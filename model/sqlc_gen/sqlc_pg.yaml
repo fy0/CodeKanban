@@ -1,0 +1,46 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries:
+      - "../*.sql"
+    schema: "./schema_postgres.sql"
+    gen:
+      go:
+        package: "model"
+        out: ".."
+        sql_package: "pgx/v5"
+        emit_db_tags: true # 是否为结构体字段加上 db:"..." 标签
+        emit_prepared_queries: true # 在pg驱动下看不出区别，因为有隐藏处理
+        emit_interface: false # 是否生成 Querier 接口，方便 mock 或外部调用
+        emit_exact_table_names: false # 结构体名字是否完全复用表名（不复数化）
+        emit_empty_slices: false # :many 查询无结果时返回空切片而非 nil
+        emit_exported_queries: false # 是否把 SQL 语句导出为公开常量，供外部包使用
+        emit_json_tags: true # 是否为结构体字段加上 json:"..." 标签
+        emit_result_struct_pointers: true  # 查询结果是否返回结构体指针
+        emit_params_struct_pointers: true # 入参是否使用结构体指针
+        emit_methods_with_db_argument: false # 生成的方法是否把 DB/TX 当参数传入，而非内嵌在 Queries 里
+        emit_pointers_for_null_types: false # 可空列是否用 *T 代替 sql.NullT（仅 pgx 与 SQLite 支持） (暂时没搞懂)
+        emit_enum_valid_method: false # 是否为枚举类型生成 Valid() 方法
+        emit_all_enum_values: false # 是否为枚举类型生成返回所有合法值的函数
+        emit_sql_as_comment: false # 是否在生成的函数上方把 SQL 语句作为注释块输出
+        build_tags: # 如果填写，会在每个文件头部加上 //go:build xxx
+        initialisms: [] # 需要全大写的缩写列表，例如 app_id → AppID
+        json_tags_id_uppercase: false # json 标签里用 "Id" 还是 "id"，false时为 camelcase
+        json_tags_case_style: "camel" # json 标签风格：camel、pascal、snake 或 none（默认）
+        omit_unused_structs: true # 不生成查询里没用到的表/枚举结构体
+        output_batch_file_name: batch_gen.go # 自定义 batch 文件名
+        output_db_file_name: db_gen.go # 自定义 db 文件名
+        output_models_file_name: models_gen.go # 自定义 models 文件名
+        output_querier_file_name: querier_gen.go # 自定义 querier 文件名
+        output_copyfrom_file_name: copyfrom_gen.go # 自定义 copyfrom 文件名
+        output_files_suffix: _gen.go # 给所有生成文件加后缀，如 _gen.go
+        query_parameter_limit: 1 # 方法参数个数阈值；设为 0 则始终生成参数结构体
+
+        overrides:
+          - column: "*.created_at"
+            go_type: "time.Time"
+          - column: "*.updated_at"
+            go_type: "time.Time"
+          - column: "*.deleted_at"
+            go_type:
+              type: "*time.Time"
