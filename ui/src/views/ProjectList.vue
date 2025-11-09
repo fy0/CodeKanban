@@ -6,16 +6,24 @@
           <n-icon size="24">
             <FolderOpenOutline />
           </n-icon>
-          <span>Git Worktree Manager</span>
+          <span>{{ APP_NAME }}</span>
         </n-space>
       </template>
       <template #extra>
-        <n-button type="primary" @click="showCreateDialog = true">
-          <template #icon>
-            <n-icon><AddOutline /></n-icon>
-          </template>
-          新建项目
-        </n-button>
+        <n-space>
+          <n-button quaternary @click="goToPtyTest">
+            <template #icon>
+              <n-icon><TerminalOutline /></n-icon>
+            </template>
+            PTY 测试
+          </n-button>
+          <n-button type="primary" @click="showCreateDialog = true">
+            <template #icon>
+              <n-icon><AddOutline /></n-icon>
+            </template>
+            新建项目
+          </n-button>
+        </n-space>
       </template>
     </n-page-header>
 
@@ -70,16 +78,21 @@
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
+import { useTitle } from '@vueuse/core';
 import {
   AddOutline,
   EllipsisHorizontalOutline,
   FolderOpenOutline,
   FolderOutline,
   GitBranchOutline,
+  TerminalOutline,
 } from '@vicons/ionicons5';
 import ProjectCreateDialog from '@/components/project/ProjectCreateDialog.vue';
 import { useProjectStore } from '@/stores/project';
 import type { Project } from '@/types/models';
+import { APP_NAME } from '@/constants/app';
+
+useTitle(`项目列表 - ${APP_NAME}`);
 
 const router = useRouter();
 const projectStore = useProjectStore();
@@ -93,6 +106,10 @@ onMounted(() => {
 
 function goToProject(id: string) {
   router.push({ name: 'project', params: { id } });
+}
+
+function goToPtyTest() {
+  router.push({ name: 'pty-test' });
 }
 
 type ProjectOption = DropdownOption & { project: Project };

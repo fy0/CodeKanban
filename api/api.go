@@ -15,9 +15,13 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/valyala/fasthttp/fasthttpadaptor"
 	"go.uber.org/zap"
 
 	"go-template/api/h"
+	"go-template/api/ptytest"
+	"go-template/api/terminal"
 	"go-template/utils"
 )
 
@@ -48,11 +52,25 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS) error {
 	humaAPI, v1 := h.NewAPI(app, cfg)
 	humaTypesRegister()
 
+	terminalManager := terminal.NewManager(terminal.Config{
+		Shell:                 cfg.Terminal.Shell,
+		IdleTimeout:           cfg.Terminal.IdleDuration(),
+		MaxSessionsPerProject: cfg.Terminal.MaxSessionsPerProject,
+		Encoding:              cfg.Terminal.Encoding,
+	}, theLogger)
+	terminalManager.StartBackground(ctx)
+	ptyTestManager := ptytest.NewManager(ptytest.Config{
+		Shell: cfg.Terminal.Shell,
+	}, theLogger)
+
 	registerHealthRoutes(app, humaAPI)
 	registerProjectRoutes(v1)
 	registerWorktreeRoutes(v1)
 	registerTaskRoutes(v1)
 	registerSystemRoutes(v1)
+	registerTerminalRoutes(app, v1, cfg, terminalManager, theLogger)
+	registerPtyTestRoutes(app, v1, cfg, ptyTestManager, theLogger)
+	registerMetricsRoute(app)
 	mountStatic(app, cfg, assets, theLogger)
 	exposeOpenAPI(app, humaAPI, cfg, theLogger)
 
@@ -122,6 +140,14 @@ func exposeOpenAPI(app *fiber.App, api huma.API, cfg *utils.AppConfig, logger *z
 
 		c.Type("json", "utf-8")
 		return c.Send(body)
+	})
+}
+
+func registerMetricsRoute(app *fiber.App) {
+	handler := fasthttpadaptor.NewFastHTTPHandler(promhttp.Handler())
+	app.Get("/metrics", func(c *fiber.Ctx) error {
+		handler(c.Context())
+		return nil
 	})
 }
 

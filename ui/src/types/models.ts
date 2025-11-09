@@ -51,3 +51,18 @@ export interface TaskComment {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface TerminalSession {
+  id: string;
+  projectId: string;
+  worktreeId: string;
+  workingDir: string;
+  title: string;
+  createdAt: string;
+  lastActive: string;
+  status: 'starting' | 'running' | 'closed' | 'error';
+  wsPath: string;
+  wsUrl: string;
+  rows: number;
+  cols: number;
+}

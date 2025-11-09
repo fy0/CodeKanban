@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -18,6 +19,43 @@ type AttachmentConfig struct {
 	AccessKey string `json:"accessKey" yaml:"accessKey"`
 	SecretKey string `json:"secretKey" yaml:"secretKey"`
 	Token     string `json:"token" yaml:"token"`
+}
+
+type TerminalShellConfig struct {
+	Windows string `json:"windows" yaml:"windows"`
+	Linux   string `json:"linux" yaml:"linux"`
+	Darwin  string `json:"darwin" yaml:"darwin"`
+}
+
+type TerminalConfig struct {
+	Shell                 TerminalShellConfig `json:"shell" yaml:"shell"`
+	IdleTimeout           string              `json:"idleTimeout" yaml:"idleTimeout"`
+	MaxSessionsPerProject int                 `json:"maxSessionsPerProject" yaml:"maxSessionsPerProject"`
+	AllowedRoots          []string            `json:"allowedRoots" yaml:"allowedRoots"`
+	Encoding              string              `json:"encoding" yaml:"encoding"`
+
+	idleDuration time.Duration
+}
+
+// IdleDuration parses the configured timeout string and falls back to 10 minutes on errors.
+func (c *TerminalConfig) IdleDuration() time.Duration {
+	if c == nil {
+		return 0
+	}
+	if c.idleDuration != 0 {
+		return c.idleDuration
+	}
+	if c.IdleTimeout == "" {
+		c.idleDuration = 10 * time.Minute
+		return c.idleDuration
+	}
+	dur, err := time.ParseDuration(c.IdleTimeout)
+	if err != nil {
+		c.idleDuration = 10 * time.Minute
+		return c.idleDuration
+	}
+	c.idleDuration = dur
+	return c.idleDuration
 }
 
 type AppConfig struct {
@@ -40,6 +78,7 @@ type AppConfig struct {
 	AttachmentConfig    AttachmentConfig `json:"attachmentConfig" yaml:"attachmentConfig"`
 	DSN                 string           `json:"dbUrl" yaml:"dbUrl"`
 	PrintConfig         bool             `json:"printConfig" yaml:"printConfig"`
+	Terminal            TerminalConfig   `json:"terminal" yaml:"terminal"`
 }
 
 var configStore = koanf.New(".")
@@ -66,6 +105,17 @@ func ReadConfig() *AppConfig {
 		},
 		DSN:         "./data/data.db",
 		PrintConfig: true,
+		Terminal: TerminalConfig{
+			Shell: TerminalShellConfig{
+				Windows: "pwsh.exe -NoLogo",
+				Linux:   "/bin/bash",
+				Darwin:  "/bin/zsh",
+			},
+			IdleTimeout:           "10m",
+			MaxSessionsPerProject: 6,
+			AllowedRoots:          []string{},
+			Encoding:              "utf-8",
+		},
 	}
 
 	lo.Must0(configStore.Load(structs.Provider(&defaults, "yaml"), nil))
@@ -85,6 +135,9 @@ func ReadConfig() *AppConfig {
 		fmt.Printf("解析配置失败: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Normalize derived values to avoid重复计算.
+	_ = config.Terminal.IdleDuration()
 
 	if config.PrintConfig {
 		configStore.Print()

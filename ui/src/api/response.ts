@@ -19,13 +19,13 @@ export const unwrapBody = <T>(response: MaybeBody<T>): T | undefined => {
   return response as T;
 };
 
-export const extractItems = <T>(response: MaybeBody<{ items?: T[] } | T[]>): T[] => {
+export const extractItems = <T>(response: MaybeBody<{ items?: T[] | null } | T[]>): T[] => {
   const payload = unwrapBody(response);
   if (Array.isArray(payload)) {
     return payload as T[];
   }
   if (hasProp(payload, 'items')) {
-    const items = (payload as { items?: T[] }).items;
+    const items = (payload as { items?: T[] | null }).items;
     return Array.isArray(items) ? items : [];
   }
   return [];

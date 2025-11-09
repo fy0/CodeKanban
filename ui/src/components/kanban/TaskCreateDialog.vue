@@ -145,7 +145,7 @@ async function handleSubmit() {
       dueDate: form.value.dueDate,
       tags: form.value.tags,
     });
-    const task = extractItem<Task>(response);
+    const task = extractItem(response) as unknown as Task | undefined;
     if (task) {
       emit('created', task);
       message.success('任务创建成功');

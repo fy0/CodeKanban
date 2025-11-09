@@ -160,7 +160,7 @@ async function fetchTasks(projectId: string) {
   boardLoading.value = true;
   try {
     const response = await listTasks.send(projectId);
-    const items = extractItems<Task>(response);
+    const items = extractItems(response) as unknown as Task[];
     taskStore.setTasks(items);
   } catch (error: any) {
     message.error(error?.message ?? '加载任务失败');
@@ -190,7 +190,7 @@ async function handleTaskMoved(event: { taskId: string; newStatus: Task['status'
 
   try {
     const response = await moveTask.send(taskId, { status: newStatus, orderIndex });
-    const updated = extractItem<Task>(response);
+    const updated = extractItem(response) as unknown as Task | undefined;
     if (updated) {
       taskStore.upsertTask(updated);
     }

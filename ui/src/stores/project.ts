@@ -112,10 +112,6 @@ export const useProjectStore = defineStore('project', () => {
     await systemApi.openExplorer(path);
   }
 
-  async function openInTerminal(path: string) {
-    await systemApi.openTerminal(path);
-  }
-
   function setSelectedWorktree(worktreeId: string | null) {
     selectedWorktreeId.value = worktreeId;
   }
@@ -152,7 +148,6 @@ export const useProjectStore = defineStore('project', () => {
     refreshAllWorktrees,
     syncWorktrees,
     openInExplorer,
-    openInTerminal,
     addRecentProject,
     setSelectedWorktree,
   };

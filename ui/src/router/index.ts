@@ -13,6 +13,11 @@ const router = createRouter({
       name: 'project',
       component: () => import('@/views/ProjectWorkspace.vue'),
     },
+    {
+      path: '/pty-test',
+      name: 'pty-test',
+      component: () => import('@/views/PtyTest.vue'),
+    },
   ],
 });
 

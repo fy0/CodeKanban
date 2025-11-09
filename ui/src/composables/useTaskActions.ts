@@ -28,16 +28,13 @@ export interface MoveTaskPayload {
 }
 
 export const useTaskActions = () => {
-  const normalizeDueDate = (value?: string | null) => {
-    if (value === undefined) {
-      return undefined;
-    }
-    if (value === null || value === '') {
+  const normalizeDueDate = (value?: string | null): string | null => {
+    if (value === undefined || value === null || value === '') {
       return null;
     }
     const parsed = dayjs(value);
     if (!parsed.isValid()) {
-      return undefined;
+      return null;
     }
     return parsed.endOf('day').toISOString();
   };
@@ -74,7 +71,10 @@ export const useTaskActions = () => {
     Apis.task.update({
       pathParams: { id: taskId },
       data: {
-        ...payload,
+        title: payload.title ?? null,
+        description: payload.description ?? null,
+        priority: payload.priority ?? null,
+        tags: payload.tags ?? null,
         dueDate: normalizeDueDate(payload.dueDate),
       },
     }),
@@ -100,7 +100,7 @@ export const useTaskActions = () => {
   const bindWorktree = useReq((taskId: string, worktreeId: string | null) =>
     Apis.task.bindWorktree({
       pathParams: { id: taskId },
-      data: { worktreeId },
+      data: { worktreeId: worktreeId ?? undefined },
     }),
   );
 

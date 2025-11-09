@@ -120,7 +120,7 @@ func registerProjectRoutes(group *huma.Group) {
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {
-		op.OperationID = "project-delete-by-id"
+		op.OperationID = "project-delete"
 		op.Summary = "删除项目"
 		op.Tags = []string{projectTag}
 	})

@@ -11,6 +11,24 @@ importers:
       '@vicons/ionicons5':
         specifier: ^0.12.0
         version: 0.12.0
+      '@vueuse/core':
+        specifier: ^14.0.0
+        version: 14.0.0(vue@3.5.22(typescript@5.8.3))
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/addon-search':
+        specifier: ^0.15.0
+        version: 0.15.0(@xterm/xterm@5.5.0)
+      '@xterm/addon-web-links':
+        specifier: ^0.11.0
+        version: 0.11.0(@xterm/xterm@5.5.0)
+      '@xterm/addon-webgl':
+        specifier: ^0.18.0
+        version: 0.18.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.3.0
+        version: 5.5.0
       alova:
         specifier: ^3.3.4
         version: 3.3.4
@@ -20,6 +38,9 @@ importers:
       es-toolkit:
         specifier: ^1.39.10
         version: 1.39.10
+      eventemitter3:
+        specifier: ^5.0.1
+        version: 5.0.1
       filesize:
         specifier: ^11.0.13
         version: 11.0.13
@@ -66,6 +87,9 @@ importers:
       '@types/node':
         specifier: ^22.16.5
         version: 22.18.6
+      '@types/web':
+        specifier: ^0.0.154
+        version: 0.0.154
       '@vitejs/plugin-vue':
         specifier: ^6.0.1
         version: 6.0.1(rolldown-vite@7.1.13(@types/node@22.18.6)(esbuild@0.25.10)(jiti@2.6.0))(vue@3.5.22(typescript@5.8.3))
@@ -110,7 +134,7 @@ importers:
         version: 5.8.3
       unplugin-auto-import:
         specifier: ^20.2.0
-        version: 20.2.0
+        version: 20.2.0(@vueuse/core@14.0.0(vue@3.5.22(typescript@5.8.3)))
       unplugin-vue-components:
         specifier: ^29.1.0
         version: 29.1.0(@babel/parser@7.28.4)(vue@3.5.22(typescript@5.8.3))
@@ -928,6 +952,12 @@ packages:
   '@types/node@22.18.6':
     resolution: {integrity: sha512-r8uszLPpeIWbNKtvWRt/DbVi5zbqZyj1PTmhRMqBMvDnaz1QpmSKujUtJLrqGZeoM8v72MfYggDceY4K1itzWQ==}
 
+  '@types/web-bluetooth@0.0.21':
+    resolution: {integrity: sha512-oIQLCGWtcFZy2JW77j9k8nHzAOpqMHLQejDA48XXMWH6tjCQHz5RCFz1bzsmROyL6PUm+LLnUiI4BCn221inxA==}
+
+  '@types/web@0.0.154':
+    resolution: {integrity: sha512-Tc10Nkpbb8AgM3iGnrvpKVb6x8pzrZpMCPqMJe8htXoEdNDKojEevNAkCjxkjCLZF2p1ZB+gknAwdbkypxwxKg==}
+
   '@typescript-eslint/eslint-plugin@8.44.1':
     resolution: {integrity: sha512-molgphGqOBT7t4YKCSkbasmu1tb1MgrZ2szGzHbclF7PNmOkSTQVHy+2jXOSnxvR3+Xe1yySHFZoqMpz3TfQsw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -1119,6 +1149,42 @@ packages:
         optional: true
       vue:
         optional: true
+
+  '@vueuse/core@14.0.0':
+    resolution: {integrity: sha512-d6tKRWkZE8IQElX2aHBxXOMD478fHIYV+Dzm2y9Ag122ICBpNKtGICiXKOhWU3L1kKdttDD9dCMS4bGP3jhCTQ==}
+    peerDependencies:
+      vue: ^3.5.0
+
+  '@vueuse/metadata@14.0.0':
+    resolution: {integrity: sha512-6yoGqbJcMldVCevkFiHDBTB1V5Hq+G/haPlGIuaFZHpXC0HADB0EN1ryQAAceiW+ryS3niUwvdFbGiqHqBrfVA==}
+
+  '@vueuse/shared@14.0.0':
+    resolution: {integrity: sha512-mTCA0uczBgurRlwVaQHfG0Ja7UdGe4g9mwffiJmvLiTtp1G4AQyIjej6si/k8c8pUwTfVpNufck+23gXptPAkw==}
+    peerDependencies:
+      vue: ^3.5.0
+
+  '@xterm/addon-fit@0.10.0':
+    resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/addon-search@0.15.0':
+    resolution: {integrity: sha512-ZBZKLQ+EuKE83CqCmSSz5y1tx+aNOCUaA7dm6emgOX+8J9H1FWXZyrKfzjwzV+V14TV3xToz1goIeRhXBS5qjg==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/addon-web-links@0.11.0':
+    resolution: {integrity: sha512-nIHQ38pQI+a5kXnRaTgwqSHnX7KE6+4SVoceompgHL26unAxdfP6IPqUTSYPQgSwM56hsElfoNrrW5V7BUED/Q==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/addon-webgl@0.18.0':
+    resolution: {integrity: sha512-xCnfMBTI+/HKPdRnSOHaJDRqEpq2Ugy8LEj9GiY4J3zJObo3joylIFaMvzBwbYRg8zLtkO0KQaStCeSfoaI2/w==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/xterm@5.5.0':
+    resolution: {integrity: sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A==}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1470,6 +1536,9 @@ packages:
   esutils@2.0.3:
     resolution: {integrity: sha512-kVscqXk4OCp68SZ0dkgEKVi6/8ij300KBWTJq32P/dYeWTSwK41WyTxalN1eRmA5Z9UU/LX9D7FWSmV9SAYx6g==}
     engines: {node: '>=0.10.0'}
+
+  eventemitter3@5.0.1:
+    resolution: {integrity: sha512-GWkBvjiSZK87ELrYOSESUYeVIc9mvLLf/nXalMOS5dYrgZq9o5OVkbZAVM06CVxYsCwH9BDZFPlQTlPA1j4ahA==}
 
   evtd@0.2.4:
     resolution: {integrity: sha512-qaeGN5bx63s/AXgQo8gj6fBkxge+OoLddLniox5qtLAEY5HSnuSlISXVPxnSae1dWblvTh4/HoMIB+mbMsvZzw==}
@@ -3295,6 +3364,10 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
+  '@types/web-bluetooth@0.0.21': {}
+
+  '@types/web@0.0.154': {}
+
   '@typescript-eslint/eslint-plugin@8.44.1(@typescript-eslint/parser@8.44.1(eslint@9.36.0(jiti@2.6.0))(typescript@5.8.3))(eslint@9.36.0(jiti@2.6.0))(typescript@5.8.3)':
     dependencies:
       '@eslint-community/regexpp': 4.12.1
@@ -3593,6 +3666,37 @@ snapshots:
     optionalDependencies:
       typescript: 5.8.3
       vue: 3.5.22(typescript@5.8.3)
+
+  '@vueuse/core@14.0.0(vue@3.5.22(typescript@5.8.3))':
+    dependencies:
+      '@types/web-bluetooth': 0.0.21
+      '@vueuse/metadata': 14.0.0
+      '@vueuse/shared': 14.0.0(vue@3.5.22(typescript@5.8.3))
+      vue: 3.5.22(typescript@5.8.3)
+
+  '@vueuse/metadata@14.0.0': {}
+
+  '@vueuse/shared@14.0.0(vue@3.5.22(typescript@5.8.3))':
+    dependencies:
+      vue: 3.5.22(typescript@5.8.3)
+
+  '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/addon-search@0.15.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/addon-webgl@0.18.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/xterm@5.5.0': {}
 
   acorn-jsx@5.3.2(acorn@8.15.0):
     dependencies:
@@ -3950,6 +4054,8 @@ snapshots:
       '@types/estree': 1.0.8
 
   esutils@2.0.3: {}
+
+  eventemitter3@5.0.1: {}
 
   evtd@0.2.4: {}
 
@@ -4832,7 +4938,7 @@ snapshots:
       unplugin: 2.3.10
       unplugin-utils: 0.3.0
 
-  unplugin-auto-import@20.2.0:
+  unplugin-auto-import@20.2.0(@vueuse/core@14.0.0(vue@3.5.22(typescript@5.8.3))):
     dependencies:
       local-pkg: 1.1.2
       magic-string: 0.30.19
@@ -4840,6 +4946,8 @@ snapshots:
       unimport: 5.4.0
       unplugin: 2.3.10
       unplugin-utils: 0.3.0
+    optionalDependencies:
+      '@vueuse/core': 14.0.0(vue@3.5.22(typescript@5.8.3))
 
   unplugin-utils@0.3.0:
     dependencies:

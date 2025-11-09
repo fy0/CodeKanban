@@ -209,7 +209,7 @@ async function loadComments(taskId: string) {
   detailLoading.value = true;
   try {
     const response = await listComments.send(taskId);
-    const items = extractItems<TaskComment>(response);
+    const items = extractItems(response) as unknown as TaskComment[];
     taskStore.setComments(taskId, items);
   } catch (error: any) {
     message.error(error?.message ?? '加载评论失败');
@@ -232,11 +232,11 @@ async function handleSave() {
       dueDate: form.value.dueDate,
     };
     const response = await updateTask.send(task.value.id, payload);
-    let updated = extractItem<Task>(response);
+    let updated = extractItem(response) as unknown as Task | undefined;
 
     if (form.value.worktreeId !== originalWorktreeId.value) {
       const bindResponse = await bindWorktree.send(task.value.id, form.value.worktreeId);
-      updated = extractItem<Task>(bindResponse);
+      updated = extractItem(bindResponse) as unknown as Task | undefined;
     }
 
     if (updated) {

@@ -73,6 +73,10 @@ import WorktreeCreateDialog from './WorktreeCreateDialog.vue';
 import { useProjectStore } from '@/stores/project';
 import type { Worktree } from '@/types/models';
 
+const emit = defineEmits<{
+  'open-terminal': [payload: Worktree];
+}>();
+
 const projectStore = useProjectStore();
 const message = useMessage();
 const dialog = useDialog();
@@ -153,12 +157,8 @@ async function handleOpenExplorer(path: string) {
   }
 }
 
-async function handleOpenTerminal(path: string) {
-  try {
-    await projectStore.openInTerminal(path);
-  } catch (error: any) {
-    message.error(error?.message ?? '打开终端失败');
-  }
+function handleOpenTerminal(worktree: Worktree) {
+  emit('open-terminal', worktree);
 }
 
 async function handleWorktreeCreated(worktree?: Worktree) {

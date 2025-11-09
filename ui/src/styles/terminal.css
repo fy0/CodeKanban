@@ -1,0 +1,10 @@
+@import '@xterm/xterm/css/xterm.css';
+
+.terminal-shell .xterm {
+  padding: 8px;
+}
+
+.terminal-shell .xterm-viewport {
+  overflow-y: auto;
+  scrollbar-width: thin;
+}

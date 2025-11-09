@@ -110,6 +110,32 @@ export interface CreateProjectInputBody {
    */
   worktreeBasePath?: string;
 }
+export interface PtyTestCreateInputBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 终端列数
+   */
+  cols: number;
+  /**
+   * xpty 输出编码，默认 utf-8
+   */
+  encoding: string;
+  /**
+   * 终端行数
+   */
+  rows: number;
+  /**
+   * 自定义 shell 命令，留空使用默认配置
+   */
+  shell: string;
+  /**
+   * 工作目录，可选
+   */
+  workingDir: string;
+}
 export interface OpenPathInputBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -205,6 +231,28 @@ export interface Worktree_create_request {
    */
   createBranch: boolean;
 }
+export interface TerminalCreateInputBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 终端列数
+   */
+  cols: number;
+  /**
+   * 终端行数
+   */
+  rows: number;
+  /**
+   * 终端标题
+   */
+  title: string;
+  /**
+   * 工作目录
+   */
+  workingDir: string;
+}
 export interface UpdateTaskBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -239,7 +287,7 @@ export interface BindWorktreeBody {
   /**
    * Worktree ID（null 表示解绑）
    */
-  worktreeId: string | null;
+  worktreeId?: string;
 }
 export interface CreateCommentBody {
   /**
@@ -259,15 +307,15 @@ export interface MoveTaskBody {
   /**
    * 排序索引
    */
-  orderIndex: number | null;
+  orderIndex?: number;
   /**
    * 新状态
    */
-  status: string;
+  status?: string;
   /**
    * 关联 Worktree
    */
-  worktreeId: string | null;
+  worktreeId?: string;
 }
 export interface ItemResponseProjectBody {
   /**
@@ -299,6 +347,31 @@ export interface ItemResponseRefreshAllResultBody {
    */
   item: RefreshAllResult;
 }
+export interface TerminalSessionView {
+  cols: number;
+  createdAt: string;
+  encoding: string;
+  id: string;
+  lastActive: string;
+  projectId: string;
+  rows: number;
+  status: string;
+  title: string;
+  workingDir: string;
+  worktreeId: string;
+  wsPath: string;
+  wsUrl: string;
+}
+export interface ItemsResponseTerminalSessionViewBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应列表
+   */
+  items: TerminalSessionView[] | null;
+}
 export interface Worktree {
   branchName: string;
   createdAt: string;
@@ -327,6 +400,27 @@ export interface ItemsResponseWorktreeBody {
    * 响应列表
    */
   items: Worktree[] | null;
+}
+export interface PtyTestSessionView {
+  cols: number;
+  createdAt: string;
+  encoding: string;
+  id: string;
+  rows: number;
+  shell: string[] | null;
+  workingDir: string;
+  wsPath: string;
+  wsUrl: string;
+}
+export interface ItemResponsePtyTestSessionViewBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: PtyTestSessionView;
 }
 export interface DeletedAt {
   Time: string;
@@ -447,6 +541,16 @@ export interface PaginatedResponseTaskTableBody {
    * 记录总数
    */
   total: number;
+}
+export interface ItemResponseTerminalSessionViewBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: TerminalSessionView;
 }
 export interface ItemResponseTaskCommentTableBody {
   /**
@@ -607,7 +711,7 @@ declare global {
        * }
        * ```
        */
-      deleteById<
+      delete<
         Config extends Alova2MethodConfig<MessageResponseBody> & {
           pathParams: {
             id: string;
@@ -615,7 +719,7 @@ declare global {
         }
       >(
         config: Config
-      ): Alova2Method<MessageResponseBody, 'project.deleteById', Config>;
+      ): Alova2Method<MessageResponseBody, 'project.delete', Config>;
       /**
        * ---
        *
@@ -1586,7 +1690,7 @@ declare global {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
        *   // Worktree ID（null 表示解绑）
-       *   worktreeId: string | null
+       *   worktreeId?: string
        * }
        * ```
        *
@@ -1712,11 +1816,11 @@ declare global {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
        *   // 排序索引
-       *   orderIndex: number | null
+       *   orderIndex?: number
        *   // 新状态
-       *   status: string
+       *   status?: string
        *   // 关联 Worktree
-       *   worktreeId: string | null
+       *   worktreeId?: string
        * }
        * ```
        *
@@ -1818,6 +1922,273 @@ declare global {
       >(
         config: Config
       ): Alova2Method<ItemResponseTaskTableBody, 'task.move', Config>;
+    };
+    terminalSession: {
+      /**
+       * ---
+       *
+       * [GET] 获取终端会话列表
+       *
+       * **path:** /api/v1/projects/{projectId}/terminals
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应列表
+       *   // [params1] start
+       *   // [items] start
+       *   // [items] end
+       *   // [params1] end
+       *   items: Array<{
+       *     cols: number
+       *     createdAt: string
+       *     encoding: string
+       *     id: string
+       *     lastActive: string
+       *     projectId: string
+       *     rows: number
+       *     status: string
+       *     title: string
+       *     workingDir: string
+       *     worktreeId: string
+       *     wsPath: string
+       *     wsUrl: string
+       *   }> | null
+       * }
+       * ```
+       */
+      list<
+        Config extends Alova2MethodConfig<ItemsResponseTerminalSessionViewBody> & {
+          pathParams: {
+            projectId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemsResponseTerminalSessionViewBody, 'terminalSession.list', Config>;
+      /**
+       * ---
+       *
+       * [DELETE] 关闭终端会话
+       *
+       * **path:** /api/v1/projects/{projectId}/terminals/{sessionId}
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       *   sessionId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      close<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          pathParams: {
+            projectId: string;
+            sessionId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'terminalSession.close', Config>;
+      /**
+       * ---
+       *
+       * [POST] 创建终端会话
+       *
+       * **path:** /api/v1/projects/{projectId}/worktrees/{worktreeId}/terminals
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       *   worktreeId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 终端列数
+       *   cols: number
+       *   // 终端行数
+       *   rows: number
+       *   // 终端标题
+       *   title: string
+       *   // 工作目录
+       *   workingDir: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     cols: number
+       *     createdAt: string
+       *     encoding: string
+       *     id: string
+       *     lastActive: string
+       *     projectId: string
+       *     rows: number
+       *     status: string
+       *     title: string
+       *     workingDir: string
+       *     worktreeId: string
+       *     wsPath: string
+       *     wsUrl: string
+       *   }
+       * }
+       * ```
+       */
+      create<
+        Config extends Alova2MethodConfig<ItemResponseTerminalSessionViewBody> & {
+          pathParams: {
+            projectId: string;
+            worktreeId: string;
+          };
+          data: TerminalCreateInputBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.create', Config>;
+    };
+    ptyTest: {
+      /**
+       * ---
+       *
+       * [POST] 创建 PTY 测试会话
+       *
+       * **path:** /api/v1/pty-test/sessions
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 终端列数
+       *   cols: number
+       *   // xpty 输出编码，默认 utf-8
+       *   encoding: string
+       *   // 终端行数
+       *   rows: number
+       *   // 自定义 shell 命令，留空使用默认配置
+       *   shell: string
+       *   // 工作目录，可选
+       *   workingDir: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     cols: number
+       *     createdAt: string
+       *     encoding: string
+       *     id: string
+       *     rows: number
+       *     // [params1] start
+       *     // [items] start
+       *     // [items] end
+       *     // [params1] end
+       *     shell: string[] | null
+       *     workingDir: string
+       *     wsPath: string
+       *     wsUrl: string
+       *   }
+       * }
+       * ```
+       */
+      sessionCreate<
+        Config extends Alova2MethodConfig<ItemResponsePtyTestSessionViewBody> & {
+          data: PtyTestCreateInputBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponsePtyTestSessionViewBody, 'ptyTest.sessionCreate', Config>;
+      /**
+       * ---
+       *
+       * [DELETE] 关闭 PTY 测试会话
+       *
+       * **path:** /api/v1/pty-test/sessions/{sessionId}
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   sessionId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      sessionClose<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          pathParams: {
+            sessionId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'ptyTest.sessionClose', Config>;
     };
     system: {
       /**

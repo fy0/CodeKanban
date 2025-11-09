@@ -55,7 +55,7 @@ const emit = defineEmits<{
   refresh: [id: string];
   delete: [worktree: Worktree];
   'open-explorer': [path: string];
-  'open-terminal': [path: string];
+  'open-terminal': [worktree: Worktree];
   select: [id: string];
 }>();
 
@@ -72,7 +72,7 @@ function handleAction(key: string | number) {
       emit('open-explorer', props.worktree.path);
       break;
     case 'terminal':
-      emit('open-terminal', props.worktree.path);
+      emit('open-terminal', props.worktree);
       break;
     case 'refresh':
       emit('refresh', props.worktree.id);
