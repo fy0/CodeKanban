@@ -22,6 +22,7 @@ import (
 	"go-template/api/h"
 	"go-template/api/terminal"
 	"go-template/model"
+	"go-template/service"
 	"go-template/utils"
 )
 
@@ -33,7 +34,7 @@ const (
 type terminalController struct {
 	cfg            *utils.AppConfig
 	manager        *terminal.Manager
-	worktreeSvc    *model.WorktreeService
+	worktreeSvc    *service.WorktreeService
 	logger         *zap.Logger
 	upgrader       websocket.Upgrader
 	wsPathTemplate string
@@ -46,7 +47,7 @@ func registerTerminalRoutes(app *fiber.App, group *huma.Group, cfg *utils.AppCon
 	ctrl := &terminalController{
 		cfg:         cfg,
 		manager:     manager,
-		worktreeSvc: model.NewWorktreeService(),
+		worktreeSvc: service.NewWorktreeService(),
 		logger:      logger.Named("terminal-controller"),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  32 * 1024,
@@ -116,6 +117,31 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "terminal-session-close"
 		op.Summary = "关闭终端会话"
+		op.Tags = []string{terminalTag}
+	})
+
+	huma.Patch(group, "/projects/{projectId}/terminals/{sessionId}", func(
+		ctx context.Context,
+		input *terminalRenameInput,
+	) (*h.ItemResponse[terminalSessionView], error) {
+		session, err := c.manager.RenameSession(input.ProjectID, input.SessionID, input.Body.Title)
+		if err != nil {
+			switch {
+			case errors.Is(err, terminal.ErrSessionNotFound):
+				return nil, huma.Error404NotFound(err.Error())
+			case errors.Is(err, terminal.ErrInvalidSessionTitle):
+				return nil, huma.Error400BadRequest(err.Error())
+			default:
+				return nil, huma.Error500InternalServerError("failed to rename session", err)
+			}
+		}
+		view := c.viewFromSnapshot(session.Snapshot())
+		resp := h.NewItemResponse(view)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-session-rename"
+		op.Summary = "终端标签重命名"
 		op.Tags = []string{terminalTag}
 	})
 }
@@ -212,53 +238,80 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 		return conn.WriteJSON(msg)
 	}
 
+	status := session.Status()
+
 	if err := send(wsMessage{
 		Type: "ready",
-		Data: string(session.Status()),
+		Data: string(status),
 	}); err != nil {
 		return
 	}
 
-	go c.forwardPTY(ctx, session, conn, send)
-	c.consumeClient(ctx, session, conn, send)
-}
+	scrollback := session.Scrollback()
+	for _, chunk := range scrollback {
+		if len(chunk) == 0 {
+			continue
+		}
+		encoded := base64.StdEncoding.EncodeToString(chunk)
+		if err := send(wsMessage{Type: "data", Data: encoded}); err != nil {
+			return
+		}
+	}
 
-func (c *terminalController) forwardPTY(ctx context.Context, session *terminal.Session, conn *websocket.Conn, send func(wsMessage) error) {
-	reader := session.Reader()
-	if reader == nil {
-		_ = send(wsMessage{
-			Type: "exit",
-			Data: "session is not ready",
-		})
+	if status == terminal.SessionStatusClosed || status == terminal.SessionStatusError {
+		message := "session closed"
+		if err := session.Err(); err != nil {
+			message = err.Error()
+		}
+		_ = send(wsMessage{Type: "exit", Data: message})
 		return
 	}
 
-	buffer := make([]byte, 32*1024)
+	stream, err := session.Subscribe(ctx)
+	if err != nil {
+		c.logger.Warn("failed to subscribe session stream", zap.Error(err))
+		_ = send(wsMessage{Type: "error", Data: "failed to attach terminal stream"})
+		return
+	}
+
+	go c.forwardPTY(ctx, session, stream, send)
+	c.consumeClient(ctx, session, conn, send)
+}
+
+func (c *terminalController) forwardPTY(ctx context.Context, session *terminal.Session, stream *terminal.SessionStream, send func(wsMessage) error) {
+	if stream == nil {
+		return
+	}
+	defer stream.Close()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			n, err := reader.Read(buffer)
-				if n > 0 {
-					session.Touch()
-					normalized := session.NormalizeOutput(buffer[:n])
-					if len(normalized) > 0 {
-						c.manager.ReportIO(session.ProjectID(), "output", len(normalized))
-						chunk := base64.StdEncoding.EncodeToString(normalized)
-						if writeErr := send(wsMessage{Type: "data", Data: chunk}); writeErr != nil {
-							return
-						}
-					}
-				}
-			if err != nil {
-				_ = send(wsMessage{
-					Type: "exit",
-					Data: err.Error(),
-				})
-				session.Touch()
+		case event, ok := <-stream.Events():
+			if !ok {
 				return
+			}
+			switch event.Type {
+			case terminal.StreamEventData:
+				if len(event.Data) == 0 {
+					continue
+				}
+				chunk := base64.StdEncoding.EncodeToString(event.Data)
+				if writeErr := send(wsMessage{Type: "data", Data: chunk}); writeErr != nil {
+					return
+				}
+			case terminal.StreamEventExit:
+				message := "session closed"
+				if event.Err != nil {
+					message = event.Err.Error()
+				} else if err := session.Err(); err != nil {
+					message = err.Error()
+				}
+				_ = send(wsMessage{Type: "exit", Data: message})
+				return
+			default:
+				continue
 			}
 		}
 	}
@@ -288,17 +341,14 @@ func (c *terminalController) consumeClient(ctx context.Context, session *termina
 				if msg.Data == "" {
 					continue
 				}
-				n, writeErr := session.Write([]byte(msg.Data))
-				if writeErr != nil {
+				if _, writeErr := session.Write([]byte(msg.Data)); writeErr != nil {
 					_ = send(wsMessage{Type: "error", Data: writeErr.Error()})
 					return
 				}
-				c.manager.ReportIO(session.ProjectID(), "input", n)
 			case "resize":
 				_ = session.Resize(msg.Cols, msg.Rows)
 			case "close":
 				_ = session.Close()
-				_ = send(wsMessage{Type: "exit", Data: "closed"})
 				return
 			default:
 				continue
@@ -385,6 +435,14 @@ type terminalCreateInput struct {
 		Title      string `json:"title" doc:"终端标题"`
 		Rows       int    `json:"rows" doc:"终端行数"`
 		Cols       int    `json:"cols" doc:"终端列数"`
+	} `json:"body"`
+}
+
+type terminalRenameInput struct {
+	ProjectID string `path:"projectId"`
+	SessionID string `path:"sessionId"`
+	Body      struct {
+		Title string `json:"title" doc:"新的终端标签名"`
 	} `json:"body"`
 }
 

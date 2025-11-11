@@ -15,8 +15,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/valyala/fasthttp/fasthttpadaptor"
 	"go.uber.org/zap"
 
 	"go-template/api/h"
@@ -37,6 +35,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS) error {
 	app := fiber.New(fiber.Config{
 		BodyLimit:             bodyLimit,
 		DisableStartupMessage: true,
+		Immutable:             true, // 防止字符串内存被重用覆盖
 	})
 
 	app.Use(cors.New(cors.Config{
@@ -50,6 +49,8 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS) error {
 	app.Use(compress.New())
 
 	humaAPI, v1 := h.NewAPI(app, cfg)
+	humaAPI.UseMiddleware(h.HumaTraceMiddleware)
+	h.HumaValidatePatch()
 	humaTypesRegister()
 
 	terminalManager := terminal.NewManager(terminal.Config{
@@ -57,6 +58,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS) error {
 		IdleTimeout:           cfg.Terminal.IdleDuration(),
 		MaxSessionsPerProject: cfg.Terminal.MaxSessionsPerProject,
 		Encoding:              cfg.Terminal.Encoding,
+		ScrollbackBytes:       cfg.Terminal.ScrollbackBytes,
 	}, theLogger)
 	terminalManager.StartBackground(ctx)
 	ptyTestManager := ptytest.NewManager(ptytest.Config{
@@ -66,11 +68,13 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS) error {
 	registerHealthRoutes(app, humaAPI)
 	registerProjectRoutes(v1)
 	registerWorktreeRoutes(v1)
+	registerBranchRoutes(v1)
 	registerTaskRoutes(v1)
+	registerNotePadRoutes(v1)
 	registerSystemRoutes(v1)
+	registerUploadRoutes(v1, cfg, theLogger)
 	registerTerminalRoutes(app, v1, cfg, terminalManager, theLogger)
 	registerPtyTestRoutes(app, v1, cfg, ptyTestManager, theLogger)
-	registerMetricsRoute(app)
 	mountStatic(app, cfg, assets, theLogger)
 	exposeOpenAPI(app, humaAPI, cfg, theLogger)
 
@@ -119,7 +123,7 @@ func mountStatic(app *fiber.App, cfg *utils.AppConfig, assets embed.FS, logger *
 
 	app.Use(mountPath, filesystem.New(filesystem.Config{
 		Root:       fs,
-		PathPrefix: "",
+		PathPrefix: "static",
 		MaxAge:     300,
 	}))
 }
@@ -140,14 +144,6 @@ func exposeOpenAPI(app *fiber.App, api huma.API, cfg *utils.AppConfig, logger *z
 
 		c.Type("json", "utf-8")
 		return c.Send(body)
-	})
-}
-
-func registerMetricsRoute(app *fiber.App) {
-	handler := fasthttpadaptor.NewFastHTTPHandler(promhttp.Handler())
-	app.Get("/metrics", func(c *fiber.Ctx) error {
-		handler(c.Context())
-		return nil
 	})
 }
 

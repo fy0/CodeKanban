@@ -1,9 +1,15 @@
 <template>
   <div v-if="tabs.length && expanded" class="terminal-panel" :style="panelStyle">
     <!-- 拖动调整高度的手柄 -->
-    <div class="resize-handle" @mousedown="startResize">
+    <div class="resize-handle resize-handle-top" @mousedown="startResize">
       <div class="resize-indicator"></div>
     </div>
+
+    <!-- 左侧拖动手柄 -->
+    <div class="resize-handle resize-handle-left" @mousedown="startResizeLeft"></div>
+
+    <!-- 右侧拖动手柄 -->
+    <div class="resize-handle resize-handle-right" @mousedown="startResizeRight"></div>
 
     <div class="panel-header">
       <n-tabs
@@ -13,7 +19,12 @@
         size="small"
         @close="handleClose"
       >
-        <n-tab-pane v-for="tab in tabs" :key="tab.id" :name="tab.id">
+        <n-tab-pane
+          v-for="tab in tabs"
+          :key="tab.id"
+          :name="tab.id"
+          :tab-props="createTabProps(tab)"
+        >
           <template #tab>
             <span class="tab-label">
               <span class="status-dot" :class="tab.clientStatus" />
@@ -22,6 +33,16 @@
           </template>
         </n-tab-pane>
       </n-tabs>
+      <n-dropdown
+        trigger="manual"
+        placement="bottom-start"
+        :show="!!contextMenuTab"
+        :options="contextMenuOptions"
+        :x="contextMenuX"
+        :y="contextMenuY"
+        @select="handleContextMenuSelect"
+        @clickoutside="contextMenuTab = null"
+      />
       <div class="header-actions">
         <n-checkbox v-model:checked="autoResize" size="small">
           缩放时自动改变终端大小
@@ -62,12 +83,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from 'vue';
-import { useMessage } from 'naive-ui';
+import { computed, h, ref, toRef, watch } from 'vue';
+import type { HTMLAttributes } from 'vue';
+import { useDialog, useMessage, NIcon, NInput } from 'naive-ui';
 import { useStorage, useThrottleFn } from '@vueuse/core';
-import { ChevronDownOutline, ChevronUpOutline, TerminalOutline } from '@vicons/ionicons5';
+import { ChevronDownOutline, ChevronUpOutline, TerminalOutline, CopyOutline, CreateOutline } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
-import { useTerminalClient, type TerminalCreateOptions } from '@/composables/useTerminalClient';
+import { useTerminalClient, type TerminalCreateOptions, type TerminalTabState } from '@/composables/useTerminalClient';
+import type { DropdownOption } from 'naive-ui';
 
 const props = defineProps<{
   projectId: string;
@@ -75,15 +98,48 @@ const props = defineProps<{
 
 const projectIdRef = toRef(props, 'projectId');
 const message = useMessage();
+const dialog = useDialog();
 const expanded = useStorage('terminal-panel-expanded', true);
 const panelHeight = useStorage('terminal-panel-height', 320);
+const panelLeft = useStorage('terminal-panel-left', 12);
+const panelRight = useStorage('terminal-panel-right', 12);
 const autoResize = useStorage('terminal-auto-resize', true);
 const isResizing = ref(false);
 
+// 右键菜单相关状态
+const contextMenuTab = ref<string | null>(null);
+const contextMenuX = ref(0);
+const contextMenuY = ref(0);
+const contextMenuOptions = ref<DropdownOption[]>([
+  {
+    label: '复制标签',
+    key: 'duplicate',
+    icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
+  },
+  {
+    label: '重命名',
+    key: 'rename',
+    icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
+  },
+]);
+
 const MIN_HEIGHT = 200;
 const MAX_HEIGHT = 800;
+const MIN_MARGIN = 12;
+const MAX_MARGIN_PERCENT = 0.4; // 最大边距占窗口宽度的40%
+const DUPLICATE_SUFFIX = ' 副本';
 
-const { tabs, activeTabId, emitter, createSession, closeSession, send, disconnectTab } =
+const {
+  tabs,
+  activeTabId,
+  emitter,
+  reloadSessions,
+  createSession,
+  renameSession,
+  closeSession,
+  send,
+  disconnectTab,
+} =
   useTerminalClient(projectIdRef);
 
 const activeId = computed({
@@ -95,6 +151,8 @@ const activeId = computed({
 
 const panelStyle = computed(() => ({
   height: expanded.value ? `${panelHeight.value}px` : 'auto',
+  left: `${panelLeft.value}px`,
+  right: `${panelRight.value}px`,
 }));
 
 // 节流的终端 resize 函数
@@ -188,6 +246,96 @@ function startResize(event: MouseEvent) {
   document.body.style.userSelect = 'none';
 }
 
+function startResizeLeft(event: MouseEvent) {
+  if (!expanded.value) return;
+
+  event.preventDefault();
+  isResizing.value = true;
+
+  const startX = event.clientX;
+  const startLeft = panelLeft.value;
+  const windowWidth = window.innerWidth;
+  const maxMargin = windowWidth * MAX_MARGIN_PERCENT;
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isResizing.value) return;
+
+    const deltaX = e.clientX - startX;
+    const newLeft = Math.max(MIN_MARGIN, Math.min(maxMargin, startLeft + deltaX));
+    panelLeft.value = newLeft;
+
+    // 拖动时实时调整终端大小（使用节流函数）
+    if (autoResize.value) {
+      throttledTerminalResize();
+    }
+  };
+
+  const handleMouseUp = () => {
+    isResizing.value = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+
+    // 拖动结束后再调整一次，确保精确
+    if (autoResize.value && expanded.value && tabs.value.length > 0) {
+      setTimeout(() => {
+        emitter.emit('terminal-resize-all');
+      }, 50);
+    }
+  };
+
+  document.addEventListener('mousemove', handleMouseMove);
+  document.addEventListener('mouseup', handleMouseUp);
+  document.body.style.cursor = 'ew-resize';
+  document.body.style.userSelect = 'none';
+}
+
+function startResizeRight(event: MouseEvent) {
+  if (!expanded.value) return;
+
+  event.preventDefault();
+  isResizing.value = true;
+
+  const startX = event.clientX;
+  const startRight = panelRight.value;
+  const windowWidth = window.innerWidth;
+  const maxMargin = windowWidth * MAX_MARGIN_PERCENT;
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isResizing.value) return;
+
+    const deltaX = startX - e.clientX;
+    const newRight = Math.max(MIN_MARGIN, Math.min(maxMargin, startRight + deltaX));
+    panelRight.value = newRight;
+
+    // 拖动时实时调整终端大小（使用节流函数）
+    if (autoResize.value) {
+      throttledTerminalResize();
+    }
+  };
+
+  const handleMouseUp = () => {
+    isResizing.value = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+
+    // 拖动结束后再调整一次，确保精确
+    if (autoResize.value && expanded.value && tabs.value.length > 0) {
+      setTimeout(() => {
+        emitter.emit('terminal-resize-all');
+      }, 50);
+    }
+  };
+
+  document.addEventListener('mousemove', handleMouseMove);
+  document.addEventListener('mouseup', handleMouseUp);
+  document.body.style.cursor = 'ew-resize';
+  document.body.style.userSelect = 'none';
+}
+
 async function openTerminal(options: TerminalCreateOptions) {
   if (!props.projectId) {
     message.warning('请先选择项目');
@@ -216,8 +364,110 @@ async function handleClose(sessionId: string) {
   }
 }
 
+function createTabProps(tab: TerminalTabState): HTMLAttributes {
+  return {
+    onContextmenu: (event: MouseEvent) => handleTabContextMenu(event, tab),
+  };
+}
+
+function handleTabContextMenu(event: MouseEvent, tab: TerminalTabState) {
+  event.preventDefault();
+  contextMenuX.value = event.clientX;
+  contextMenuY.value = event.clientY;
+  contextMenuTab.value = tab.id;
+}
+
+async function handleContextMenuSelect(key: string) {
+  if (!contextMenuTab.value) {
+    return;
+  }
+  const tab = tabs.value.find(t => t.id === contextMenuTab.value);
+  contextMenuTab.value = null;
+  if (!tab) {
+    return;
+  }
+  if (key === 'duplicate') {
+    await duplicateTab(tab);
+    return;
+  }
+  if (key === 'rename') {
+    promptRenameTab(tab);
+  }
+}
+
+async function duplicateTab(tab: TerminalTabState) {
+  const title = buildDuplicateTitle(tab.title);
+  try {
+    await createSession({
+      worktreeId: tab.worktreeId,
+      workingDir: tab.workingDir,
+      title,
+      rows: tab.rows > 0 ? tab.rows : undefined,
+      cols: tab.cols > 0 ? tab.cols : undefined,
+    });
+    message.success('已复制标签');
+  } catch (error: any) {
+    message.error(error?.message ?? '复制失败');
+  }
+}
+
+function promptRenameTab(tab: TerminalTabState) {
+  const inputValue = ref(tab.title);
+  dialog.create({
+    title: '重命名标签',
+    content: () =>
+      h(NInput, {
+        value: inputValue.value,
+        'onUpdate:value': (value: string) => {
+          inputValue.value = value;
+        },
+        maxlength: 64,
+        autofocus: true,
+        placeholder: '请输入新的标签名',
+      }),
+    positiveText: '保存',
+    negativeText: '取消',
+    showIcon: false,
+    maskClosable: false,
+    closeOnEsc: true,
+    onPositiveClick: async () => {
+      const nextTitle = inputValue.value.trim();
+      if (!nextTitle) {
+        message.warning('标签名称不能为空');
+        return false;
+      }
+      if (nextTitle === tab.title) {
+        return true;
+      }
+      try {
+        await renameSession(tab.id, nextTitle);
+        message.success('标签已更新');
+        return true;
+      } catch (error: any) {
+        message.error(error?.message ?? '重命名失败');
+        return false;
+      }
+    },
+  });
+}
+
+function buildDuplicateTitle(rawTitle: string) {
+  const base = rawTitle.trim() || 'Terminal';
+  const baseCandidate = `${base}${DUPLICATE_SUFFIX}`;
+  const titles = new Set(tabs.value.map(t => t.title));
+  if (!titles.has(baseCandidate)) {
+    return baseCandidate;
+  }
+  let counter = 2;
+  while (titles.has(`${baseCandidate} ${counter}`)) {
+    counter += 1;
+  }
+  return `${baseCandidate} ${counter}`;
+}
+
 defineExpose({
   createTerminal: openTerminal,
+  reloadSessions,
 });
 </script>
 
@@ -225,8 +475,6 @@ defineExpose({
 .terminal-panel {
   position: fixed;
   bottom: 12px;
-  left: 12px;
-  right: 12px;
   background-color: var(--n-card-color, #fff);
   border: 1px solid var(--n-border-color);
   border-radius: 8px;
@@ -240,6 +488,10 @@ defineExpose({
 
 .resize-handle {
   position: absolute;
+  z-index: 10;
+}
+
+.resize-handle-top {
   top: 0;
   left: 0;
   right: 0;
@@ -248,12 +500,39 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10;
 }
 
-.resize-handle:hover .resize-indicator {
+.resize-handle-top:hover .resize-indicator {
   background-color: var(--n-color-primary);
   opacity: 1;
+}
+
+.resize-handle-left {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: transparent;
+  transition: background-color 0.2s;
+}
+
+.resize-handle-left:hover {
+  background: var(--n-color-primary);
+}
+
+.resize-handle-right {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: transparent;
+  transition: background-color 0.2s;
+}
+
+.resize-handle-right:hover {
+  background: var(--n-color-primary);
 }
 
 .resize-indicator {

@@ -1,7 +1,7 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHashHistory } from 'vue-router';
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHashHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
@@ -12,6 +12,11 @@ const router = createRouter({
       path: '/project/:id',
       name: 'project',
       component: () => import('@/views/ProjectWorkspace.vue'),
+    },
+    {
+      path: '/project/:id/branches',
+      name: 'project-branches',
+      component: () => import('@/views/BranchManagement.vue'),
     },
     {
       path: '/pty-test',

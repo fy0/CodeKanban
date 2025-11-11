@@ -32,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useTitle } from '@vueuse/core';
 import { useProjectStore } from '@/stores/project';
@@ -79,6 +79,31 @@ watch(
   },
 );
 
+// 监听路由变化，当从分支管理等页面返回到项目工作区时刷新 worktrees
+watch(
+  () => route.name,
+  (newName, oldName) => {
+    // 当从分支管理页面返回到项目工作区时，重新加载 worktrees
+    // 这样可以确保在分支管理页面创建的新 worktree 能够立即显示
+    if (newName === 'project' && oldName === 'project-branches' && currentProjectId.value) {
+      projectStore.fetchWorktrees(currentProjectId.value);
+    }
+  },
+);
+
+watch(
+  currentProjectId,
+  newId => {
+    if (!newId) {
+      return;
+    }
+    nextTick(() => {
+      void terminalPanelRef.value?.reloadSessions();
+    });
+  },
+  { immediate: true },
+);
+
 function handleOpenTerminal(worktree: Worktree) {
   terminalPanelRef.value?.createTerminal({
     worktreeId: worktree.id,
@@ -97,5 +122,6 @@ function handleOpenTerminal(worktree: Worktree) {
   padding: 24px;
   height: 100vh;
   overflow-y: auto;
+  background-color: #ffffff;
 }
 </style>

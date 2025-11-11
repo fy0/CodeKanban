@@ -13,7 +13,7 @@ type ProjectTable struct {
 	Name             string     `gorm:"type:text;not null;index" json:"name"`
 	Path             string     `gorm:"type:text;not null;uniqueIndex" json:"path"`
 	Description      string     `gorm:"type:text" json:"description"`
-	DefaultBranch    string     `gorm:"type:text;default:'main'" json:"defaultBranch"`
+	DefaultBranch    string     `gorm:"type:text" json:"defaultBranch"`
 	WorktreeBasePath string     `gorm:"type:text" json:"worktreeBasePath"`
 	RemoteURL        string     `gorm:"type:text" json:"remoteUrl"`
 	LastSyncAt       *time.Time `gorm:"type:datetime" json:"lastSyncAt"`

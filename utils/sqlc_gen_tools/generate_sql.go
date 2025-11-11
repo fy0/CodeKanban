@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -95,5 +96,22 @@ func GenerateSQLForDialect(models []any, dialect string) ([]string, error) {
 		}
 	}
 
-	return collectorLogger.CollectedSQL, nil
+	return normalizeIdentifierQuoting(collectorLogger.CollectedSQL, dialect), nil
+}
+
+// normalizeIdentifierQuoting enforces dialect-specific identifier quoting style.
+func normalizeIdentifierQuoting(statements []string, dialect string) []string {
+	if len(statements) == 0 {
+		return statements
+	}
+
+	switch dialect {
+	case "sqlite":
+		replacer := strings.NewReplacer("`", `"`)
+		for i, stmt := range statements {
+			statements[i] = replacer.Replace(stmt)
+		}
+	}
+
+	return statements
 }

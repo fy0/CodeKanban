@@ -125,8 +125,9 @@ func (s *ProjectService) CreateProject(ctx context.Context, params CreateProject
 	}
 
 	now := time.Now()
+	idVal := utils.NewID()
 	project, err := q.ProjectCreate(ctx, &ProjectCreateParams{
-		Id:               utils.NewID(),
+		Id:               idVal,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 		Name:             name,
@@ -245,10 +246,7 @@ func (s *ProjectService) syncWorktrees(ctx context.Context, projectID string, re
 		return
 	}
 
-	worktreeService := NewWorktreeService()
-	worktreeService.AsyncRefresh(false)
-
-	dbWorktrees, err := worktreeService.ListWorktrees(ctx, projectID)
+	dbWorktrees, err := q.WorktreeListByProject(ctx, projectID)
 	if err != nil {
 		logger.Warn("failed to list worktrees from database", zap.Error(err))
 		return
@@ -256,12 +254,12 @@ func (s *ProjectService) syncWorktrees(ctx context.Context, projectID string, re
 
 	gitByPath := make(map[string]git.WorktreeInfo, len(gitWorktrees))
 	for _, wt := range gitWorktrees {
-		gitByPath[normalizePathCase(wt.Path)] = wt
+		gitByPath[NormalizePathCase(wt.Path)] = wt
 	}
 
 	dbByPath := make(map[string]*Worktree, len(dbWorktrees))
 	for _, wt := range dbWorktrees {
-		dbByPath[normalizePathCase(wt.Path)] = wt
+		dbByPath[NormalizePathCase(wt.Path)] = wt
 	}
 
 	now := time.Now()
@@ -295,8 +293,10 @@ func (s *ProjectService) syncWorktrees(ctx context.Context, projectID string, re
 			commit := gitWT.HeadCommit
 			headPtr = &commit
 		}
+		idVal := utils.NewID()
+		zeroVal := int64(0)
 		_, err := q.WorktreeCreate(ctx, &WorktreeCreateParams{
-			Id:              utils.NewID(),
+			Id:              idVal,
 			CreatedAt:       now,
 			UpdatedAt:       now,
 			ProjectId:       projectID,
@@ -305,12 +305,12 @@ func (s *ProjectService) syncWorktrees(ctx context.Context, projectID string, re
 			IsMain:          gitWT.IsMain,
 			IsBare:          gitWT.IsBare,
 			HeadCommit:      headPtr,
-			StatusAhead:     0,
-			StatusBehind:    0,
-			StatusModified:  0,
-			StatusStaged:    0,
-			StatusUntracked: 0,
-			StatusConflicts: 0,
+			StatusAhead:     &zeroVal,
+			StatusBehind:    &zeroVal,
+			StatusModified:  &zeroVal,
+			StatusStaged:    &zeroVal,
+			StatusUntracked: &zeroVal,
+			StatusConflicts: &zeroVal,
 			StatusUpdatedAt: nil,
 		})
 		if err != nil {
@@ -331,9 +331,10 @@ func (s *ProjectService) syncWorktrees(ctx context.Context, projectID string, re
 			UpdatedAt: now,
 			Id:        dbWT.Id,
 		}); err != nil {
+			worktreeID := dbWT.Id
 			logger.Warn("failed to soft delete orphan worktree",
 				zap.Error(err),
-				zap.String("worktreeId", dbWT.Id),
+				zap.String("worktreeId", worktreeID),
 			)
 		}
 	}

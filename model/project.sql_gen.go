@@ -29,22 +29,11 @@ INSERT INTO projects (
   ?4,
   ?5,
   ?6,
-  ?7,
+  CAST(?7 AS TEXT),
   ?8,
   ?9,
   ?10
-) RETURNING
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  name,
-  path,
-  description,
-  default_branch,
-  worktree_base_path,
-  remote_url,
-  last_sync_at
+) RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at
 `
 
 type ProjectCreateParams struct {
@@ -91,19 +80,7 @@ func (q *Queries) ProjectCreate(ctx context.Context, arg *ProjectCreateParams) (
 }
 
 const projectGetByID = `-- name: ProjectGetByID :one
-SELECT
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  name,
-  path,
-  description,
-  default_branch,
-  worktree_base_path,
-  remote_url,
-  last_sync_at
-FROM projects
+SELECT id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at FROM projects
 WHERE id = ?1
   AND deleted_at IS NULL
 LIMIT 1

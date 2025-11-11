@@ -16,12 +16,13 @@ export interface Worktree {
   branchName: string;
   path: string;
   isMain: boolean;
-  headCommit: string;
-  statusAhead: number;
-  statusBehind: number;
-  statusModified: number;
-  statusStaged: number;
-  statusUntracked: number;
+  headCommit: string | null;
+  headCommitDate: string | null;
+  statusAhead: number | null;
+  statusBehind: number | null;
+  statusModified: number | null;
+  statusStaged: number | null;
+  statusUntracked: number | null;
   statusUpdatedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -65,4 +66,33 @@ export interface TerminalSession {
   wsUrl: string;
   rows: number;
   cols: number;
+}
+
+export interface BranchInfo {
+  name: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  headCommit: string;
+  hasWorktree?: boolean;
+}
+
+export interface BranchListResult {
+  local: BranchInfo[];
+  remote: BranchInfo[];
+}
+
+export interface MergeResult {
+  success: boolean;
+  conflicts: string[];
+  message: string;
+}
+
+export interface NotePad {
+  id: string;
+  projectId?: string | null;
+  name: string;
+  content: string;
+  orderIndex: number;
+  createdAt: string;
+  updatedAt: string;
 }

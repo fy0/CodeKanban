@@ -215,6 +215,7 @@ function handleTaskCreated(task: Task) {
   display: flex;
   flex-direction: column;
   height: 100%;
+  background-color: #ffffff;
 }
 
 .board-header {

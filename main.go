@@ -14,7 +14,7 @@ import (
 	"go-template/utils"
 )
 
-//go:embed static
+//go:embed all:static
 var embedStatic embed.FS
 
 //go:generate go run ./model/sqlc_gen/

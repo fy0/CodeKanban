@@ -1,0 +1,130 @@
+name: Build
+
+on:
+  push:
+    branches: [ master, main, develop ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_name: aicode-kanban-linux-amd64
+            exe_name: aicode-kanban
+          - os: windows-latest
+            artifact_name: aicode-kanban-windows-amd64
+            exe_name: aicode-kanban.exe
+          - os: macos-latest
+            artifact_name: aicode-kanban-macos-amd64
+            exe_name: aicode-kanban
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.6'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend dependencies
+        working-directory: ./ui
+        run: pnpm install
+
+      - name: Build frontend
+        working-directory: ./ui
+        run: pnpm build
+
+      - name: Copy frontend dist to static
+        shell: bash
+        run: |
+          rm -rf static/*
+          cp -r ui/dist/* static/
+
+      - name: Build Go binary
+        run: |
+          go build -ldflags="-s -w" -trimpath -o ${{ matrix.exe_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.exe_name }}
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package binaries
+        run: |
+          mkdir -p release
+
+          # Package Windows binary as .zip
+          cd artifacts/aicode-kanban-windows-amd64
+          zip ../../release/aicode-kanban-windows-amd64.zip aicode-kanban.exe
+          cd ../..
+
+          # Package Linux binary as .tar.gz
+          cd artifacts/aicode-kanban-linux-amd64
+          tar -czf ../../release/aicode-kanban-linux-amd64.tar.gz aicode-kanban
+          cd ../..
+
+          # Package macOS binary as .tar.gz
+          cd artifacts/aicode-kanban-macos-amd64
+          tar -czf ../../release/aicode-kanban-macos-amd64.tar.gz aicode-kanban
+          cd ../..
+
+          # List packaged files
+          ls -lh release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

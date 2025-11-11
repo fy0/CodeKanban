@@ -9,6 +9,7 @@ INSERT INTO worktrees (
   is_main,
   is_bare,
   head_commit,
+  head_commit_date,
   status_ahead,
   status_behind,
   status_modified,
@@ -26,6 +27,7 @@ INSERT INTO worktrees (
   @is_main,
   @is_bare,
   @head_commit,
+  @head_commit_date,
   @status_ahead,
   @status_behind,
   @status_modified,
@@ -33,24 +35,7 @@ INSERT INTO worktrees (
   @status_untracked,
   @status_conflicts,
   @status_updated_at
-) RETURNING
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  project_id,
-  branch_name,
-  path,
-  is_main,
-  is_bare,
-  head_commit,
-  status_ahead,
-  status_behind,
-  status_modified,
-  status_staged,
-  status_untracked,
-  status_conflicts,
-  status_updated_at;
+) RETURNING *;
 
 -- name: WorktreeGetByID :one
 SELECT
@@ -64,6 +49,7 @@ SELECT
   is_main,
   is_bare,
   head_commit,
+  head_commit_date,
   status_ahead,
   status_behind,
   status_modified,
@@ -77,25 +63,7 @@ WHERE id = @id
 LIMIT 1;
 
 -- name: WorktreeListByProject :many
-SELECT
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  project_id,
-  branch_name,
-  path,
-  is_main,
-  is_bare,
-  head_commit,
-  status_ahead,
-  status_behind,
-  status_modified,
-  status_staged,
-  status_untracked,
-  status_conflicts,
-  status_updated_at
-FROM worktrees
+SELECT * FROM worktrees
 WHERE project_id = @project_id
   AND deleted_at IS NULL
 ORDER BY is_main DESC, created_at ASC;
@@ -119,7 +87,8 @@ SET
   status_untracked = @status_untracked,
   status_conflicts = @status_conflicts,
   status_updated_at = @status_updated_at,
-  head_commit = COALESCE(@head_commit, head_commit)
+  head_commit = COALESCE(@head_commit, head_commit),
+  head_commit_date = COALESCE(@head_commit_date, head_commit_date)
 WHERE id = @id
   AND deleted_at IS NULL
 RETURNING
@@ -133,6 +102,7 @@ RETURNING
   is_main,
   is_bare,
   head_commit,
+  head_commit_date,
   status_ahead,
   status_behind,
   status_modified,

@@ -15,3 +15,8 @@ func resolveQueries(q *Queries) (*Queries, error) {
 	}
 	return target, nil
 }
+
+// ResolveQueries exposes the default query resolver for external packages.
+func ResolveQueries(q *Queries) (*Queries, error) {
+	return resolveQueries(q)
+}

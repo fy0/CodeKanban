@@ -1,9 +1,11 @@
 package git
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -14,6 +16,7 @@ import (
 type GitRepo struct {
 	Path       string
 	Repository *goGit.Repository
+	Config     map[string]string
 }
 
 // Remote describes a configured git remote.
@@ -50,6 +53,7 @@ func DetectRepository(path string) (*GitRepo, error) {
 	return &GitRepo{
 		Path:       absPath,
 		Repository: repo,
+		Config:     loadGitConfig(absPath),
 	}, nil
 }
 
@@ -91,4 +95,52 @@ func (r *GitRepo) GetCurrentBranch() (string, error) {
 	}
 
 	return head.Name().Short(), nil
+}
+
+// ConfigValue returns the resolved git config value for the provided key.
+func (r *GitRepo) ConfigValue(key string) (string, bool) {
+	if r == nil || len(r.Config) == 0 {
+		return "", false
+	}
+	name := strings.ToLower(strings.TrimSpace(key))
+	if name == "" {
+		return "", false
+	}
+	value, ok := r.Config[name]
+	return value, ok
+}
+
+func loadGitConfig(path string) map[string]string {
+	results := make(map[string]string)
+
+	cmd := exec.Command("git", "config", "--list")
+	cmd.Dir = path
+
+	output, err := cmd.Output()
+	if err != nil || len(output) == 0 {
+		return results
+	}
+
+	lines := bytes.Split(output, []byte{'\n'})
+	for _, line := range lines {
+		addGitConfigEntry(results, string(line))
+	}
+	return results
+}
+
+func addGitConfigEntry(target map[string]string, entry string) {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return
+	}
+	parts := strings.SplitN(entry, "=", 2)
+	key := strings.ToLower(strings.TrimSpace(parts[0]))
+	if key == "" {
+		return
+	}
+	value := ""
+	if len(parts) == 2 {
+		value = strings.TrimSpace(parts[1])
+	}
+	target[key] = value
 }

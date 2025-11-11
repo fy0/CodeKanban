@@ -21,6 +21,7 @@ INSERT INTO worktrees (
   is_main,
   is_bare,
   head_commit,
+  head_commit_date,
   status_ahead,
   status_behind,
   status_modified,
@@ -44,25 +45,9 @@ INSERT INTO worktrees (
   ?13,
   ?14,
   ?15,
-  ?16
-) RETURNING
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  project_id,
-  branch_name,
-  path,
-  is_main,
-  is_bare,
-  head_commit,
-  status_ahead,
-  status_behind,
-  status_modified,
-  status_staged,
-  status_untracked,
-  status_conflicts,
-  status_updated_at
+  ?16,
+  ?17
+) RETURNING id, created_at, updated_at, deleted_at, project_id, branch_name, path, is_main, is_bare, head_commit, head_commit_date, status_ahead, status_behind, status_modified, status_staged, status_untracked, status_conflicts, status_updated_at
 `
 
 type WorktreeCreateParams struct {
@@ -75,12 +60,13 @@ type WorktreeCreateParams struct {
 	IsMain          bool       `db:"is_main" json:"isMain"`
 	IsBare          bool       `db:"is_bare" json:"isBare"`
 	HeadCommit      *string    `db:"head_commit" json:"headCommit"`
-	StatusAhead     int64      `db:"status_ahead" json:"statusAhead"`
-	StatusBehind    int64      `db:"status_behind" json:"statusBehind"`
-	StatusModified  int64      `db:"status_modified" json:"statusModified"`
-	StatusStaged    int64      `db:"status_staged" json:"statusStaged"`
-	StatusUntracked int64      `db:"status_untracked" json:"statusUntracked"`
-	StatusConflicts int64      `db:"status_conflicts" json:"statusConflicts"`
+	HeadCommitDate  *time.Time `db:"head_commit_date" json:"headCommitDate"`
+	StatusAhead     *int64     `db:"status_ahead" json:"statusAhead"`
+	StatusBehind    *int64     `db:"status_behind" json:"statusBehind"`
+	StatusModified  *int64     `db:"status_modified" json:"statusModified"`
+	StatusStaged    *int64     `db:"status_staged" json:"statusStaged"`
+	StatusUntracked *int64     `db:"status_untracked" json:"statusUntracked"`
+	StatusConflicts *int64     `db:"status_conflicts" json:"statusConflicts"`
 	StatusUpdatedAt *time.Time `db:"status_updated_at" json:"statusUpdatedAt"`
 }
 
@@ -95,6 +81,7 @@ func (q *Queries) WorktreeCreate(ctx context.Context, arg *WorktreeCreateParams)
 		arg.IsMain,
 		arg.IsBare,
 		arg.HeadCommit,
+		arg.HeadCommitDate,
 		arg.StatusAhead,
 		arg.StatusBehind,
 		arg.StatusModified,
@@ -115,6 +102,7 @@ func (q *Queries) WorktreeCreate(ctx context.Context, arg *WorktreeCreateParams)
 		&i.IsMain,
 		&i.IsBare,
 		&i.HeadCommit,
+		&i.HeadCommitDate,
 		&i.StatusAhead,
 		&i.StatusBehind,
 		&i.StatusModified,
@@ -138,6 +126,7 @@ SELECT
   is_main,
   is_bare,
   head_commit,
+  head_commit_date,
   status_ahead,
   status_behind,
   status_modified,
@@ -165,6 +154,7 @@ func (q *Queries) WorktreeGetByID(ctx context.Context, id string) (*Worktree, er
 		&i.IsMain,
 		&i.IsBare,
 		&i.HeadCommit,
+		&i.HeadCommitDate,
 		&i.StatusAhead,
 		&i.StatusBehind,
 		&i.StatusModified,
@@ -177,25 +167,7 @@ func (q *Queries) WorktreeGetByID(ctx context.Context, id string) (*Worktree, er
 }
 
 const worktreeListByProject = `-- name: WorktreeListByProject :many
-SELECT
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  project_id,
-  branch_name,
-  path,
-  is_main,
-  is_bare,
-  head_commit,
-  status_ahead,
-  status_behind,
-  status_modified,
-  status_staged,
-  status_untracked,
-  status_conflicts,
-  status_updated_at
-FROM worktrees
+SELECT id, created_at, updated_at, deleted_at, project_id, branch_name, path, is_main, is_bare, head_commit, head_commit_date, status_ahead, status_behind, status_modified, status_staged, status_untracked, status_conflicts, status_updated_at FROM worktrees
 WHERE project_id = ?1
   AND deleted_at IS NULL
 ORDER BY is_main DESC, created_at ASC
@@ -221,6 +193,7 @@ func (q *Queries) WorktreeListByProject(ctx context.Context, projectID string) (
 			&i.IsMain,
 			&i.IsBare,
 			&i.HeadCommit,
+			&i.HeadCommitDate,
 			&i.StatusAhead,
 			&i.StatusBehind,
 			&i.StatusModified,
@@ -309,8 +282,9 @@ SET
   status_untracked = ?6,
   status_conflicts = ?7,
   status_updated_at = ?8,
-  head_commit = COALESCE(?9, head_commit)
-WHERE id = ?10
+  head_commit = COALESCE(?9, head_commit),
+  head_commit_date = COALESCE(?10, head_commit_date)
+WHERE id = ?11
   AND deleted_at IS NULL
 RETURNING
   id,
@@ -323,6 +297,7 @@ RETURNING
   is_main,
   is_bare,
   head_commit,
+  head_commit_date,
   status_ahead,
   status_behind,
   status_modified,
@@ -334,14 +309,15 @@ RETURNING
 
 type WorktreeUpdateStatusParams struct {
 	UpdatedAt       time.Time  `db:"updated_at" json:"updatedAt"`
-	StatusAhead     int64      `db:"status_ahead" json:"statusAhead"`
-	StatusBehind    int64      `db:"status_behind" json:"statusBehind"`
-	StatusModified  int64      `db:"status_modified" json:"statusModified"`
-	StatusStaged    int64      `db:"status_staged" json:"statusStaged"`
-	StatusUntracked int64      `db:"status_untracked" json:"statusUntracked"`
-	StatusConflicts int64      `db:"status_conflicts" json:"statusConflicts"`
+	StatusAhead     *int64     `db:"status_ahead" json:"statusAhead"`
+	StatusBehind    *int64     `db:"status_behind" json:"statusBehind"`
+	StatusModified  *int64     `db:"status_modified" json:"statusModified"`
+	StatusStaged    *int64     `db:"status_staged" json:"statusStaged"`
+	StatusUntracked *int64     `db:"status_untracked" json:"statusUntracked"`
+	StatusConflicts *int64     `db:"status_conflicts" json:"statusConflicts"`
 	StatusUpdatedAt *time.Time `db:"status_updated_at" json:"statusUpdatedAt"`
 	HeadCommit      *string    `db:"head_commit" json:"headCommit"`
+	HeadCommitDate  *time.Time `db:"head_commit_date" json:"headCommitDate"`
 	Id              string     `db:"id" json:"id"`
 }
 
@@ -356,6 +332,7 @@ func (q *Queries) WorktreeUpdateStatus(ctx context.Context, arg *WorktreeUpdateS
 		arg.StatusConflicts,
 		arg.StatusUpdatedAt,
 		arg.HeadCommit,
+		arg.HeadCommitDate,
 		arg.Id,
 	)
 	var i Worktree
@@ -370,6 +347,7 @@ func (q *Queries) WorktreeUpdateStatus(ctx context.Context, arg *WorktreeUpdateS
 		&i.IsMain,
 		&i.IsBare,
 		&i.HeadCommit,
+		&i.HeadCommitDate,
 		&i.StatusAhead,
 		&i.StatusBehind,
 		&i.StatusModified,

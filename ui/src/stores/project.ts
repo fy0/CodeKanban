@@ -81,26 +81,20 @@ export const useProjectStore = defineStore('project', () => {
     payload: { branchName: string; baseBranch?: string; createBranch?: boolean },
   ) {
     const worktree = await worktreeApi.create(projectId, payload);
-    worktrees.value.push(worktree);
+    // 不在这里 push，让调用方负责刷新完整列表以获取最新的 git 状态
     return worktree;
   }
 
-  async function deleteWorktree(id: string, force = false, deleteBranch = false) {
+  async function deleteWorktree(id: string, force = false, deleteBranch = true) {
     await worktreeApi.delete(id, force, deleteBranch);
     worktrees.value = worktrees.value.filter(worktree => worktree.id !== id);
   }
 
-  async function refreshWorktreeStatus(id: string) {
-    const updated = await worktreeApi.refreshStatus(id);
+  function updateWorktreeInList(id: string, updated: Worktree) {
     const index = worktrees.value.findIndex(worktree => worktree.id === id);
     if (index !== -1) {
       worktrees.value.splice(index, 1, updated);
     }
-  }
-
-  async function refreshAllWorktrees(projectId: string) {
-    await worktreeApi.refreshAll(projectId);
-    await fetchWorktrees(projectId);
   }
 
   async function syncWorktrees(projectId: string) {
@@ -144,8 +138,7 @@ export const useProjectStore = defineStore('project', () => {
     fetchWorktrees,
     createWorktree,
     deleteWorktree,
-    refreshWorktreeStatus,
-    refreshAllWorktrees,
+    updateWorktreeInList,
     syncWorktrees,
     openInExplorer,
     addRecentProject,

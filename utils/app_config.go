@@ -33,6 +33,7 @@ type TerminalConfig struct {
 	MaxSessionsPerProject int                 `json:"maxSessionsPerProject" yaml:"maxSessionsPerProject"`
 	AllowedRoots          []string            `json:"allowedRoots" yaml:"allowedRoots"`
 	Encoding              string              `json:"encoding" yaml:"encoding"`
+	ScrollbackBytes       int                 `json:"scrollbackBytes" yaml:"scrollbackBytes"`
 
 	idleDuration time.Duration
 }
@@ -111,10 +112,11 @@ func ReadConfig() *AppConfig {
 				Linux:   "/bin/bash",
 				Darwin:  "/bin/zsh",
 			},
-			IdleTimeout:           "10m",
+			IdleTimeout:           "0s",
 			MaxSessionsPerProject: 6,
 			AllowedRoots:          []string{},
 			Encoding:              "utf-8",
+			ScrollbackBytes:       262144,
 		},
 	}
 

@@ -1,25 +1,44 @@
 <template>
   <n-space size="small">
-    <n-tag
-      v-if="worktree.statusAhead > 0 || worktree.statusBehind > 0"
-      size="small"
-      type="info"
-      :bordered="false"
+    <n-tooltip
+      v-if="(worktree.statusAhead ?? 0) > 0 || (worktree.statusBehind ?? 0) > 0"
+      trigger="hover"
+      placement="bottom"
     >
-      ↑{{ worktree.statusAhead }} ↓{{ worktree.statusBehind }}
-    </n-tag>
+      <template #trigger>
+        <n-tag size="small" type="info" :bordered="false">
+          ↑{{ worktree.statusAhead ?? 0 }} ↓{{ worktree.statusBehind ?? 0 }}
+        </n-tag>
+      </template>
+      领先/落后远程分支的提交数
+    </n-tooltip>
 
-    <n-tag v-if="worktree.statusModified > 0" size="small" type="warning" :bordered="false">
-      ~{{ worktree.statusModified }}
-    </n-tag>
+    <n-tooltip v-if="(worktree.statusModified ?? 0) > 0" trigger="hover" placement="bottom">
+      <template #trigger>
+        <n-tag size="small" type="warning" :bordered="false">
+          ~{{ worktree.statusModified ?? 0 }}
+        </n-tag>
+      </template>
+      已修改但未暂存的文件数
+    </n-tooltip>
 
-    <n-tag v-if="worktree.statusStaged > 0" size="small" type="success" :bordered="false">
-      +{{ worktree.statusStaged }}
-    </n-tag>
+    <n-tooltip v-if="(worktree.statusStaged ?? 0) > 0" trigger="hover" placement="bottom">
+      <template #trigger>
+        <n-tag size="small" type="success" :bordered="false">
+          +{{ worktree.statusStaged ?? 0 }}
+        </n-tag>
+      </template>
+      已暂存待提交的文件数
+    </n-tooltip>
 
-    <n-tag v-if="worktree.statusUntracked > 0" size="small" :bordered="false">
-      ?{{ worktree.statusUntracked }}
-    </n-tag>
+    <n-tooltip v-if="(worktree.statusUntracked ?? 0) > 0" trigger="hover" placement="bottom">
+      <template #trigger>
+        <n-tag size="small" :bordered="false">
+          ?{{ worktree.statusUntracked ?? 0 }}
+        </n-tag>
+      </template>
+      未跟踪的新文件数
+    </n-tooltip>
   </n-space>
 </template>
 

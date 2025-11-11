@@ -10,6 +10,7 @@ import (
 
 	"go-template/api/h"
 	"go-template/model"
+	"go-template/service"
 	"go-template/utils"
 )
 
@@ -23,8 +24,14 @@ type createWorktreeInput struct {
 	} `json:"body"`
 }
 
+type commitWorktreeInput struct {
+	Body struct {
+		Message string `json:"message" doc:"提交信息" minLength:"1"`
+	} `json:"body"`
+}
+
 func registerWorktreeRoutes(group *huma.Group) {
-	service := model.NewWorktreeService()
+	worktreeSvc := service.NewWorktreeService()
 
 	huma.Post(group, "/projects/{projectId}/worktrees", func(
 		ctx context.Context,
@@ -33,7 +40,7 @@ func registerWorktreeRoutes(group *huma.Group) {
 			createWorktreeInput
 		},
 	) (*h.ItemResponse[model.Worktree], error) {
-		worktree, err := service.CreateWorktree(
+		worktree, err := worktreeSvc.CreateWorktree(
 			ctx,
 			input.ProjectID,
 			input.Body.BranchName,
@@ -59,7 +66,7 @@ func registerWorktreeRoutes(group *huma.Group) {
 			ProjectID string `path:"projectId"`
 		},
 	) (*h.ItemsResponse[*model.Worktree], error) {
-		if err := service.SyncWorktrees(ctx, input.ProjectID); err != nil {
+		if err := worktreeSvc.SyncWorktrees(ctx, input.ProjectID); err != nil {
 			switch {
 			case errors.Is(err, model.ErrDBNotInitialized):
 				return nil, huma.Error503ServiceUnavailable("database is not initialized")
@@ -73,7 +80,7 @@ func registerWorktreeRoutes(group *huma.Group) {
 			}
 		}
 
-		worktrees, err := service.ListWorktrees(ctx, input.ProjectID)
+		worktrees, err := worktreeSvc.ListWorktrees(ctx, input.ProjectID)
 		if err != nil {
 			if errors.Is(err, model.ErrDBNotInitialized) {
 				return nil, huma.Error503ServiceUnavailable("database is not initialized")
@@ -95,10 +102,10 @@ func registerWorktreeRoutes(group *huma.Group) {
 		input *struct {
 			ID           string `path:"id"`
 			Force        bool   `query:"force" default:"false"`
-			DeleteBranch bool   `query:"deleteBranch" default:"false"`
+			DeleteBranch bool   `query:"deleteBranch" default:"true"`
 		},
 	) (*h.MessageResponse, error) {
-		if err := service.DeleteWorktree(ctx, input.ID, input.Force, input.DeleteBranch); err != nil {
+		if err := worktreeSvc.DeleteWorktree(ctx, input.ID, input.Force, input.DeleteBranch); err != nil {
 			return nil, mapWorktreeError(err)
 		}
 
@@ -111,13 +118,33 @@ func registerWorktreeRoutes(group *huma.Group) {
 		op.Tags = []string{worktreeTag}
 	})
 
+	huma.Post(group, "/worktrees/{id}/commit", func(
+		ctx context.Context,
+		input *struct {
+			ID string `path:"id"`
+			commitWorktreeInput
+		},
+	) (*h.ItemResponse[model.Worktree], error) {
+		worktree, err := worktreeSvc.CommitWorktree(ctx, input.ID, input.Body.Message)
+		if err != nil {
+			return nil, mapWorktreeError(err)
+		}
+		resp := h.NewItemResponse(*worktree)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "worktree-commit"
+		op.Summary = "提交 Worktree 更改"
+		op.Tags = []string{worktreeTag}
+	})
+
 	huma.Post(group, "/worktrees/{id}/refresh-status", func(
 		ctx context.Context,
 		input *struct {
 			ID string `path:"id"`
 		},
 	) (*h.ItemResponse[model.Worktree], error) {
-		worktree, err := service.RefreshWorktreeStatus(ctx, input.ID)
+		worktree, err := worktreeSvc.RefreshWorktreeStatus(ctx, input.ID)
 		if err != nil {
 			return nil, mapWorktreeError(err)
 		}
@@ -137,7 +164,7 @@ func registerWorktreeRoutes(group *huma.Group) {
 			ProjectID string `path:"projectId"`
 		},
 	) (*h.ItemResponse[refreshAllResult], error) {
-		updated, failed, err := service.RefreshAllWorktrees(ctx, input.ProjectID)
+		updated, failed, err := worktreeSvc.RefreshAllWorktrees(ctx, input.ProjectID)
 		if err != nil {
 			return nil, mapWorktreeError(err)
 		}
@@ -160,7 +187,7 @@ func registerWorktreeRoutes(group *huma.Group) {
 			ProjectID string `path:"projectId"`
 		},
 	) (*h.MessageResponse, error) {
-		if err := service.SyncWorktrees(ctx, input.ProjectID); err != nil {
+		if err := worktreeSvc.SyncWorktrees(ctx, input.ProjectID); err != nil {
 			return nil, mapWorktreeError(err)
 		}
 		resp := h.NewMessageResponse("worktrees synced successfully")
@@ -185,6 +212,8 @@ func mapWorktreeError(err error) error {
 	case errors.Is(err, model.ErrWorktreeIsMain),
 		errors.Is(err, model.ErrWorktreeHasTasks):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, model.ErrWorktreeClean):
+		return huma.Error400BadRequest(err.Error())
 	default:
 		return huma.Error400BadRequest(err.Error())
 	}

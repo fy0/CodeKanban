@@ -32,7 +32,7 @@ INSERT INTO user_access_tokens (
 `
 
 type AccessTokenCreateParams struct {
-	Id        *string   `db:"id" json:"id"`
+	Id        string    `db:"id" json:"id"`
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
 	UserId    string    `db:"user_id" json:"userId"`
@@ -40,7 +40,7 @@ type AccessTokenCreateParams struct {
 }
 
 type AccessTokenCreateRow struct {
-	Id        *string   `db:"id" json:"id"`
+	Id        string    `db:"id" json:"id"`
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
 	UserId    string    `db:"user_id" json:"userId"`
@@ -89,14 +89,14 @@ LIMIT 1
 `
 
 type AccessTokenGetByIdRow struct {
-	Id        *string   `db:"id" json:"id"`
+	Id        string    `db:"id" json:"id"`
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
 	UserId    string    `db:"user_id" json:"userId"`
 	ExpiredAt time.Time `db:"expired_at" json:"expiredAt"`
 }
 
-func (q *Queries) AccessTokenGetById(ctx context.Context, id *string) (*AccessTokenGetByIdRow, error) {
+func (q *Queries) AccessTokenGetById(ctx context.Context, id string) (*AccessTokenGetByIdRow, error) {
 	row := q.queryRow(ctx, q.accessTokenGetByIdStmt, accessTokenGetById, id)
 	var i AccessTokenGetByIdRow
 	err := row.Scan(
@@ -120,7 +120,7 @@ WHERE id = ?3
 type AccessTokenRefreshParams struct {
 	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
 	ExpiredAt time.Time `db:"expired_at" json:"expiredAt"`
-	Id        *string   `db:"id" json:"id"`
+	Id        string    `db:"id" json:"id"`
 }
 
 func (q *Queries) AccessTokenRefresh(ctx context.Context, arg *AccessTokenRefreshParams) error {
@@ -166,7 +166,7 @@ INSERT INTO users (
 `
 
 type UserCreateParams struct {
-	Id        *string   `db:"id" json:"id"`
+	Id        string    `db:"id" json:"id"`
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
 	Nickname  *string   `db:"nickname" json:"nickname"`
@@ -220,7 +220,7 @@ WHERE id = ?3
 type UserDeleteParams struct {
 	DeletedAt *time.Time `db:"deleted_at" json:"deletedAt"`
 	UpdatedAt time.Time  `db:"updated_at" json:"updatedAt"`
-	Id        *string    `db:"id" json:"id"`
+	Id        string     `db:"id" json:"id"`
 }
 
 func (q *Queries) UserDelete(ctx context.Context, arg *UserDeleteParams) error {
@@ -240,7 +240,7 @@ WHERE id = ?3
 type UserDisableParams struct {
 	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
 	Disabled  bool      `db:"disabled" json:"disabled"`
-	Id        *string   `db:"id" json:"id"`
+	Id        string    `db:"id" json:"id"`
 }
 
 func (q *Queries) UserDisable(ctx context.Context, arg *UserDisableParams) error {
@@ -255,7 +255,7 @@ WHERE id = ?1
 LIMIT 1
 `
 
-func (q *Queries) UserGetById(ctx context.Context, id *string) (*User, error) {
+func (q *Queries) UserGetById(ctx context.Context, id string) (*User, error) {
 	row := q.queryRow(ctx, q.userGetByIdStmt, userGetById, id)
 	var i User
 	err := row.Scan(
@@ -330,7 +330,7 @@ type UserListParams struct {
 }
 
 type UserListRow struct {
-	Id        *string    `db:"id" json:"id"`
+	Id        string     `db:"id" json:"id"`
 	CreatedAt time.Time  `db:"created_at" json:"createdAt"`
 	UpdatedAt time.Time  `db:"updated_at" json:"updatedAt"`
 	DeletedAt *time.Time `db:"deleted_at" json:"deletedAt"`
@@ -431,7 +431,7 @@ type UserUpdateInfoParams struct {
 	Nickname  *string   `db:"nickname" json:"nickname"`
 	Avatar    *string   `db:"avatar" json:"avatar"`
 	Brief     *string   `db:"brief" json:"brief"`
-	Id        *string   `db:"id" json:"id"`
+	Id        string    `db:"id" json:"id"`
 }
 
 func (q *Queries) UserUpdateInfo(ctx context.Context, arg *UserUpdateInfoParams) (*User, error) {
@@ -473,7 +473,7 @@ type UserUpdatePasswordParams struct {
 	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
 	Password  string    `db:"password" json:"password"`
 	Salt      string    `db:"salt" json:"salt"`
-	Id        *string   `db:"id" json:"id"`
+	Id        string    `db:"id" json:"id"`
 }
 
 func (q *Queries) UserUpdatePassword(ctx context.Context, arg *UserUpdatePasswordParams) error {

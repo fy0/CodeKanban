@@ -10,13 +10,6 @@ type ItemResponse<T> = {
   item?: T;
 };
 
-type RefreshAllResponse = {
-  item?: {
-    updated: number;
-    failed: number;
-  };
-};
-
 export const projectApi = {
   async list(): Promise<{ items: Project[]; total: number }> {
     const body = (await http.Get<ListProjectsResponse>('/projects').send()) ?? {};
@@ -75,23 +68,6 @@ export const worktreeApi = {
 
   async delete(id: string, force = false, deleteBranch = false): Promise<void> {
     await http.Delete(`/worktrees/${id}?force=${force}&deleteBranch=${deleteBranch}`).send();
-  },
-
-  async refreshStatus(id: string): Promise<Worktree> {
-    const body =
-      (await http.Post<ItemResponse<Worktree>>(`/worktrees/${id}/refresh-status`, {}).send()) ?? {};
-    if (!body.item) {
-      throw new Error('failed to refresh worktree status');
-    }
-    return body.item;
-  },
-
-  async refreshAll(projectId: string): Promise<{ updated: number; failed: number }> {
-    const body =
-      (await http.Post<RefreshAllResponse>(`/projects/${projectId}/refresh-all-worktrees`, {}).send()) ??
-      {};
-    const result = body.item ?? { updated: 0, failed: 0 };
-    return result;
   },
 
   async sync(projectId: string): Promise<void> {

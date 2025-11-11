@@ -15,8 +15,14 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
+import { SerializeAddon } from '@xterm/addon-serialize';
 import '@/styles/terminal.css';
 import type { TerminalTabState, ServerMessage } from '@/composables/useTerminalClient';
+import {
+  getTerminalSnapshot,
+  saveTerminalSnapshot,
+  clearTerminalSnapshot,
+} from '@/utils/terminalSnapshotCache';
 
 const props = defineProps<{
   tab: TerminalTabState;
@@ -27,7 +33,12 @@ const props = defineProps<{
 const containerRef = ref<HTMLDivElement>();
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
+let serializeAddon: SerializeAddon | null = null;
+let pasteHandler: ((event: ClipboardEvent) => void) | null = null;
+let dragOverHandler: ((event: DragEvent) => void) | null = null;
+let dropHandler: ((event: DragEvent) => void) | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
+const SNAPSHOT_SCROLLBACK = 1200;
 
 // 监听 clientStatus 变化
 watch(
@@ -108,6 +119,49 @@ function base64ToUint8Array(value: string) {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+function restoreSnapshotIfAvailable() {
+  if (!terminal) {
+    return false;
+  }
+  const snapshot = getTerminalSnapshot(props.tab.id);
+  if (!snapshot) {
+    return false;
+  }
+  try {
+    terminal.reset();
+    terminal.write(snapshot.serialized);
+    console.log('[Terminal Snapshot] Restored cache for session:', props.tab.id);
+    return true;
+  } catch (error) {
+    console.warn('[Terminal Snapshot] Failed to restore cache', error);
+    clearTerminalSnapshot(props.tab.id);
+    return false;
+  }
+}
+
+function persistSnapshot() {
+  if (!terminal || !serializeAddon) {
+    return;
+  }
+  try {
+    const serialized = serializeAddon.serialize({
+      scrollback: SNAPSHOT_SCROLLBACK,
+    });
+    if (!serialized) {
+      clearTerminalSnapshot(props.tab.id);
+      return;
+    }
+    saveTerminalSnapshot(props.tab.id, {
+      serialized,
+      cols: terminal.cols,
+      rows: terminal.rows,
+    });
+    console.log('[Terminal Snapshot] Saved cache for session:', props.tab.id);
+  } catch (error) {
+    console.warn('[Terminal Snapshot] Failed to serialize terminal contents', error);
+  }
 }
 
 function handleResize() {
@@ -198,10 +252,12 @@ onMounted(() => {
   const webLinksAddon = new WebLinksAddon();
   const searchAddon = new SearchAddon();
   const webglAddon = new WebglAddon();
+  serializeAddon = new SerializeAddon();
 
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(webLinksAddon);
   terminal.loadAddon(searchAddon);
+  terminal.loadAddon(serializeAddon);
   try {
     terminal.loadAddon(webglAddon);
     console.log('[Terminal] WebGL renderer loaded successfully');
@@ -209,9 +265,16 @@ onMounted(() => {
     console.warn('[Terminal] WebGL renderer failed to load, using Canvas fallback', error);
   }
 
+  const restoredFromCache = restoreSnapshotIfAvailable();
+
   const container = containerRef.value;
   if (container) {
     terminal.open(container);
+    if (restoredFromCache) {
+      setTimeout(() => {
+        terminal?.scrollToBottom();
+      }, 0);
+    }
     // 延迟执行 fit，确保 DOM 完全渲染且面板动画完成
     // 面板展开动画 200ms + 额外缓冲 150ms = 350ms
     const performFit = (retryIfSmall = true) => {
@@ -285,6 +348,136 @@ onMounted(() => {
     props.send(props.tab.id, { type: 'input', data });
   });
 
+  // 支持 Ctrl+V/Cmd+V 粘贴
+  terminal.attachCustomKeyEventHandler(event => {
+    // Ctrl+V (Windows/Linux) 或 Cmd+V (Mac)
+    if ((event.ctrlKey || event.metaKey) && event.key === 'v' && event.type === 'keydown') {
+      event.preventDefault();
+      navigator.clipboard
+        .readText()
+        .then(text => {
+          if (terminal) {
+            // 将粘贴的文本发送到终端
+            props.send(props.tab.id, { type: 'input', data: text });
+          }
+        })
+        .catch(err => {
+          console.warn('[Terminal] Failed to read clipboard:', err);
+        });
+      return false; // 阻止默认处理
+    }
+    return true; // 其他按键正常处理
+  });
+
+  // 支持浏览器原生 paste 事件（上传图片并发送路径）
+  pasteHandler = async (event: ClipboardEvent) => {
+    event.preventDefault();
+
+    // 处理图片粘贴：上传图片并发送文件路径
+    const items = event.clipboardData?.items;
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            try {
+              // 读取图片为 base64
+              const arrayBuffer = await file.arrayBuffer();
+              const base64 = btoa(
+                new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+              );
+
+              // 上传图片到服务器
+              const response = await fetch('/api/v1/upload/clipboard-image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  fileName: file.name || 'pasted-image.png',
+                  data: base64,
+                }),
+              });
+
+              if (response.ok) {
+                const result = await response.json();
+                const filePath = result.data.path;
+                // 将文件路径作为输入发送（模拟用户输入文件路径）
+                props.send(props.tab.id, { type: 'input', data: filePath });
+              }
+            } catch (error) {
+              console.warn('[Terminal] Failed to upload clipboard image:', error);
+            }
+          }
+          return;
+        }
+      }
+    }
+
+    // 处理文本粘贴
+    const text = event.clipboardData?.getData('text');
+    if (text) {
+      props.send(props.tab.id, { type: 'input', data: text });
+      return;
+    }
+  };
+  container?.addEventListener('paste', pasteHandler);
+
+  // 支持拖放图片文件到终端
+  dragOverHandler = (event: DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    // 设置拖放效果
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  dropHandler = async (event: DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const files = event.dataTransfer?.files;
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    // 处理所有拖放的文件
+    for (const file of Array.from(files)) {
+      // 只处理图片文件
+      if (file.type.startsWith('image/')) {
+        try {
+          // 读取图片为 base64
+          const arrayBuffer = await file.arrayBuffer();
+          const base64 = btoa(
+            new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+          );
+
+          // 上传图片到服务器
+          const response = await fetch('/api/v1/upload/clipboard-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: file.name,
+              data: base64,
+            }),
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+            const filePath = result.data.path;
+            // 将文件路径作为输入发送
+            props.send(props.tab.id, { type: 'input', data: filePath + ' ' });
+          }
+        } catch (error) {
+          console.warn('[Terminal] Failed to upload dropped image:', error);
+        }
+      }
+    }
+  };
+
+  container?.addEventListener('dragover', dragOverHandler);
+  container?.addEventListener('drop', dropHandler);
+
   props.emitter.on(props.tab.id, handleMessage);
   props.emitter.on('terminal-resize-all', handleTerminalResizeAll);
   props.emitter.on(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
@@ -292,14 +485,31 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  persistSnapshot();
   props.emitter.off(props.tab.id, handleMessage);
   props.emitter.off('terminal-resize-all', handleTerminalResizeAll);
   props.emitter.off(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
   window.removeEventListener('resize', handleResize);
+  if (containerRef.value) {
+    if (pasteHandler) {
+      containerRef.value.removeEventListener('paste', pasteHandler);
+    }
+    if (dragOverHandler) {
+      containerRef.value.removeEventListener('dragover', dragOverHandler);
+    }
+    if (dropHandler) {
+      containerRef.value.removeEventListener('drop', dropHandler);
+    }
+  }
   terminal?.dispose();
   terminal = null;
   fitAddon?.dispose();
   fitAddon = null;
+  serializeAddon?.dispose();
+  serializeAddon = null;
+  pasteHandler = null;
+  dragOverHandler = null;
+  dropHandler = null;
 });
 </script>
 

@@ -2,12 +2,8 @@ package ptytest
 
 import (
 	"context"
-	"errors"
-	"runtime"
-	"strings"
 	"sync"
 
-	"github.com/google/shlex"
 	"go.uber.org/zap"
 
 	"go-template/utils"
@@ -107,36 +103,5 @@ func (m *Manager) watchSession(session *Session) {
 }
 
 func (m *Manager) shellCommand(override string) ([]string, error) {
-	raw := strings.TrimSpace(override)
-	if raw == "" {
-		switch runtime.GOOS {
-		case "windows":
-			raw = m.cfg.Shell.Windows
-		case "darwin":
-			raw = m.cfg.Shell.Darwin
-		default:
-			raw = m.cfg.Shell.Linux
-		}
-		raw = strings.TrimSpace(raw)
-	}
-
-	if raw == "" {
-		switch runtime.GOOS {
-		case "windows":
-			raw = "powershell.exe -NoLogo"
-		case "darwin":
-			raw = "/bin/zsh"
-		default:
-			raw = "/bin/bash"
-		}
-	}
-
-	parts, err := shlex.Split(raw)
-	if err != nil {
-		return nil, err
-	}
-	if len(parts) == 0 {
-		return nil, errors.New("invalid shell configuration")
-	}
-	return parts, nil
+	return utils.ResolveShellCommand(override, m.cfg.Shell)
 }

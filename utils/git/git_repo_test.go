@@ -24,6 +24,10 @@ func TestDetectRepository(t *testing.T) {
 		t.Fatalf("unexpected current branch: %q (%v)", branch, err)
 	}
 
+	if value, ok := repo.ConfigValue("core.autocrlf"); !ok || strings.ToLower(value) != "true" {
+		t.Fatalf("expected core.autocrlf=true, got %q (present=%v)", value, ok)
+	}
+
 	remotes, err := repo.GetRemotes()
 	if err != nil {
 		t.Fatalf("GetRemotes error: %v", err)
@@ -111,6 +115,7 @@ func initTestRepo(t *testing.T) string {
 	runGit(t, dir, "init", "-b", "main")
 	runGit(t, dir, "config", "user.email", "test@example.com")
 	runGit(t, dir, "config", "user.name", "Test User")
+	runGit(t, dir, "config", "core.autocrlf", "true")
 
 	readme := filepath.Join(dir, "README.md")
 	if err := os.WriteFile(readme, []byte("# Test Repo\n"), 0o644); err != nil {

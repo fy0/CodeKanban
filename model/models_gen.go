@@ -16,14 +16,14 @@ type Project struct {
 	Name             string     `db:"name" json:"name"`
 	Path             string     `db:"path" json:"path"`
 	Description      *string    `db:"description" json:"description"`
-	DefaultBranch    string     `db:"default_branch" json:"defaultBranch"`
+	DefaultBranch    *string    `db:"default_branch" json:"defaultBranch"`
 	WorktreeBasePath *string    `db:"worktree_base_path" json:"worktreeBasePath"`
 	RemoteUrl        *string    `db:"remote_url" json:"remoteUrl"`
 	LastSyncAt       *time.Time `db:"last_sync_at" json:"lastSyncAt"`
 }
 
 type User struct {
-	Id        *string    `db:"id" json:"id"`
+	Id        string     `db:"id" json:"id"`
 	CreatedAt time.Time  `db:"created_at" json:"createdAt"`
 	UpdatedAt time.Time  `db:"updated_at" json:"updatedAt"`
 	DeletedAt *time.Time `db:"deleted_at" json:"deletedAt"`
@@ -47,11 +47,12 @@ type Worktree struct {
 	IsMain          bool       `db:"is_main" json:"isMain"`
 	IsBare          bool       `db:"is_bare" json:"isBare"`
 	HeadCommit      *string    `db:"head_commit" json:"headCommit"`
-	StatusAhead     int64      `db:"status_ahead" json:"statusAhead"`
-	StatusBehind    int64      `db:"status_behind" json:"statusBehind"`
-	StatusModified  int64      `db:"status_modified" json:"statusModified"`
-	StatusStaged    int64      `db:"status_staged" json:"statusStaged"`
-	StatusUntracked int64      `db:"status_untracked" json:"statusUntracked"`
-	StatusConflicts int64      `db:"status_conflicts" json:"statusConflicts"`
+	HeadCommitDate  *time.Time `db:"head_commit_date" json:"headCommitDate"`
+	StatusAhead     *int64     `db:"status_ahead" json:"statusAhead"`
+	StatusBehind    *int64     `db:"status_behind" json:"statusBehind"`
+	StatusModified  *int64     `db:"status_modified" json:"statusModified"`
+	StatusStaged    *int64     `db:"status_staged" json:"statusStaged"`
+	StatusUntracked *int64     `db:"status_untracked" json:"statusUntracked"`
+	StatusConflicts *int64     `db:"status_conflicts" json:"statusConflicts"`
 	StatusUpdatedAt *time.Time `db:"status_updated_at" json:"statusUpdatedAt"`
 }

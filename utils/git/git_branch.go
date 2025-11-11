@@ -11,10 +11,11 @@ import (
 
 // BranchInfo describes local or remote branch metadata.
 type BranchInfo struct {
-	Name       string
-	IsCurrent  bool
-	IsRemote   bool
-	HeadCommit string
+	Name        string `json:"name"`
+	IsCurrent   bool   `json:"isCurrent"`
+	IsRemote    bool   `json:"isRemote"`
+	HeadCommit  string `json:"headCommit"`
+	HasWorktree bool   `json:"hasWorktree"`
 }
 
 // ListBranches returns local and remote branches present in the repository.
@@ -140,4 +141,27 @@ func shortHash(hash plumbing.Hash) string {
 		return value[:7]
 	}
 	return value
+}
+
+// ValidateBranchName verifies the provided branch name matches git's ref rules.
+func (r *GitRepo) ValidateBranchName(name string) error {
+	if r == nil {
+		return errors.New("git repository is not initialized")
+	}
+	branch := strings.TrimSpace(name)
+	if branch == "" {
+		return errors.New("branch name is required")
+	}
+
+	ref := fmt.Sprintf("refs/heads/%s", branch)
+	cmd := exec.Command("git", "check-ref-format", "--allow-onelevel", ref)
+	cmd.Dir = r.Path
+	if output, err := cmd.CombinedOutput(); err != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = err.Error()
+		}
+		return fmt.Errorf("invalid branch name: %s", message)
+	}
+	return nil
 }

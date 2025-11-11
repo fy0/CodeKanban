@@ -71,11 +71,11 @@ export const useTaskActions = () => {
     Apis.task.update({
       pathParams: { id: taskId },
       data: {
-        title: payload.title ?? null,
-        description: payload.description ?? null,
-        priority: payload.priority ?? null,
-        tags: payload.tags ?? null,
-        dueDate: normalizeDueDate(payload.dueDate),
+        title: payload.title ?? undefined,
+        description: payload.description ?? undefined,
+        priority: payload.priority ?? undefined,
+        tags: payload.tags ?? undefined,
+        dueDate: normalizeDueDate(payload.dueDate) ?? undefined,
       },
     }),
   );

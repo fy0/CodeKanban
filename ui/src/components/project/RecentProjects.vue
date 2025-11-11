@@ -15,33 +15,32 @@
         返回列表
       </n-button>
     </div>
-    <div v-if="loading" class="loading-container">
-      <n-spin size="small" />
-    </div>
-    <div v-else-if="recentProjects.length === 0" class="empty-state">
-      <n-text depth="3">暂无最近项目</n-text>
+    <div v-if="recentProjects.length === 0" class="empty-state">
+      <n-text depth="3">{{ loading ? '加载中...' : '暂无最近项目' }}</n-text>
     </div>
     <div v-else class="projects-list">
-      <div
-        v-for="project in recentProjects"
-        :key="project.id"
-        class="project-item"
-        :class="{ active: project.id === currentProjectId }"
-        @click="handleSelectProject(project.id)"
-      >
-        <div class="project-info">
-          <n-text class="project-name" strong>{{ project.name }}</n-text>
-          <n-text class="project-path" depth="3">{{ project.path }}</n-text>
+      <TransitionGroup name="project-list" tag="div">
+        <div
+          v-for="project in recentProjects"
+          :key="project.id"
+          class="project-item"
+          :class="{ active: project.id === currentProjectId }"
+          @click="handleSelectProject(project.id)"
+        >
+          <div class="project-info">
+            <n-text class="project-name" strong>{{ project.name }}</n-text>
+            <n-text class="project-path" depth="3">{{ project.path }}</n-text>
+          </div>
+          <n-icon v-if="project.id === currentProjectId" size="18" color="#18a058">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+              <path
+                fill="currentColor"
+                d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
+              />
+            </svg>
+          </n-icon>
         </div>
-        <n-icon v-if="project.id === currentProjectId" size="18" color="#18a058">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path
-              fill="currentColor"
-              d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
-            />
-          </svg>
-        </n-icon>
-      </div>
+      </TransitionGroup>
     </div>
   </div>
 </template>
@@ -89,13 +88,6 @@ onMounted(() => {
 .recent-projects-header {
   padding: 16px;
   border-bottom: 1px solid var(--n-border-color);
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 32px;
 }
 
 .empty-state {
@@ -148,5 +140,27 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 过渡动画 */
+.project-list-move,
+.project-list-enter-active,
+.project-list-leave-active {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.project-list-enter-from {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+
+.project-list-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+.project-list-leave-active {
+  position: absolute;
+  width: 100%;
 }
 </style>

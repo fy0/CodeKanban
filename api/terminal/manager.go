@@ -3,13 +3,12 @@ package terminal
 import (
 	"context"
 	"errors"
-	"runtime"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
-	"github.com/google/shlex"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
 	"go-template/utils"
@@ -21,6 +20,7 @@ type Config struct {
 	IdleTimeout           time.Duration
 	MaxSessionsPerProject int
 	Encoding              string
+	ScrollbackBytes       int
 }
 
 // CreateSessionParams describes API level inputs.
@@ -38,33 +38,37 @@ type CreateSessionParams struct {
 
 // Manager orchestrates PTY sessions.
 type Manager struct {
-	cfg      Config
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	logger   *zap.Logger
-	metrics  *metrics
-	encoding string
+	cfg       Config
+	sessionMu sync.Mutex
+	sessions  utils.SyncMap[string, *Session]
+	logger    *zap.Logger
+	encoding  string
+	baseCtx   context.Context
+	baseCtxMu sync.RWMutex
 }
 
 // NewManager builds a manager instance.
 func NewManager(cfg Config, logger *zap.Logger) *Manager {
 	cfg.Encoding = strings.ToLower(strings.TrimSpace(cfg.Encoding))
+	if cfg.ScrollbackBytes <= 0 {
+		cfg.ScrollbackBytes = 256 * 1024
+	}
 	if logger == nil {
 		logger = utils.Logger()
 	}
 
 	mgr := &Manager{
 		cfg:      cfg,
-		sessions: make(map[string]*Session),
 		logger:   logger.Named("terminal-manager"),
-		metrics:  newMetrics(),
 		encoding: cfg.Encoding,
+		baseCtx:  context.Background(),
 	}
 	return mgr
 }
 
 // StartBackground kicks off cleanup goroutines.
 func (m *Manager) StartBackground(ctx context.Context) {
+	ctx = m.setBaseContext(ctx)
 	go m.reapIdleSessions(ctx)
 }
 
@@ -74,16 +78,17 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 		return nil, errors.New("projectId and worktreeId are required")
 	}
 
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+	}
+
 	command, err := m.shellCommand()
 	if err != nil {
 		return nil, err
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.cfg.MaxSessionsPerProject > 0 && m.countByProjectLocked(params.ProjectID) >= m.cfg.MaxSessionsPerProject {
-		return nil, ErrSessionLimitReached
 	}
 
 	if params.ID == "" {
@@ -91,28 +96,39 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 	}
 
 	session, err := NewSession(SessionParams{
-		ID:         params.ID,
-		ProjectID:  params.ProjectID,
-		WorktreeID: params.WorktreeID,
-		WorkingDir: params.WorkingDir,
-		Title:      params.Title,
-		Command:    command,
-		Env:        params.Env,
-		Rows:       params.Rows,
-		Cols:       params.Cols,
-		Logger:     m.logger,
-		Encoding:   m.cfg.Encoding,
+		ID:              params.ID,
+		ProjectID:       params.ProjectID,
+		WorktreeID:      params.WorktreeID,
+		WorkingDir:      params.WorkingDir,
+		Title:           params.Title,
+		Command:         command,
+		Env:             params.Env,
+		Rows:            params.Rows,
+		Cols:            params.Cols,
+		Logger:          m.logger,
+		Encoding:        m.cfg.Encoding,
+		ScrollbackLimit: m.cfg.ScrollbackBytes,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	if err := session.Start(ctx); err != nil {
+	if err := m.addSession(session); err != nil {
 		return nil, err
 	}
 
-	m.sessions[session.ID()] = session
-	m.metrics.activeSessionGauge.With(prometheus.Labels{"project_id": params.ProjectID}).Inc()
+	startCtx := m.sessionContext()
+	if err := startCtx.Err(); err != nil {
+		m.sessions.Delete(session.ID())
+		_ = session.Close()
+		return nil, err
+	}
+
+	if err := session.Start(startCtx); err != nil {
+		m.sessions.Delete(session.ID())
+		_ = session.Close()
+		return nil, err
+	}
 
 	go m.watchSession(session)
 
@@ -121,13 +137,32 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 
 // GetSession returns a session by identifier.
 func (m *Manager) GetSession(id string) (*Session, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	session, ok := m.sessions[id]
+	session, ok := m.sessions.Load(id)
 	if !ok {
 		return nil, ErrSessionNotFound
 	}
+	return session, nil
+}
+
+// RenameSession updates the title of the targeted session.
+func (m *Manager) RenameSession(projectID, sessionID, title string) (*Session, error) {
+	normalized := strings.TrimSpace(title)
+	if normalized == "" {
+		return nil, ErrInvalidSessionTitle
+	}
+	if utf8.RuneCountInString(normalized) > 64 {
+		return nil, fmt.Errorf("%w: title length must be <= 64 characters", ErrInvalidSessionTitle)
+	}
+
+	session, err := m.GetSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if projectID != "" && session.ProjectID() != projectID {
+		return nil, ErrSessionNotFound
+	}
+
+	session.UpdateTitle(normalized)
 	return session, nil
 }
 
@@ -142,64 +177,51 @@ func (m *Manager) CloseSession(id string) error {
 
 // ListSessions enumerates sessions, optionally filtering by project.
 func (m *Manager) ListSessions(projectID string) []SessionSnapshot {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	results := make([]SessionSnapshot, 0, len(m.sessions))
-	for _, session := range m.sessions {
+	results := make([]SessionSnapshot, 0)
+	m.sessions.Range(func(_ string, session *Session) bool {
 		if projectID != "" && session.ProjectID() != projectID {
-			continue
+			return true
 		}
 		results = append(results, session.Snapshot())
-	}
+		return true
+	})
 	return results
 }
 
 func (m *Manager) shellCommand() ([]string, error) {
-	var raw string
-	switch runtime.GOOS {
-	case "windows":
-		raw = m.cfg.Shell.Windows
-	case "darwin":
-		raw = m.cfg.Shell.Darwin
-	default:
-		raw = m.cfg.Shell.Linux
-	}
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		if runtime.GOOS == "windows" {
-			raw = "powershell.exe -NoLogo"
-		} else if runtime.GOOS == "darwin" {
-			raw = "/bin/zsh"
-		} else {
-			raw = "/bin/bash"
-		}
-	}
-	parts, err := shlex.Split(raw)
-	if err != nil {
-		return nil, err
-	}
-	if len(parts) == 0 {
-		return nil, errors.New("invalid shell configuration")
-	}
-	return parts, nil
+	return utils.ResolveShellCommand("", m.cfg.Shell)
 }
 
 func (m *Manager) watchSession(session *Session) {
 	<-session.Closed()
-	m.mu.Lock()
-	delete(m.sessions, session.ID())
-	m.mu.Unlock()
-	m.metrics.activeSessionGauge.With(prometheus.Labels{"project_id": session.ProjectID()}).Dec()
+	m.sessions.Delete(session.ID())
 }
 
-func (m *Manager) countByProjectLocked(projectID string) int {
+func (m *Manager) addSession(session *Session) error {
+	if m.cfg.MaxSessionsPerProject <= 0 {
+		m.sessions.Store(session.ID(), session)
+		return nil
+	}
+
+	m.sessionMu.Lock()
+	defer m.sessionMu.Unlock()
+
+	if m.countByProject(session.ProjectID()) >= m.cfg.MaxSessionsPerProject {
+		return ErrSessionLimitReached
+	}
+
+	m.sessions.Store(session.ID(), session)
+	return nil
+}
+
+func (m *Manager) countByProject(projectID string) int {
 	count := 0
-	for _, session := range m.sessions {
+	m.sessions.Range(func(_ string, session *Session) bool {
 		if session.ProjectID() == projectID {
 			count++
 		}
-	}
+		return true
+	})
 	return count
 }
 
@@ -223,12 +245,11 @@ func (m *Manager) cleanupIdle() {
 	}
 	now := time.Now()
 
-	m.mu.RLock()
-	sessions := make([]*Session, 0, len(m.sessions))
-	for _, session := range m.sessions {
+	sessions := make([]*Session, 0, m.sessions.Len())
+	m.sessions.Range(func(_ string, session *Session) bool {
 		sessions = append(sessions, session)
-	}
-	m.mu.RUnlock()
+		return true
+	})
 
 	for _, session := range sessions {
 		if now.Sub(session.LastActive()) > m.cfg.IdleTimeout {
@@ -242,13 +263,22 @@ func (m *Manager) cleanupIdle() {
 	}
 }
 
-// ReportIO records bytes flowing through the PTY for Prometheus metrics.
-func (m *Manager) ReportIO(projectID string, direction string, n int) {
-	if n <= 0 {
-		return
+func (m *Manager) setBaseContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	m.metrics.ioBytesCounter.With(prometheus.Labels{
-		"project_id": projectID,
-		"direction":  direction,
-	}).Add(float64(n))
+	m.baseCtxMu.Lock()
+	m.baseCtx = ctx
+	m.baseCtxMu.Unlock()
+	return ctx
+}
+
+func (m *Manager) sessionContext() context.Context {
+	m.baseCtxMu.RLock()
+	ctx := m.baseCtx
+	m.baseCtxMu.RUnlock()
+	if ctx != nil {
+		return ctx
+	}
+	return context.Background()
 }

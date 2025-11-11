@@ -16,6 +16,7 @@ func GetAllModels() []any {
 		&tables.WorktreeTable{},
 		&tables.TaskTable{},
 		&tables.TaskCommentTable{},
+		&tables.NotePadTable{},
 	}
 }
 

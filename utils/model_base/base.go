@@ -23,7 +23,7 @@ type BaseModel struct {
 }
 
 type StringPKBaseModel struct {
-	ID        string         `gorm:"primary_key" json:"id"`
+	ID        string         `gorm:"primary_key; not null" json:"id"`
 	CreatedAt time.Time      `json:"createdAt"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"deletedAt"`

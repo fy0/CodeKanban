@@ -31,11 +31,11 @@ type createTaskBody struct {
 }
 
 type updateTaskBody struct {
-	Title       *string    `json:"title" doc:"任务标题"`
-	Description *string    `json:"description" doc:"任务描述"`
-	Priority    *int       `json:"priority" doc:"优先级"`
-	Tags        *[]string  `json:"tags" doc:"标签"`
-	DueDate     *time.Time `json:"dueDate" doc:"截止日期"`
+	Title       *string    `json:"title,omitempty" doc:"任务标题"`
+	Description *string    `json:"description,omitempty" doc:"任务描述"`
+	Priority    *int       `json:"priority,omitempty" doc:"优先级"`
+	Tags        *[]string  `json:"tags,omitempty" doc:"标签"`
+	DueDate     *time.Time `json:"dueDate,omitempty" doc:"截止日期"`
 }
 
 type moveTaskBody struct {

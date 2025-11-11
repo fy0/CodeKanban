@@ -88,6 +88,24 @@ type Alova2Method<
       >
     : never;
 
+export interface CreateNotePadBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 内容
+   */
+  content: string;
+  /**
+   * 标签页名称
+   */
+  name: string;
+  /**
+   * 项目ID（为空表示全局笔记）
+   */
+  projectId?: string;
+}
 export interface CreateProjectInputBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -146,6 +164,20 @@ export interface OpenPathInputBody {
    */
   path: string;
 }
+export interface UploadClipboardImageInputBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 图片数据（base64 编码）
+   */
+  data: string;
+  /**
+   * 文件名
+   */
+  fileName: string;
+}
 export interface MessageResponseBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -158,7 +190,7 @@ export interface MessageResponseBody {
 }
 export interface Project {
   createdAt: string;
-  defaultBranch: string;
+  defaultBranch: string | null;
   deletedAt: string | null;
   description: string | null;
   id: string;
@@ -178,6 +210,48 @@ export interface ItemsResponseProjectBody {
    * 响应列表
    */
   items: Project[] | null;
+}
+export interface UpdateNotePadBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 内容
+   */
+  content?: string;
+  /**
+   * 标签页名称
+   */
+  name?: string;
+}
+export interface MoveNotePadBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 排序索引
+   */
+  orderIndex: number;
+}
+export interface CreateBranchBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 基础分支
+   */
+  base: string;
+  /**
+   * 同时创建 Worktree
+   */
+  createWorktree: boolean;
+  /**
+   * 分支名称
+   */
+  name: string;
 }
 export interface CreateTaskBody {
   /**
@@ -212,6 +286,16 @@ export interface CreateTaskBody {
    * 关联的 Worktree
    */
   worktreeId: string | null;
+}
+export interface TerminalRenameInputBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 新的终端标签名
+   */
+  title: string;
 }
 export interface Worktree_create_request {
   /**
@@ -261,23 +345,23 @@ export interface UpdateTaskBody {
   /**
    * 任务描述
    */
-  description: string | null;
+  description?: string;
   /**
    * 截止日期
    */
-  dueDate: string | null;
+  dueDate?: string;
   /**
    * 优先级
    */
-  priority: number | null;
+  priority?: number;
   /**
    * 标签
    */
-  tags: string[] | null;
+  tags?: string[];
   /**
    * 任务标题
    */
-  title: string | null;
+  title?: string;
 }
 export interface BindWorktreeBody {
   /**
@@ -317,6 +401,76 @@ export interface MoveTaskBody {
    */
   worktreeId?: string;
 }
+export interface Worktree_commit_request {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 提交信息
+   */
+  message: string;
+}
+export interface MergeBranchBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * Squash 合并后立即提交
+   */
+  commit: boolean;
+  /**
+   * 提交信息（仅 squash 合并生效）
+   */
+  commitMessage: string;
+  /**
+   * 源分支
+   */
+  sourceBranch: string;
+  /**
+   * 合并策略
+   */
+  strategy: 'merge' | 'rebase' | 'squash';
+  /**
+   * 目标分支
+   */
+  targetBranch: string;
+}
+export interface DeletedAt {
+  Time: string;
+  Valid: boolean;
+}
+export interface NotePadTable {
+  content: string;
+  createdAt: string;
+  deletedAt: DeletedAt;
+  id: string;
+  name: string;
+  orderIndex: number;
+  projectId: string | null;
+  updatedAt: string;
+}
+export interface ItemsResponseNotePadTableBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应列表
+   */
+  items: NotePadTable[] | null;
+}
+export interface ItemResponseNotePadTableBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: NotePadTable;
+}
 export interface ItemResponseProjectBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -326,6 +480,27 @@ export interface ItemResponseProjectBody {
    * 响应对象
    */
   item: Project;
+}
+export interface BranchInfo {
+  hasWorktree: boolean;
+  headCommit: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  name: string;
+}
+export interface BranchListResult {
+  local: BranchInfo[] | null;
+  remote: BranchInfo[] | null;
+}
+export interface ItemResponseBranchListResultBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: BranchListResult;
 }
 export interface RefreshAllResult {
   /**
@@ -377,17 +552,18 @@ export interface Worktree {
   createdAt: string;
   deletedAt: string | null;
   headCommit: string | null;
+  headCommitDate: string | null;
   id: string;
   isBare: boolean;
   isMain: boolean;
   path: string;
   projectId: string;
-  statusAhead: number;
-  statusBehind: number;
-  statusConflicts: number;
-  statusModified: number;
-  statusStaged: number;
-  statusUntracked: number;
+  statusAhead: number | null;
+  statusBehind: number | null;
+  statusConflicts: number | null;
+  statusModified: number | null;
+  statusStaged: number | null;
+  statusUntracked: number | null;
   statusUpdatedAt: string | null;
   updatedAt: string;
 }
@@ -422,10 +598,6 @@ export interface ItemResponsePtyTestSessionViewBody {
    */
   item: PtyTestSessionView;
 }
-export interface DeletedAt {
-  Time: string;
-  Valid: boolean;
-}
 export interface ProjectTable {
   createdAt: string;
   defaultBranch: string;
@@ -444,6 +616,7 @@ export interface WorktreeTable {
   createdAt: string;
   deletedAt: DeletedAt;
   headCommit: string;
+  headCommitDate: string | null;
   id: string;
   isBare: boolean;
   isMain: boolean;
@@ -506,6 +679,30 @@ export interface ItemsResponseTaskCommentTableBody {
    */
   items: TaskCommentTable[] | null;
 }
+export interface UploadImageResponse {
+  /**
+   * 文件名
+   */
+  fileName: string;
+  /**
+   * 文件路径
+   */
+  path: string;
+  /**
+   * 文件大小（字节）
+   */
+  size: number;
+}
+export interface ItemResponseUploadImageResponseBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: UploadImageResponse;
+}
 export interface ItemResponseWorktreeBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -562,6 +759,21 @@ export interface ItemResponseTaskCommentTableBody {
    */
   item: TaskCommentTable;
 }
+export interface MergeResult {
+  conflicts: string[] | null;
+  message: string;
+  success: boolean;
+}
+export interface ItemResponseMergeResultBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: MergeResult;
+}
 declare global {
   interface Apis {
     health: {
@@ -588,6 +800,331 @@ declare global {
         config?: Config
       ): Alova2Method<MessageResponseBody, 'health.check', Config>;
     };
+    notepad: {
+      /**
+       * ---
+       *
+       * [GET] 获取记事板标签
+       *
+       * **path:** /api/v1/notepads
+       *
+       * ---
+       *
+       * **Query Parameters**
+       * ```ts
+       * type QueryParameters = {
+       *   // 项目ID（为空或global表示全局笔记）
+       *   projectId?: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应列表
+       *   // [params1] start
+       *   // [items] start
+       *   // [items] end
+       *   // [params1] end
+       *   items: Array<{
+       *     content: string
+       *     createdAt: string
+       *     deletedAt: {
+       *       Time: string
+       *       Valid: boolean
+       *     }
+       *     id: string
+       *     name: string
+       *     orderIndex: number
+       *     projectId: string | null
+       *     updatedAt: string
+       *   }> | null
+       * }
+       * ```
+       */
+      list<
+        Config extends Alova2MethodConfig<ItemsResponseNotePadTableBody> & {
+          params: {
+            /**
+             * 项目ID（为空或global表示全局笔记）
+             */
+            projectId?: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemsResponseNotePadTableBody, 'notepad.list', Config>;
+      /**
+       * ---
+       *
+       * [POST] 创建记事板标签
+       *
+       * **path:** /api/v1/notepads
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 内容
+       *   content: string
+       *   // 标签页名称
+       *   name: string
+       *   // 项目ID（为空表示全局笔记）
+       *   projectId?: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     content: string
+       *     createdAt: string
+       *     deletedAt: {
+       *       Time: string
+       *       Valid: boolean
+       *     }
+       *     id: string
+       *     name: string
+       *     orderIndex: number
+       *     projectId: string | null
+       *     updatedAt: string
+       *   }
+       * }
+       * ```
+       */
+      create<
+        Config extends Alova2MethodConfig<ItemResponseNotePadTableBody> & {
+          data: CreateNotePadBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseNotePadTableBody, 'notepad.create', Config>;
+      /**
+       * ---
+       *
+       * [DELETE] 删除记事板标签
+       *
+       * **path:** /api/v1/notepads/{id}
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   id: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      delete<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          pathParams: {
+            id: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'notepad.delete', Config>;
+      /**
+       * ---
+       *
+       * [GET] 获取记事板标签详情
+       *
+       * **path:** /api/v1/notepads/{id}
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   id: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     content: string
+       *     createdAt: string
+       *     deletedAt: {
+       *       Time: string
+       *       Valid: boolean
+       *     }
+       *     id: string
+       *     name: string
+       *     orderIndex: number
+       *     projectId: string | null
+       *     updatedAt: string
+       *   }
+       * }
+       * ```
+       */
+      get<
+        Config extends Alova2MethodConfig<ItemResponseNotePadTableBody> & {
+          pathParams: {
+            id: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseNotePadTableBody, 'notepad.get', Config>;
+      /**
+       * ---
+       *
+       * [PATCH] 更新记事板标签
+       *
+       * **path:** /api/v1/notepads/{id}
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   id: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 内容
+       *   content?: string
+       *   // 标签页名称
+       *   name?: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     content: string
+       *     createdAt: string
+       *     deletedAt: {
+       *       Time: string
+       *       Valid: boolean
+       *     }
+       *     id: string
+       *     name: string
+       *     orderIndex: number
+       *     projectId: string | null
+       *     updatedAt: string
+       *   }
+       * }
+       * ```
+       */
+      update<
+        Config extends Alova2MethodConfig<ItemResponseNotePadTableBody> & {
+          pathParams: {
+            id: string;
+          };
+          data: UpdateNotePadBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseNotePadTableBody, 'notepad.update', Config>;
+      /**
+       * ---
+       *
+       * [POST] 移动记事板标签顺序
+       *
+       * **path:** /api/v1/notepads/{id}/move
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   id: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 排序索引
+       *   orderIndex: number
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     content: string
+       *     createdAt: string
+       *     deletedAt: {
+       *       Time: string
+       *       Valid: boolean
+       *     }
+       *     id: string
+       *     name: string
+       *     orderIndex: number
+       *     projectId: string | null
+       *     updatedAt: string
+       *   }
+       * }
+       * ```
+       */
+      move<
+        Config extends Alova2MethodConfig<ItemResponseNotePadTableBody> & {
+          pathParams: {
+            id: string;
+          };
+          data: MoveNotePadBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseNotePadTableBody, 'notepad.move', Config>;
+    };
     project: {
       /**
        * ---
@@ -610,7 +1147,7 @@ declare global {
        *   // [params1] end
        *   items: Array<{
        *     createdAt: string
-       *     defaultBranch: string
+       *     defaultBranch: string | null
        *     deletedAt: string | null
        *     description: string | null
        *     id: string
@@ -662,7 +1199,7 @@ declare global {
        *   // 响应对象
        *   item: {
        *     createdAt: string
-       *     defaultBranch: string
+       *     defaultBranch: string | null
        *     deletedAt: string | null
        *     description: string | null
        *     id: string
@@ -746,7 +1283,7 @@ declare global {
        *   // 响应对象
        *   item: {
        *     createdAt: string
-       *     defaultBranch: string
+       *     defaultBranch: string | null
        *     deletedAt: string | null
        *     description: string | null
        *     id: string
@@ -769,6 +1306,243 @@ declare global {
       >(
         config: Config
       ): Alova2Method<ItemResponseProjectBody, 'project.getById', Config>;
+    };
+    branch: {
+      /**
+       * ---
+       *
+       * [GET] 获取分支列表
+       *
+       * **path:** /api/v1/projects/{projectId}/branches
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     // [params1] start
+       *     // [items] start
+       *     // [items] end
+       *     // [params1] end
+       *     local: Array<{
+       *       hasWorktree: boolean
+       *       headCommit: string
+       *       isCurrent: boolean
+       *       isRemote: boolean
+       *       name: string
+       *     }> | null
+       *     // [params1] start
+       *     // [items] start
+       *     // [items] end
+       *     // [params1] end
+       *     remote: Array<{
+       *       hasWorktree: boolean
+       *       headCommit: string
+       *       isCurrent: boolean
+       *       isRemote: boolean
+       *       name: string
+       *     }> | null
+       *   }
+       * }
+       * ```
+       */
+      list<
+        Config extends Alova2MethodConfig<ItemResponseBranchListResultBody> & {
+          pathParams: {
+            projectId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseBranchListResultBody, 'branch.list', Config>;
+      /**
+       * ---
+       *
+       * [POST] 创建分支
+       *
+       * **path:** /api/v1/projects/{projectId}/branches
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 基础分支
+       *   base: string
+       *   // 同时创建 Worktree
+       *   createWorktree: boolean
+       *   // 分支名称
+       *   name: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      create<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          pathParams: {
+            projectId: string;
+          };
+          data: CreateBranchBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'branch.create', Config>;
+      /**
+       * ---
+       *
+       * [DELETE] 删除分支
+       *
+       * **path:** /api/v1/projects/{projectId}/branches/{branchName}
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       *   branchName: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Query Parameters**
+       * ```ts
+       * type QueryParameters = {
+       *   // 强制删除
+       *   force?: boolean
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      delete<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          pathParams: {
+            projectId: string;
+            branchName: string;
+          };
+          params: {
+            /**
+             * 强制删除
+             */
+            force?: boolean;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'branch.delete', Config>;
+      /**
+       * ---
+       *
+       * [POST] 合并分支
+       *
+       * **path:** /api/v1/worktrees/{id}/merge
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   id: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // Squash 合并后立即提交
+       *   commit: boolean
+       *   // 提交信息（仅 squash 合并生效）
+       *   commitMessage: string
+       *   // 源分支
+       *   sourceBranch: string
+       *   // 合并策略
+       *   strategy: 'merge' | 'rebase' | 'squash'
+       *   // 目标分支
+       *   targetBranch: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     // [params1] start
+       *     // [items] start
+       *     // [items] end
+       *     // [params1] end
+       *     conflicts: string[] | null
+       *     message: string
+       *     success: boolean
+       *   }
+       * }
+       * ```
+       */
+      merge<
+        Config extends Alova2MethodConfig<ItemResponseMergeResultBody> & {
+          pathParams: {
+            id: string;
+          };
+          data: MergeBranchBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseMergeResultBody, 'branch.merge', Config>;
     };
     worktree: {
       /**
@@ -883,17 +1657,18 @@ declare global {
        *     createdAt: string
        *     deletedAt: string | null
        *     headCommit: string | null
+       *     headCommitDate: string | null
        *     id: string
        *     isBare: boolean
        *     isMain: boolean
        *     path: string
        *     projectId: string
-       *     statusAhead: number
-       *     statusBehind: number
-       *     statusConflicts: number
-       *     statusModified: number
-       *     statusStaged: number
-       *     statusUntracked: number
+       *     statusAhead: number | null
+       *     statusBehind: number | null
+       *     statusConflicts: number | null
+       *     statusModified: number | null
+       *     statusStaged: number | null
+       *     statusUntracked: number | null
        *     statusUpdatedAt: string | null
        *     updatedAt: string
        *   }> | null
@@ -954,17 +1729,18 @@ declare global {
        *     createdAt: string
        *     deletedAt: string | null
        *     headCommit: string | null
+       *     headCommitDate: string | null
        *     id: string
        *     isBare: boolean
        *     isMain: boolean
        *     path: string
        *     projectId: string
-       *     statusAhead: number
-       *     statusBehind: number
-       *     statusConflicts: number
-       *     statusModified: number
-       *     statusStaged: number
-       *     statusUntracked: number
+       *     statusAhead: number | null
+       *     statusBehind: number | null
+       *     statusConflicts: number | null
+       *     statusModified: number | null
+       *     statusStaged: number | null
+       *     statusUntracked: number | null
        *     statusUpdatedAt: string | null
        *     updatedAt: string
        *   }
@@ -1035,6 +1811,75 @@ declare global {
       /**
        * ---
        *
+       * [POST] 提交 Worktree 更改
+       *
+       * **path:** /api/v1/worktrees/{id}/commit
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   id: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提交信息
+       *   message: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     branchName: string
+       *     createdAt: string
+       *     deletedAt: string | null
+       *     headCommit: string | null
+       *     headCommitDate: string | null
+       *     id: string
+       *     isBare: boolean
+       *     isMain: boolean
+       *     path: string
+       *     projectId: string
+       *     statusAhead: number | null
+       *     statusBehind: number | null
+       *     statusConflicts: number | null
+       *     statusModified: number | null
+       *     statusStaged: number | null
+       *     statusUntracked: number | null
+       *     statusUpdatedAt: string | null
+       *     updatedAt: string
+       *   }
+       * }
+       * ```
+       */
+      commit<
+        Config extends Alova2MethodConfig<ItemResponseWorktreeBody> & {
+          pathParams: {
+            id: string;
+          };
+          data: Worktree_commit_request;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseWorktreeBody, 'worktree.commit', Config>;
+      /**
+       * ---
+       *
        * [POST] 刷新 Worktree 状态
        *
        * **path:** /api/v1/worktrees/{id}/refresh-status
@@ -1061,17 +1906,18 @@ declare global {
        *     createdAt: string
        *     deletedAt: string | null
        *     headCommit: string | null
+       *     headCommitDate: string | null
        *     id: string
        *     isBare: boolean
        *     isMain: boolean
        *     path: string
        *     projectId: string
-       *     statusAhead: number
-       *     statusBehind: number
-       *     statusConflicts: number
-       *     statusModified: number
-       *     statusStaged: number
-       *     statusUntracked: number
+       *     statusAhead: number | null
+       *     statusBehind: number | null
+       *     statusConflicts: number | null
+       *     statusModified: number | null
+       *     statusStaged: number | null
+       *     statusUntracked: number | null
        *     statusUpdatedAt: string | null
        *     updatedAt: string
        *   }
@@ -1178,6 +2024,7 @@ declare global {
        *         Valid: boolean
        *       }
        *       headCommit: string
+       *       headCommitDate: string | null
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -1333,6 +2180,7 @@ declare global {
        *         Valid: boolean
        *       }
        *       headCommit: string
+       *       headCommitDate: string | null
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -1484,6 +2332,7 @@ declare global {
        *         Valid: boolean
        *       }
        *       headCommit: string
+       *       headCommitDate: string | null
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -1552,19 +2401,17 @@ declare global {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
        *   // 任务描述
-       *   description: string | null
+       *   description?: string
        *   // 截止日期
-       *   dueDate: string | null
+       *   dueDate?: string
        *   // 优先级
-       *   priority: number | null
+       *   priority?: number
        *   // 标签
-       *   // [params1] start
        *   // [items] start
        *   // [items] end
-       *   // [params1] end
-       *   tags: string[] | null
+       *   tags?: string[]
        *   // 任务标题
-       *   title: string | null
+       *   title?: string
        * }
        * ```
        *
@@ -1621,6 +2468,7 @@ declare global {
        *         Valid: boolean
        *       }
        *       headCommit: string
+       *       headCommitDate: string | null
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -1747,6 +2595,7 @@ declare global {
        *         Valid: boolean
        *       }
        *       headCommit: string
+       *       headCommitDate: string | null
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -1877,6 +2726,7 @@ declare global {
        *         Valid: boolean
        *       }
        *       headCommit: string
+       *       headCommitDate: string | null
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -2018,6 +2868,72 @@ declare global {
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'terminalSession.close', Config>;
+      /**
+       * ---
+       *
+       * [PATCH] 终端标签重命名
+       *
+       * **path:** /api/v1/projects/{projectId}/terminals/{sessionId}
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       *   sessionId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 新的终端标签名
+       *   title: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     cols: number
+       *     createdAt: string
+       *     encoding: string
+       *     id: string
+       *     lastActive: string
+       *     projectId: string
+       *     rows: number
+       *     status: string
+       *     title: string
+       *     workingDir: string
+       *     worktreeId: string
+       *     wsPath: string
+       *     wsUrl: string
+       *   }
+       * }
+       * ```
+       */
+      rename<
+        Config extends Alova2MethodConfig<ItemResponseTerminalSessionViewBody> & {
+          pathParams: {
+            projectId: string;
+            sessionId: string;
+          };
+          data: TerminalRenameInputBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.rename', Config>;
       /**
        * ---
        *
@@ -2387,6 +3303,7 @@ declare global {
        *           Valid: boolean
        *         }
        *         headCommit: string
+       *         headCommitDate: string | null
        *         id: string
        *         isBare: boolean
        *         isMain: boolean
@@ -2523,6 +3440,7 @@ declare global {
        *           Valid: boolean
        *         }
        *         headCommit: string
+       *         headCommitDate: string | null
        *         id: string
        *         isBare: boolean
        *         isMain: boolean
@@ -2571,6 +3489,55 @@ declare global {
       >(
         config: Config
       ): Alova2Method<ItemResponseTaskCommentTableBody, 'taskComment.create', Config>;
+    };
+    upload: {
+      /**
+       * ---
+       *
+       * [POST] 上传剪贴板图片
+       *
+       * **path:** /api/v1/upload/clipboard-image
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 图片数据（base64 编码）
+       *   data: string
+       *   // 文件名
+       *   fileName: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     // 文件名
+       *     fileName: string
+       *     // 文件路径
+       *     path: string
+       *     // 文件大小（字节）
+       *     size: number
+       *   }
+       * }
+       * ```
+       */
+      clipboardImage<
+        Config extends Alova2MethodConfig<ItemResponseUploadImageResponseBody> & {
+          data: UploadClipboardImageInputBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseUploadImageResponseBody, 'upload.clipboardImage', Config>;
     };
   }
 

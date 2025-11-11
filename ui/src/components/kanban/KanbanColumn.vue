@@ -75,9 +75,9 @@ function handleChange(event: any) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: var(--n-color);
+  background-color: #f5f5f5;
   border-radius: 8px;
-  border: 1px solid var(--n-border-color);
+  border: 1px solid #e0e0e0;
 }
 
 .column-header {

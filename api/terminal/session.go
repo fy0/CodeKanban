@@ -48,6 +48,48 @@ type SessionSnapshot struct {
 	Encoding   string
 }
 
+type StreamEventType string
+
+const (
+	StreamEventData StreamEventType = "data"
+	StreamEventExit StreamEventType = "exit"
+)
+
+type StreamEvent struct {
+	Type StreamEventType
+	Data []byte
+	Err  error
+}
+
+type SessionStream struct {
+	id     string
+	events <-chan StreamEvent
+	cancel context.CancelFunc
+}
+
+func (s *SessionStream) Events() <-chan StreamEvent {
+	if s == nil {
+		return nil
+	}
+	return s.events
+}
+
+func (s *SessionStream) Close() {
+	if s == nil || s.cancel == nil {
+		return
+	}
+	s.cancel()
+}
+
+type sessionSubscriber struct {
+	id     string
+	ch     chan StreamEvent
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+const subscriberBufferSize = 128
+
 // Session encapsulates a PTY-backed terminal command.
 type Session struct {
 	id         string
@@ -77,21 +119,31 @@ type Session struct {
 	encName  string
 
 	mu sync.RWMutex
+
+	scrollMu        sync.RWMutex
+	scrollback      [][]byte
+	scrollbackSize  int
+	scrollbackLimit int
+
+	subMu       sync.RWMutex
+	subscribers map[string]*sessionSubscriber
+	exitOnce    sync.Once
 }
 
 // SessionParams collects the data required to bootstrap a session.
 type SessionParams struct {
-	ID         string
-	ProjectID  string
-	WorktreeID string
-	WorkingDir string
-	Title      string
-	Command    []string
-	Env        []string
-	Rows       int
-	Cols       int
-	Logger     *zap.Logger
-	Encoding   string
+	ID              string
+	ProjectID       string
+	WorktreeID      string
+	WorkingDir      string
+	Title           string
+	Command         []string
+	Env             []string
+	Rows            int
+	Cols            int
+	Logger          *zap.Logger
+	Encoding        string
+	ScrollbackLimit int
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -109,26 +161,33 @@ func NewSession(params SessionParams) (*Session, error) {
 		params.ID = utils.NewID()
 	}
 
+	scrollbackLimit := params.ScrollbackLimit
+	if scrollbackLimit < 0 {
+		scrollbackLimit = 0
+	}
+
 	enc, encName, err := resolveEncoding(params.Encoding)
 	if err != nil {
 		return nil, err
 	}
 
 	session := &Session{
-		id:         params.ID,
-		projectID:  params.ProjectID,
-		worktreeID: params.WorktreeID,
-		workingDir: params.WorkingDir,
-		title:      params.Title,
-		command:    append([]string{}, params.Command...),
-		env:        append([]string{}, params.Env...),
-		rows:       params.Rows,
-		cols:       params.Cols,
-		createdAt:  time.Now(),
-		closed:     make(chan struct{}),
-		logger:     params.Logger,
-		encoding:   enc,
-		encName:    encName,
+		id:              params.ID,
+		projectID:       params.ProjectID,
+		worktreeID:      params.WorktreeID,
+		workingDir:      params.WorkingDir,
+		title:           params.Title,
+		command:         append([]string{}, params.Command...),
+		env:             append([]string{}, params.Env...),
+		rows:            params.Rows,
+		cols:            params.Cols,
+		createdAt:       time.Now(),
+		closed:          make(chan struct{}),
+		logger:          params.Logger,
+		encoding:        enc,
+		encName:         encName,
+		scrollbackLimit: scrollbackLimit,
+		subscribers:     make(map[string]*sessionSubscriber),
 	}
 
 	if session.title == "" {
@@ -192,8 +251,39 @@ func (s *Session) Start(ctx context.Context) error {
 	s.setStatus(SessionStatusRunning)
 
 	go s.wait(sessionCtx)
+	go s.consumePTY(sessionCtx)
 
 	return nil
+}
+
+func (s *Session) consumePTY(ctx context.Context) {
+	reader := s.Reader()
+	if reader == nil {
+		return
+	}
+
+	buffer := make([]byte, 32*1024)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			s.Touch()
+			normalized := s.NormalizeOutput(buffer[:n])
+			if len(normalized) > 0 {
+				s.appendScrollback(normalized)
+				s.broadcast(StreamEvent{Type: StreamEventData, Data: normalized})
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 // Reader exposes the PTY reader interface.
@@ -247,6 +337,51 @@ func (s *Session) Resize(cols, rows int) error {
 	return nil
 }
 
+// Subscribe registers a stream subscriber that receives PTY output events.
+func (s *Session) Subscribe(ctx context.Context) (*SessionStream, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	subCtx, cancel := context.WithCancel(ctx)
+	subscriber := &sessionSubscriber{
+		id:     utils.NewID(),
+		ch:     make(chan StreamEvent, subscriberBufferSize),
+		cancel: cancel,
+	}
+
+	s.subMu.Lock()
+	if s.subscribers == nil {
+		s.subscribers = make(map[string]*sessionSubscriber)
+	}
+	s.subscribers[subscriber.id] = subscriber
+	s.subMu.Unlock()
+
+	go func() {
+		<-subCtx.Done()
+		s.removeSubscriber(subscriber.id)
+	}()
+
+	return &SessionStream{
+		id:     subscriber.id,
+		events: subscriber.ch,
+		cancel: cancel,
+	}, nil
+}
+
+// Scrollback returns a copy of the buffered PTY output.
+func (s *Session) Scrollback() [][]byte {
+	s.scrollMu.RLock()
+	defer s.scrollMu.RUnlock()
+	if len(s.scrollback) == 0 {
+		return nil
+	}
+	result := make([][]byte, len(s.scrollback))
+	for i, chunk := range s.scrollback {
+		result[i] = cloneBytes(chunk)
+	}
+	return result
+}
+
 // Close terminates the session and underlying process.
 func (s *Session) Close() error {
 	var closeErr error
@@ -265,6 +400,7 @@ func (s *Session) Close() error {
 		}
 		s.mu.Unlock()
 		close(s.closed)
+		s.notifyExit(s.Err())
 	})
 	return closeErr
 }
@@ -296,7 +432,16 @@ func (s *Session) WorkingDir() string {
 
 // Title returns the display name.
 func (s *Session) Title() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.title
+}
+
+// UpdateTitle mutates the tab label in a threadsafe manner.
+func (s *Session) UpdateTitle(title string) {
+	s.mu.Lock()
+	s.title = title
+	s.mu.Unlock()
 }
 
 // CreatedAt returns the spawn timestamp.
@@ -324,6 +469,8 @@ func (s *Session) Touch() {
 
 // Snapshot copies current state for API responses.
 func (s *Session) Snapshot() SessionSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return SessionSnapshot{
 		ID:         s.id,
 		ProjectID:  s.projectID,
@@ -395,6 +542,78 @@ func (s *Session) wait(ctx context.Context) {
 		}
 	}
 	_ = s.Close()
+}
+
+func (s *Session) appendScrollback(chunk []byte) {
+	if len(chunk) == 0 || s.scrollbackLimit <= 0 {
+		return
+	}
+	data := cloneBytes(chunk)
+
+	s.scrollMu.Lock()
+	s.scrollback = append(s.scrollback, data)
+	s.scrollbackSize += len(data)
+	for s.scrollbackSize > s.scrollbackLimit && len(s.scrollback) > 0 {
+		s.scrollbackSize -= len(s.scrollback[0])
+		s.scrollback = s.scrollback[1:]
+	}
+	s.scrollMu.Unlock()
+}
+
+func (s *Session) broadcast(event StreamEvent) {
+	listeners := s.snapshotSubscribers()
+	for _, sub := range listeners {
+		select {
+		case sub.ch <- event:
+		default:
+			if s.logger != nil {
+				s.logger.Debug("dropping terminal event for slow subscriber",
+					zap.String("sessionId", s.id))
+			}
+		}
+	}
+}
+
+func (s *Session) snapshotSubscribers() []*sessionSubscriber {
+	s.subMu.RLock()
+	defer s.subMu.RUnlock()
+	if len(s.subscribers) == 0 {
+		return nil
+	}
+	list := make([]*sessionSubscriber, 0, len(s.subscribers))
+	for _, sub := range s.subscribers {
+		list = append(list, sub)
+	}
+	return list
+}
+
+func (s *Session) notifyExit(err error) {
+	s.exitOnce.Do(func() {
+		event := StreamEvent{Type: StreamEventExit, Err: err}
+		for _, sub := range s.snapshotSubscribers() {
+			select {
+			case sub.ch <- event:
+			default:
+			}
+			if sub.cancel != nil {
+				sub.cancel()
+			}
+		}
+	})
+}
+
+func (s *Session) removeSubscriber(id string) {
+	s.subMu.Lock()
+	sub, ok := s.subscribers[id]
+	if ok {
+		delete(s.subscribers, id)
+	}
+	s.subMu.Unlock()
+	if ok {
+		sub.once.Do(func() {
+			close(sub.ch)
+		})
+	}
 }
 
 func cloneBytes(src []byte) []byte {

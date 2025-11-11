@@ -13,12 +13,8 @@
         <n-input v-model:value="formData.branchName" placeholder="feature/new-feature" />
       </n-form-item>
 
-      <n-form-item label="基础分支" path="baseBranch" v-if="formData.createBranch">
+      <n-form-item label="基础分支" path="baseBranch">
         <n-input v-model:value="formData.baseBranch" placeholder="main" />
-      </n-form-item>
-
-      <n-form-item label="选项">
-        <n-checkbox v-model:checked="formData.createBranch">同时创建新分支</n-checkbox>
       </n-form-item>
     </n-form>
   </n-modal>
@@ -78,7 +74,6 @@ async function handleCreate() {
     await formRef.value?.validate();
     loading.value = true;
     const worktree = await projectStore.createWorktree(projectStore.currentProject.id, formData.value);
-    message.success('Worktree 创建成功');
     visible.value = false;
     emit('success', worktree);
   } catch (error: any) {

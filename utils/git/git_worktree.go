@@ -94,7 +94,16 @@ func (r *GitRepo) RemoveWorktree(path string, force bool) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Path
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("remove worktree failed: %s", strings.TrimSpace(string(output)))
+		errMsg := strings.TrimSpace(string(output))
+		// If the error indicates the worktree doesn't exist, try pruning
+		if strings.Contains(errMsg, "is not a working tree") || strings.Contains(errMsg, "not found") {
+			// Try to prune stale worktree entries
+			if pruneErr := r.PruneWorktrees(); pruneErr == nil {
+				// After pruning, the worktree metadata should be cleaned up
+				return nil
+			}
+		}
+		return fmt.Errorf("remove worktree failed: %s", errMsg)
 	}
 	return nil
 }

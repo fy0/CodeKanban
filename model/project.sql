@@ -1,3 +1,10 @@
+
+-- name: ProjectGetByID :one
+SELECT * FROM projects
+WHERE id = @id
+  AND deleted_at IS NULL
+LIMIT 1;
+
 -- name: ProjectCreate :one
 INSERT INTO projects (
   id,
@@ -17,40 +24,11 @@ INSERT INTO projects (
   @name,
   @path,
   @description,
-  @default_branch,
+  CAST(@default_branch AS TEXT),
   @worktree_base_path,
   @remote_url,
   @last_sync_at
-) RETURNING
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  name,
-  path,
-  description,
-  default_branch,
-  worktree_base_path,
-  remote_url,
-  last_sync_at;
-
--- name: ProjectGetByID :one
-SELECT
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  name,
-  path,
-  description,
-  default_branch,
-  worktree_base_path,
-  remote_url,
-  last_sync_at
-FROM projects
-WHERE id = @id
-  AND deleted_at IS NULL
-LIMIT 1;
+) RETURNING *;
 
 -- name: ProjectList :many
 SELECT
