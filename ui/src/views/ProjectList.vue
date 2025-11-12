@@ -27,7 +27,7 @@
             <template #icon>
               <n-icon><AddOutline /></n-icon>
             </template>
-            新建项目
+            添加项目
           </n-button>
         </n-space>
       </template>
@@ -144,7 +144,7 @@ type ProjectOption = DropdownOption & { project: Project };
 function getCardActions(project: Project): ProjectOption[] {
   return [
     { label: '打开', key: 'open', project } as ProjectOption,
-    { label: '�༭', key: 'edit', project } as ProjectOption,
+    { label: '编辑', key: 'edit', project } as ProjectOption,
     { label: '删除', key: 'delete', project } as ProjectOption,
   ];
 }

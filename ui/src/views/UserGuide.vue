@@ -64,7 +64,7 @@
           <n-step title="创建项目">
             <n-space vertical>
               <n-text depth="3">
-                点击项目列表页右上角的「新建项目」按钮，填写项目名称和项目路径。
+                点击项目列表页右上角的「添加项目」按钮，填写项目名称和项目路径。
               </n-text>
               <n-text depth="3" type="info">
                 <n-icon size="16"><AlertCircleOutline /></n-icon>
@@ -123,7 +123,7 @@
           <n-collapse-item title="项目管理" name="projects">
             <n-space vertical>
               <n-h3>创建项目</n-h3>
-              <n-text>在项目列表页点击「新建项目」，输入项目信息：</n-text>
+              <n-text>在项目列表页点击「添加项目」，输入项目信息：</n-text>
               <n-ul>
                 <n-li><strong>项目名称：</strong>便于识别的显示名称</n-li>
                 <n-li><strong>项目路径：</strong>项目目录的绝对路径（建议使用 Git 仓库根目录）</n-li>

@@ -10,7 +10,7 @@
         </n-space>
       </template>
       <template #extra>
-        <n-space>
+        <n-space align="center">
           <n-button tertiary @click="handleResetTheme">
             <template #icon>
               <n-icon>
@@ -361,7 +361,7 @@ function formatShortcutLabel(event: KeyboardEvent) {
 .general-settings-page {
   max-width: 960px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 24px 24px 48px 24px;
 }
 
 .preview-panel {

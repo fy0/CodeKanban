@@ -3,7 +3,7 @@
     <div class="list-header">
       <n-space justify="space-between" align="center">
         <h3>Worktrees</h3>
-        <n-space>
+        <n-space align="center">
           <n-button
             text
             size="small"

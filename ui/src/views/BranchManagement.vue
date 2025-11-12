@@ -54,12 +54,6 @@
 
     <n-spin :show="branchLoading">
       <n-grid cols="24" x-gap="16" y-gap="16">
-        <n-gi :span="24" class="branch-summary">
-          <n-alert type="info" show-icon>
-            快捷键：Ctrl+N 创建分支、Ctrl+R 刷新、Ctrl+F 聚焦搜索。通过操作列可以创建/打开 Worktree 或删除分支。
-          </n-alert>
-        </n-gi>
-
         <n-gi :span="24" :lg="12">
           <n-card title="本地分支">
             <template #header-extra>
