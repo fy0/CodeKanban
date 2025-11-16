@@ -18,13 +18,22 @@ import (
 	"go.uber.org/zap"
 
 	"go-template/api/h"
-	"go-template/api/ptytest"
 	"go-template/api/terminal"
 	"go-template/utils"
 )
 
+// AppInfo 应用信息
+type AppInfo struct {
+	Name    string
+	Version string
+	Channel string
+}
+
+var appInfo *AppInfo
+
 // Init 初始化 Fiber + Huma 的初始化，启动 HTTP 服务
-func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS) error {
+func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppInfo) error {
+	appInfo = info
 	theLogger := utils.LoggerFromContext(ctx)
 
 	bodyLimit := int(cfg.AttachmentSizeLimit * 1024)
@@ -61,9 +70,6 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS) error {
 		ScrollbackBytes:       cfg.Terminal.ScrollbackBytes,
 	}, theLogger)
 	terminalManager.StartBackground(ctx)
-	ptyTestManager := ptytest.NewManager(ptytest.Config{
-		Shell: cfg.Terminal.Shell,
-	}, theLogger)
 
 	registerHealthRoutes(app, humaAPI)
 	registerProjectRoutes(v1)
@@ -74,7 +80,6 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS) error {
 	registerSystemRoutes(v1)
 	registerUploadRoutes(v1, cfg, theLogger)
 	registerTerminalRoutes(app, v1, cfg, terminalManager, theLogger)
-	registerPtyTestRoutes(app, v1, cfg, ptyTestManager, theLogger)
 	mountStatic(app, cfg, assets, theLogger)
 	exposeOpenAPI(app, humaAPI, cfg, theLogger)
 
@@ -93,10 +98,6 @@ func registerHealthRoutes(app *fiber.App, api huma.API) {
 		resp := h.NewMessageResponse("ok")
 		resp.Status = http.StatusOK
 		return resp, nil
-	})
-
-	app.Get("/healthz", func(c *fiber.Ctx) error {
-		return c.Status(http.StatusOK).JSON(fiber.Map{"status": "ok"})
 	})
 }
 

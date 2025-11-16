@@ -98,6 +98,26 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 		op.Tags = []string{terminalTag}
 	})
 
+	huma.Get(group, "/terminals/counts", func(
+		ctx context.Context,
+		input *struct{},
+	) (*terminalCountsResponse, error) {
+		sessions := c.manager.ListSessions("")
+		counts := make(map[string]int)
+		for _, snapshot := range sessions {
+			counts[snapshot.ProjectID]++
+		}
+		resp := &terminalCountsResponse{
+			Status: http.StatusOK,
+		}
+		resp.Body.Counts = counts
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-counts"
+		op.Summary = "获取所有项目的终端数量统计"
+		op.Tags = []string{terminalTag}
+	})
+
 	huma.Post(group, "/projects/{projectId}/terminals/{sessionId}/close", func(
 		ctx context.Context,
 		input *struct {
@@ -460,4 +480,11 @@ type terminalSessionView struct {
 	Rows       int       `json:"rows"`
 	Cols       int       `json:"cols"`
 	Encoding   string    `json:"encoding"`
+}
+
+type terminalCountsResponse struct {
+	Status int `json:"-"`
+	Body   struct {
+		Counts map[string]int `json:"counts" doc:"项目ID到终端数量的映射"`
+	} `json:"body"`
 }

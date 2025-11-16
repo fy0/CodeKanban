@@ -128,35 +128,9 @@ export interface CreateProjectInputBody {
    */
   path: string;
   /**
-   * Worktree 基础路径（可选，默认为项目目录下的 worktrees 子目录）
+   * Worktree 基础路径（可选，默认为项目目录下的 .worktrees 子目录）
    */
   worktreeBasePath?: string;
-}
-export interface PtyTestCreateInputBody {
-  /**
-   * A URL to the JSON Schema for this object.
-   */
-  $schema?: string;
-  /**
-   * 终端列数
-   */
-  cols: number;
-  /**
-   * xpty 输出编码，默认 utf-8
-   */
-  encoding: string;
-  /**
-   * 终端行数
-   */
-  rows: number;
-  /**
-   * 自定义 shell 命令，留空使用默认配置
-   */
-  shell: string;
-  /**
-   * 工作目录，可选
-   */
-  workingDir: string;
 }
 export interface OpenEditorInputBody {
   /**
@@ -233,6 +207,34 @@ export interface ItemsResponseProjectBody {
    * 响应列表
    */
   items: Project[] | null;
+}
+export interface VersionResponseBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 更新频道
+   */
+  channel: string;
+  /**
+   * 应用名称
+   */
+  name: string;
+  /**
+   * 版本号
+   */
+  version: string;
+}
+export interface TerminalCountsResponseBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 项目ID到终端数量的映射
+   */
+  counts: Record<string, number>;
 }
 export interface MoveNotePadBody {
   /**
@@ -522,27 +524,6 @@ export interface ItemResponseProjectBody {
    */
   item: Project;
 }
-export interface BranchInfo {
-  hasWorktree: boolean;
-  headCommit: string;
-  isCurrent: boolean;
-  isRemote: boolean;
-  name: string;
-}
-export interface BranchListResult {
-  local: BranchInfo[] | null;
-  remote: BranchInfo[] | null;
-}
-export interface ItemResponseBranchListResultBody {
-  /**
-   * A URL to the JSON Schema for this object.
-   */
-  $schema?: string;
-  /**
-   * 响应对象
-   */
-  item: BranchListResult;
-}
 export interface RefreshAllResult {
   /**
    * 刷新失败数量
@@ -618,27 +599,6 @@ export interface ItemsResponseWorktreeBody {
    */
   items: Worktree[] | null;
 }
-export interface PtyTestSessionView {
-  cols: number;
-  createdAt: string;
-  encoding: string;
-  id: string;
-  rows: number;
-  shell: string[] | null;
-  workingDir: string;
-  wsPath: string;
-  wsUrl: string;
-}
-export interface ItemResponsePtyTestSessionViewBody {
-  /**
-   * A URL to the JSON Schema for this object.
-   */
-  $schema?: string;
-  /**
-   * 响应对象
-   */
-  item: PtyTestSessionView;
-}
 export interface ProjectTable {
   createdAt: string;
   defaultBranch: string;
@@ -675,6 +635,7 @@ export interface WorktreeTable {
   updatedAt: string;
 }
 export interface TaskTable {
+  branchName: string;
   completedAt: string | null;
   createdAt: string;
   deletedAt: DeletedAt;
@@ -754,6 +715,27 @@ export interface ItemResponseWorktreeBody {
    * 响应对象
    */
   item: Worktree;
+}
+export interface BranchInfo {
+  hasWorktree: boolean;
+  headCommit: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  name: string;
+}
+export interface BranchListResult {
+  local: BranchInfo[] | null;
+  remote: BranchInfo[] | null;
+}
+export interface ItemResponseBranchListResultBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: BranchListResult;
 }
 export interface PaginatedResponseTaskTableBody {
   /**
@@ -1229,7 +1211,7 @@ declare global {
        *   name: string
        *   // 本地项目目录路径（可非 Git 仓库）
        *   path: string
-       *   // Worktree 基础路径（可选，默认为项目目录下的 worktrees 子目录）
+       *   // Worktree 基础路径（可选，默认为项目目录下的 .worktrees 子目录）
        *   worktreeBasePath?: string
        * }
        * ```
@@ -1440,6 +1422,16 @@ declare global {
        *
        * ---
        *
+       * **Query Parameters**
+       * ```ts
+       * type QueryParameters = {
+       *   // 强制刷新，忽略缓存
+       *   force?: boolean
+       * }
+       * ```
+       *
+       * ---
+       *
        * **Response**
        * ```ts
        * type Response = {
@@ -1477,6 +1469,12 @@ declare global {
         Config extends Alova2MethodConfig<ItemResponseBranchListResultBody> & {
           pathParams: {
             projectId: string;
+          };
+          params: {
+            /**
+             * 强制刷新，忽略缓存
+             */
+            force?: boolean;
           };
         }
       >(
@@ -2094,6 +2092,7 @@ declare global {
        *   // [items] end
        *   // [params1] end
        *   items: Array<{
+       *     branchName: string
        *     completedAt: string | null
        *     createdAt: string
        *     deletedAt: {
@@ -2252,6 +2251,7 @@ declare global {
        *   $schema?: string
        *   // 响应对象
        *   item: {
+       *     branchName: string
        *     completedAt: string | null
        *     createdAt: string
        *     deletedAt: {
@@ -2369,6 +2369,7 @@ declare global {
        *   $schema?: string
        *   // 响应对象
        *   item: {
+       *     branchName: string
        *     completedAt: string | null
        *     createdAt: string
        *     deletedAt: {
@@ -2497,6 +2498,7 @@ declare global {
        *   $schema?: string
        *   // 响应对象
        *   item: {
+       *     branchName: string
        *     completedAt: string | null
        *     createdAt: string
        *     deletedAt: {
@@ -2667,6 +2669,7 @@ declare global {
        *   $schema?: string
        *   // 响应对象
        *   item: {
+       *     branchName: string
        *     completedAt: string | null
        *     createdAt: string
        *     deletedAt: {
@@ -2806,6 +2809,7 @@ declare global {
        *   $schema?: string
        *   // 响应对象
        *   item: {
+       *     branchName: string
        *     completedAt: string | null
        *     createdAt: string
        *     deletedAt: {
@@ -3132,34 +3136,12 @@ declare global {
       >(
         config: Config
       ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.create', Config>;
-    };
-    ptyTest: {
       /**
        * ---
        *
-       * [POST] 创建 PTY 测试会话
+       * [GET] 获取所有项目的终端数量统计
        *
-       * **path:** /api/v1/pty-test/sessions
-       *
-       * ---
-       *
-       * **RequestBody**
-       * ```ts
-       * type RequestBody = {
-       *   // A URL to the JSON Schema for this object.
-       *   $schema?: string
-       *   // 终端列数
-       *   cols: number
-       *   // xpty 输出编码，默认 utf-8
-       *   encoding: string
-       *   // 终端行数
-       *   rows: number
-       *   // 自定义 shell 命令，留空使用默认配置
-       *   shell: string
-       *   // 工作目录，可选
-       *   workingDir: string
-       * }
-       * ```
+       * **path:** /api/v1/terminals/counts
        *
        * ---
        *
@@ -3168,69 +3150,14 @@ declare global {
        * type Response = {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
-       *   // 响应对象
-       *   item: {
-       *     cols: number
-       *     createdAt: string
-       *     encoding: string
-       *     id: string
-       *     rows: number
-       *     // [params1] start
-       *     // [items] start
-       *     // [items] end
-       *     // [params1] end
-       *     shell: string[] | null
-       *     workingDir: string
-       *     wsPath: string
-       *     wsUrl: string
-       *   }
+       *   // 项目ID到终端数量的映射
+       *   counts: Record<string, number>
        * }
        * ```
        */
-      sessionCreate<
-        Config extends Alova2MethodConfig<ItemResponsePtyTestSessionViewBody> & {
-          data: PtyTestCreateInputBody;
-        }
-      >(
-        config: Config
-      ): Alova2Method<ItemResponsePtyTestSessionViewBody, 'ptyTest.sessionCreate', Config>;
-      /**
-       * ---
-       *
-       * [POST] 关闭 PTY 测试会话
-       *
-       * **path:** /api/v1/pty-test/sessions/{sessionId}
-       *
-       * ---
-       *
-       * **Path Parameters**
-       * ```ts
-       * type PathParameters = {
-       *   sessionId: string
-       * }
-       * ```
-       *
-       * ---
-       *
-       * **Response**
-       * ```ts
-       * type Response = {
-       *   // A URL to the JSON Schema for this object.
-       *   $schema?: string
-       *   // 提示信息
-       *   message: string
-       * }
-       * ```
-       */
-      sessionClose<
-        Config extends Alova2MethodConfig<MessageResponseBody> & {
-          pathParams: {
-            sessionId: string;
-          };
-        }
-      >(
-        config: Config
-      ): Alova2Method<MessageResponseBody, 'ptyTest.sessionClose', Config>;
+      terminalCounts<Config extends Alova2MethodConfig<TerminalCountsResponseBody>>(
+        config?: Config
+      ): Alova2Method<TerminalCountsResponseBody, 'terminalSession.terminalCounts', Config>;
     };
     system: {
       /**
@@ -3351,6 +3278,32 @@ declare global {
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'system.openTerminal', Config>;
+      /**
+       * ---
+       *
+       * [GET] 获取应用版本信息
+       *
+       * **path:** /api/v1/system/version
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 更新频道
+       *   channel: string
+       *   // 应用名称
+       *   name: string
+       *   // 版本号
+       *   version: string
+       * }
+       * ```
+       */
+      version<Config extends Alova2MethodConfig<VersionResponseBody>>(
+        config?: Config
+      ): Alova2Method<VersionResponseBody, 'system.version', Config>;
     };
     taskComment: {
       /**
@@ -3427,6 +3380,7 @@ declare global {
        *     }
        *     id: string
        *     task?: {
+       *       branchName: string
        *       completedAt: string | null
        *       createdAt: string
        *       deletedAt: {
@@ -3566,6 +3520,7 @@ declare global {
        *     }
        *     id: string
        *     task?: {
+       *       branchName: string
        *       completedAt: string | null
        *       createdAt: string
        *       deletedAt: {

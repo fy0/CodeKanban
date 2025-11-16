@@ -162,6 +162,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   let globalLoadToken = 0;
   const projectLoadTokens = new Map<string, number>();
   const emitter = new EventEmitter();
+  const cachedCounts = reactive(new Map<string, number>());
 
   function getTabs(projectId?: string) {
     if (!projectId) {
@@ -222,6 +223,8 @@ export const useTerminalStore = defineStore('terminal', () => {
       }
       const items = response?.items ?? [];
       reconcileSessions(resolved, items as unknown as TerminalSession[]);
+      // 更新终端计数缓存
+      cachedCounts.set(resolved, items.length);
     } catch (error) {
       console.error('Failed to load terminal sessions', error);
     }
@@ -255,6 +258,9 @@ export const useTerminalStore = defineStore('terminal', () => {
       activate: true,
       projectIdOverride: resolved,
     });
+    // 更新终端计数缓存
+    const currentCount = cachedCounts.get(resolved) ?? 0;
+    cachedCounts.set(resolved, currentCount + 1);
   }
 
   async function renameSession(projectId: string | undefined, sessionId: string, title: string) {
@@ -318,6 +324,9 @@ export const useTerminalStore = defineStore('terminal', () => {
         const index = bucket.findIndex(tab => tab.id === sessionId);
         if (index !== -1) {
           bucket.splice(index, 1);
+          // 更新终端计数缓存
+          const currentCount = cachedCounts.get(record.projectId) ?? 0;
+          cachedCounts.set(record.projectId, Math.max(0, currentCount - 1));
         }
         captureProjectOrder(record.projectId, bucket);
         if (bucket.length === 0) {
@@ -553,6 +562,32 @@ export const useTerminalStore = defineStore('terminal', () => {
     return fromPayload || requestedProjectId;
   }
 
+  function getTerminalCount(projectId?: string) {
+    if (!projectId) {
+      return 0;
+    }
+    const bucket = tabStore.get(projectId);
+    return bucket?.length ?? 0;
+  }
+
+  async function loadTerminalCounts() {
+    try {
+      const response = await Apis.terminalSession.terminalCounts({ cacheFor: 0 }).send();
+      const counts = response?.counts ?? {};
+
+      // 更新缓存的终端数量
+      cachedCounts.clear();
+      Object.entries(counts).forEach(([projectId, count]) => {
+        cachedCounts.set(projectId, count);
+      });
+
+      return counts;
+    } catch (error) {
+      console.error('Failed to load terminal counts', error);
+      return {};
+    }
+  }
+
   return {
     emitter,
     getTabs,
@@ -566,5 +601,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     send,
     disconnectTab,
     reorderTabs,
+    getTerminalCount,
+    terminalCounts: cachedCounts,
+    loadTerminalCounts,
   };
 });

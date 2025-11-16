@@ -6,7 +6,17 @@
           <n-icon size="24">
             <FolderOpenOutline />
           </n-icon>
-          <span>{{ APP_NAME }}</span>
+          <a
+            href="https://github.com/fy0/CodeKanban"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="app-name-link"
+          >
+            {{ appStore.appInfo.name }}
+          </a>
+          <n-tag size="small" type="info" :bordered="false">
+            v{{ appStore.appInfo.version }}
+          </n-tag>
         </div>
       </template>
       <template #extra>
@@ -66,12 +76,25 @@
               {{ project.description }}
             </n-text>
             <n-divider style="margin: 8px 0" />
-            <n-tag size="small" :bordered="false">
-              <template #icon>
-                <n-icon size="16"><GitBranchOutline /></n-icon>
-              </template>
-              {{ project.defaultBranch || 'main' }}
-            </n-tag>
+            <n-space size="small">
+              <n-tag size="small" :bordered="false">
+                <template #icon>
+                  <n-icon size="16"><GitBranchOutline /></n-icon>
+                </template>
+                {{ project.defaultBranch || 'main' }}
+              </n-tag>
+              <n-tag
+                v-if="terminalCounts.get(project.id) && terminalCounts.get(project.id)! > 0"
+                size="small"
+                type="success"
+                :bordered="false"
+              >
+                <template #icon>
+                  <n-icon size="16"><TerminalOutline /></n-icon>
+                </template>
+                {{ terminalCounts.get(project.id) }}
+              </n-tag>
+            </n-space>
           </n-space>
         </n-card>
       </div>
@@ -90,7 +113,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import { useTitle } from '@vueuse/core';
@@ -102,25 +125,33 @@ import {
   GitBranchOutline,
   SettingsOutline,
   BookOutline,
+  TerminalOutline,
 } from '@vicons/ionicons5';
 import ProjectCreateDialog from '@/components/project/ProjectCreateDialog.vue';
 import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
 import { useProjectStore } from '@/stores/project';
+import { useTerminalStore } from '@/stores/terminal';
+import { useAppStore } from '@/stores/app';
 import type { Project } from '@/types/models';
-import { APP_NAME } from '@/constants/app';
 
-useTitle(`项目列表 - ${APP_NAME}`);
+const appStore = useAppStore();
+
+useTitle(`项目列表 - ${appStore.appInfo.name}`);
 
 const router = useRouter();
 const projectStore = useProjectStore();
+const terminalStore = useTerminalStore();
 const message = useMessage();
 const dialog = useDialog();
 const showCreateDialog = ref(false);
 const showEditDialog = ref(false);
 const editingProject = ref<Project | null>(null);
 
+const terminalCounts = terminalStore.terminalCounts;
+
 onMounted(() => {
   projectStore.fetchProjects();
+  terminalStore.loadTerminalCounts();
 });
 
 watch(showEditDialog, value => {
@@ -211,6 +242,16 @@ async function handleProjectUpdated() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.app-name-link {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.app-name-link:hover {
+  color: var(--n-primary-color);
 }
 
 .project-grid {

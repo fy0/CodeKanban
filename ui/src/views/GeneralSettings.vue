@@ -2,11 +2,11 @@
   <div class="general-settings-page">
     <n-page-header @back="handleBack">
       <template #title>
-        <n-space align="center">
-          <n-icon size="24">
+        <n-space align="center" :wrap="false">
+          <n-icon size="24" style="display: flex;">
             <SettingsOutline />
           </n-icon>
-          <span>总设置</span>
+          <span style="line-height: 24px;">总设置</span>
         </n-space>
       </template>
       <template #extra>
@@ -380,6 +380,14 @@ function formatShortcutLabel(event: KeyboardEvent) {
   max-width: 960px;
   margin: 0 auto;
   padding: 24px 24px 48px 24px;
+}
+
+:deep(.n-page-header) {
+  padding-bottom: 16px;
+}
+
+:deep(.n-page-header .n-page-header-header) {
+  align-items: center;
 }
 
 .preview-panel {

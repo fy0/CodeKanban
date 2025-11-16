@@ -1,65 +1,96 @@
 # 代码看板 Code kanban
 
-此项目的主要功能是管理多个项目的大量终端，用于AI时代编程时，让你比较容易的处理复数的 claude code / codex / gemini code 等等
+AI时代的辅助编程工具，帮助你提速10倍。
 
-如果你像我一样，日常可能会在3-4个代码仓库中不停切换，同时每个项目又分别开5个以上终端，每个终端运行着不同的AI编程工具，那么你应该会喜欢这个工具。
+## 核心功能
 
-另提供简易的 git worktree 管理功能，worktree是一种轻量级分支，这样你就可以同时让ai写两个功能，如果某一个不满意回滚就可以了。
+- **多项目多终端管理**：轻松在 3-4 个代码仓库、二十几个终端之间切换，每个终端运行不同的 AI 编程任务
+- **Git Worktree 管理**：轻量级分支管理，同时让 AI 开发多个功能，不满意随时回滚
+- **任务看板系统**：可视化管理开发任务，支持任务状态跟踪和分支关联
+- **Web 终端集成**：使用VSC同款技术栈的 Web 终端，支持标签管理、拖动排序、折叠展开等 (快捷键`)
+- **笔记功能**：支持多标签笔记，自动保存，标签可重命名和排序 (快捷键1)
+- **编辑器集成**：快捷打开 VSCode、Cursor、Zed 等编辑器
+- **使用你喜欢的工具**: Claude Code, Codex, Gemini, Qwen Code, Droid, ... 啥都行
 
-未来可能的一些功能:
+
+## 开发指南
+
+### 环境要求
+- **Node.js**: v20.19.0+ 或 v22.12.0+
+- **Go**: 1.24.6+
+- **包管理器**: pnpm（推荐）
+
+### 安装依赖
+
+**前端依赖**：
+```bash
+cd ui
+pnpm install
+```
+
+**后端依赖**：
+```bash
+go mod tidy
+```
+
+### 开发运行
+
+**前端开发服务器**：
+```bash
+cd ui
+pnpm dev
+```
+访问地址：`http://localhost:5173`
+
+**后端开发服务器**：
+```bash
+go run . # 注意，初次运行后会生成config.yaml，端口3007，由于跟正式版本冲突，无法同时运行，建议改为3005。以下当作已经修改
+```
+- 服务端口：`http://localhost:3005`
+- OpenAPI 文档：`http://localhost:3005/docs`
+- 健康检查：`http://localhost:3005/api/v1/health`
+
+**可选参数**：
+- `-m` 或 `--migrate`：强制执行数据库迁移
+- `-i` 或 `--install`：安装为系统服务
+- `--uninstall`：卸载系统服务
+
+### 生产构建
+
+**完整构建**（推荐）：
+```bash
+python build.py
+```
+此脚本会自动完成以下步骤：
+1. 构建前端（`pnpm build`）
+2. 将前端产物复制到 `static/` 目录
+3. 构建 Go 可执行文件（带优化）
+
+**手动构建**：
+```bash
+# 构建前端
+cd ui && pnpm build
+
+# 构建后端
+go build -ldflags="-s -w" -trimpath -o CodeKanban
+```
+
+**构建产物**：
+- 前端：`ui/dist/` → `static/` (移动到此目录后，构建后端会自动存入可执行文件，实现单文件启动)
+- 后端：`CodeKanban.exe`（Windows）或 `CodeKanban`（Linux/macOS）
+
+### 访问应用
+
+**开发环境**：
+- 前端开发服务器：`http://localhost:5173`
+- 后端 API：`http://localhost:3005`
+
+**生产环境**：
+运行构建后的可执行文件，访问 `http://localhost:3007`
+
+
+### 未来可能的一些功能
 - 移动端支持
 - 代码清理: 如前端的src/api，应当全走自动生成
 - 完成提醒功能，例如AI干完之后播放个声音，告诉你已经弄好了。
 - 空闲终端列表 / 待交互终端列表。
-
-总之目前基本上满足日常需求了。
-
-
-## 能力概览
-- **配置中心**：`utils/app_config.go` 读取 / 写入 `config.yaml`，并提供日志级别、OpenAPI、Huma 文档路径等开关。
-- **日志系统**：`utils/logger.go` 使用 zap，支持控制台与文件双输出。
-- **数据层**：
-  - `model/table` 存放 GORM 表声明，可按需扩展具体业务模型。
-  - `model` 目录下封装了 GORM 初始化、迁移、关闭等生命周期方法。
-  - `model/sqlc_gen` 保留了 schema 生成脚本，若后续需要接入 sqlc，可按需启用。
-- **API 框架**：`api/api.go` 预置 Fiber + Huma 集成，自动挂载 OpenAPI JSON 与自定义 docsPath。
-- **分支管理**：`model/branch.go` 提供分支增删查、合并与 Worktree 联动，输出缓存、结构化日志与 Prometheus 指标，前端 `BranchManagement.vue` 提供可视化操作。
-- **工具集**：保留 ID 生成、SQL schema 生成等常用组件。
-
-## 使用步骤
-1. 初始化依赖：`go mod tidy`
-2. 根据环境修改 `config.yaml`（数据库 DSN、日志输出等）。
-3. 启动服务：`go run .`
-   - 如需强制迁移，可追加 `-m` 或 `--migrate`。
-4. 若未来需要生成 sqlc 代码，可在补齐 SQL 文件后执行 `go generate -run="sqlc"`（可选）。
-
-## 目录说明
-- `api/`：HTTP & Huma 相关实现。
-- `model/`：数据层（GORM 表、初始化、可选的 sqlc schema 工具）。
-- `utils/`：配置、日志、ID、sqlc 生成工具等通用模块。
-- `static/`、`docs/`、`data/`：静态资源、自定义文档、运行期数据占位。
-
-## 系统服务
-- 安装：`go run . -i`
-- 卸载：`go run . --uninstall`
-
-复制项目后，可按需替换示例模型或移除不需要的模块，使其贴合自身业务。
-
-## 分支管理
-
-### 后端能力
-
-- `GET /api/v1/projects/{projectId}/branches`：返回本地 / 远程分支列表，自动标记本地 Worktree 绑定。
-- `POST /api/v1/projects/{projectId}/branches/create`：校验分支命名并创建分支，可选同步创建 Worktree。
-- `POST /api/v1/projects/{projectId}/branches/{branchName}`：支持 `force` 查询参数，删除前会阻止默认分支和当前检出的分支。
-- `POST /api/v1/worktrees/{id}/merge`：在指定 Worktree 内执行 merge/rebase/squash，返回冲突文件清单；落盘 Prometheus 指标与结构化日志。
-
-### 前端入口
-
-- 路由 `/#/project/:id/branches` 提供分支管理页面，可从 Worktree 侧栏的「分支」按钮进入。
-- 页面特性：
-  - 顶部提供快捷键提示（Ctrl+N 创建、Ctrl+R 刷新、Ctrl+F 聚焦搜索）。
-  - 左右分栏展示本地 / 远程分支，列表支持超 200 条的虚拟滚动。
-  - 本地分支可直接创建 / 打开 Worktree 或发起删除；远程分支可一键创建本地分支。
-  - 底部合并区支持选择 Worktree + 源分支 + 策略并展示冲突文件，合并结束自动刷新 Worktree 状态。
-- 所有 API 调用遵循 `ui/docs/data-fetching-best-practices.md` 规范，通过 `useReq` + `Apis.branch.*` 实现。

@@ -19,11 +19,6 @@ const router = createRouter({
       component: () => import('@/views/BranchManagement.vue'),
     },
     {
-      path: '/pty-test',
-      name: 'pty-test',
-      component: () => import('@/views/PtyTest.vue'),
-    },
-    {
       path: '/guide',
       name: 'guide',
       component: () => import('@/views/UserGuide.vue'),

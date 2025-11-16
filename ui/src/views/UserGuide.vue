@@ -1,6 +1,6 @@
 <template>
   <div class="user-guide-page">
-    <n-page-header>
+    <n-page-header @back="goBack">
       <template #title>
         <div class="title-wrapper">
           <n-icon size="24">

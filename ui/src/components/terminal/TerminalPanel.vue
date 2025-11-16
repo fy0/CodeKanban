@@ -796,6 +796,7 @@ function handleSettingsMenuSelect(key: string) {
 defineExpose({
   createTerminal: openTerminal,
   reloadSessions,
+  toggleExpanded,
 });
 </script>
 

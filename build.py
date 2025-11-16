@@ -102,7 +102,7 @@ def main():
 
     # 步骤 3: 构建 Go 程序
     print("\n[步骤 3/3] 构建 Go 程序（优化模式）")
-    exe_name = "aicode-kanban.exe" if is_windows else "aicode-kanban"
+    exe_name = "CodeKanban.exe" if is_windows else "CodeKanban"
 
     # 编译优化选项：
     # -ldflags="-s -w"  去除调试信息和符号表，减小体积

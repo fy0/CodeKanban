@@ -6,6 +6,7 @@
         <RecentProjects
           :current-project-id="currentProjectId"
           @edit-current="openProjectEditDialog"
+          @toggle-terminal="toggleTerminalPanel"
         />
       </n-layout-sider>
 
@@ -130,6 +131,10 @@ async function handleProjectUpdated() {
   if (currentProjectId.value) {
     await projectStore.fetchProject(currentProjectId.value);
   }
+}
+
+function toggleTerminalPanel() {
+  terminalPanelRef.value?.toggleExpanded();
 }
 </script>
 

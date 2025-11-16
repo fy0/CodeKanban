@@ -78,7 +78,11 @@ func run(forceMigrate bool) {
 	}
 
 	ctx := utils.ContextWithLogger(context.Background(), logger)
-	if err := api.Init(ctx, cfg, embedStatic); err != nil {
+	if err := api.Init(ctx, cfg, embedStatic, &api.AppInfo{
+		Name:    APPNAME,
+		Version: VERSION.String(),
+		Channel: APP_CHANNEL,
+	}); err != nil {
 		logger.Fatal("服务启动失败", zap.Error(err))
 	}
 }

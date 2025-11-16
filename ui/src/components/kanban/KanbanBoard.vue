@@ -5,16 +5,12 @@
         <div>
           <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
             <h2 style="margin: 0;">任务看板</h2>
-            <n-button
-              size="tiny"
-              text
-              :disabled="!projectId || boardLoading"
-              :loading="boardLoading"
-              @click="fetchTasks(currentProjectId)"
-              style="font-size: 16px;"
-            >
+            <n-button size="tiny" text :disabled="!projectId || boardLoading" :loading="boardLoading"
+              @click="fetchTasks(currentProjectId)" style="font-size: 16px;">
               <template #icon>
-                <n-icon size="16"><RefreshOutline /></n-icon>
+                <n-icon size="16">
+                  <RefreshOutline />
+                </n-icon>
               </template>
             </n-button>
           </div>
@@ -26,28 +22,19 @@
               <RouterLink to="/">项目列表</RouterLink>
             </n-breadcrumb-item>
             <n-breadcrumb-item>
-              <RouterLink
-                v-if="currentProjectId"
-                :to="{ name: 'project', params: { id: currentProjectId } }"
-              >
+              <RouterLink v-if="currentProjectId" :to="{ name: 'project', params: { id: currentProjectId } }">
                 {{ currentProjectName }}
               </RouterLink>
               <span v-else>未选择项目</span>
             </n-breadcrumb-item>
           </n-breadcrumb>
-          <n-select
-            style="width: 200px"
-            size="small"
-            :disabled="!projectId"
-            v-model:value="worktreeFilterValue"
-            :options="worktreeFilterOptions"
-            placeholder="全部分支"
-            clearable
-            :consistent-menu-width="false"
-          />
-          <n-button type="primary" :disabled="!projectId" @click="openCreateDialog('todo')">
+          <n-select style="width: 200px" size="small" :disabled="!projectId" v-model:value="worktreeFilterValue"
+            :options="worktreeFilterOptions" placeholder="全部分支" clearable :consistent-menu-width="false" />
+          <n-button size="small" type="primary" :disabled="!projectId" @click="openCreateDialog('todo')">
             <template #icon>
-              <n-icon><AddOutline /></n-icon>
+              <n-icon>
+                <AddOutline />
+              </n-icon>
             </template>
             新建任务
           </n-button>
@@ -59,40 +46,20 @@
       <n-spin :show="boardLoading">
         <n-empty v-if="!projectId" description="请选择一个项目查看任务" />
         <div v-else class="board-columns">
-          <KanbanColumn
-            v-for="column in columns"
-            :key="column.key"
-            :title="column.title"
-            :status="column.key"
-            :tasks="filteredTasksByStatus[column.key] ?? []"
-            :show-add-button="projectId ? column.allowQuickAdd : false"
-            :add-disabled="!projectId"
-            @task-moved="handleTaskMoved"
-            @task-clicked="handleTaskClicked"
-            @task-edit="handleTaskEdit"
-            @task-delete="handleTaskDeleteRequest"
-            @task-copy="handleTaskCopy"
-            @task-start-work="handleTaskStartWork"
-            @add-click="handleColumnQuickAdd(column.key)"
-          />
+          <KanbanColumn v-for="column in columns" :key="column.key" :title="column.title" :status="column.key"
+            :tasks="filteredTasksByStatus[column.key] ?? []" :show-add-button="projectId ? column.allowQuickAdd : false"
+            :add-disabled="!projectId" @task-moved="handleTaskMoved" @task-clicked="handleTaskClicked"
+            @task-edit="handleTaskEdit" @task-delete="handleTaskDeleteRequest" @task-copy="handleTaskCopy"
+            @task-start-work="handleTaskStartWork" @add-click="handleColumnQuickAdd(column.key)" />
         </div>
       </n-spin>
     </div>
 
-    <TaskCreateDialog
-      v-if="projectId"
-      v-model:show="showCreateDialog"
-      :project-id="projectId"
-      :default-status="createTargetStatus"
-      @created="handleTaskCreated"
-    />
+    <TaskCreateDialog v-if="projectId" v-model:show="showCreateDialog" :project-id="projectId"
+      :default-status="createTargetStatus" @created="handleTaskCreated" />
 
-    <TaskDetailDrawer
-      v-model:show="showDetailDrawer"
-      :project-id="projectId"
-      :task-id="taskStore.selectedTaskId"
-      @closed="taskStore.selectTask(null)"
-    />
+    <TaskDetailDrawer v-model:show="showDetailDrawer" :project-id="projectId" :task-id="taskStore.selectedTaskId"
+      @closed="taskStore.selectTask(null)" />
   </div>
 </template>
 

@@ -13,6 +13,14 @@ import (
 
 const systemTag = "system-系统工具"
 
+type versionResponse struct {
+	Body struct {
+		Name    string `json:"name" doc:"应用名称"`
+		Version string `json:"version" doc:"版本号"`
+		Channel string `json:"channel" doc:"更新频道"`
+	} `json:"body"`
+}
+
 type openPathInput struct {
 	Body struct {
 		Path string `json:"path" doc:"目标路径" required:"true"`
@@ -28,6 +36,18 @@ type openEditorInput struct {
 }
 
 func registerSystemRoutes(group *huma.Group) {
+	huma.Get(group, "/system/version", func(ctx context.Context, input *struct{}) (*versionResponse, error) {
+		resp := &versionResponse{}
+		resp.Body.Name = appInfo.Name
+		resp.Body.Version = appInfo.Version
+		resp.Body.Channel = appInfo.Channel
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-version"
+		op.Summary = "获取应用版本信息"
+		op.Tags = []string{systemTag}
+	})
+
 	huma.Post(group, "/system/open-explorer", func(ctx context.Context, input *openPathInput) (*h.MessageResponse, error) {
 		if err := system.OpenExplorer(input.Body.Path); err != nil {
 			return nil, mapSystemError(err)
