@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -66,12 +64,8 @@ func GenerateSQLForDialect(models []any, dialect string) ([]string, error) {
 	switch dialect {
 	case "sqlite":
 		dialector = sqlite.New(sqlite.Config{Conn: sqlDB})
-	case "postgres":
-		dialector = postgres.New(postgres.Config{Conn: sqlDB})
-	case "mysql":
-		dialector = mysql.New(mysql.Config{Conn: sqlDB})
 	default:
-		return nil, fmt.Errorf("不支持的数据库方言: %s", dialect)
+		return nil, fmt.Errorf("不支持的数据库方言: %s (仅支持 sqlite)", dialect)
 	}
 
 	db, err := gorm.Open(dialector, &gorm.Config{

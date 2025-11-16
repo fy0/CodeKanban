@@ -1,5 +1,5 @@
 -- 数据库建表语句
--- 生成时间: 2025-11-12 02:05:44
+-- 生成时间: 2025-11-16 02:49:18
 -- 数据库方言: sqlite
 -- 总共 36 条语句
 
@@ -14,7 +14,7 @@ CREATE INDEX "idx_access_tokens_user_id" ON "user_access_tokens"("user_id");
 CREATE INDEX "idx_user_access_tokens_deleted_at" ON "user_access_tokens"("deleted_at");
 
 
-CREATE TABLE "projects" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"name" text NOT NULL,"path" text NOT NULL,"description" text,"default_branch" text,"worktree_base_path" text,"remote_url" text,"last_sync_at" datetime,PRIMARY KEY ("id"));
+CREATE TABLE "projects" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"name" text NOT NULL,"path" text NOT NULL,"description" text,"default_branch" text,"worktree_base_path" text,"remote_url" text,"last_sync_at" datetime,"hide_path" boolean NOT NULL DEFAULT false,PRIMARY KEY ("id"));
 CREATE UNIQUE INDEX "idx_projects_path" ON "projects"("path");
 CREATE INDEX "idx_projects_name" ON "projects"("name");
 CREATE INDEX "idx_projects_deleted_at" ON "projects"("deleted_at");
@@ -27,7 +27,7 @@ CREATE INDEX "idx_worktrees_project_id" ON "worktrees"("project_id");
 CREATE INDEX "idx_worktrees_deleted_at" ON "worktrees"("deleted_at");
 
 
-CREATE TABLE "tasks" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"project_id" text NOT NULL,"worktree_id" text,"title" text NOT NULL,"description" text,"status" text NOT NULL,"priority" integer DEFAULT 0,"order_index" real NOT NULL,"tags" text,"due_date" datetime,"completed_at" datetime,PRIMARY KEY ("id"));
+CREATE TABLE "tasks" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"project_id" text NOT NULL,"worktree_id" text,"branch_name" text,"title" text NOT NULL,"description" text,"status" text NOT NULL,"priority" integer DEFAULT 0,"order_index" real NOT NULL,"tags" text,"due_date" datetime,"completed_at" datetime,PRIMARY KEY ("id"));
 CREATE INDEX "idx_tasks_order_index" ON "tasks"("order_index");
 CREATE INDEX "idx_tasks_priority" ON "tasks"("priority");
 CREATE INDEX "idx_tasks_status" ON "tasks"("status");

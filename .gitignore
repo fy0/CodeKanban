@@ -32,4 +32,4 @@ data.db
 .claude
 
 database_schema_postgres.sql
-worktrees/
+.worktrees/

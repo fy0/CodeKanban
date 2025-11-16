@@ -35,9 +35,10 @@ func registerBranchRoutes(group *huma.Group) {
 		ctx context.Context,
 		input *struct {
 			ProjectID string `path:"projectId"`
+			Force     bool   `query:"force" default:"false" doc:"强制刷新，忽略缓存"`
 		},
 	) (*h.ItemResponse[model.BranchListResult], error) {
-		result, err := branchSvc.ListBranches(ctx, input.ProjectID)
+		result, err := branchSvc.ListBranches(ctx, input.ProjectID, input.Force)
 		if err != nil {
 			return nil, mapBranchError(err)
 		}

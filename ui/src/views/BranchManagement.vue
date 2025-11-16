@@ -292,10 +292,12 @@ useTitle(
   ),
 );
 
-const branchListReq = useReq((projectId: string) =>
-  Apis.branch.list({
-    pathParams: { projectId },
-  }),
+const branchListReq = useReq(
+  (projectId: string, force = false) =>
+    Apis.branch.list({
+      pathParams: { projectId },
+      ...(force ? { params: { force: true } } : {}),
+    } as any),
   { cacheFor: 60000 },
 );
 
@@ -438,7 +440,7 @@ async function reloadBranches(force = false) {
   branchError.value = null;
   try {
     if (force) {
-      await branchListReq.forceReload(currentProjectId.value);
+      await branchListReq.forceReload(currentProjectId.value, true);
     } else {
       await branchListReq.send(currentProjectId.value);
     }

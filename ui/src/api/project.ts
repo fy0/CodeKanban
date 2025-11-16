@@ -12,7 +12,8 @@ type ItemResponse<T> = {
 
 export const projectApi = {
   async list(): Promise<{ items: Project[]; total: number }> {
-    const body = (await http.Get<ListProjectsResponse>('/projects').send()) ?? {};
+    const body =
+      (await http.Get<ListProjectsResponse>('/projects', { cacheFor: 0 }).send(true)) ?? {};
     const items = body.items ?? [];
     const total = typeof body.total === 'number' ? body.total : items.length;
     return { items, total };
@@ -56,7 +57,7 @@ export const projectApi = {
 export const worktreeApi = {
   async list(projectId: string): Promise<Worktree[]> {
     const body =
-      (await http.Get<{ items?: Worktree[] }>(`/projects/${projectId}/worktrees`).send()) ?? {};
+      (await http.Get<{ items?: Worktree[] }>(`/projects/${projectId}/worktrees`).send(true)) ?? {};
     return body.items ?? [];
   },
 

@@ -12,7 +12,7 @@ func TestProjectTableCRUD(t *testing.T) {
 		Path:             "/tmp/sample-project",
 		Description:      "Test project record",
 		DefaultBranch:    "main",
-		WorktreeBasePath: "/tmp/sample-project/worktrees",
+		WorktreeBasePath: "/tmp/sample-project/.worktrees",
 		RemoteURL:        "git@example.com:sample/project.git",
 	}
 

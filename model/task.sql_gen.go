@@ -14,6 +14,7 @@ SELECT COUNT(1) AS count
 FROM tasks
 WHERE worktree_id = ?1
   AND deleted_at IS NULL
+  AND status IN ('todo', 'in_progress')
 `
 
 func (q *Queries) TaskCountByWorktree(ctx context.Context, worktreeID *string) (int64, error) {

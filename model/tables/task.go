@@ -55,6 +55,7 @@ type TaskTable struct {
 
 	ProjectID   string      `gorm:"type:text;not null;index" json:"projectId"`
 	WorktreeID  *string     `gorm:"type:text;index" json:"worktreeId"`
+	BranchName  string      `gorm:"type:text" json:"branchName"` // 存储关联的分支名称，即使worktree被删除也能显示
 	Title       string      `gorm:"type:text;not null" json:"title"`
 	Description string      `gorm:"type:text" json:"description"`
 	Status      string      `gorm:"type:text;not null;index" json:"status"` // todo/in_progress/done/archived

@@ -32,6 +32,127 @@ type SessionRecord = {
   tab: TerminalTabState;
 };
 
+const TAB_ORDER_STORAGE_KEY = 'kanban-terminal-tab-order';
+
+const storedTabOrders = loadStoredTabOrders();
+
+function loadStoredTabOrders() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return new Map<string, string[]>();
+  }
+  try {
+    const raw = window.localStorage.getItem(TAB_ORDER_STORAGE_KEY);
+    if (!raw) {
+      return new Map<string, string[]>();
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const result = new Map<string, string[]>();
+    Object.entries(parsed).forEach(([projectId, value]) => {
+      if (!projectId || !Array.isArray(value)) {
+        return;
+      }
+      const ids = value
+        .map(id => (typeof id === 'string' ? id.trim() : ''))
+        .filter((id): id is string => Boolean(id));
+      if (ids.length) {
+        result.set(projectId, ids);
+      }
+    });
+    return result;
+  } catch (error) {
+    console.warn('[Terminal Store] Failed to parse stored tab order', error);
+    return new Map<string, string[]>();
+  }
+}
+
+function persistStoredTabOrders() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  if (!storedTabOrders.size) {
+    window.localStorage.removeItem(TAB_ORDER_STORAGE_KEY);
+    return;
+  }
+  const payload: Record<string, string[]> = {};
+  storedTabOrders.forEach((order, projectId) => {
+    if (order.length) {
+      payload[projectId] = order;
+    }
+  });
+  if (Object.keys(payload).length === 0) {
+    window.localStorage.removeItem(TAB_ORDER_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(TAB_ORDER_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function captureProjectOrder(projectId: string, bucket?: TerminalTabState[]) {
+  if (!projectId) {
+    return;
+  }
+  const nextOrder = bucket?.map(tab => tab.id).filter(Boolean) ?? [];
+  if (!nextOrder.length) {
+    if (storedTabOrders.delete(projectId)) {
+      persistStoredTabOrders();
+    }
+    return;
+  }
+  const currentOrder = storedTabOrders.get(projectId);
+  if (ordersEqual(currentOrder, nextOrder)) {
+    return;
+  }
+  storedTabOrders.set(projectId, nextOrder);
+  persistStoredTabOrders();
+}
+
+function ordersEqual(current: string[] | undefined, next: string[]) {
+  if (!current || current.length !== next.length) {
+    return false;
+  }
+  for (let index = 0; index < current.length; index += 1) {
+    if (current[index] !== next[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sortSessionsWithStoredOrder(projectId: string, sessions: TerminalSession[]) {
+  if (!sessions.length) {
+    return sessions;
+  }
+  const storedOrder = storedTabOrders.get(projectId);
+  const ordered = [...sessions];
+  if (!storedOrder || storedOrder.length === 0) {
+    ordered.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    return ordered;
+  }
+  const orderIndex = new Map<string, number>();
+  storedOrder.forEach((id, index) => {
+    if (id) {
+      orderIndex.set(id, index);
+    }
+  });
+  ordered.sort((a, b) => {
+    const indexA = orderIndex.get(a.id);
+    const indexB = orderIndex.get(b.id);
+    if (indexA != null && indexB != null) {
+      if (indexA !== indexB) {
+        return indexA - indexB;
+      }
+      return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+    }
+    if (indexA != null) {
+      return -1;
+    }
+    if (indexB != null) {
+      return 1;
+    }
+    return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+  });
+  return ordered;
+}
+
 export const useTerminalStore = defineStore('terminal', () => {
   const tabStore = reactive(new Map<string, TerminalTabState[]>());
   const sessionIndex = new Map<string, SessionRecord>();
@@ -198,6 +319,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         if (index !== -1) {
           bucket.splice(index, 1);
         }
+        captureProjectOrder(record.projectId, bucket);
         if (bucket.length === 0) {
           tabStore.delete(record.projectId);
         }
@@ -263,6 +385,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       return;
     }
     bucket.splice(clampedToIndex, 0, tab);
+    captureProjectOrder(projectId, bucket);
   }
 
   function attachOrUpdateSession(
@@ -307,6 +430,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     };
     bucket.push(tab);
     sessionIndex.set(tab.id, { projectId: resolvedProjectId, tab });
+    captureProjectOrder(resolvedProjectId, bucket);
     if (options?.activate) {
       setActiveTab(resolvedProjectId, tab.id);
     } else if (!activeTabByProject.get(resolvedProjectId)) {
@@ -394,10 +518,12 @@ export const useTerminalStore = defineStore('terminal', () => {
         disconnectTab(tab.id, true);
       }
     }
-    for (const session of sessions) {
+    const orderedSessions = sortSessionsWithStoredOrder(projectId, sessions);
+    for (const session of orderedSessions) {
       attachOrUpdateSession(session, { projectIdOverride: projectId });
     }
     ensureActiveTab(projectId);
+    captureProjectOrder(projectId, tabStore.get(projectId));
   }
 
   function ensureProjectSelected(projectId?: string) {

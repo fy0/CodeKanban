@@ -104,18 +104,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("生成 SQLite schema 失败: %v", err)
 		}
-	case "postgresql":
-		err := generateSchemaFile(models, "postgres", filepath.Join(pathPrefix, "./schema_postgres.sql"))
-		if err != nil {
-			log.Fatalf("生成 PostgreSQL schema 失败: %v", err)
-		}
-	case "mysql":
-		err := generateSchemaFile(models, "mysql", filepath.Join(pathPrefix, "./schema_mysql.sql"))
-		if err != nil {
-			log.Fatalf("生成 MySQL schema 失败: %v", err)
-		}
 	default:
-		log.Fatalf("不支持的 engine 类型: %s", engine)
+		log.Fatalf("不支持的 engine 类型: %s (仅支持 sqlite)", engine)
 	}
 
 	// 运行 sqlc generate

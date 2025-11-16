@@ -18,7 +18,7 @@ type createProjectInput struct {
 		Name             string  `json:"name" minLength:"1" maxLength:"100" doc:"项目名称"`
 		Path             string  `json:"path" minLength:"1" doc:"本地项目目录路径（可非 Git 仓库）"`
 		Description      string  `json:"description" doc:"项目描述"`
-		WorktreeBasePath *string `json:"worktreeBasePath,omitempty" doc:"Worktree 基础路径（可选，默认为项目目录下的 worktrees 子目录）"`
+		WorktreeBasePath *string `json:"worktreeBasePath,omitempty" doc:"Worktree 基础路径（可选，默认为项目目录下的 .worktrees 子目录）"`
 		HidePath         *bool   `json:"hidePath,omitempty" doc:"是否隐藏真实路径"`
 	}
 }

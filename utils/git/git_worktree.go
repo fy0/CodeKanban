@@ -24,6 +24,9 @@ func (r *GitRepo) ListWorktrees() ([]WorktreeInfo, error) {
 		return nil, errors.New("git repository is not initialized")
 	}
 
+	// Prune stale entries first so list output matches actual filesystem state.
+	_ = r.PruneWorktrees()
+
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
 	cmd.Dir = r.Path
 

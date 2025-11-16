@@ -9,8 +9,6 @@ import (
 
 	"go-template/utils"
 
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -49,14 +47,10 @@ func DBInit(dsn string, logLevel logger.LogLevel) (*gorm.DB, error) {
 	var dialector gorm.Dialector
 
 	switch {
-	case strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://"):
-		dialector = postgres.Open(dsn)
-	case strings.HasPrefix(dsn, "mysql://") || strings.Contains(dsn, "@tcp("):
-		dialector = mysql.Open(strings.TrimPrefix(dsn, "mysql://"))
 	case strings.HasSuffix(dsn, ".db") || strings.HasPrefix(dsn, "file:") || strings.HasPrefix(dsn, ":memory:"):
 		dialector = sqliteOpen(dsn)
 	default:
-		return nil, fmt.Errorf("无法识别的数据库类型: %s", dsn)
+		return nil, fmt.Errorf("无法识别的数据库类型: %s (仅支持 SQLite)", dsn)
 	}
 
 	db, err := gorm.Open(dialector, &gorm.Config{

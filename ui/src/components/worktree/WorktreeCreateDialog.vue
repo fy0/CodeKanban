@@ -74,15 +74,15 @@ async function handleCreate() {
     await formRef.value?.validate();
     loading.value = true;
     const worktree = await projectStore.createWorktree(projectStore.currentProject.id, formData.value);
-    visible.value = false;
+    // 先 emit success 事件，确保父组件能接收到
     emit('success', worktree);
+    // 返回 true 让 Naive UI 自动关闭对话框
+    return true;
   } catch (error: any) {
     message.error(error?.message ?? '创建失败');
     return false;
   } finally {
     loading.value = false;
   }
-
-  return true;
 }
 </script>

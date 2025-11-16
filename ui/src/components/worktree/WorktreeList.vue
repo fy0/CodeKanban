@@ -325,10 +325,12 @@ const branchMergeReq = useReq(
     }),
 );
 
-const branchListReq = useReq((projectId: string) =>
-  Apis.branch.list({
-    pathParams: { projectId },
-  }),
+const branchListReq = useReq(
+  (projectId: string, force = false) =>
+    Apis.branch.list({
+      pathParams: { projectId },
+      ...(force ? { params: { force: true } } : {}),
+    } as any),
 );
 
 const branchList = computed<BranchListResult>(() => {
@@ -392,11 +394,16 @@ async function handleRefreshAll() {
     return;
   }
   try {
+    // 先从 git 仓库同步 worktree 到数据库（会识别外部创建的新 worktree）
+    await projectStore.syncWorktrees(projectStore.currentProject.id);
+    // 然后刷新所有 worktree 的 git 状态
     await refreshAllWorktreesReq.send(projectStore.currentProject.id);
+    // 最后重新获取列表以确保 UI 显示最新的状态
     await projectStore.fetchWorktrees(projectStore.currentProject.id);
+    await branchListReq.forceReload(projectStore.currentProject.id, true);
     message.success('已刷新所有 Worktree 状态');
   } catch (error: any) {
-    message.error(error?.message ?? '刷新失败', { duration: 0 });
+    message.error(error?.message ?? '刷新失败', { duration: 0, closable: true, keepAliveOnHover: true });
   }
 }
 
@@ -409,7 +416,7 @@ async function handleRefresh(id: string) {
     }
     message.success('状态已刷新');
   } catch (error: any) {
-    message.error(error?.message ?? '刷新失败', { duration: 0 });
+    message.error(error?.message ?? '刷新失败', { duration: 0, closable: true, keepAliveOnHover: true });
   }
 }
 
@@ -456,8 +463,7 @@ async function performDeleteWorktree(
       });
       return;
     }
-    message.error(errorMessage || '删除失败', { duration: 0 });
-    throw error;
+    message.error(errorMessage || '删除失败', { duration: 0, closable: true, keepAliveOnHover: true });
   } finally {
     deletingWorktreeId.value = null;
   }
@@ -494,7 +500,7 @@ async function handleOpenExplorer(path: string) {
   try {
     await projectStore.openInExplorer(path);
   } catch (error: any) {
-    message.error(error?.message ?? '打开文件管理器失败', { duration: 0 });
+    message.error(error?.message ?? '打开文件管理器失败', { duration: 0, closable: true, keepAliveOnHover: true });
   }
 }
 
@@ -520,26 +526,14 @@ async function handleOpenEditor(payload: { worktree: Worktree; editor: EditorPre
     const label = EDITOR_LABEL_MAP[editor] ?? '编辑器';
     message.success(`已在 ${label} 中打开`);
   } catch (error: any) {
-    message.error(error?.message ?? '打开编辑器失败', { duration: 0 });
+    message.error(error?.message ?? '打开编辑器失败', { duration: 0, closable: true, keepAliveOnHover: true });
   }
 }
 
-async function handleWorktreeCreated(worktree?: Worktree) {
-  if (!projectStore.currentProject) {
-    return;
-  }
-  // 创建成功后立即刷新列表以获取最新状态（包括 git status）
-  try {
-    await projectStore.fetchWorktrees(projectStore.currentProject.id);
-    if (worktree) {
-      message.success(`Worktree ${worktree.branchName} 创建成功`);
-    }
-  } catch (error: any) {
-    // 如果刷新失败，仍然显示创建成功的消息，因为创建操作本身已经成功
-    if (worktree) {
-      message.success(`Worktree ${worktree.branchName} 创建成功`);
-    }
-    message.warning('刷新列表失败: ' + (error?.message ?? '未知错误'));
+function handleWorktreeCreated(worktree?: Worktree) {
+  // createWorktree 已经在 store 中完成了刷新，这里只需显示成功消息
+  if (worktree) {
+    message.success(`Worktree ${worktree.branchName} 创建成功`);
   }
 }
 
@@ -562,7 +556,7 @@ function goToBranchManagement() {
 function openSyncDialog(worktree: Worktree) {
   const initial = resolveSyncBranchDefault();
   if (!initial) {
-    message.error('暂无可用的上游分支，请先在分支管理中创建', { duration: 0 });
+    message.error('暂无可用的上游分支，请先在分支管理中创建', { duration: 0, closable: true, keepAliveOnHover: true });
     return;
   }
   branchOperation.visible = true;
@@ -575,7 +569,7 @@ function openSyncDialog(worktree: Worktree) {
 function openMergeDialog(payload: { worktree: Worktree; strategy?: 'merge' | 'squash' }) {
   const initial = resolveMergeTargetDefault();
   if (!initial) {
-    message.error('没有可用的目标 Worktree，请先创建对应分支的 Worktree', { duration: 0 });
+    message.error('没有可用的目标 Worktree，请先创建对应分支的 Worktree', { duration: 0, closable: true, keepAliveOnHover: true });
     return;
   }
   branchOperation.visible = true;
@@ -707,7 +701,7 @@ async function submitCommit() {
     message.success('提交成功');
     closeCommitDialog();
   } catch (error: any) {
-    message.error(error?.message ?? '提交失败', { duration: 0 });
+    message.error(error?.message ?? '提交失败', { duration: 0, closable: true, keepAliveOnHover: true });
   }
 }
 
@@ -766,7 +760,7 @@ async function confirmBranchOperation() {
     }
     closeBranchOperation();
   } catch (error: any) {
-    message.error(error?.message ?? '操作失败', { duration: 0 });
+    message.error(error?.message ?? '操作失败', { duration: 0, closable: true, keepAliveOnHover: true });
   } finally {
     branchOperationLoading.value = false;
   }
@@ -798,9 +792,9 @@ async function performMerge(
     message.success(result.message || '操作成功');
   } else {
     const conflicts = result.conflicts?.length ? `冲突文件：${result.conflicts.join(', ')}` : '';
-    message.warning(result.message || '存在冲突，请手动处理', { duration: 0 });
+    message.warning(result.message || '存在冲突，请手动处理', { duration: 0, closable: true, keepAliveOnHover: true });
     if (conflicts) {
-      message.info(conflicts, { duration: 0 });
+      message.info(conflicts, { duration: 0, closable: true, keepAliveOnHover: true });
     }
   }
 }

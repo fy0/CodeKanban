@@ -266,6 +266,9 @@ const switchScope = async (scope: 'global' | 'project') => {
 
 const loadTabs = async () => {
   try {
+    // 先清空当前激活的tab，避免切换作用域时显示旧数据
+    activeTabId.value = '';
+    
     const projectId =
       currentScope.value === 'project' && currentProjectId.value ? currentProjectId.value : undefined;
     const data = await notepadApi.list(projectId);
@@ -274,7 +277,8 @@ const loadTabs = async () => {
     // 如果没有标签，创建一个默认标签
     if (tabs.value.length === 0) {
       await handleAddTab();
-    } else if (!activeTabId.value || !tabs.value.find((t) => t.id === activeTabId.value)) {
+    } else {
+      // 激活第一个标签
       setActiveTab(tabs.value[0].id);
     }
   } catch (error) {

@@ -2,12 +2,12 @@
   <div class="user-guide-page">
     <n-page-header>
       <template #title>
-        <n-space align="center">
+        <div class="title-wrapper">
           <n-icon size="24">
             <BookOutline />
           </n-icon>
           <span>使用指引</span>
-        </n-space>
+        </div>
       </template>
       <template #extra>
         <n-button quaternary size="small" @click="goBack">
@@ -18,17 +18,21 @@
 
     <div class="guide-content">
       <!-- 欢迎介绍 -->
-      <n-card title="欢迎使用 AICode Kanban">
+      <n-card title="欢迎使用 Code Kanban">
         <n-space vertical size="large">
           <n-text>
-            AICode Kanban 是一个面向 <n-text strong>AI 编程时代</n-text>的效率工具，
-            专为解决 <n-text strong type="success">CLI AI 编程工具的多项目、多终端管理痛点</n-text>而设计。
+            Code Kanban 是一个面向 <n-text strong>AI 编程时代</n-text>的效率工具，
+            专为解决CLI AI 编程工具的多项目、多终端管理痛点而设计。
+          </n-text>
+
+          <n-text>
+            如果你像我一样，日常可能会在3-4个代码仓库中不停切换，同时每个项目又分别开5个以上终端，每个终端运行着不同的AI编程工具，那么你应该会喜欢这个工具。
           </n-text>
 
           <n-alert type="warning" title="AI 编程时代的挑战">
-            使用 Claude Code、Codex、Droid、Gemini Code 等 CLI AI 编程工具时，经常需要在多个项目、多个分支间频繁切换。
-            传统的终端窗口杂乱无章，项目路径难以追踪，多个 AI CLI 工具同时运行更是混乱不堪。
-            AICode Kanban 让你在一个界面中掌控一切！
+            使用 Claude Code、Codex、Qwen Code 等 CLI AI 编程工具时，经常需要在多个项目、多个分支间频繁切换。
+            传统的终端窗口杂乱无章，进行的任务难以追踪，多个 AI CLI 工具同时运行更是混乱不堪。
+            Code Kanban 让你在一个界面中掌控一切！
           </n-alert>
 
           <n-alert type="success" title="核心优势">
@@ -58,63 +62,143 @@
         </n-space>
       </n-card>
 
-      <!-- 快速开始 -->
-      <n-card title="快速开始">
-        <n-steps vertical :current="null">
-          <n-step title="创建项目">
-            <n-space vertical>
-              <n-text depth="3">
-                点击项目列表页右上角的「添加项目」按钮，填写项目名称和项目路径。
-              </n-text>
-              <n-text depth="3" type="info">
-                <n-icon size="16"><AlertCircleOutline /></n-icon>
-                建议使用 Git 仓库根目录，否则无法使用工作区（Worktree）功能。
-              </n-text>
-            </n-space>
-          </n-step>
+      <!-- 工作流程 -->
+      <n-card title="工作流程">
+        <n-tabs v-model:value="workflowTab" type="segment" animated>
+          <n-tab-pane name="quick" tab="快速开始(适用于多数情况)">
+            <n-steps vertical :current="null" style="margin-top: 16px">
+              <n-step title="添加项目">
+                <n-space vertical>
+                  <n-text depth="3">
+                    点击项目列表页右上角的「添加项目」按钮，填写项目名称和项目路径。
+                  </n-text>
+                  <n-text depth="3" type="info">
+                    <n-icon size="16"><AlertCircleOutline /></n-icon>
+                    建议使用 Git 仓库根目录，否则无法使用工作区（Worktree）功能。
+                  </n-text>
+                </n-space>
+              </n-step>
 
-          <n-step title="创建工作区（可选）">
-            <n-space vertical>
-              <n-text depth="3">
-                如果项目是 Git 仓库，可以点击「Worktrees」标签页，然后点击「新建」按钮，选择基础分支创建工作区。
-              </n-text>
-              <n-text depth="3">
-                系统会自动在项目目录下创建独立的工作区文件夹（使用 git worktree）。
-              </n-text>
-              <n-text depth="3" type="info">
-                <n-icon size="16"><AlertCircleOutline /></n-icon>
-                这一步不是必需的。如果你认为对于当前任务，AI 工具对主分支的共同编辑并不会引起混乱，无需创建工作区。
-              </n-text>
-            </n-space>
-          </n-step>
+              <n-step title="启动终端，开始工作">
+                <n-space vertical>
+                  <n-text depth="3">
+                    在工作区(Worktrees)卡片中点击「打开终端」按钮，会自动打开终端并切换到该工作区目录。
+                  </n-text>
+                  <n-text depth="3">
+                    现在你可以根据你要完成的任务开一堆终端了，然后在里面分别运行几个AI编程工具，最好把终端标题改成正在进行的任务名字，以免忘记。
+                  </n-text>
+                  <n-text depth="3">
+                    终端窗口的快捷键是 ` (键盘上数字1左边的那个键)，焦点不在终端上的时候可以用来开关终端。
+                  </n-text>
+                  <n-text depth="3" type="success">
+                    <n-icon size="16"><AlertCircleOutline /></n-icon>
+                    终端适合运行 CLI AI 编程工具（如 claude code、codex、droid、gemini code 等），
+                    在一个界面中集中管理所有 AI 编程会话，随时切换项目和工作区。
+                  </n-text>
+                </n-space>
+              </n-step>
 
-          <n-step title="管理任务">
-            <n-space vertical>
-              <n-text depth="3">
-                在看板中创建任务，拖拽任务卡片调整状态（待办 → 进行中 → 已完成）。
-              </n-text>
-              <n-text depth="3">
-                任务可以关联到特定的工作区和分支。
-              </n-text>
-            </n-space>
-          </n-step>
+              <n-step title="完成任务">
+                <n-space vertical>
+                  <n-text depth="3">
+                    在你感觉合适的时候进行代码提交。
+                  </n-text>
+                  <n-text depth="3">
+                    此外，还提供了简易任务板用于目标管理，笔记本用于随手注记（屏幕右侧，快捷键1）。对了，终端可以在任务板中启动，终端标题会直接使用对应任务的标题。
+                  </n-text>
+                  <n-text depth="3">
+                    如果希望让AI同时做多件事情，而又不希望代码互相打架，可以使用worktree管理功能。
+                  </n-text>
+                </n-space>
+              </n-step>
+            </n-steps>
+          </n-tab-pane>
 
-          <n-step title="使用终端">
-            <n-space vertical>
-              <n-text depth="3">
-                在工作区卡片中点击「打开终端」按钮，会自动打开终端并切换到该工作区目录。
-              </n-text>
-              <n-text depth="3">
-                支持多标签页管理，可以为不同工作区打开独立的终端。
-              </n-text>
-              <n-text depth="3" type="success">
-                <n-icon size="16"><AlertCircleOutline /></n-icon>
-                特别适合运行 CLI AI 编程工具（如 claude code、codex、droid、gemini code 等），
-                在一个界面中集中管理所有 AI 编程会话，随时切换项目和工作区。
-              </n-text>
-            </n-space>
-          </n-step>
-        </n-steps>
+          <n-tab-pane name="standard" tab="更标准的流程(使用worktree的复杂流程)">
+            <n-steps vertical :current="null" style="margin-top: 16px">
+              <n-step title="添加项目">
+                <n-space vertical>
+                  <n-text depth="3">
+                    点击项目列表页右上角的「添加项目」按钮，填写项目名称和项目路径。
+                  </n-text>
+                  <n-text depth="3" type="info">
+                    <n-icon size="16"><AlertCircleOutline /></n-icon>
+                    建议使用 Git 仓库根目录，否则无法使用工作区（Worktree）功能。
+                  </n-text>
+                </n-space>
+              </n-step>
+
+              <n-step title="创建工作区">
+                <n-space vertical>
+                  <n-text depth="3">
+                    如果项目是 Git 仓库，可以点击「Worktrees」标签页，然后点击「新建」按钮，选择基础分支创建工作区。
+                  </n-text>
+                  <n-text depth="3">
+                    系统会自动在项目目录下创建独立的工作区文件夹（使用 git worktree，位置是「.worktrees/分支名」）。
+                  </n-text>
+                  <n-text depth="3">
+                    有一些项目的工作流程要求为每一个PR开一个分支，你可以使用这个功能，也可以在终端里直接切换分支然后刷新页面，都没关系。
+                  </n-text>
+                </n-space>
+              </n-step>
+
+              <n-step title="管理任务">
+                <n-space vertical>
+                  <n-text depth="3">
+                    在看板中创建任务，拖拽任务卡片可调整其状态（待办 → 进行中 → 已完成）。
+                  </n-text>
+                  <n-text depth="3">
+                    任务可以关联到特定的工作区和分支。
+                  </n-text>
+                  <n-text depth="3">
+                    把你要做的事情一一列上去。
+                  </n-text>
+                </n-space>
+              </n-step>
+
+              <n-step title="启动终端，开始工作">
+                <n-space vertical>
+                  <n-text depth="3">
+                    在工作区(Worktrees)卡片中点击「打开终端」按钮，会自动打开终端并切换到该工作区目录。
+                  </n-text>
+                  <n-text depth="3">
+                    现在你可以根据你要完成的任务开一堆终端了，然后在里面分别运行几个AI编程工具，最好把终端标题改成正在进行的任务名字，以免忘记。
+                  </n-text>
+                  <n-text depth="3">
+                    终端窗口的快捷键是 ` (键盘上数字1左边的那个键)，焦点不在终端上的时候可以用来开关终端。
+                  </n-text>
+                  <n-text depth="3" type="success">
+                    <n-icon size="16"><AlertCircleOutline /></n-icon>
+                    终端适合运行 CLI AI 编程工具（如 claude code、codex、droid、gemini code 等），
+                    在一个界面中集中管理所有 AI 编程会话，随时切换项目和工作区。
+                  </n-text>
+                </n-space>
+              </n-step>
+
+              <n-step title="提交代码">
+                <n-space vertical>
+                  <n-text depth="3">
+                    在你感觉合适的时候进行代码提交。
+                  </n-text>
+                  <n-text depth="3">
+                    如果你是从分支进行提交，那我建议最好在提交前进行一下rebase，Code Kanban提供了这个功能，然后以squash或者merge的方式并入主分支，又或者去发起一个PR，据当前项目的要求而定。
+                  </n-text>
+                </n-space>
+              </n-step>
+
+              <n-step title="完成任务">
+                <n-space vertical>
+                  <n-text depth="3">
+                    当你确定已经搞好的时候，在任务板上，将任务拖到已完成。
+                  </n-text>
+                  <n-text depth="3">
+                    最后将临时的工作分支删掉，结束！
+                  </n-text>
+                </n-space>
+              </n-step>
+            </n-steps>
+          </n-tab-pane>
+        </n-tabs>
       </n-card>
 
       <!-- 核心功能 -->
@@ -519,6 +603,7 @@
               <n-li>AI进化的速度超过了人们的想象，确实很厉害，顿时感觉自己处于一个夕阳行业中了。</n-li>
               <n-li>项目名字是临时乱起的，也许后面会有个正式点的名字和版本号。</n-li>
               <n-li>希望大家用来提高效率改善生活，不要用来内卷，搞窝里斗。</n-li>
+              <n-li>如果感觉好用，也可以赞助一点。</n-li>
             </n-ul>
           </div>
 
@@ -529,11 +614,11 @@
             <n-ul>
               <n-li>
                 <n-text>GitHub Issues：</n-text>
-                <n-a href="https://github.com/fy0/aicode-kanban/issues" target="_blank">提交 bug 报告或功能请求</n-a>
+                <a href="https://github.com/fy0/CodeKanban/issues" target="_blank">提交 bug 报告或功能请求</a>
               </n-li>
               <n-li>
                 <n-text>项目仓库：</n-text>
-                <n-a href="https://github.com/fy0/aicode-kanban" target="_blank">查看源码和文档</n-a>
+                <a href="https://github.com/fy0/CodeKanban" target="_blank">查看源码和文档</a>
               </n-li>
             </n-ul>
           </div>
@@ -552,14 +637,14 @@
               />
               <n-space vertical :size="4">
                 <n-space :size="8">
-                  <n-a href="https://github.com/fy0" target="_blank">
+                  <a href="https://github.com/fy0" target="_blank">
                     <n-space :size="4" align="center">
                       <n-text>@fy0</n-text>
                     </n-space>
-                  </n-a>
+                  </a>
                 </n-space>
                 <n-text depth="3" style="font-size: 13px">
-                  感谢使用 AICode Kanban，希望能提升你的开发效率！
+                  感谢使用 Code Kanban，希望能提升你的开发效率！
                 </n-text>
               </n-space>
             </n-space>
@@ -568,7 +653,9 @@
           <n-divider />
 
           <n-text type="success">
-            ⭐ 如果觉得这个项目对你有帮助，欢迎在 GitHub 上给个 Star！
+            <a href="https://github.com/fy0/CodeKanban" target="_blank">
+              ⭐ 如果觉得这个项目对你有帮助，欢迎在 GitHub 上给个 Star！
+            </a>
           </n-text>
         </n-space>
       </n-card>
@@ -577,6 +664,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useTitle } from '@vueuse/core';
 import {
@@ -592,6 +680,7 @@ import { APP_NAME } from '@/constants/app';
 useTitle(`使用指引 - ${APP_NAME}`);
 
 const router = useRouter();
+const workflowTab = ref('quick'); // 默认显示快速开始
 
 function goBack() {
   router.push({ name: 'projects' });
@@ -607,6 +696,12 @@ function openGithub() {
   padding: 24px;
   max-width: 1200px;
   margin: 0 auto;
+}
+
+.title-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .guide-content {

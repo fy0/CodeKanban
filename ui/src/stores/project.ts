@@ -112,7 +112,8 @@ export const useProjectStore = defineStore('project', () => {
     payload: { branchName: string; baseBranch?: string; createBranch?: boolean },
   ) {
     const worktree = await worktreeApi.create(projectId, payload);
-    // 不在这里 push，让调用方负责刷新完整列表以获取最新的 git 状态
+    // 创建成功后立即刷新列表，确保 UI 能及时更新
+    await fetchWorktrees(projectId);
     return worktree;
   }
 

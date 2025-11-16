@@ -17,7 +17,7 @@ type ProjectTable struct {
 	WorktreeBasePath string     `gorm:"type:text" json:"worktreeBasePath"`
 	RemoteURL        string     `gorm:"type:text" json:"remoteUrl"`
 	LastSyncAt       *time.Time `gorm:"type:datetime" json:"lastSyncAt"`
-	HidePath         bool       `gorm:"not null;default:false" json:"hidePath"`
+	HidePath         bool       `gorm:"type:boolean;not null;default:false" json:"hidePath"`
 }
 
 // TableName maps the gorm model to the projects table.

@@ -33,20 +33,7 @@ INSERT INTO projects (
 ) RETURNING *;
 
 -- name: ProjectList :many
-SELECT
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  name,
-  path,
-  description,
-  default_branch,
-  worktree_base_path,
-  remote_url,
-  hide_path,
-  last_sync_at
-FROM projects
+SELECT * FROM projects
 WHERE deleted_at IS NULL
 ORDER BY created_at DESC;
 

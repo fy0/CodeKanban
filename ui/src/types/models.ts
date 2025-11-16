@@ -33,6 +33,7 @@ export interface Task {
   id: string;
   projectId: string;
   worktreeId?: string | null;
+  branchName: string; // 关联的分支名称，即使worktree被删除也能显示
   title: string;
   description: string;
   status: 'todo' | 'in_progress' | 'done' | 'archived';

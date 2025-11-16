@@ -136,11 +136,15 @@ function handleChange(event: any) {
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .task-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
+  min-height: 100%;
 }
 </style>

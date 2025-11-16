@@ -3,7 +3,21 @@
     <div class="board-header">
       <n-space justify="space-between" align="center">
         <div>
-          <h2>任务看板</h2>
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+            <h2 style="margin: 0;">任务看板</h2>
+            <n-button
+              size="tiny"
+              text
+              :disabled="!projectId || boardLoading"
+              :loading="boardLoading"
+              @click="fetchTasks(currentProjectId)"
+              style="font-size: 16px;"
+            >
+              <template #icon>
+                <n-icon size="16"><RefreshOutline /></n-icon>
+              </template>
+            </n-button>
+          </div>
           <n-text depth="3">拖拽卡片以重新排序或切换状态</n-text>
         </div>
         <div class="board-header__actions">
@@ -87,7 +101,7 @@ import { computed, inject, ref, watch, type Ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useClipboard } from '@vueuse/core';
 import { useDialog, useMessage } from 'naive-ui';
-import { AddOutline } from '@vicons/ionicons5';
+import { AddOutline, RefreshOutline } from '@vicons/ionicons5';
 import KanbanColumn from './KanbanColumn.vue';
 import TaskCreateDialog from './TaskCreateDialog.vue';
 import TaskDetailDrawer from './TaskDetailDrawer.vue';

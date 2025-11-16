@@ -1,1 +1,1 @@
-export const APP_NAME = 'AI Code Kanban';
+export const APP_NAME = 'Code Kanban';

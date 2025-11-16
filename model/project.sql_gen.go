@@ -35,7 +35,7 @@ INSERT INTO projects (
   ?9,
   ?10,
   ?11
-) RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, hide_path, last_sync_at
+) RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path
 `
 
 type ProjectCreateParams struct {
@@ -78,14 +78,14 @@ func (q *Queries) ProjectCreate(ctx context.Context, arg *ProjectCreateParams) (
 		&i.DefaultBranch,
 		&i.WorktreeBasePath,
 		&i.RemoteUrl,
-		&i.HidePath,
 		&i.LastSyncAt,
+		&i.HidePath,
 	)
 	return &i, err
 }
 
 const projectGetByID = `-- name: ProjectGetByID :one
-SELECT id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, hide_path, last_sync_at FROM projects
+SELECT id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path FROM projects
 WHERE id = ?1
   AND deleted_at IS NULL
 LIMIT 1
@@ -105,27 +105,14 @@ func (q *Queries) ProjectGetByID(ctx context.Context, id string) (*Project, erro
 		&i.DefaultBranch,
 		&i.WorktreeBasePath,
 		&i.RemoteUrl,
-		&i.HidePath,
 		&i.LastSyncAt,
+		&i.HidePath,
 	)
 	return &i, err
 }
 
 const projectList = `-- name: ProjectList :many
-SELECT
-  id,
-  created_at,
-  updated_at,
-  deleted_at,
-  name,
-  path,
-  description,
-  default_branch,
-  worktree_base_path,
-  remote_url,
-  hide_path,
-  last_sync_at
-FROM projects
+SELECT id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path FROM projects
 WHERE deleted_at IS NULL
 ORDER BY created_at DESC
 `
@@ -150,8 +137,8 @@ func (q *Queries) ProjectList(ctx context.Context) ([]*Project, error) {
 			&i.DefaultBranch,
 			&i.WorktreeBasePath,
 			&i.RemoteUrl,
-			&i.HidePath,
 			&i.LastSyncAt,
+			&i.HidePath,
 		); err != nil {
 			return nil, err
 		}
@@ -166,6 +153,29 @@ func (q *Queries) ProjectList(ctx context.Context) ([]*Project, error) {
 	return items, nil
 }
 
+const projectSoftDelete = `-- name: ProjectSoftDelete :execrows
+UPDATE projects
+SET
+  deleted_at = ?1,
+  updated_at = ?2
+WHERE id = ?3
+  AND deleted_at IS NULL
+`
+
+type ProjectSoftDeleteParams struct {
+	DeletedAt *time.Time `db:"deleted_at" json:"deletedAt"`
+	UpdatedAt time.Time  `db:"updated_at" json:"updatedAt"`
+	Id        string     `db:"id" json:"id"`
+}
+
+func (q *Queries) ProjectSoftDelete(ctx context.Context, arg *ProjectSoftDeleteParams) (int64, error) {
+	result, err := q.exec(ctx, q.projectSoftDeleteStmt, projectSoftDelete, arg.DeletedAt, arg.UpdatedAt, arg.Id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const projectUpdate = `-- name: ProjectUpdate :one
 UPDATE projects
 SET
@@ -175,7 +185,7 @@ SET
   hide_path = ?4
 WHERE id = ?5
   AND deleted_at IS NULL
-RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, hide_path, last_sync_at
+RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path
 `
 
 type ProjectUpdateParams struct {
@@ -206,31 +216,8 @@ func (q *Queries) ProjectUpdate(ctx context.Context, arg *ProjectUpdateParams) (
 		&i.DefaultBranch,
 		&i.WorktreeBasePath,
 		&i.RemoteUrl,
-		&i.HidePath,
 		&i.LastSyncAt,
+		&i.HidePath,
 	)
 	return &i, err
-}
-
-const projectSoftDelete = `-- name: ProjectSoftDelete :execrows
-UPDATE projects
-SET
-  deleted_at = ?1,
-  updated_at = ?2
-WHERE id = ?3
-  AND deleted_at IS NULL
-`
-
-type ProjectSoftDeleteParams struct {
-	DeletedAt *time.Time `db:"deleted_at" json:"deletedAt"`
-	UpdatedAt time.Time  `db:"updated_at" json:"updatedAt"`
-	Id        string     `db:"id" json:"id"`
-}
-
-func (q *Queries) ProjectSoftDelete(ctx context.Context, arg *ProjectSoftDeleteParams) (int64, error) {
-	result, err := q.exec(ctx, q.projectSoftDeleteStmt, projectSoftDelete, arg.DeletedAt, arg.UpdatedAt, arg.Id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }

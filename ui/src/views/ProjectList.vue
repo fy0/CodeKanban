@@ -2,12 +2,12 @@
   <div class="project-list-page">
     <n-page-header>
       <template #title>
-        <n-space align="center">
+        <div class="title-wrapper">
           <n-icon size="24">
             <FolderOpenOutline />
           </n-icon>
           <span>{{ APP_NAME }}</span>
-        </n-space>
+        </div>
       </template>
       <template #extra>
         <n-space>
@@ -75,7 +75,9 @@
           </n-space>
         </n-card>
       </div>
-      <n-empty v-else description="还没有任何项目，点击右上角创建一个吧" />
+      <div v-else class="empty-container">
+        <n-empty description="还没有任何项目，点击右上角创建一个吧" />
+      </div>
     </n-spin>
 
     <ProjectCreateDialog v-model:show="showCreateDialog" @success="handleProjectCreated" />
@@ -205,10 +207,24 @@ async function handleProjectUpdated() {
   margin: 0 auto;
 }
 
+.title-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .project-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
+  margin-top: 24px;
+}
+
+.empty-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
   margin-top: 24px;
 }
 

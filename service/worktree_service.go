@@ -123,13 +123,18 @@ func (s *WorktreeService) CreateWorktree(
 		return nil, err
 	}
 
-	if s != nil && s.asyncStatusRefresh {
-		go s.RefreshWorktreeStatus(context.Background(), worktree.Id)
-	} else {
-		_, _ = s.RefreshWorktreeStatus(ctx, worktree.Id)
+	// 同步刷新状态，确保返回的 worktree 包含最新的 git 状态信息
+	refreshed, err := s.RefreshWorktreeStatus(ctx, worktree.Id)
+	if err != nil {
+		// 如果刷新状态失败，记录警告但不影响创建流程
+		utils.Logger().Warn("failed to refresh worktree status after creation",
+			zap.Error(err),
+			zap.String("worktreeId", worktree.Id),
+		)
+		return worktree, nil
 	}
 
-	return worktree, nil
+	return refreshed, nil
 }
 
 // ListWorktrees returns worktrees for a project ordered by main flag then creation.
@@ -362,9 +367,15 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 		return err
 	}
 
+	// 如果不是 git 仓库，直接返回成功（非 git 目录没有 worktrees 需要同步）
 	gitRepo, err := git.DetectRepository(project.Path)
 	if err != nil {
-		return err
+		utils.Logger().Debug("project is not a git repository, skip worktree sync",
+			zap.String("projectId", projectID),
+			zap.String("path", project.Path),
+			zap.Error(err),
+		)
+		return nil
 	}
 
 	gitWorktrees, err := gitRepo.ListWorktrees()
@@ -516,7 +527,7 @@ func (s *WorktreeService) resolveWorktreePath(project *model.Project, branchName
 	if project.WorktreeBasePath != nil && strings.TrimSpace(*project.WorktreeBasePath) != "" {
 		basePath = *project.WorktreeBasePath
 	} else {
-		basePath = filepath.Join(project.Path, "worktrees")
+		basePath = filepath.Join(project.Path, ".worktrees")
 	}
 	if !filepath.IsAbs(basePath) {
 		basePath = filepath.Join(project.Path, basePath)

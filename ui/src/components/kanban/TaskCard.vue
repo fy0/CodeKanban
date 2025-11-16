@@ -55,8 +55,8 @@
 
     <div class="task-card__meta">
       <n-space size="small" wrap>
-        <n-tag v-if="task.worktree?.branchName" size="tiny" :bordered="false">
-          {{ task.worktree.branchName }}
+        <n-tag v-if="displayBranchName" size="tiny" :bordered="false">
+          {{ displayBranchName }}
         </n-tag>
         <n-tag v-if="task.dueDate" size="tiny" :type="isOverdue ? 'error' : 'default'" :bordered="false">
           截止 {{ formatDate(task.dueDate) }}
@@ -99,6 +99,11 @@ const priorityMap: Record<number, { label: string; type: 'default' | 'info' | 'w
 
 const priorityType = computed(() => priorityMap[props.task.priority]?.type ?? 'default');
 const priorityLabel = computed(() => priorityMap[props.task.priority]?.label ?? '');
+
+// 优先显示 branchName，如果没有再尝试从 worktree 中获取
+const displayBranchName = computed(() => {
+  return props.task.branchName || props.task.worktree?.branchName || '';
+});
 
 const isOverdue = computed(() => {
   if (!props.task.dueDate) {

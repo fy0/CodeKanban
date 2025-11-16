@@ -117,9 +117,9 @@ func (s *ProjectService) CreateProject(ctx context.Context, params CreateProject
 	worktreeBase := strings.TrimSpace(params.WorktreeBasePath)
 	if worktreeBase == "" {
 		if gitRepo != nil {
-			worktreeBase = filepath.Join(gitRepo.Path, "worktrees")
+			worktreeBase = filepath.Join(gitRepo.Path, ".worktrees")
 		} else {
-			worktreeBase = filepath.Join(cleanPath, "worktrees")
+			worktreeBase = filepath.Join(cleanPath, ".worktrees")
 		}
 	} else {
 		worktreeBase = filepath.Clean(worktreeBase)
@@ -154,7 +154,13 @@ func (s *ProjectService) CreateProject(ctx context.Context, params CreateProject
 		return nil, err
 	}
 
-	s.dispatchWorktreeSync(ctx, project.Id, gitRepo)
+	// 如果是 git 仓库，同步 worktrees；否则创建一个虚拟的 main worktree
+	if gitRepo != nil {
+		s.dispatchWorktreeSync(ctx, project.Id, gitRepo)
+	} else {
+		// 为非 git 目录创建虚拟 worktree，使终端等功能可用
+		s.createVirtualMainWorktree(ctx, project.Id, cleanPath, defaultBranch)
+	}
 	return project, nil
 }
 
@@ -385,6 +391,69 @@ func (s *ProjectService) syncWorktrees(ctx context.Context, projectID string, re
 				zap.String("worktreeId", worktreeID),
 			)
 		}
+	}
+}
+
+// createVirtualMainWorktree 为非 git 目录创建一个虚拟的 main worktree，使终端等功能可用
+func (s *ProjectService) createVirtualMainWorktree(ctx context.Context, projectID, projectPath, branchName string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	q, err := resolveQueries(nil)
+	if err != nil {
+		return
+	}
+
+	logger := utils.Logger()
+
+	// 检查是否已经存在 worktree
+	existingWorktrees, err := q.WorktreeListByProject(ctx, projectID)
+	if err != nil {
+		logger.Warn("failed to check existing worktrees",
+			zap.Error(err),
+			zap.String("projectId", projectID),
+		)
+		return
+	}
+
+	// 如果已经有 worktree，不创建
+	if len(existingWorktrees) > 0 {
+		return
+	}
+
+	// 创建虚拟 main worktree
+	now := time.Now()
+	zeroVal := int64(0)
+	_, err = q.WorktreeCreate(ctx, &WorktreeCreateParams{
+		Id:              utils.NewID(),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ProjectId:       projectID,
+		BranchName:      branchName,
+		Path:            filepath.Clean(projectPath),
+		IsMain:          true,
+		IsBare:          false,
+		HeadCommit:      nil,
+		StatusAhead:     &zeroVal,
+		StatusBehind:    &zeroVal,
+		StatusModified:  &zeroVal,
+		StatusStaged:    &zeroVal,
+		StatusUntracked: &zeroVal,
+		StatusConflicts: &zeroVal,
+		StatusUpdatedAt: nil,
+	})
+	if err != nil {
+		logger.Warn("failed to create virtual main worktree for non-git project",
+			zap.Error(err),
+			zap.String("projectId", projectID),
+			zap.String("path", projectPath),
+		)
+	} else {
+		logger.Debug("created virtual main worktree for non-git project",
+			zap.String("projectId", projectID),
+			zap.String("path", projectPath),
+		)
 	}
 }
 

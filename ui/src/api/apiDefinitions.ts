@@ -43,6 +43,7 @@ export default {
   'terminalSession.create': ['POST', '/api/v1/projects/{projectId}/worktrees/{worktreeId}/terminals'],
   'ptyTest.sessionCreate': ['POST', '/api/v1/pty-test/sessions'],
   'ptyTest.sessionClose': ['POST', '/api/v1/pty-test/sessions/{sessionId}'],
+  'system.openEditor': ['POST', '/api/v1/system/open-editor'],
   'system.openExplorer': ['POST', '/api/v1/system/open-explorer'],
   'system.openTerminal': ['POST', '/api/v1/system/open-terminal'],
   'taskComment.delete': ['POST', '/api/v1/task-comments/{id}'],

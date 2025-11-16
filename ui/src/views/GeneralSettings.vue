@@ -172,7 +172,7 @@
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
-import { useTitle, useEventListener } from '@vueuse/core';
+import { useTitle, useEventListener, useDebounceFn } from '@vueuse/core';
 import { useMessage } from 'naive-ui';
 import { ColorPaletteOutline, SettingsOutline, RefreshOutline } from '@vicons/ionicons5';
 import {
@@ -236,14 +236,32 @@ const customEditorCommandValue = computed({
 
 const showCustomEditorInput = computed(() => defaultEditorValue.value === 'custom');
 
+// 使用本地 ref + 防抖来避免输入过程中立即删除项目
+const recentProjectsLimitLocal = ref(recentProjectsLimit.value);
+const debouncedUpdateRecentProjectsLimit = useDebounceFn((value: number) => {
+  settingsStore.updateRecentProjectsLimit(value ?? 10);
+}, 800);
+
 const recentProjectsLimitValue = computed({
-  get: () => recentProjectsLimit.value,
-  set: value => settingsStore.updateRecentProjectsLimit(value ?? 10),
+  get: () => recentProjectsLimitLocal.value,
+  set: (value) => {
+    recentProjectsLimitLocal.value = value ?? 10;
+    debouncedUpdateRecentProjectsLimit(value ?? 10);
+  },
 });
 
+// 单项目终端上限也应用相同的防抖机制
+const terminalLimitLocal = ref(maxTerminalsPerProject.value);
+const debouncedUpdateTerminalLimit = useDebounceFn((value: number) => {
+  settingsStore.updateMaxTerminalsPerProject(value ?? 12);
+}, 800);
+
 const terminalLimitValue = computed({
-  get: () => maxTerminalsPerProject.value,
-  set: value => settingsStore.updateMaxTerminalsPerProject(value ?? 12),
+  get: () => terminalLimitLocal.value,
+  set: (value) => {
+    terminalLimitLocal.value = value ?? 12;
+    debouncedUpdateTerminalLimit(value ?? 12);
+  },
 });
 
 const confirmTerminalCloseValue = computed({

@@ -27,7 +27,7 @@ func TestBranchServiceListMarksWorktrees(t *testing.T) {
 	}
 
 	branchSvc := NewBranchService()
-	result, err := branchSvc.ListBranches(context.Background(), project.Id)
+	result, err := branchSvc.ListBranches(context.Background(), project.Id, true)
 	if err != nil {
 		t.Fatalf("ListBranches returned error: %v", err)
 	}

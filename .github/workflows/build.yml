@@ -16,14 +16,14 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         include:
           - os: ubuntu-latest
-            artifact_name: aicode-kanban-linux-amd64
-            exe_name: aicode-kanban
+            artifact_name: CodeKanban-linux-amd64
+            exe_name: CodeKanban
           - os: windows-latest
-            artifact_name: aicode-kanban-windows-amd64
-            exe_name: aicode-kanban.exe
+            artifact_name: CodeKanban-windows-amd64
+            exe_name: CodeKanban.exe
           - os: macos-latest
-            artifact_name: aicode-kanban-macos-amd64
-            exe_name: aicode-kanban
+            artifact_name: CodeKanban-macos-amd64
+            exe_name: CodeKanban
 
     steps:
       - name: Checkout code
@@ -103,18 +103,18 @@ jobs:
           mkdir -p release
 
           # Package Windows binary as .zip
-          cd artifacts/aicode-kanban-windows-amd64
-          zip ../../release/aicode-kanban-windows-amd64.zip aicode-kanban.exe
+          cd artifacts/CodeKanban-windows-amd64
+          zip ../../release/CodeKanban-windows-amd64.zip CodeKanban.exe
           cd ../..
 
           # Package Linux binary as .tar.gz
-          cd artifacts/aicode-kanban-linux-amd64
-          tar -czf ../../release/aicode-kanban-linux-amd64.tar.gz aicode-kanban
+          cd artifacts/CodeKanban-linux-amd64
+          tar -czf ../../release/CodeKanban-linux-amd64.tar.gz CodeKanban
           cd ../..
 
           # Package macOS binary as .tar.gz
-          cd artifacts/aicode-kanban-macos-amd64
-          tar -czf ../../release/aicode-kanban-macos-amd64.tar.gz aicode-kanban
+          cd artifacts/CodeKanban-macos-amd64
+          tar -czf ../../release/CodeKanban-macos-amd64.tar.gz CodeKanban
           cd ../..
 
           # List packaged files

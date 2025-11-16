@@ -19,8 +19,8 @@ type Project struct {
 	DefaultBranch    *string    `db:"default_branch" json:"defaultBranch"`
 	WorktreeBasePath *string    `db:"worktree_base_path" json:"worktreeBasePath"`
 	RemoteUrl        *string    `db:"remote_url" json:"remoteUrl"`
-	HidePath         bool       `db:"hide_path" json:"hidePath"`
 	LastSyncAt       *time.Time `db:"last_sync_at" json:"lastSyncAt"`
+	HidePath         bool       `db:"hide_path" json:"hidePath"`
 }
 
 type User struct {

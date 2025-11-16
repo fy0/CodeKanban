@@ -116,7 +116,7 @@ export interface CreateProjectInputBody {
    */
   description: string;
   /**
-   * �Ƿ�����·��
+   * 是否隐藏真实路径
    */
   hidePath?: boolean;
   /**
@@ -157,6 +157,24 @@ export interface PtyTestCreateInputBody {
    * 工作目录，可选
    */
   workingDir: string;
+}
+export interface OpenEditorInputBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 自定义命令，使用 {{path}} 作为路径占位符
+   */
+  customCommand?: string;
+  /**
+   * 目标编辑器(vscode/cursor/trae/zed/custom)
+   */
+  editor: string;
+  /**
+   * 目标路径
+   */
+  path: string;
 }
 export interface OpenPathInputBody {
   /**
@@ -246,15 +264,15 @@ export interface UpdateProjectInputBody {
    */
   $schema?: string;
   /**
-   * ��Ŀ����
+   * 项目描述
    */
   description: string;
   /**
-   * �Ƿ�����·��
+   * 是否隐藏真实路径
    */
   hidePath: boolean;
   /**
-   * ��Ŀ����
+   * 项目名称
    */
   name: string;
 }
@@ -1205,7 +1223,7 @@ declare global {
        *   $schema?: string
        *   // 项目描述
        *   description: string
-       *   // �Ƿ�����·��
+       *   // 是否隐藏真实路径
        *   hidePath?: boolean
        *   // 项目名称
        *   name: string
@@ -1338,7 +1356,7 @@ declare global {
       /**
        * ---
        *
-       * [POST] �༭��Ŀ
+       * [POST] 编辑项目
        *
        * **path:** /api/v1/projects/{id}/update
        *
@@ -1358,11 +1376,11 @@ declare global {
        * type RequestBody = {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
-       *   // ��Ŀ����
+       *   // 项目描述
        *   description: string
-       *   // �Ƿ�����·��
+       *   // 是否隐藏真实路径
        *   hidePath: boolean
-       *   // ��Ŀ����
+       *   // 项目名称
        *   name: string
        * }
        * ```
@@ -3215,6 +3233,48 @@ declare global {
       ): Alova2Method<MessageResponseBody, 'ptyTest.sessionClose', Config>;
     };
     system: {
+      /**
+       * ---
+       *
+       * [POST] 使用指定编辑器打开目录
+       *
+       * **path:** /api/v1/system/open-editor
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 自定义命令，使用 {{path}} 作为路径占位符
+       *   customCommand?: string
+       *   // 目标编辑器(vscode/cursor/trae/zed/custom)
+       *   editor: string
+       *   // 目标路径
+       *   path: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      openEditor<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          data: OpenEditorInputBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'system.openEditor', Config>;
       /**
        * ---
        *

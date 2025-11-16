@@ -97,11 +97,14 @@ func (s *TaskService) CreateTask(ctx context.Context, req *CreateTaskRequest) (*
 	}
 
 	var worktreeID *string
+	var branchName string
 	if req.WorktreeID != nil && strings.TrimSpace(*req.WorktreeID) != "" {
 		worktreeID = req.WorktreeID
-		if err := s.ensureWorktreeBelongsToProject(dbCtx, *worktreeID, projectID); err != nil {
+		worktree, err := s.getWorktreeWithBranch(dbCtx, *worktreeID, projectID)
+		if err != nil {
 			return nil, err
 		}
+		branchName = worktree.BranchName
 	}
 
 	orderIndex, err := s.getNextOrderIndex(dbCtx, projectID, status)
@@ -112,6 +115,7 @@ func (s *TaskService) CreateTask(ctx context.Context, req *CreateTaskRequest) (*
 	task := &tables.TaskTable{
 		ProjectID:   projectID,
 		WorktreeID:  worktreeID,
+		BranchName:  branchName,
 		Title:       title,
 		Description: strings.TrimSpace(req.Description),
 		Status:      status,
@@ -229,12 +233,13 @@ func (s *TaskService) UpdateTask(ctx context.Context, id string, updates map[str
 	}
 
 	if value, ok := updates["worktree_id"]; ok {
-		if value == nil {
-			if err := dbCtx.Model(&tables.TaskTable{}).Where("id = ?", id).Update("worktree_id", nil).Error; err != nil {
-				return nil, err
-			}
-			delete(updates, "worktree_id")
+		if err := dbCtx.
+			Model(&tables.TaskTable{}).
+			Where("id = ?", id).
+			Update("worktree_id", value).Error; err != nil {
+			return nil, err
 		}
+		delete(updates, "worktree_id")
 	}
 
 	if len(updates) > 0 {
@@ -306,11 +311,38 @@ func (s *TaskService) MoveTask(ctx context.Context, id string, req *MoveTaskRequ
 	if req.WorktreeID != nil {
 		if *req.WorktreeID == "" {
 			updates["worktree_id"] = nil
+			updates["branch_name"] = ""
 		} else {
-			if err := s.ensureWorktreeBelongsToProject(dbCtx, *req.WorktreeID, task.ProjectID); err != nil {
+			worktree, err := s.getWorktreeWithBranch(dbCtx, *req.WorktreeID, task.ProjectID)
+			if err != nil {
 				return nil, err
 			}
 			updates["worktree_id"] = *req.WorktreeID
+			updates["branch_name"] = worktree.BranchName
+		}
+	}
+
+	// 当任务从完成状态改回其他状态时，验证关联的分支是否还存在
+	// 注意：task.Status 已经在上面被更新为新状态（如果有的话）
+	originalStatus := task.Status
+	if _, exists := updates["status"]; exists {
+		// 如果状态被更新了，需要检查原始状态
+		var origTask tables.TaskTable
+		if err := dbCtx.First(&origTask, "id = ?", id).Error; err == nil {
+			originalStatus = origTask.Status
+		}
+	}
+
+	newStatus := task.Status
+	if originalStatus == "done" && newStatus != "" && newStatus != "done" {
+		if task.WorktreeID != nil && task.BranchName != "" {
+			// 尝试获取worktree，如果不存在则清除绑定
+			_, err := s.getWorktreeWithBranch(dbCtx, *task.WorktreeID, task.ProjectID)
+			if err != nil {
+				// worktree已被删除，清除绑定
+				updates["worktree_id"] = nil
+				updates["branch_name"] = ""
+			}
 		}
 	}
 
@@ -333,11 +365,14 @@ func (s *TaskService) BindWorktree(ctx context.Context, id string, worktreeID *s
 	updates := map[string]interface{}{}
 	if worktreeID == nil || strings.TrimSpace(*worktreeID) == "" {
 		updates["worktree_id"] = nil
+		updates["branch_name"] = ""
 	} else {
-		if err := s.ensureWorktreeBelongsToProject(dbCtx, *worktreeID, task.ProjectID); err != nil {
+		worktree, err := s.getWorktreeWithBranch(dbCtx, *worktreeID, task.ProjectID)
+		if err != nil {
 			return nil, err
 		}
 		updates["worktree_id"] = *worktreeID
+		updates["branch_name"] = worktree.BranchName
 	}
 
 	return s.UpdateTask(ctx, id, updates)
@@ -406,4 +441,19 @@ func (s *TaskService) ensureWorktreeBelongsToProject(dbCtx *gorm.DB, worktreeID,
 		return fmt.Errorf("worktree does not belong to project")
 	}
 	return nil
+}
+
+// getWorktreeWithBranch 获取 worktree 并验证其归属，返回 worktree 以便获取分支名称
+func (s *TaskService) getWorktreeWithBranch(dbCtx *gorm.DB, worktreeID, projectID string) (*tables.WorktreeTable, error) {
+	var worktree tables.WorktreeTable
+	if err := dbCtx.First(&worktree, "id = ?", worktreeID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrWorktreeNotFound
+		}
+		return nil, err
+	}
+	if worktree.ProjectID != projectID {
+		return nil, fmt.Errorf("worktree does not belong to project")
+	}
+	return &worktree, nil
 }

@@ -31,14 +31,16 @@ func NewBranchService() *BranchService {
 }
 
 // ListBranches enumerates local/remote branches for a project, marking worktree associations.
-func (s *BranchService) ListBranches(ctx context.Context, projectID string) (_ *model.BranchListResult, err error) {
+func (s *BranchService) ListBranches(ctx context.Context, projectID string, forceRefresh bool) (_ *model.BranchListResult, err error) {
 	ctx = ensureContext(ctx)
 	logger := s.logger(ctx)
 	if strings.TrimSpace(projectID) == "" {
 		return nil, fmt.Errorf("project id is required")
 	}
 
-	if result := s.getCached(projectID); result != nil {
+	if forceRefresh {
+		s.invalidateCache(projectID)
+	} else if result := s.getCached(projectID); result != nil {
 		logger.Debug("branch list cache hit", zap.String("projectId", projectID))
 		return result, nil
 	}
