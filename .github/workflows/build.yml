@@ -3,6 +3,8 @@ name: Build
 on:
   push:
     branches: [ master, main, develop ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ master, main ]
   workflow_dispatch:
@@ -73,9 +75,31 @@ jobs:
           rm -rf static/*
           cp -r ui/dist/* static/
 
+      - name: Extract version info
+        id: version
+        shell: bash
+        run: |
+          BUILD_DATE=$(date +%Y%m%d)
+          echo "BUILD_METADATA=+${BUILD_DATE}" >> $GITHUB_OUTPUT
+
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Tag build (stable release)
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "VERSION_MAIN=${TAG_VERSION}" >> $GITHUB_OUTPUT
+            echo "VERSION_PRERELEASE=" >> $GITHUB_OUTPUT
+            echo "APP_CHANNEL=stable" >> $GITHUB_OUTPUT
+          else
+            # Commit build (development)
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            TAG_VERSION="${LATEST_TAG#v}"
+            echo "VERSION_MAIN=${TAG_VERSION}" >> $GITHUB_OUTPUT
+            echo "VERSION_PRERELEASE=-alpha" >> $GITHUB_OUTPUT
+            echo "APP_CHANNEL=dev" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build Go binary
         run: |
-          go build -ldflags="-s -w" -trimpath -o ${{ matrix.exe_name }}
+          go build -ldflags="-s -w -X 'main.VERSION_MAIN=${{ steps.version.outputs.VERSION_MAIN }}' -X 'main.VERSION_PRERELEASE=${{ steps.version.outputs.VERSION_PRERELEASE }}' -X 'main.VERSION_BUILD_METADATA=${{ steps.version.outputs.BUILD_METADATA }}' -X 'main.APP_CHANNEL=${{ steps.version.outputs.APP_CHANNEL }}'" -trimpath -o ${{ matrix.exe_name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -93,6 +117,39 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${CURRENT_TAG}^ 2>/dev/null || echo "")
+
+          echo "Current tag: ${CURRENT_TAG}"
+          echo "Previous tag: ${PREVIOUS_TAG}"
+
+          {
+            echo "CHANGELOG<<EOF"
+            echo "## What's Changed"
+            echo ""
+
+            if [ -n "${PREVIOUS_TAG}" ]; then
+              # Get commits between previous tag and current tag
+              git log ${PREVIOUS_TAG}..${CURRENT_TAG} --pretty=format:"- %s (%h)" --no-merges
+            else
+              # First release, get all commits
+              git log ${CURRENT_TAG} --pretty=format:"- %s (%h)" --no-merges | head -20
+            fi
+
+            echo ""
+            echo ""
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${CURRENT_TAG}"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -124,6 +181,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
+          body: ${{ steps.changelog.outputs.CHANGELOG }}
           draft: false
           prerelease: false
         env:
