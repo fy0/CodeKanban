@@ -100,15 +100,4 @@ export const systemApi = {
   async openEditor(options: { path: string; editor: string; customCommand?: string }): Promise<void> {
     await http.Post('/system/open-editor', options).send();
   },
-  async getVersion(): Promise<{ name: string; version: string; channel: string }> {
-    const body =
-      (await http
-        .Get<{ name?: string; version?: string; channel?: string }>('/system/version')
-        .send()) ?? {};
-    return {
-      name: body.name ?? 'Unknown',
-      version: body.version ?? '0.0.0',
-      channel: body.channel ?? 'unknown',
-    };
-  },
 };

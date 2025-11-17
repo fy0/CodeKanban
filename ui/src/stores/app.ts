@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import { systemApi } from '@/api/project';
 
 export interface AppInfo {
   name: string;
@@ -15,30 +14,12 @@ export const useAppStore = defineStore('app', () => {
     channel: 'unknown',
   });
 
-  const loading = ref(false);
-  const loaded = ref(false);
-
-  async function fetchAppInfo() {
-    if (loaded.value) {
-      return;
-    }
-
-    try {
-      loading.value = true;
-      const info = await systemApi.getVersion();
-      appInfo.value = info;
-      loaded.value = true;
-    } catch (error) {
-      console.error('Failed to fetch app info:', error);
-    } finally {
-      loading.value = false;
-    }
+  function setAppInfo(info: AppInfo) {
+    appInfo.value = info;
   }
 
   return {
     appInfo,
-    loading,
-    loaded,
-    fetchAppInfo,
+    setAppInfo,
   };
 });
