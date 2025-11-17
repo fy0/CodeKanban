@@ -17,7 +17,7 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 
-	"go-template/utils"
+	"code-kanban/utils"
 )
 
 // SessionStatus describes the lifecycle stage of a terminal session.

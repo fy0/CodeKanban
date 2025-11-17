@@ -12,8 +12,8 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.uber.org/zap"
 
-	"go-template/api/h"
-	"go-template/utils"
+	"code-kanban/api/h"
+	"code-kanban/utils"
 )
 
 const uploadTag = "upload-上传"

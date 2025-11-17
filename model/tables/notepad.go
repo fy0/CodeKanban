@@ -1,7 +1,7 @@
 package tables
 
 import (
-	"go-template/utils/model_base"
+	"code-kanban/utils/model_base"
 )
 
 // NotePadTable stores notepad tabs with their content.

@@ -3,7 +3,7 @@ package tables
 import (
 	"time"
 
-	"go-template/utils/model_base"
+	"code-kanban/utils/model_base"
 )
 
 // WorktreeTable tracks git worktree metadata alongside cached status information.

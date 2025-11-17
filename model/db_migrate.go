@@ -3,8 +3,8 @@ package model
 import (
 	"reflect"
 
-	"go-template/model/tables"
-	"go-template/utils"
+	"code-kanban/model/tables"
+	"code-kanban/utils"
 	"go.uber.org/zap"
 )
 

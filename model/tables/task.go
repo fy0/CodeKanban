@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"go-template/utils/model_base"
+	"code-kanban/utils/model_base"
 )
 
 // StringArray provides json serialization helpers for simple string lists.

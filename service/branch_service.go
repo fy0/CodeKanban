@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"go-template/model"
-	"go-template/model/tables"
-	"go-template/utils"
-	"go-template/utils/cache"
-	"go-template/utils/git"
+	"code-kanban/model"
+	"code-kanban/model/tables"
+	"code-kanban/utils"
+	"code-kanban/utils/cache"
+	"code-kanban/utils/git"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"

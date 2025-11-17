@@ -1,6 +1,6 @@
 package tables
 
-import "go-template/utils/model_base"
+import "code-kanban/utils/model_base"
 
 // TaskCommentTable stores comment threads associated with a task.
 type TaskCommentTable struct {

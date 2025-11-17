@@ -7,9 +7,9 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"go-template/api/h"
-	"go-template/model"
-	"go-template/model/tables"
+	"code-kanban/api/h"
+	"code-kanban/model"
+	"code-kanban/model/tables"
 )
 
 const (

@@ -1,6 +1,6 @@
 package model
 
-import "go-template/utils/git"
+import "code-kanban/utils/git"
 
 // BranchListResult describes the response for listing branches.
 type BranchListResult struct {

@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"go-template/utils"
+	"code-kanban/utils"
 )
 
 type wsMessage struct {

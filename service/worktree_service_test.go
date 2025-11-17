@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"go-template/model"
+	"code-kanban/model"
 )
 
 func TestWorktreeServiceCreateAndRefresh(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humafiber"
 	"github.com/gofiber/fiber/v2"
 
-	"go-template/utils"
+	"code-kanban/utils"
 )
 
 // NewAPI 会基于 Fiber 实例构建 Huma API，并按约定创建 /api/v1 分组。

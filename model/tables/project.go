@@ -3,7 +3,7 @@ package tables
 import (
 	"time"
 
-	"go-template/utils/model_base"
+	"code-kanban/utils/model_base"
 )
 
 // ProjectTable defines the persisted metadata for a tracked git repository.

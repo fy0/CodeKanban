@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"go-template/model"
-	"go-template/utils/sqlc_gen_tools"
+	"code-kanban/model"
+	"code-kanban/utils/sqlc_gen_tools"
 
 	"gopkg.in/yaml.v3"
 )

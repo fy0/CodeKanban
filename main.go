@@ -10,9 +10,9 @@ import (
 	"github.com/jessevdk/go-flags"
 	"go.uber.org/zap"
 
-	"go-template/api"
-	"go-template/model"
-	"go-template/utils"
+	"code-kanban/api"
+	"code-kanban/model"
+	"code-kanban/utils"
 )
 
 //go:embed all:static

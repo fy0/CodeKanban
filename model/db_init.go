@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"go-template/utils/model_base"
+	"code-kanban/utils/model_base"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

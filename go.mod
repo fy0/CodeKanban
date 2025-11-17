@@ -1,4 +1,4 @@
-module go-template
+module code-kanban
 
 go 1.24.6
 

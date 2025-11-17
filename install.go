@@ -30,7 +30,7 @@ func serviceInstall(isInstall bool) {
 	wd, _ := filepath.Abs(cwd)
 
 	svcConfig := &service.Config{
-		Name:             "go-template",
+		Name:             "code-kanban",
 		DisplayName:      "Go Template Service",
 		Description:      "Go 项目模板自动以 Windows 服务运行",
 		WorkingDirectory: wd,

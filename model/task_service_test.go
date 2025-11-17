@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"go-template/model/tables"
+	"code-kanban/model/tables"
 )
 
 func TestTaskServiceLifecycle(t *testing.T) {

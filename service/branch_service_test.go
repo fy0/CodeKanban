@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"testing"
 
-	"go-template/model"
-	"go-template/utils/git"
+	"code-kanban/model"
+	"code-kanban/utils/git"
 )
 
 func TestBranchServiceListMarksWorktrees(t *testing.T) {

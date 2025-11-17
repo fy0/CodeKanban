@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"go-template/model/tables"
+	"code-kanban/model/tables"
 
 	"gorm.io/gorm"
 )

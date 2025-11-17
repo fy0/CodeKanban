@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"go-template/utils"
+	"code-kanban/utils"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

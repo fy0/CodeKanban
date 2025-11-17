@@ -8,10 +8,10 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.uber.org/zap"
 
-	"go-template/api/h"
-	"go-template/model"
-	"go-template/service"
-	"go-template/utils"
+	"code-kanban/api/h"
+	"code-kanban/model"
+	"code-kanban/service"
+	"code-kanban/utils"
 )
 
 const worktreeTag = "worktree-工作树"

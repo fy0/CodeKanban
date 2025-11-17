@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"go-template/model"
-	"go-template/utils"
-	"go-template/utils/git"
+	"code-kanban/model"
+	"code-kanban/utils"
+	"code-kanban/utils/git"
 
 	"go.uber.org/zap"
 )

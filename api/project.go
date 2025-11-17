@@ -7,8 +7,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"go-template/api/h"
-	"go-template/model"
+	"code-kanban/api/h"
+	"code-kanban/model"
 )
 
 const projectTag = "project-项目管理"

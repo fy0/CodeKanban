@@ -17,9 +17,9 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"go.uber.org/zap"
 
-	"go-template/api/h"
-	"go-template/api/terminal"
-	"go-template/utils"
+	"code-kanban/api/h"
+	"code-kanban/api/terminal"
+	"code-kanban/utils"
 )
 
 // AppInfo 应用信息

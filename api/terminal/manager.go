@@ -11,7 +11,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"go-template/utils"
+	"code-kanban/utils"
 )
 
 // Config defines runtime constraints for terminal sessions.

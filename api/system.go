@@ -7,8 +7,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"go-template/api/h"
-	"go-template/utils/system"
+	"code-kanban/api/h"
+	"code-kanban/utils/system"
 )
 
 const systemTag = "system-系统工具"
