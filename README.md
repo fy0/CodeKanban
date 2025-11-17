@@ -1,12 +1,26 @@
+<div align="center">
+
 # 代码看板 Code kanban
 
 AI时代的辅助编程工具，帮助你提速10倍。
 
-## 核心功能
+![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)
+![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
+![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
+![预览图](docs/preview.png)
+
+[核心特性](#核心特性) • [开发指南](#开发指南) • [关于](#关于)
+
+</div>
+
+## 核心特性
+
+- **开箱即用**: 单文件，本地数据库，双击即可使用
 - **多项目多终端管理**：轻松在 3-4 个代码仓库、二十几个终端之间切换，每个终端运行不同的 AI 编程任务
 - **Git Worktree 管理**：轻量级分支管理，同时让 AI 开发多个功能，不满意随时回滚
-- **任务看板系统**：可视化管理开发任务，支持任务状态跟踪和分支关联
+- **任务看板**：可视化管理开发任务，支持任务状态跟踪和分支关联
 - **Web 终端集成**：使用VSC同款技术栈的 Web 终端，支持标签管理、拖动排序、折叠展开等 (快捷键`)
 - **笔记功能**：支持多标签笔记，自动保存，标签可重命名和排序 (快捷键1)
 - **编辑器集成**：快捷打开 VSCode、Cursor、Zed 等编辑器
@@ -87,6 +101,16 @@ go build -ldflags="-s -w" -trimpath -o CodeKanban
 
 **生产环境**：
 运行构建后的可执行文件，访问 `http://localhost:3007`
+
+## 关于
+
+我们处在一个日新月异也异常撕裂的时代，我们的作品也是如此。
+
+这个工具切实的提升了我的效率，但也许效率的提升也会减少工作需求，而AI的发展会消灭这个行业。
+
+不管怎么说，希望大家用的开心。
+
+如果有帮到你，可以点点star或者给我一点赞助。
 
 
 ### 未来可能的一些功能
