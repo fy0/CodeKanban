@@ -2,16 +2,16 @@
 
 # Code Kanban
 
+[中文](README.zh-CN.md) | [English](README.md)
+
 An auxiliary programming tool for the AI era, helping you speed up 10x.
+
+[Core Features](#core-features) • [Quick Start](#quick-start) • [Development Guide](#development-guide) • [About](#about)
 
 ![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)
 ![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
-
-[中文](README.zh-CN.md) | [English](README.md)
-
-[Core Features](#core-features) • [Quick Start](#quick-start) • [Development Guide](#development-guide) • [About](#about)
 
 ![Preview](docs/preview-en.png)
 

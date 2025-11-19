@@ -2,16 +2,16 @@
 
 # 代码看板 Code kanban
 
+[中文](README.zh-CN.md) | [English](README.md)
+
 AI时代的辅助编程工具，帮助你提速10倍。
+
+[核心特性](#核心特性) • [快速体验](#快速体验) • [开发指南](#开发指南) • [关于](#关于)
 
 ![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)
 ![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
-
-[中文](README.zh-CN.md) | [English](README.md)
-
-[核心特性](#核心特性) • [快速体验](#快速体验) • [开发指南](#开发指南) • [关于](#关于)
 
 ![预览图](docs/preview.png)
 

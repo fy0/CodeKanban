@@ -79,6 +79,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # 配置 npm 认证
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
           # 使用自动发布脚本发布所有包
           python3 publish-all-packages.py
 
