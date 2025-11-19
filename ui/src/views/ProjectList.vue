@@ -6,15 +6,45 @@
           <n-icon size="24">
             <FolderOpenOutline />
           </n-icon>
-          <a
-            href="https://github.com/fy0/CodeKanban"
-            target="_blank"
-            rel="noopener noreferrer"
+          <span
             class="app-name-link"
+            @click="handleAppNameClick"
           >
             {{ appStore.appInfo.name }}
-          </a>
-          <n-tag size="small" type="info" :bordered="false">
+          </span>
+          <n-popover
+            v-if="updateInfo?.hasUpdate"
+            trigger="hover"
+            placement="bottom"
+          >
+            <template #trigger>
+              <n-tag
+                size="small"
+                type="warning"
+                :bordered="false"
+                style="cursor: pointer"
+                @click="showUpdateModal = true"
+              >
+                v{{ appStore.appInfo.version }}
+                <template #icon>
+                  <n-icon :component="ArrowUpCircleOutline" />
+                </template>
+              </n-tag>
+            </template>
+            <div
+              style="max-width: 280px; cursor: pointer"
+              @click="showUpdateModal = true"
+            >
+              <div style="font-weight: 500; margin-bottom: 8px">{{ t('update.newVersionAvailable') }}</div>
+              <div style="font-size: 13px; margin-bottom: 4px">
+                {{ t('update.latestVersion') }}: <n-tag size="tiny" type="success">{{ updateInfo.latestVersion }}</n-tag>
+              </div>
+              <div style="font-size: 12px; color: var(--n-text-color-3)">
+                {{ t('update.clickToView') }}
+              </div>
+            </div>
+          </n-popover>
+          <n-tag v-else size="small" type="info" :bordered="false">
             v{{ appStore.appInfo.version }}
           </n-tag>
         </div>
@@ -182,6 +212,31 @@
       :project="editingProject"
       @success="handleProjectUpdated"
     />
+
+    <!-- 更新提示模态框 -->
+    <n-modal v-model:show="showUpdateModal" preset="card" style="width: 420px" :title="t('update.newVersionAvailable')">
+      <div style="margin-bottom: 16px">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px">
+          <span style="color: var(--n-text-color-3)">{{ t('update.currentVersion') }}:</span>
+          <n-tag :bordered="false" size="small">{{ updateInfo?.currentVersion }}</n-tag>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px">
+          <span style="color: var(--n-text-color-3)">{{ t('update.latestVersion') }}:</span>
+          <n-tag type="success" :bordered="false" size="small">{{ updateInfo?.latestVersion }}</n-tag>
+        </div>
+      </div>
+
+      <n-alert type="info" :bordered="false" style="margin-bottom: 16px">
+        <code style="user-select: all">npm install -g codekanban@latest</code>
+      </n-alert>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="openUpdateUrl">{{ t('update.viewDetails') }}</n-button>
+          <n-button type="primary" @click="copyUpdateCommand">{{ t('update.copyCommand') }}</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -202,6 +257,7 @@ import {
   SearchOutline,
   ArrowDownOutline,
   ArrowUpOutline,
+  ArrowUpCircleOutline,
 } from '@vicons/ionicons5';
 import ProjectCreateDialog from '@/components/project/ProjectCreateDialog.vue';
 import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
@@ -228,6 +284,56 @@ const dialog = useDialog();
 const showCreateDialog = ref(false);
 const showEditDialog = ref(false);
 const editingProject = ref<Project | null>(null);
+const showUpdateModal = ref(false);
+
+// 更新检查
+interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  updateUrl?: string;
+  message?: string;
+}
+const updateInfo = ref<UpdateInfo | null>(null);
+
+const { send: checkUpdate } = useReq(() => Apis.system.checkUpdate({}));
+
+const checkForUpdates = async () => {
+  try {
+    const result = await checkUpdate();
+    if (result) {
+      updateInfo.value = result;
+    }
+  } catch (error) {
+    console.error('Failed to check for updates:', error);
+  }
+};
+
+const copyUpdateCommand = () => {
+  const command = 'npm install -g codekanban@latest';
+  navigator.clipboard.writeText(command).then(() => {
+    message.success(t('update.commandCopied'));
+    showUpdateModal.value = false;
+  });
+};
+
+const openUpdateUrl = () => {
+  if (updateInfo.value?.updateUrl) {
+    window.open(updateInfo.value.updateUrl, '_blank');
+  }
+};
+
+const handleAppNameClick = () => {
+  dialog.info({
+    title: t('nav.visitProjectConfirm'),
+    content: t('nav.visitProjectMessage'),
+    positiveText: t('nav.visitNow'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      window.open('https://github.com/fy0/CodeKanban', '_blank', 'noopener,noreferrer');
+    },
+  });
+};
 
 const terminalCounts = terminalStore.terminalCounts;
 
@@ -343,6 +449,8 @@ const filteredAndSortedProjects = computed(() => {
 onMounted(() => {
   projectStore.fetchProjects();
   terminalStore.loadTerminalCounts();
+  // 延迟检查更新，避免阻塞页面加载
+  setTimeout(checkForUpdates, 2000);
 });
 
 watch(showEditDialog, value => {
@@ -541,6 +649,7 @@ function getPriorityLabel(priority: number): string {
   color: inherit;
   text-decoration: none;
   transition: color 0.2s;
+  cursor: pointer;
 }
 
 .app-name-link:hover {

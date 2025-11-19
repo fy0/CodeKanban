@@ -1,0 +1,35 @@
+{
+  "name": "codekanban",
+  "version": "0.1.0",
+  "description": "An auxiliary programming tool for the AI era, helping you speed up 10x.",
+  "bin": {
+    "codekanban": "npm-bin/codekanban.js"
+  },
+  "optionalDependencies": {
+    "@codekanban/win32-x64": "0.1.0",
+    "@codekanban/darwin-x64": "0.1.0",
+    "@codekanban/darwin-arm64": "0.1.0",
+    "@codekanban/linux-x64": "0.1.0",
+    "@codekanban/linux-arm64": "0.1.0"
+  },
+  "keywords": [
+    "ai",
+    "coding",
+    "kanban",
+    "terminal",
+    "productivity",
+    "developer-tools",
+    "worktree",
+    "git"
+  ],
+  "author": "fy0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fy0/CodeKanban"
+  },
+  "homepage": "https://github.com/fy0/CodeKanban#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

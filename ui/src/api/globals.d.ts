@@ -209,6 +209,32 @@ export interface ItemsResponseProjectBody {
    */
   items: Project[] | null;
 }
+export interface CheckUpdateResponseBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 当前版本
+   */
+  currentVersion: string;
+  /**
+   * 是否有更新
+   */
+  hasUpdate: boolean;
+  /**
+   * 最新版本
+   */
+  latestVersion: string;
+  /**
+   * 提示信息
+   */
+  message?: string;
+  /**
+   * 更新地址
+   */
+  updateUrl?: string;
+}
 export interface VersionResponseBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -3252,6 +3278,36 @@ declare global {
       ): Alova2Method<TerminalCountsResponseBody, 'terminalSession.terminalCounts', Config>;
     };
     system: {
+      /**
+       * ---
+       *
+       * [GET] 检查版本更新
+       *
+       * **path:** /api/v1/system/check-update
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 当前版本
+       *   currentVersion: string
+       *   // 是否有更新
+       *   hasUpdate: boolean
+       *   // 最新版本
+       *   latestVersion: string
+       *   // 提示信息
+       *   message?: string
+       *   // 更新地址
+       *   updateUrl?: string
+       * }
+       * ```
+       */
+      checkUpdate<Config extends Alova2MethodConfig<CheckUpdateResponseBody>>(
+        config?: Config
+      ): Alova2Method<CheckUpdateResponseBody, 'system.checkUpdate', Config>;
       /**
        * ---
        *

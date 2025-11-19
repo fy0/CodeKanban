@@ -1,0 +1,111 @@
+name: Publish to NPM
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  npm-publish:
+    name: Build and Publish to NPM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for npm provenance
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.6'
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=${TAG_VERSION}" >> $GITHUB_OUTPUT
+          echo "Publishing version: ${TAG_VERSION}"
+
+      - name: Build multi-platform packages
+        run: |
+          python3 build-npm-multipackage.py --version ${{ steps.version.outputs.VERSION }} --package-name "codekanban"
+
+      - name: List build artifacts
+        run: |
+          echo "=== Built binaries ==="
+          find npm-packages -type f -name "codekanban*" -exec ls -lh {} \;
+          echo ""
+          echo "=== Package structure ==="
+          ls -la npm-packages/
+
+      - name: Publish all packages to NPM
+        if: success()
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # 使用自动发布脚本发布所有包
+          python3 publish-all-packages.py
+
+      - name: Create summary
+        if: success()
+        run: |
+          echo "### ✅ CodeKanban Published to NPM" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Main Package:**" >> $GITHUB_STEP_SUMMARY
+          echo "- codekanban" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Platform Packages:**" >> $GITHUB_STEP_SUMMARY
+          echo "- @codekanban/win32-x64" >> $GITHUB_STEP_SUMMARY
+          echo "- @codekanban/darwin-x64" >> $GITHUB_STEP_SUMMARY
+          echo "- @codekanban/darwin-arm64" >> $GITHUB_STEP_SUMMARY
+          echo "- @codekanban/linux-x64" >> $GITHUB_STEP_SUMMARY
+          echo "- @codekanban/linux-arm64" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Installation:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "npm install -g codekanban@${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**NPM:** https://www.npmjs.com/package/codekanban" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload main package as artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-main-package
+          path: '*.tgz'
+          retention-days: 30

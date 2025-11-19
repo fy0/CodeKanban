@@ -1,123 +1,130 @@
 <div align="center">
 
-# 代码看板 Code kanban
+# Code Kanban
 
-AI时代的辅助编程工具，帮助你提速10倍。
+An auxiliary programming tool for the AI era, helping you speed up 10x.
 
 ![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)
 ![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-![预览图](docs/preview.png)
+[中文](README.zh-CN.md) | [English](README.md)
 
-[中文](README.md) | [English](README.en-US.md)
+[Core Features](#core-features) • [Quick Start](#quick-start) • [Development Guide](#development-guide) • [About](#about)
 
-[核心特性](#核心特性) • [开发指南](#开发指南) • [关于](#关于)
+![Preview](docs/preview-en.png)
 
 </div>
 
-## 核心特性
+## Quick Start
 
-- **开箱即用**: 单文件，本地数据库，双击即可使用
-- **多项目多终端管理**：轻松在 3-4 个代码仓库、二十几个终端之间切换，每个终端运行不同的 AI 编程任务
-- **Git Worktree 管理**：轻量级分支管理，同时让 AI 开发多个功能，不满意随时回滚
-- **任务看板**：可视化管理开发任务，支持任务状态跟踪和分支关联
-- **Web 终端集成**：使用VSC同款技术栈的 Web 终端，支持标签管理、拖动排序、折叠展开等 (快捷键`)
-- **笔记功能**：支持多标签笔记，自动保存，标签可重命名和排序 (快捷键1)
-- **编辑器集成**：快捷打开 VSCode、Cursor、Zed 等编辑器
-- **使用你喜欢的工具**: Claude Code, Codex, Gemini, Qwen Code, Droid, ... 啥都行
+Try it instantly:
 
-Tips: 中文用户注意，搜狗输入法在 ClaudeCode 中兼容性不佳，在VSCode中表现也是大差不差的。不过alt+v仍然可以粘贴图片。
+```bash
+npx codekanban
+# or
+npm install -g codekanban
+```
 
-## 开发指南
+## Core Features
 
-### 环境要求
-- **Node.js**: v20.19.0+ 或 v22.12.0+
+- **Ready to Use**: Single file, local database, double-click to use
+- **Multi-Project Multi-Terminal Management**: Easily switch between 3-4 code repositories and dozens of terminals, each running different AI programming tasks
+- **Git Worktree Management**: Lightweight branch management, let AI develop multiple features simultaneously, rollback anytime if unsatisfied
+- **Task Kanban**: Visualize development task management with support for task status tracking and branch association
+- **Web Terminal Integration**: Web terminal using the same technology stack as VSC, supports tab management, drag sorting, collapse/expand, etc. (Hotkey: `)
+- **Notes Feature**: Supports multi-tab notes, auto-save, tabs can be renamed and sorted (Hotkey: 1)
+- **Editor Integration**: Quick open VSCode, Cursor, Zed and other editors
+- **Use Your Favorite Tools**: Claude Code, Codex, Gemini, Qwen Code, Droid, ... anything works
+
+## Development Guide
+
+### Requirements
+- **Node.js**: v20.19.0+ or v22.12.0+
 - **Go**: 1.24.6+
-- **包管理器**: pnpm（推荐）
+- **Package Manager**: pnpm (recommended)
 
-### 安装依赖
+### Install Dependencies
 
-**前端依赖**：
+**Frontend Dependencies**:
 ```bash
 cd ui
 pnpm install
 ```
 
-**后端依赖**：
+**Backend Dependencies**:
 ```bash
 go mod tidy
 ```
 
-### 开发运行
+### Development Mode
 
-**前端开发服务器**：
+**Frontend Development Server**:
 ```bash
 cd ui
 pnpm dev
 ```
-访问地址：`http://localhost:5173`
+Access at: `http://localhost:5173`
 
-**后端开发服务器**：
+**Backend Development Server**:
 ```bash
-go run . # 注意，初次运行后会生成config.yaml，端口3007，由于跟正式版本冲突，无法同时运行，建议改为3005。以下当作已经修改
+go run . # Note: After first run, config.yaml will be generated with port 3007. Due to conflicts with the production version, they cannot run simultaneously. It's recommended to change to 3005. The following assumes it has been changed.
 ```
-- 服务端口：`http://localhost:3005`
-- OpenAPI 文档：`http://localhost:3005/docs`
-- 健康检查：`http://localhost:3005/api/v1/health`
+- Server Port: `http://localhost:3005`
+- OpenAPI Documentation: `http://localhost:3005/docs`
+- Health Check: `http://localhost:3005/api/v1/health`
 
-**可选参数**：
-- `-m` 或 `--migrate`：强制执行数据库迁移
-- `-i` 或 `--install`：安装为系统服务
-- `--uninstall`：卸载系统服务
+**Optional Parameters**:
+- `-m` or `--migrate`: Force database migration
+- `-i` or `--install`: Install as system service
+- `--uninstall`: Uninstall system service
 
-### 生产构建
+### Production Build
 
-**完整构建**（推荐）：
+**Full Build** (Recommended):
 ```bash
 python build.py
 ```
-此脚本会自动完成以下步骤：
-1. 构建前端（`pnpm build`）
-2. 将前端产物复制到 `static/` 目录
-3. 构建 Go 可执行文件（带优化）
+This script will automatically complete the following steps:
+1. Build frontend (`pnpm build`)
+2. Copy frontend artifacts to `static/` directory
+3. Build Go executable (with optimization)
 
-**手动构建**：
+**Manual Build**:
 ```bash
-# 构建前端
+# Build frontend
 cd ui && pnpm build
 
-# 构建后端
+# Build backend
 go build -ldflags="-s -w" -trimpath -o CodeKanban
 ```
 
-**构建产物**：
-- 前端：`ui/dist/` → `static/` (移动到此目录后，构建后端会自动存入可执行文件，实现单文件启动)
-- 后端：`CodeKanban.exe`（Windows）或 `CodeKanban`（Linux/macOS）
+**Build Artifacts**:
+- Frontend: `ui/dist/` → `static/` (After moving to this directory, building the backend will automatically store it in the executable, achieving single-file launch)
+- Backend: `CodeKanban.exe` (Windows) or `CodeKanban` (Linux/macOS)
 
-### 访问应用
+### Access Application
 
-**开发环境**：
-- 前端开发服务器：`http://localhost:5173`
-- 后端 API：`http://localhost:3005`
+**Development Environment**:
+- Frontend Dev Server: `http://localhost:5173`
+- Backend API: `http://localhost:3005`
 
-**生产环境**：
-运行构建后的可执行文件，访问 `http://localhost:3007`
+**Production Environment**:
+Run the built executable and access `http://localhost:3007`
 
-## 关于
+## About
 
-我们处在一个日新月异也异常撕裂的时代，我们的作品也是如此。
+We are in an era that is both rapidly changing and extremely divided, and our work is the same.
 
-这个工具切实的提升了我的效率，但也许效率的提升也会减少工作需求，而AI的发展会消灭这个行业。
+This tool has genuinely improved my efficiency, but perhaps the improvement in efficiency will also reduce work demand, and the development of AI will eliminate this industry.
 
-不管怎么说，希望大家用的开心。
+Anyway, I hope everyone enjoys using it.
 
-如果有帮到你，可以点点star或者给我一点赞助。
+If it helps you, you can give it a star or sponsor me a little.
 
-
-### 未来可能的一些功能
-- 移动端支持
-- 代码清理: 如前端的src/api，应当全走自动生成
-- 完成提醒功能，例如AI干完之后播放个声音，告诉你已经弄好了。
-- 空闲终端列表 / 待交互终端列表。
+### Possible Future Features
+- Mobile support
+- Code cleanup: For example, the frontend's src/api should all be auto-generated
+- Completion reminder feature, such as playing a sound after AI is done to tell you it's finished.
+- Idle terminal list / Terminal list awaiting interaction.

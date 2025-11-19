@@ -31,6 +31,10 @@ export default {
     guide: '使用指引',
     about: '关于',
     home: '首页',
+    visitProject: '访问项目',
+    visitProjectConfirm: '是否前往 CodeKanban 项目地址？',
+    visitProjectMessage: '如果您觉得这个项目对您有帮助，欢迎给我们点个 Star ⭐，您的支持是我们持续改进的动力！也欢迎通过赞助来支持项目的发展。',
+    visitNow: '前往项目',
   },
   project: {
     title: '项目列表',
@@ -416,5 +420,16 @@ export default {
     projectPathRequired: '请输入项目目录',
     branchNameRequired: '请输入分支名称',
     taskTitleRequired: '请输入任务标题',
+  },
+  update: {
+    newVersionAvailable: '发现新版本',
+    currentVersion: '当前版本',
+    latestVersion: '最新版本',
+    viewDetails: '查看详情',
+    copyCommand: '复制更新命令',
+    commandCopied: '更新命令已复制到剪贴板',
+    updateNow: '立即更新',
+    remindLater: '稍后提醒',
+    clickToView: '点击查看详情',
   },
 };

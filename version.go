@@ -1,4 +1,3 @@
-
 package main
 
 import "github.com/Masterminds/semver/v3"
@@ -16,4 +15,7 @@ var (
 
 	// APP_CHANNEL 更新频道，stable/dev，在 action 构建时自动注入
 	APP_CHANNEL = "dev" //nolint:revive
+
+	// PACKAGE_NAME NPM 包名，用于版本更新检查
+	PACKAGE_NAME = "codekanban"
 )

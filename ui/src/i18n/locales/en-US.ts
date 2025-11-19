@@ -31,6 +31,10 @@ export default {
     guide: 'User Guide',
     about: 'About',
     home: 'Home',
+    visitProject: 'Visit Project',
+    visitProjectConfirm: 'Would you like to visit the CodeKanban project page?',
+    visitProjectMessage: 'If you find this project helpful, please give us a Star ⭐ on GitHub! Your support motivates us to keep improving. Sponsorship is also welcome to help sustain the project.',
+    visitNow: 'Visit Now',
   },
   project: {
     title: 'Projects',
@@ -416,5 +420,16 @@ export default {
     projectPathRequired: 'Please enter project directory',
     branchNameRequired: 'Please enter branch name',
     taskTitleRequired: 'Please enter task title',
+  },
+  update: {
+    newVersionAvailable: 'New Version Available',
+    currentVersion: 'Current Version',
+    latestVersion: 'Latest Version',
+    viewDetails: 'View Details',
+    copyCommand: 'Copy Update Command',
+    commandCopied: 'Update command copied to clipboard',
+    updateNow: 'Update Now',
+    remindLater: 'Remind Me Later',
+    clickToView: 'Click to view details',
   },
 };

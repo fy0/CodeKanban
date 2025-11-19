@@ -1,0 +1,53 @@
+# 源代码
+*.go
+go.mod
+go.sum
+*.py
+
+# 开发文件
+ui/
+api/
+model/
+service/
+utils/
+docs/
+.github/
+.git/
+.claude/
+worktrees/
+
+# 测试文件
+*_test.go
+test/
+tmp/
+
+# 构建产物和二进制文件
+binary/
+npm-packages/
+*.exe
+*.tgz
+data/
+static/
+bin/
+dist/
+
+# 配置文件
+config.yaml
+*.testbak
+
+# GoReleaser
+.goreleaser.yml
+
+# 其他
+*.md
+!README.md
+!README.en-US.md
+LICENSE
+.gitignore
+.gitattributes
+中文测试.txt
+nul
+openapi.json
+build-npm.py
+build-npm-multipackage.py
+publish-all-packages.py

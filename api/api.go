@@ -24,9 +24,10 @@ import (
 
 // AppInfo 应用信息
 type AppInfo struct {
-	Name    string
-	Version string
-	Channel string
+	Name        string
+	Version     string
+	Channel     string
+	PackageName string // NPM 包名
 }
 
 var appInfo *AppInfo

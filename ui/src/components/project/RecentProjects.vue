@@ -115,20 +115,60 @@
       >
         <img src="/favicon.svg" alt="CodeKanban" class="app-logo" />
         <n-text strong style="font-size: 13px">{{ appStore.appInfo.name }}</n-text>
-        <n-text depth="3" style="font-size: 11px">v{{ appStore.appInfo.version }}</n-text>
+        <n-popover v-if="updateInfo?.hasUpdate" trigger="hover" placement="top">
+          <template #trigger>
+            <n-text
+              type="warning"
+              style="font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 2px"
+              @click.prevent="showUpdateModal = true"
+            >
+              v{{ appStore.appInfo.version }}
+              <n-icon :size="12" :component="ArrowUpCircleOutline" />
+            </n-text>
+          </template>
+          <div style="font-size: 12px">
+            {{ t('update.newVersionAvailable') }}: {{ updateInfo.latestVersion }}
+          </div>
+        </n-popover>
+        <n-text v-else depth="3" style="font-size: 11px">v{{ appStore.appInfo.version }}</n-text>
       </a>
     </div>
+
+    <!-- 更新提示模态框 -->
+    <n-modal v-model:show="showUpdateModal" preset="card" style="width: 420px" :title="t('update.newVersionAvailable')">
+      <div style="margin-bottom: 16px">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px">
+          <span style="color: var(--n-text-color-3)">{{ t('update.currentVersion') }}:</span>
+          <n-tag :bordered="false" size="small">{{ updateInfo?.currentVersion }}</n-tag>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px">
+          <span style="color: var(--n-text-color-3)">{{ t('update.latestVersion') }}:</span>
+          <n-tag type="success" :bordered="false" size="small">{{ updateInfo?.latestVersion }}</n-tag>
+        </div>
+      </div>
+
+      <n-alert type="info" :bordered="false" style="margin-bottom: 16px">
+        <code style="user-select: all">npm install -g codekanban@latest</code>
+      </n-alert>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="openUpdateUrl">{{ t('update.viewDetails') }}</n-button>
+          <n-button type="primary" @click="copyUpdateCommand">{{ t('update.copyCommand') }}</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { useDialog } from 'naive-ui';
+import { useDialog, useMessage } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
 import { useAppStore } from '@/stores/app';
-import { CreateOutline, SettingsOutline, TerminalOutline } from '@vicons/ionicons5';
+import { CreateOutline, SettingsOutline, TerminalOutline, ArrowUpCircleOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import type { ProjectPriority } from '@/stores/project';
 import type { DropdownOption } from 'naive-ui';
@@ -137,6 +177,44 @@ import { useReq } from '@/api';
 
 const { t } = useLocale();
 const dialog = useDialog();
+const message = useMessage();
+
+// 更新检查
+interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  updateUrl?: string;
+}
+const updateInfo = ref<UpdateInfo | null>(null);
+const showUpdateModal = ref(false);
+
+const { send: checkUpdate } = useReq(() => Apis.system.checkUpdate({}));
+
+const checkForUpdates = async () => {
+  try {
+    const result = await checkUpdate();
+    if (result) {
+      updateInfo.value = result;
+    }
+  } catch (error) {
+    console.error('Failed to check for updates:', error);
+  }
+};
+
+const copyUpdateCommand = () => {
+  const command = 'npm install -g codekanban@latest';
+  navigator.clipboard.writeText(command).then(() => {
+    message.success(t('update.commandCopied'));
+    showUpdateModal.value = false;
+  });
+};
+
+const openUpdateUrl = () => {
+  if (updateInfo.value?.updateUrl) {
+    window.open(updateInfo.value.updateUrl, '_blank');
+  }
+};
 
 interface ContextMenuState {
   show: boolean;
@@ -383,6 +461,8 @@ onMounted(() => {
     projectStore.fetchProjects();
   }
   terminalStore.loadTerminalCounts();
+  // 延迟检查更新
+  setTimeout(checkForUpdates, 2000);
 });
 </script>
 

@@ -86,6 +86,21 @@ var configStore = koanf.New(".")
 
 // ReadConfig 会加载 config.yaml，若不存在则写入默认配置。
 func ReadConfig() *AppConfig {
+	// 获取数据目录（npm 全局安装时使用 ~/.codekanban，否则使用 ./data）
+	dataDir := GetDataDir()
+
+	// 打印工作目录信息
+	if cwd, err := os.Getwd(); err == nil {
+		fmt.Printf("Working directory: %s\n", cwd)
+	}
+	fmt.Printf("Data directory: %s\n", dataDir)
+	fmt.Println()
+
+	// 确保数据目录存在
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		fmt.Printf("创建数据目录失败: %v\n", err)
+	}
+
 	defaults := AppConfig{
 		ServeAt:             ":3007",
 		Domain:              "127.0.0.1:3007",
@@ -93,7 +108,7 @@ func ReadConfig() *AppConfig {
 		WebUrl:              "/",
 		AttachmentSizeLimit: 8192,
 		ImageCompress:       true,
-		LogFile:             "./data/service.log",
+		LogFile:             fmt.Sprintf("%s/service.log", dataDir),
 		LogLevel:            string(LogLevelInfo),
 		CorsAllowOrigins:    "*",
 		AutoMigrate:         true,
@@ -104,7 +119,7 @@ func ReadConfig() *AppConfig {
 		AttachmentConfig: AttachmentConfig{
 			UseS3: false,
 		},
-		DSN:         "./data/data.db",
+		DSN:         fmt.Sprintf("%s/data.db", dataDir),
 		PrintConfig: true,
 		Terminal: TerminalConfig{
 			Shell: TerminalShellConfig{
@@ -122,11 +137,22 @@ func ReadConfig() *AppConfig {
 
 	lo.Must0(configStore.Load(structs.Provider(&defaults, "yaml"), nil))
 
-	provider := file.Provider("config.yaml")
+	// 配置文件路径：优先使用工作目录的 config.yaml，如果不存在则使用数据目录的
+	workDirConfig := "config.yaml"
+	dataDirConfig := fmt.Sprintf("%s/config.yaml", dataDir)
+
+	var configPath string
+	if _, err := os.Stat(workDirConfig); err == nil {
+		configPath = workDirConfig
+	} else {
+		configPath = dataDirConfig
+	}
+
+	provider := file.Provider(configPath)
 	if err := configStore.Load(provider, yaml.Parser()); err != nil {
 		fmt.Printf("读取配置失败: %v\n", err)
 		if os.IsNotExist(err) {
-			WriteConfig(&defaults)
+			WriteConfigToPath(&defaults, configPath)
 		} else {
 			os.Exit(1)
 		}
@@ -150,6 +176,13 @@ func ReadConfig() *AppConfig {
 
 // WriteConfig 会将当前配置写回磁盘，常用于初始化默认配置。
 func WriteConfig(config *AppConfig) {
+	dataDir := GetDataDir()
+	configPath := fmt.Sprintf("%s/config.yaml", dataDir)
+	WriteConfigToPath(config, configPath)
+}
+
+// WriteConfigToPath 将配置写入指定路径
+func WriteConfigToPath(config *AppConfig, path string) {
 	if config != nil {
 		lo.Must0(configStore.Load(structs.Provider(config, "yaml"), nil))
 	}
@@ -160,7 +193,7 @@ func WriteConfig(config *AppConfig) {
 		return
 	}
 
-	if err := os.WriteFile("./config.yaml", content, 0o644); err != nil {
-		fmt.Println("写入配置失败: 无法写入文件")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		fmt.Printf("写入配置失败: 无法写入文件 %s\n", path)
 	}
 }

@@ -24,12 +24,20 @@ var runningAsService bool
 
 func main() {
 	var opts struct {
+		Version      bool `short:"v" long:"version" description:"显示版本信息"`
 		Install      bool `short:"i" long:"install" description:"安装为系统服务"`
 		Uninstall    bool `long:"uninstall" description:"卸载系统服务"`
 		ForceMigrate bool `short:"m" long:"migrate" description:"强制执行数据库迁移"`
+		UseHomeData  bool `short:"H" long:"home-data" description:"使用用户目录存储数据 (~/.codekanban)"`
 	}
 
 	if _, err := flags.ParseArgs(&opts, os.Args); err != nil {
+		return
+	}
+
+	if opts.Version {
+		fmt.Printf("%s v%s\n", APPNAME, VERSION.String())
+		fmt.Printf("Channel: %s\n", APP_CHANNEL)
 		return
 	}
 
@@ -43,10 +51,18 @@ func main() {
 		return
 	}
 
+	if opts.UseHomeData {
+		utils.SetUseHomeData(true)
+	}
+
 	run(opts.ForceMigrate)
 }
 
 func run(forceMigrate bool) {
+	// 异步检查版本更新（不阻塞启动）
+	checker := utils.NewVersionChecker(VERSION.String(), PACKAGE_NAME)
+	checker.CheckAsync()
+
 	cfg := utils.ReadConfig()
 	if forceMigrate {
 		cfg.AutoMigrate = true
@@ -64,7 +80,7 @@ func run(forceMigrate bool) {
 	}
 	defer model.DBClose()
 
-	logger.Info("服务启动中", zap.String("listen", cfg.ServeAt))
+	logger.Info("Starting server", zap.String("listen", cfg.ServeAt))
 
 	if !runningAsService {
 		if url := utils.BuildLaunchURL(cfg); url != "" {
@@ -79,10 +95,11 @@ func run(forceMigrate bool) {
 
 	ctx := utils.ContextWithLogger(context.Background(), logger)
 	if err := api.Init(ctx, cfg, embedStatic, &api.AppInfo{
-		Name:    APPNAME,
-		Version: VERSION.String(),
-		Channel: APP_CHANNEL,
+		Name:        APPNAME,
+		Version:     VERSION.String(),
+		Channel:     APP_CHANNEL,
+		PackageName: PACKAGE_NAME,
 	}); err != nil {
-		logger.Fatal("服务启动失败", zap.Error(err))
+		logger.Fatal("Failed to start server", zap.Error(err))
 	}
 }
