@@ -66,6 +66,31 @@ def main():
         "linux-arm64"
     ]
 
+    # 调试信息：检查 npm 认证
+    print("\n[调试] 检查 npm 认证状态...")
+    check_auth_cmd = ["npm", "whoami"]
+    auth_result = run_command(check_auth_cmd, cwd=root_dir)
+
+    if auth_result != 0:
+        print("\n[警告] npm whoami 失败，可能未正确认证")
+        print("[调试] 检查 .npmrc 配置...")
+        npmrc_path = Path.home() / ".npmrc"
+        if npmrc_path.exists():
+            print(f"[调试] 找到 .npmrc: {npmrc_path}")
+            # 不打印内容，避免泄露 token
+        else:
+            print(f"[警告] 未找到 .npmrc: {npmrc_path}")
+
+        if is_github_actions():
+            print("[调试] 在 GitHub Actions 中，检查 NODE_AUTH_TOKEN 环境变量...")
+            if os.getenv('NODE_AUTH_TOKEN'):
+                print("[调试] NODE_AUTH_TOKEN 已设置 (长度: {})".format(len(os.getenv('NODE_AUTH_TOKEN', ''))))
+            else:
+                print("[错误] NODE_AUTH_TOKEN 未设置！")
+                return 1
+    else:
+        print("[调试] npm 认证成功")
+
     # 构建发布命令（在 GitHub Actions 中使用 provenance）
     publish_cmd = ["npm", "publish", "--access", "public"]
     if is_github_actions():
@@ -87,10 +112,14 @@ def main():
             with open(platform_package_json, 'r', encoding='utf-8') as f:
                 pkg = json.load(f)
                 pkg_name = pkg.get('name', f'unknown-{platform}')
+                pkg_version = pkg.get('version', 'unknown')
         else:
             pkg_name = f'unknown-{platform}'
+            pkg_version = 'unknown'
 
-        print(f"\n发布 {pkg_name}...")
+        print(f"\n[调试] 准备发布: {pkg_name}@{pkg_version}")
+        print(f"[调试] 包目录: {platform_dir}")
+        print(f"[调试] 发布命令: {' '.join(publish_cmd)}")
 
         ret = run_command(
             publish_cmd,

@@ -79,8 +79,35 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # 调试：检查环境变量
+          echo "=== 调试信息 ==="
+          echo "NODE_AUTH_TOKEN 长度: ${#NODE_AUTH_TOKEN}"
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "错误: NODE_AUTH_TOKEN 未设置！"
+            exit 1
+          fi
+
           # 配置 npm 认证
+          echo "配置 npm 认证..."
           echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+
+          # 验证 .npmrc 文件已创建
+          if [ -f ~/.npmrc ]; then
+            echo "✓ .npmrc 文件已创建"
+            echo ".npmrc 内容（隐藏 token）:"
+            cat ~/.npmrc | sed 's/:_authToken=.*/:_authToken=***HIDDEN***/g'
+          else
+            echo "✗ .npmrc 文件创建失败！"
+            exit 1
+          fi
+
+          # 测试 npm 认证
+          echo "测试 npm 认证..."
+          npm whoami || {
+            echo "错误: npm whoami 失败！认证未成功。"
+            exit 1
+          }
+
           # 使用自动发布脚本发布所有包
           python3 publish-all-packages.py
 
