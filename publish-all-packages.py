@@ -91,11 +91,17 @@ def main():
     else:
         print("[调试] npm 认证成功")
 
-    # 构建发布命令（在 GitHub Actions 中使用 provenance）
+    # 构建发布命令
     publish_cmd = ["npm", "publish", "--access", "public"]
-    if is_github_actions():
+
+    # Granular access tokens 在某些情况下与 --provenance 不兼容
+    # 暂时禁用以测试基本发布功能
+    use_provenance = False
+    if is_github_actions() and use_provenance:
         publish_cmd.append("--provenance")
         print("\n[信息] 检测到 GitHub Actions 环境，将使用 --provenance 发布")
+    else:
+        print("\n[信息] 使用标准发布模式（不使用 provenance）")
 
     # 发布所有平台包
     print("\n[步骤 1/2] 发布平台包")
