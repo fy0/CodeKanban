@@ -55,7 +55,12 @@ jobs:
         id: version
         run: |
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          BUILD_DATE=$(date +%Y%m%d)
           echo "VERSION=${TAG_VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION_MAIN=${TAG_VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION_PRERELEASE=" >> $GITHUB_OUTPUT
+          echo "BUILD_METADATA=+${BUILD_DATE}" >> $GITHUB_OUTPUT
+          echo "APP_CHANNEL=stable" >> $GITHUB_OUTPUT
           echo "Publishing version: ${TAG_VERSION}"
 
       - name: Install frontend dependencies
@@ -64,7 +69,13 @@ jobs:
 
       - name: Build multi-platform packages
         run: |
-          python3 build-npm-multipackage.py --version ${{ steps.version.outputs.VERSION }} --package-name "codekanban"
+          python3 build-npm-multipackage.py \
+            --version ${{ steps.version.outputs.VERSION }} \
+            --package-name "codekanban" \
+            --version-main "${{ steps.version.outputs.VERSION_MAIN }}" \
+            --version-prerelease "${{ steps.version.outputs.VERSION_PRERELEASE }}" \
+            --version-build-metadata "${{ steps.version.outputs.BUILD_METADATA }}" \
+            --app-channel "${{ steps.version.outputs.APP_CHANNEL }}"
 
       - name: List build artifacts
         run: |

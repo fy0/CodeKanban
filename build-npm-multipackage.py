@@ -65,7 +65,7 @@ def copy_dist_to_static(dist_dir: Path, static_dir: Path):
     return True
 
 
-def build_go_multiplatform(root_dir: Path, npm_packages_dir: Path):
+def build_go_multiplatform(root_dir: Path, npm_packages_dir: Path, version_main: str = "", version_prerelease: str = "", version_build_metadata: str = "", app_channel: str = ""):
     """构建多平台版本（每个平台一个 npm 包）"""
     print("\n[步骤 3/5] 构建多平台 Go 程序")
 
@@ -80,6 +80,20 @@ def build_go_multiplatform(root_dir: Path, npm_packages_dir: Path):
 
     success_count = 0
     total_size = 0
+
+    # 构建 ldflags，注入版本信息
+    ldflags_parts = ["-s", "-w"]
+    if version_main:
+        ldflags_parts.append(f"-X 'main.VERSION_MAIN={version_main}'")
+    if version_prerelease:
+        ldflags_parts.append(f"-X 'main.VERSION_PRERELEASE={version_prerelease}'")
+    if version_build_metadata:
+        ldflags_parts.append(f"-X 'main.VERSION_BUILD_METADATA={version_build_metadata}'")
+    if app_channel:
+        ldflags_parts.append(f"-X 'main.APP_CHANNEL={app_channel}'")
+
+    ldflags = " ".join(ldflags_parts)
+    print(f"版本注入信息: VERSION_MAIN={version_main}, PRERELEASE={version_prerelease}, BUILD_METADATA={version_build_metadata}, CHANNEL={app_channel}")
 
     for goos, goarch, npm_os, npm_arch in platforms:
         print(f"\n构建 {goos}/{goarch} -> {npm_os}-{npm_arch}...")
@@ -102,7 +116,7 @@ def build_go_multiplatform(root_dir: Path, npm_packages_dir: Path):
 
         build_cmd = [
             "go", "build",
-            "-ldflags=-s -w",
+            f"-ldflags={ldflags}",
             "-trimpath",
             "-o", str(output_path),
             "."
@@ -324,6 +338,10 @@ def main():
     parser = argparse.ArgumentParser(description='NPM 多包发布构建')
     parser.add_argument('--version', type=str, default='0.0.3', help='版本号')
     parser.add_argument('--package-name', type=str, default='codekanban', help='包名')
+    parser.add_argument('--version-main', type=str, default='', help='主版本号（注入到二进制）')
+    parser.add_argument('--version-prerelease', type=str, default='', help='预发布版本（注入到二进制）')
+    parser.add_argument('--version-build-metadata', type=str, default='', help='构建元数据（注入到二进制）')
+    parser.add_argument('--app-channel', type=str, default='', help='发布渠道（注入到二进制）')
     args = parser.parse_args()
 
     root_dir = Path(__file__).parent.absolute()
@@ -337,6 +355,9 @@ def main():
     print("=" * 60)
     print(f"版本: {args.version}")
     print(f"包名: {args.package_name}")
+    if args.version_main:
+        print(f"版本信息: {args.version_main}{args.version_prerelease}{args.version_build_metadata}")
+        print(f"发布渠道: {args.app_channel}")
 
     # 清理旧的包目录
     if npm_packages_dir.exists():
@@ -370,7 +391,14 @@ def main():
     version = args.version
     base_name = args.package_name
 
-    ret = build_go_multiplatform(root_dir, npm_packages_dir)
+    ret = build_go_multiplatform(
+        root_dir,
+        npm_packages_dir,
+        version_main=args.version_main,
+        version_prerelease=args.version_prerelease,
+        version_build_metadata=args.version_build_metadata,
+        app_channel=args.app_channel
+    )
     if ret != 0:
         return ret
 
