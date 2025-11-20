@@ -2,7 +2,7 @@ version: "2"
 sql:
   - engine: "sqlite"
     queries:
-      - "../*.sql"
+      - "../queries/*.sql"
     schema: "./schema_sqlite.sql"
     gen:
       go:
