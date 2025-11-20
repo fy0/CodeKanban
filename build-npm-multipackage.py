@@ -85,8 +85,8 @@ def build_go_multiplatform(root_dir: Path, npm_packages_dir: Path, version_main:
     ldflags_parts = ["-s", "-w"]
     if version_main:
         ldflags_parts.append(f"-X 'main.VERSION_MAIN={version_main}'")
-    if version_prerelease:
-        ldflags_parts.append(f"-X 'main.VERSION_PRERELEASE={version_prerelease}'")
+    # 总是注入，空字符串会覆盖默认的 -alpha
+    ldflags_parts.append(f"-X 'main.VERSION_PRERELEASE={version_prerelease}'")
     if version_build_metadata:
         ldflags_parts.append(f"-X 'main.VERSION_BUILD_METADATA={version_build_metadata}'")
     if app_channel:

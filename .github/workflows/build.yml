@@ -11,20 +11,43 @@ on:
 
 jobs:
   build:
-    name: Build for ${{ matrix.os }}
+    name: Build for ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
         include:
+          # Linux
           - os: ubuntu-latest
+            platform: linux-amd64
+            goos: linux
+            goarch: amd64
             artifact_name: CodeKanban-linux-amd64
             exe_name: CodeKanban
+          - os: ubuntu-latest
+            platform: linux-arm64
+            goos: linux
+            goarch: arm64
+            artifact_name: CodeKanban-linux-arm64
+            exe_name: CodeKanban
+          # Windows
           - os: windows-latest
+            platform: windows-amd64
+            goos: windows
+            goarch: amd64
             artifact_name: CodeKanban-windows-amd64
             exe_name: CodeKanban.exe
+          # macOS
           - os: macos-latest
+            platform: darwin-amd64
+            goos: darwin
+            goarch: amd64
             artifact_name: CodeKanban-macos-amd64
+            exe_name: CodeKanban
+          - os: macos-latest
+            platform: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            artifact_name: CodeKanban-macos-arm64
             exe_name: CodeKanban
 
     steps:
@@ -98,6 +121,10 @@ jobs:
           fi
 
       - name: Build Go binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
         run: |
           go build -ldflags="-s -w -X 'main.VERSION_MAIN=${{ steps.version.outputs.VERSION_MAIN }}' -X 'main.VERSION_PRERELEASE=${{ steps.version.outputs.VERSION_PRERELEASE }}' -X 'main.VERSION_BUILD_METADATA=${{ steps.version.outputs.BUILD_METADATA }}' -X 'main.APP_CHANNEL=${{ steps.version.outputs.APP_CHANNEL }}'" -trimpath -o ${{ matrix.exe_name }}
 
@@ -159,19 +186,27 @@ jobs:
         run: |
           mkdir -p release
 
-          # Package Windows binary as .zip
+          # Package Windows binaries as .zip
           cd artifacts/CodeKanban-windows-amd64
           zip ../../release/CodeKanban-windows-amd64.zip CodeKanban.exe
           cd ../..
 
-          # Package Linux binary as .tar.gz
+          # Package Linux binaries as .tar.gz
           cd artifacts/CodeKanban-linux-amd64
           tar -czf ../../release/CodeKanban-linux-amd64.tar.gz CodeKanban
           cd ../..
 
-          # Package macOS binary as .tar.gz
+          cd artifacts/CodeKanban-linux-arm64
+          tar -czf ../../release/CodeKanban-linux-arm64.tar.gz CodeKanban
+          cd ../..
+
+          # Package macOS binaries as .tar.gz
           cd artifacts/CodeKanban-macos-amd64
           tar -czf ../../release/CodeKanban-macos-amd64.tar.gz CodeKanban
+          cd ../..
+
+          cd artifacts/CodeKanban-macos-arm64
+          tar -czf ../../release/CodeKanban-macos-arm64.tar.gz CodeKanban
           cd ../..
 
           # List packaged files
