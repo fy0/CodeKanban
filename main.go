@@ -33,7 +33,11 @@ func main() {
 		Port         int    `short:"p" long:"port" description:"Server port (default: 3007)"`
 	}
 
-	if _, err := flags.ParseArgs(&opts, os.Args); err != nil {
+	parser := flags.NewParser(&opts, flags.Default)
+	parser.Name = PACKAGE_NAME
+	parser.Usage = "[OPTIONS]"
+
+	if _, err := parser.ParseArgs(os.Args); err != nil {
 		return
 	}
 

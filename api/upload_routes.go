@@ -29,6 +29,11 @@ func registerUploadRoutes(group *huma.Group, cfg *utils.AppConfig, logger *zap.L
 		logger: logger.Named("upload-controller"),
 	}
 
+	// NOTE: 图片粘贴处理端点
+	// 当前在 Windows 上，前端的 xterm.js 使用默认行为处理粘贴，不会调用此接口。
+	// 各家终端模拟器（Windows Terminal、iTerm2 等）会单独监听系统剪贴板，
+	// 因此图片粘贴由终端本身处理，而不是通过此 HTTP 接口。
+	// 但此代码可能在其他系统或特殊场景下有用，不要轻易删除。
 	huma.Post(group, "/upload/clipboard-image", func(
 		ctx context.Context,
 		input *uploadClipboardImageInput,
@@ -41,6 +46,10 @@ func registerUploadRoutes(group *huma.Group, cfg *utils.AppConfig, logger *zap.L
 	})
 }
 
+// handleClipboardImage 处理剪贴板图片上传请求
+// NOTE: 此功能当前在 Windows 上不工作，因为前端已改为使用 xterm.js 的默认粘贴行为。
+// 各家终端（Windows Terminal、cmd 等）会直接监听系统剪贴板，无需通过此接口。
+// 保留此代码是因为在其他操作系统或未来的特殊场景下可能有用。
 func (c *uploadController) handleClipboardImage(
 	ctx context.Context,
 	input *uploadClipboardImageInput,

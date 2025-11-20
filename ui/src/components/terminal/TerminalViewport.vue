@@ -35,7 +35,6 @@ const containerRef = ref<HTMLDivElement>();
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let serializeAddon: SerializeAddon | null = null;
-let pasteHandler: ((event: ClipboardEvent) => void) | null = null;
 let dragOverHandler: ((event: DragEvent) => void) | null = null;
 let dropHandler: ((event: DragEvent) => void) | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
@@ -353,79 +352,59 @@ onMounted(() => {
     props.send(props.tab.id, { type: 'input', data });
   });
 
-  // 支持 Ctrl+V/Cmd+V 粘贴
+  // 智能粘贴处理：根据剪贴板内容类型决定行为
+  // - 图片等非文本内容：发送 Ctrl+V 按键给终端，让终端程序自己处理（如 Windows Terminal、cmd）
+  // - 普通文本：拦截并发送文本内容（兼容 Claude Code 等依赖前端发送内容的终端）
   terminal.attachCustomKeyEventHandler(event => {
-    // Ctrl+V (Windows/Linux) 或 Cmd+V (Mac)
+    // 拦截 Ctrl+V (Windows/Linux) 或 Cmd+V (Mac)
     if ((event.ctrlKey || event.metaKey) && event.key === 'v' && event.type === 'keydown') {
       event.preventDefault();
-      navigator.clipboard
-        .readText()
-        .then(text => {
-          if (terminal) {
-            // 将粘贴的文本发送到终端
-            props.send(props.tab.id, { type: 'input', data: text });
+
+      // 异步处理剪贴板内容
+      (async () => {
+        try {
+          // 读取剪贴板所有内容
+          const clipboardItems = await navigator.clipboard.read();
+
+          // 检查是否包含非文本内容（图片等）
+          let hasNonText = false;
+          for (const item of clipboardItems) {
+            // 如果包含图片类型，标记为非文本
+            if (item.types.some(type => type.startsWith('image/'))) {
+              hasNonText = true;
+              break;
+            }
           }
-        })
-        .catch(err => {
+
+          if (hasNonText) {
+            // 剪贴板包含图片，发送 Ctrl+V 控制字符 (ASCII 0x16)
+            // 让终端程序自己监听系统剪贴板并处理
+            props.send(props.tab.id, { type: 'input', data: '\x16' });
+          } else {
+            // 剪贴板只有文本，读取并发送文本内容
+            const text = await navigator.clipboard.readText();
+            if (text && terminal) {
+              props.send(props.tab.id, { type: 'input', data: text });
+            }
+          }
+        } catch (err) {
           console.warn('[Terminal] Failed to read clipboard:', err);
-        });
-      return false; // 阻止默认处理
+          // 失败时fallback：尝试读取文本
+          try {
+            const text = await navigator.clipboard.readText();
+            if (text && terminal) {
+              props.send(props.tab.id, { type: 'input', data: text });
+            }
+          } catch (e) {
+            console.warn('[Terminal] Fallback clipboard read also failed:', e);
+          }
+        }
+      })();
+
+      return false; // 阻止 xterm.js 默认处理
     }
     return true; // 其他按键正常处理
   });
-
-  // 支持浏览器原生 paste 事件（上传图片并发送路径）
-  pasteHandler = async (event: ClipboardEvent) => {
-    event.preventDefault();
-
-    // 处理图片粘贴：上传图片并发送文件路径
-    const items = event.clipboardData?.items;
-    if (items) {
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        if (item.type.startsWith('image/')) {
-          const file = item.getAsFile();
-          if (file) {
-            try {
-              // 读取图片为 base64
-              const arrayBuffer = await file.arrayBuffer();
-              const base64 = btoa(
-                new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-              );
-
-              // 上传图片到服务器
-              const response = await fetch('/api/v1/upload/clipboard-image', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  fileName: file.name || 'pasted-image.png',
-                  data: base64,
-                }),
-              });
-
-              if (response.ok) {
-                const result = await response.json();
-                const filePath = result.data.path;
-                // 将文件路径作为输入发送（模拟用户输入文件路径）
-                props.send(props.tab.id, { type: 'input', data: filePath });
-              }
-            } catch (error) {
-              console.warn('[Terminal] Failed to upload clipboard image:', error);
-            }
-          }
-          return;
-        }
-      }
-    }
-
-    // 处理文本粘贴
-    const text = event.clipboardData?.getData('text');
-    if (text) {
-      props.send(props.tab.id, { type: 'input', data: text });
-      return;
-    }
-  };
-  container?.addEventListener('paste', pasteHandler);
 
   // 支持拖放图片文件到终端
   dragOverHandler = (event: DragEvent) => {
@@ -502,9 +481,6 @@ onBeforeUnmount(() => {
   props.emitter.off('terminal-blur-all', handleTerminalBlurEvent);
   window.removeEventListener('resize', handleResize);
   if (containerRef.value) {
-    if (pasteHandler) {
-      containerRef.value.removeEventListener('paste', pasteHandler);
-    }
     if (dragOverHandler) {
       containerRef.value.removeEventListener('dragover', dragOverHandler);
     }
@@ -518,7 +494,6 @@ onBeforeUnmount(() => {
   fitAddon = null;
   serializeAddon?.dispose();
   serializeAddon = null;
-  pasteHandler = null;
   dragOverHandler = null;
   dropHandler = null;
 });
