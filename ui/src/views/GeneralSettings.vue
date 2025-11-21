@@ -144,6 +144,45 @@
         </n-form>
       </n-card>
 
+      <n-card :title="t('settings.aiAssistantStatusTracking')" size="huge">
+        <template #header-extra>
+          <n-button
+            size="small"
+            :loading="saveLoading"
+            :disabled="!aiStatusDirty"
+            @click="handleSaveAIStatus"
+          >
+            {{ t('common.save') }}
+          </n-button>
+        </template>
+        <n-spin :show="aiStatusLoading">
+          <n-form label-placement="left" label-width="160">
+            <n-form-item :label="t('settings.aiAssistantClaudeCode')">
+              <n-space align="center">
+                <n-switch v-model:value="aiStatusForm.claudeCode" />
+                <span class="form-tip">{{ t('settings.aiStatusClaudeSupport') }}</span>
+              </n-space>
+            </n-form-item>
+            <n-form-item :label="t('settings.aiAssistantQwenCode')">
+              <n-space align="center">
+                <n-switch v-model:value="aiStatusForm.qwenCode" />
+                <span class="form-tip">{{ t('settings.aiStatusQwenSupport') }}</span>
+              </n-space>
+            </n-form-item>
+            <n-form-item>
+              <template #label>
+                {{ t('settings.aiAssistantCodex') }}
+                <n-tag size="small" type="warning" :bordered="false" style="margin-left: 4px;">
+                  {{ t('settings.aiStatusHasIssues') }}
+                </n-tag>
+              </template>
+              <n-switch v-model:value="aiStatusForm.codex" />
+            </n-form-item>
+          </n-form>
+          <span class="form-tip">{{ t('settings.aiAssistantStatusTrackingTip') }}</span>
+        </n-spin>
+      </n-card>
+
       <n-card :title="t('settings.realtimePreview')" size="huge">
         <div class="preview-panel" :style="{ backgroundColor: surfaceColor }">
           <div class="preview-banner" :style="{ backgroundColor: primaryColor }">
@@ -170,7 +209,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, reactive } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useTitle, useEventListener, useDebounceFn } from '@vueuse/core';
@@ -187,6 +226,9 @@ import {
 } from '@/stores/settings';
 import { APP_NAME } from '@/constants/app';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
+import Apis from '@/api';
+import { useReq, useInit } from '@/api/composable';
+import type { AIAssistantStatusConfig } from '@/types/models';
 
 type ShortcutTarget = 'terminal' | 'notepad';
 
@@ -207,6 +249,61 @@ const {
   confirmBeforeTerminalClose,
 } = storeToRefs(settingsStore);
 const capturingTarget = ref<ShortcutTarget | null>(null);
+
+// AI Assistant Status Tracking
+const aiStatusForm = reactive<AIAssistantStatusConfig>({
+  claudeCode: true,
+  codex: false,
+  qwenCode: true,
+  gemini: false,
+  cursor: false,
+  copilot: false,
+});
+const aiStatusOriginal = ref<AIAssistantStatusConfig | null>(null);
+const aiStatusDirty = computed(() => {
+  if (!aiStatusOriginal.value) return false;
+  return (
+    aiStatusForm.claudeCode !== aiStatusOriginal.value.claudeCode ||
+    aiStatusForm.codex !== aiStatusOriginal.value.codex ||
+    aiStatusForm.qwenCode !== aiStatusOriginal.value.qwenCode
+  );
+});
+
+const { send: fetchAIStatus, loading: aiStatusLoading } = useReq(
+  () => Apis.system.aiAssistantStatusGet()
+);
+
+const { send: updateAIStatus, loading: saveLoading } = useReq(
+  (config: AIAssistantStatusConfig) => Apis.system.aiAssistantStatusUpdate({ data: config })
+);
+
+async function loadAIStatus() {
+  try {
+    const resp = await fetchAIStatus();
+    const config = resp?.item;
+    if (config) {
+      Object.assign(aiStatusForm, config);
+      aiStatusOriginal.value = { ...config };
+    }
+  } catch (error) {
+    console.error('Failed to load AI status config:', error);
+  }
+}
+
+async function handleSaveAIStatus() {
+  try {
+    await updateAIStatus({ ...aiStatusForm });
+    aiStatusOriginal.value = { ...aiStatusForm };
+    message.success(t('common.saveSuccess'));
+  } catch (error) {
+    console.error('Failed to save AI status config:', error);
+    message.error(t('common.saveFailed'));
+  }
+}
+
+useInit(() => {
+  loadAIStatus();
+});
 
 const primaryColor = computed({
   get: () => theme.value.primaryColor,

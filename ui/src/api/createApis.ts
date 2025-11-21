@@ -1,7 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Go Template API - version 1.0.0
+ * Code Kanban - version 1.0.0
  *
  *
  *

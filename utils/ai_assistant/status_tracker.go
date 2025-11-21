@@ -7,14 +7,23 @@ import (
 )
 
 const (
-	defaultIdleTimeout         = 5 * time.Second
-	maxBufferedLineBytes       = 4096
-	escToInterruptDebounceTime = 500 * time.Millisecond // At least 500ms since last "esc to interrupt"
+	defaultIdleTimeout  = 5 * time.Second
+	maxBufferedLineBytes = 4096
 
-	// Unified logic for both Claude Code and Codex to handle flickering output
-	escPresentThreshold = 3 // Need 3 consecutive chunks WITH "esc to interrupt" to confirm working state
-	escAbsentThreshold  = 3 // Then need 3 consecutive chunks WITHOUT to confirm completion
+	// Debounce times for different AI assistants
+	// Claude Code/Qwen: 500ms (output frequently, quick to detect completion)
+	// Codex: 3s (sometimes hangs without output while still working)
+	defaultEscToInterruptDebounceTime = 500 * time.Millisecond
+	codexEscToInterruptDebounceTime   = 3 * time.Second
+
+	// Thresholds for detecting state transitions
+	escPresentThreshold = 3  // Need 3 consecutive chunks WITH "esc to interrupt" to confirm working state
+	escAbsentThreshold  = 3  // Default: need 3 consecutive chunks WITHOUT to confirm completion
+	codexEscAbsentThreshold = 10 // Codex: need 10 chunks (to handle spotlight animation frames)
 )
+
+// StatusEnabledChecker is a function type that checks if status tracking is enabled for a given assistant type.
+type StatusEnabledChecker func(assistantType string) bool
 
 // StatusTracker incrementally infers ACP event states from stdout chunks.
 type StatusTracker struct {
@@ -30,6 +39,7 @@ type StatusTracker struct {
 	escPresentCount       int       // counts consecutive chunks WITH "esc to interrupt"
 	escAbsentCount        int       // counts consecutive chunks WITHOUT "esc to interrupt"
 	confirmedWorking      bool      // true after seeing escPresentThreshold consecutive "esc to interrupt"
+	statusEnabledChecker  StatusEnabledChecker // optional function to check if tracking is enabled
 
 	// State duration tracking
 	thinkingDuration        time.Duration
@@ -46,6 +56,13 @@ func NewStatusTracker() *StatusTracker {
 	}
 }
 
+// SetStatusEnabledChecker sets the function to check if status tracking is enabled.
+func (t *StatusTracker) SetStatusEnabledChecker(checker StatusEnabledChecker) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.statusEnabledChecker = checker
+}
+
 // Activate enables the tracker for assistants that support ACP progress signals.
 func (t *StatusTracker) Activate(assistantType AIAssistantType) {
 	t.mu.Lock()
@@ -54,6 +71,13 @@ func (t *StatusTracker) Activate(assistantType AIAssistantType) {
 		t.resetLocked()
 		return
 	}
+
+	// Check if status tracking is enabled for this assistant type via configuration
+	if t.statusEnabledChecker != nil && !t.statusEnabledChecker(assistantType.String()) {
+		t.resetLocked()
+		return
+	}
+
 	t.assistantType = assistantType
 	t.active = true
 	if t.lastState == AIAssistantStateUnknown {
@@ -67,6 +91,22 @@ func (t *StatusTracker) Deactivate() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.resetLocked()
+}
+
+// getDebounceTime returns the appropriate debounce time based on assistant type
+func (t *StatusTracker) getDebounceTime() time.Duration {
+	if t.assistantType == AIAssistantCodex {
+		return codexEscToInterruptDebounceTime
+	}
+	return defaultEscToInterruptDebounceTime
+}
+
+// getAbsentThreshold returns the appropriate absent threshold based on assistant type
+func (t *StatusTracker) getAbsentThreshold() int {
+	if t.assistantType == AIAssistantCodex {
+		return codexEscAbsentThreshold // 10 for Codex (spotlight animation)
+	}
+	return escAbsentThreshold // 3 for others
 }
 
 // Process consumes a chunk of stdout/stderr.
@@ -150,10 +190,12 @@ func (t *StatusTracker) Process(chunk []byte) (AIAssistantState, time.Time, bool
 		// Check if completion conditions are met:
 		// 1. Confirmed working state (phase 1 passed)
 		// 2. Threshold consecutive chunks without "esc to interrupt"
-		// 3. At least 500ms elapsed since last "esc to interrupt"
+		//    (3 for Claude Code/Qwen, 10 for Codex to handle spotlight animation)
+		// 3. At least debounce time elapsed since last "esc to interrupt"
+		//    (500ms for Claude Code/Qwen, 3s for Codex)
 		// 4. Transitioning from a working state (Thinking/Executing)
-		chunkThresholdMet := t.escAbsentCount >= escAbsentThreshold
-		timeThresholdMet := !t.lastEscToInterruptAt.IsZero() && now.Sub(t.lastEscToInterruptAt) >= escToInterruptDebounceTime
+		chunkThresholdMet := t.escAbsentCount >= t.getAbsentThreshold()
+		timeThresholdMet := !t.lastEscToInterruptAt.IsZero() && now.Sub(t.lastEscToInterruptAt) >= t.getDebounceTime()
 
 		if chunkThresholdMet && timeThresholdMet {
 			// Check if we're transitioning from a working state

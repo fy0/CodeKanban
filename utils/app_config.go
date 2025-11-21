@@ -27,13 +27,23 @@ type TerminalShellConfig struct {
 	Darwin  string `json:"darwin" yaml:"darwin"`
 }
 
+type AIAssistantStatusConfig struct {
+	ClaudeCode bool `json:"claudeCode" yaml:"claudeCode"` // 状态监测准确，默认启用
+	Codex      bool `json:"codex" yaml:"codex"`           // 存在问题（光标操纵导致的误判），默认禁用
+	QwenCode   bool `json:"qwenCode" yaml:"qwenCode"`     // 状态监测准确，默认启用
+	Gemini     bool `json:"gemini" yaml:"gemini"`         // 未充分测试，默认禁用
+	Cursor     bool `json:"cursor" yaml:"cursor"`         // 未充分测试，默认禁用
+	Copilot    bool `json:"copilot" yaml:"copilot"`       // 未充分测试，默认禁用
+}
+
 type TerminalConfig struct {
-	Shell                 TerminalShellConfig `json:"shell" yaml:"shell"`
-	IdleTimeout           string              `json:"idleTimeout" yaml:"idleTimeout"`
-	MaxSessionsPerProject int                 `json:"maxSessionsPerProject" yaml:"maxSessionsPerProject"`
-	AllowedRoots          []string            `json:"allowedRoots" yaml:"allowedRoots"`
-	Encoding              string              `json:"encoding" yaml:"encoding"`
-	ScrollbackBytes       int                 `json:"scrollbackBytes" yaml:"scrollbackBytes"`
+	Shell                 TerminalShellConfig      `json:"shell" yaml:"shell"`
+	IdleTimeout           string                   `json:"idleTimeout" yaml:"idleTimeout"`
+	MaxSessionsPerProject int                      `json:"maxSessionsPerProject" yaml:"maxSessionsPerProject"`
+	AllowedRoots          []string                 `json:"allowedRoots" yaml:"allowedRoots"`
+	Encoding              string                   `json:"encoding" yaml:"encoding"`
+	ScrollbackBytes       int                      `json:"scrollbackBytes" yaml:"scrollbackBytes"`
+	AIAssistantStatus     AIAssistantStatusConfig  `json:"aiAssistantStatus" yaml:"aiAssistantStatus"`
 
 	idleDuration time.Duration
 }
@@ -57,6 +67,26 @@ func (c *TerminalConfig) IdleDuration() time.Duration {
 	}
 	c.idleDuration = dur
 	return c.idleDuration
+}
+
+// IsEnabled 检查指定 AI 助手类型是否启用了状态监测
+func (c *AIAssistantStatusConfig) IsEnabled(assistantType string) bool {
+	switch assistantType {
+	case "claude-code":
+		return c.ClaudeCode
+	case "codex":
+		return c.Codex
+	case "qwen-code":
+		return c.QwenCode
+	case "gemini":
+		return c.Gemini
+	case "cursor":
+		return c.Cursor
+	case "copilot":
+		return c.Copilot
+	default:
+		return false // 未知类型默认禁用
+	}
 }
 
 type AppConfig struct {
@@ -132,6 +162,14 @@ func ReadConfig() *AppConfig {
 			AllowedRoots:          []string{},
 			Encoding:              "utf-8",
 			ScrollbackBytes:       262144,
+			AIAssistantStatus: AIAssistantStatusConfig{
+				ClaudeCode: true,  // 状态监测准确
+				Codex:      false, // 存在问题（光标操纵导致误判）
+				QwenCode:   true,  // 状态监测准确
+				Gemini:     false, // 未充分测试
+				Cursor:     false, // 未充分测试
+				Copilot:    false, // 未充分测试
+			},
 		},
 	}
 

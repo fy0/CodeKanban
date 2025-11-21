@@ -69,6 +69,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		MaxSessionsPerProject: cfg.Terminal.MaxSessionsPerProject,
 		Encoding:              cfg.Terminal.Encoding,
 		ScrollbackBytes:       cfg.Terminal.ScrollbackBytes,
+		AIAssistantStatus:     cfg.Terminal.AIAssistantStatus,
 	}, theLogger)
 	terminalManager.StartBackground(ctx)
 
@@ -78,7 +79,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	registerBranchRoutes(v1)
 	registerTaskRoutes(v1)
 	registerNotePadRoutes(v1)
-	registerSystemRoutes(v1)
+	registerSystemRoutes(v1, cfg)
 	registerUploadRoutes(v1, cfg, theLogger)
 	registerTerminalRoutes(app, v1, cfg, terminalManager, theLogger)
 	mountStatic(app, cfg, assets, theLogger)

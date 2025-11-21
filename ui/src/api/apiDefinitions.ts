@@ -2,7 +2,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Go Template API - version 1.0.0
+ * Code Kanban - version 1.0.0
  *
  *
  *
@@ -42,6 +42,8 @@ export default {
   'worktree.listByProject': ['GET', '/api/v1/projects/{projectId}/worktrees'],
   'worktree.create': ['POST', '/api/v1/projects/{projectId}/worktrees/create'],
   'terminalSession.create': ['POST', '/api/v1/projects/{projectId}/worktrees/{worktreeId}/terminals'],
+  'system.aiAssistantStatusGet': ['GET', '/api/v1/system/ai-assistant-status'],
+  'system.aiAssistantStatusUpdate': ['POST', '/api/v1/system/ai-assistant-status/update'],
   'system.checkUpdate': ['GET', '/api/v1/system/check-update'],
   'system.openEditor': ['POST', '/api/v1/system/open-editor'],
   'system.openExplorer': ['POST', '/api/v1/system/open-explorer'],

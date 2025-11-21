@@ -1,7 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Go Template API - version 1.0.0
+ * Code Kanban - version 1.0.0
  *
  *
  *
@@ -132,6 +132,18 @@ export interface CreateProjectInputBody {
    */
   worktreeBasePath?: string;
 }
+export interface AIAssistantStatusConfig {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  claudeCode: boolean;
+  codex: boolean;
+  copilot: boolean;
+  cursor: boolean;
+  gemini: boolean;
+  qwenCode: boolean;
+}
 export interface OpenEditorInputBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -208,6 +220,16 @@ export interface ItemsResponseProjectBody {
    * 响应列表
    */
   items: Project[] | null;
+}
+export interface ItemResponseAIAssistantStatusConfigBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: AIAssistantStatusConfig;
 }
 export interface CheckUpdateResponseBody {
   /**
@@ -581,14 +603,36 @@ export interface ItemResponseRefreshAllResultBody {
    */
   item: RefreshAllResult;
 }
+export interface StateStats {
+  currentStateDuration: number;
+  executingDuration: number;
+  thinkingDuration: number;
+  waitingApprovalDuration: number;
+  waitingInputDuration: number;
+}
+export interface AIAssistantInfo {
+  command?: string;
+  detected: boolean;
+  displayName: string;
+  name: string;
+  state?: string;
+  stateUpdatedAt?: string;
+  stats?: StateStats;
+  type: string;
+}
 export interface TerminalSessionView {
+  aiAssistant?: AIAssistantInfo;
   cols: number;
   createdAt: string;
   encoding: string;
   id: string;
   lastActive: string;
+  processHasChildren?: boolean;
+  processPid?: number;
+  processStatus?: string;
   projectId: string;
   rows: number;
+  runningCommand?: string;
   status: string;
   title: string;
   workingDir: string;
@@ -3051,13 +3095,33 @@ declare global {
        *   // [items] end
        *   // [params1] end
        *   items: Array<{
+       *     aiAssistant?: {
+       *       command?: string
+       *       detected: boolean
+       *       displayName: string
+       *       name: string
+       *       state?: string
+       *       stateUpdatedAt?: string
+       *       stats?: {
+       *         currentStateDuration: number
+       *         executingDuration: number
+       *         thinkingDuration: number
+       *         waitingApprovalDuration: number
+       *         waitingInputDuration: number
+       *       }
+       *       type: string
+       *     }
        *     cols: number
        *     createdAt: string
        *     encoding: string
        *     id: string
        *     lastActive: string
+       *     processHasChildren?: boolean
+       *     processPid?: number
+       *     processStatus?: string
        *     projectId: string
        *     rows: number
+       *     runningCommand?: string
        *     status: string
        *     title: string
        *     workingDir: string
@@ -3154,13 +3218,33 @@ declare global {
        *   $schema?: string
        *   // 响应对象
        *   item: {
+       *     aiAssistant?: {
+       *       command?: string
+       *       detected: boolean
+       *       displayName: string
+       *       name: string
+       *       state?: string
+       *       stateUpdatedAt?: string
+       *       stats?: {
+       *         currentStateDuration: number
+       *         executingDuration: number
+       *         thinkingDuration: number
+       *         waitingApprovalDuration: number
+       *         waitingInputDuration: number
+       *       }
+       *       type: string
+       *     }
        *     cols: number
        *     createdAt: string
        *     encoding: string
        *     id: string
        *     lastActive: string
+       *     processHasChildren?: boolean
+       *     processPid?: number
+       *     processStatus?: string
        *     projectId: string
        *     rows: number
+       *     runningCommand?: string
        *     status: string
        *     title: string
        *     workingDir: string
@@ -3226,13 +3310,33 @@ declare global {
        *   $schema?: string
        *   // 响应对象
        *   item: {
+       *     aiAssistant?: {
+       *       command?: string
+       *       detected: boolean
+       *       displayName: string
+       *       name: string
+       *       state?: string
+       *       stateUpdatedAt?: string
+       *       stats?: {
+       *         currentStateDuration: number
+       *         executingDuration: number
+       *         thinkingDuration: number
+       *         waitingApprovalDuration: number
+       *         waitingInputDuration: number
+       *       }
+       *       type: string
+       *     }
        *     cols: number
        *     createdAt: string
        *     encoding: string
        *     id: string
        *     lastActive: string
+       *     processHasChildren?: boolean
+       *     processPid?: number
+       *     processStatus?: string
        *     projectId: string
        *     rows: number
+       *     runningCommand?: string
        *     status: string
        *     title: string
        *     workingDir: string
@@ -3278,6 +3382,79 @@ declare global {
       ): Alova2Method<TerminalCountsResponseBody, 'terminalSession.terminalCounts', Config>;
     };
     system: {
+      /**
+       * ---
+       *
+       * [GET] 获取 AI 助手状态监测配置
+       *
+       * **path:** /api/v1/system/ai-assistant-status
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     // A URL to the JSON Schema for this object.
+       *     $schema?: string
+       *     claudeCode: boolean
+       *     codex: boolean
+       *     copilot: boolean
+       *     cursor: boolean
+       *     gemini: boolean
+       *     qwenCode: boolean
+       *   }
+       * }
+       * ```
+       */
+      aiAssistantStatusGet<Config extends Alova2MethodConfig<ItemResponseAIAssistantStatusConfigBody>>(
+        config?: Config
+      ): Alova2Method<ItemResponseAIAssistantStatusConfigBody, 'system.aiAssistantStatusGet', Config>;
+      /**
+       * ---
+       *
+       * [POST] 更新 AI 助手状态监测配置
+       *
+       * **path:** /api/v1/system/ai-assistant-status/update
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   claudeCode: boolean
+       *   codex: boolean
+       *   copilot: boolean
+       *   cursor: boolean
+       *   gemini: boolean
+       *   qwenCode: boolean
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      aiAssistantStatusUpdate<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          data: AIAssistantStatusConfig;
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'system.aiAssistantStatusUpdate', Config>;
       /**
        * ---
        *

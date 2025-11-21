@@ -121,3 +121,12 @@ export interface NotePad {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface AIAssistantStatusConfig {
+  claudeCode: boolean;
+  codex: boolean;
+  qwenCode: boolean;
+  gemini: boolean;
+  cursor: boolean;
+  copilot: boolean;
+}

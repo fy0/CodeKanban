@@ -21,6 +21,7 @@ type Config struct {
 	MaxSessionsPerProject int
 	Encoding              string
 	ScrollbackBytes       int
+	AIAssistantStatus     utils.AIAssistantStatusConfig
 }
 
 // CreateSessionParams describes API level inputs.
@@ -96,18 +97,19 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 	}
 
 	session, err := NewSession(SessionParams{
-		ID:              params.ID,
-		ProjectID:       params.ProjectID,
-		WorktreeID:      params.WorktreeID,
-		WorkingDir:      params.WorkingDir,
-		Title:           params.Title,
-		Command:         command,
-		Env:             params.Env,
-		Rows:            params.Rows,
-		Cols:            params.Cols,
-		Logger:          m.logger,
-		Encoding:        m.cfg.Encoding,
-		ScrollbackLimit: m.cfg.ScrollbackBytes,
+		ID:                params.ID,
+		ProjectID:         params.ProjectID,
+		WorktreeID:        params.WorktreeID,
+		WorkingDir:        params.WorkingDir,
+		Title:             params.Title,
+		Command:           command,
+		Env:               params.Env,
+		Rows:              params.Rows,
+		Cols:              params.Cols,
+		Logger:            m.logger,
+		Encoding:          m.cfg.Encoding,
+		ScrollbackLimit:   m.cfg.ScrollbackBytes,
+		AIAssistantStatus: &m.cfg.AIAssistantStatus,
 	})
 	if err != nil {
 		return nil, err

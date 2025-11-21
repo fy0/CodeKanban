@@ -156,18 +156,19 @@ type Session struct {
 
 // SessionParams collects the data required to bootstrap a session.
 type SessionParams struct {
-	ID              string
-	ProjectID       string
-	WorktreeID      string
-	WorkingDir      string
-	Title           string
-	Command         []string
-	Env             []string
-	Rows            int
-	Cols            int
-	Logger          *zap.Logger
-	Encoding        string
-	ScrollbackLimit int
+	ID                string
+	ProjectID         string
+	WorktreeID        string
+	WorkingDir        string
+	Title             string
+	Command           []string
+	Env               []string
+	Rows              int
+	Cols              int
+	Logger            *zap.Logger
+	Encoding          string
+	ScrollbackLimit   int
+	AIAssistantStatus *utils.AIAssistantStatusConfig
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -213,6 +214,14 @@ func NewSession(params SessionParams) (*Session, error) {
 		scrollbackLimit:  scrollbackLimit,
 		subscribers:      make(map[string]*sessionSubscriber),
 		assistantTracker: ai_assistant.NewStatusTracker(),
+	}
+
+	// Set AI assistant status tracking checker if config is provided
+	if params.AIAssistantStatus != nil {
+		statusConfig := params.AIAssistantStatus
+		session.assistantTracker.SetStatusEnabledChecker(func(assistantType string) bool {
+			return statusConfig.IsEnabled(assistantType)
+		})
 	}
 
 	if session.title == "" {
@@ -802,12 +811,11 @@ func (s *Session) enrichAssistantInfo(info *ai_assistant.AIAssistantInfo) *ai_as
 		if state, ts := tracker.State(); state != ai_assistant.AIAssistantStateUnknown {
 			info.State = state
 			info.StateUpdatedAt = ts
-		} else {
-			info.State = ai_assistant.AIAssistantStateWaitingInput
-			info.StateUpdatedAt = time.Now()
+			// Attach state duration statistics only when tracking is active
+			info.Stats = tracker.Stats()
 		}
-		// Attach state duration statistics
-		info.Stats = tracker.Stats()
+		// When state is Unknown (tracking disabled), leave info.State as default (unknown)
+		// so frontend will only show the icon without status text
 	}
 	return info
 }

@@ -861,11 +861,15 @@ function showAssistantStatus(tab: TerminalTabState) {
 }
 
 function getAssistantStateClass(tab: TerminalTabState) {
-  return (tab.aiAssistant?.state || 'waiting_input').toLowerCase();
+  const state = tab.aiAssistant?.state?.toLowerCase();
+  if (!state || state === 'unknown') {
+    return 'unknown';
+  }
+  return state;
 }
 
 function getAssistantStatusLabel(tab: TerminalTabState) {
-  const state = (tab.aiAssistant?.state || 'waiting_input').toLowerCase();
+  const state = tab.aiAssistant?.state?.toLowerCase();
   switch (state) {
     case 'thinking':
       return t('terminal.aiStatusThinking');
@@ -878,13 +882,16 @@ function getAssistantStatusLabel(tab: TerminalTabState) {
     case 'waiting_input':
       return t('terminal.aiStatusWaitingInput');
     default:
-      return t('terminal.aiStatusIdle');
+      return ''; // unknown or disabled - no label
   }
 }
 
 function getAssistantTooltip(tab: TerminalTabState) {
   const label = getAssistantStatusLabel(tab);
   const name = tab.aiAssistant?.displayName || tab.aiAssistant?.name || tab.aiAssistant?.type || '';
+  if (!label) {
+    return name || t('terminal.aiAssistantDetected');
+  }
   if (!name) {
     return label;
   }
@@ -953,7 +960,7 @@ function getAssistantIcon(tab: TerminalTabState): string {
 }
 
 function getAssistantStatusEmoji(tab: TerminalTabState): string {
-  const state = (tab.aiAssistant?.state || 'waiting_input').toLowerCase();
+  const state = tab.aiAssistant?.state?.toLowerCase();
   switch (state) {
     case 'thinking':
       return '🧠';
@@ -966,7 +973,7 @@ function getAssistantStatusEmoji(tab: TerminalTabState): string {
     case 'waiting_input':
       return '✓';
     default:
-      return '●';
+      return ''; // unknown - no emoji
   }
 }
 
@@ -1372,6 +1379,17 @@ defineExpose({
 .ai-status-pill.state-waiting_input {
   background-color: rgba(148, 163, 184, 0.18);
   color: #475467;
+}
+
+.ai-status-pill.state-unknown {
+  background-color: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  padding: 0 4px;
+}
+
+.ai-status-pill.state-unknown .ai-status-text,
+.ai-status-pill.state-unknown .ai-status-emoji {
+  display: none;
 }
 
 .ai-status-icon {

@@ -46,7 +46,7 @@ type openEditorInput struct {
 	} `json:"body"`
 }
 
-func registerSystemRoutes(group *huma.Group) {
+func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig) {
 	huma.Get(group, "/system/version", func(ctx context.Context, input *struct{}) (*versionResponse, error) {
 		resp := &versionResponse{}
 		resp.Body.Name = appInfo.Name
@@ -133,6 +133,37 @@ func registerSystemRoutes(group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "system-open-editor"
 		op.Summary = "使用指定编辑器打开目录"
+		op.Tags = []string{systemTag}
+	})
+
+	// AI 助手状态监测配置
+	huma.Get(group, "/system/ai-assistant-status", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.AIAssistantStatusConfig], error) {
+		resp := h.NewItemResponse(cfg.Terminal.AIAssistantStatus)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-ai-assistant-status-get"
+		op.Summary = "获取 AI 助手状态监测配置"
+		op.Description = "获取当前 AI 助手状态监测的启用/禁用配置"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/ai-assistant-status/update", func(ctx context.Context, input *struct {
+		Body utils.AIAssistantStatusConfig `json:"body"`
+	}) (*h.MessageResponse, error) {
+		// 更新内存中的配置
+		cfg.Terminal.AIAssistantStatus = input.Body
+
+		// 写回配置文件
+		utils.WriteConfig(cfg)
+
+		resp := h.NewMessageResponse("AI assistant status config updated. Restart required for existing terminals.")
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-ai-assistant-status-update"
+		op.Summary = "更新 AI 助手状态监测配置"
+		op.Description = "更新 AI 助手状态监测的启用/禁用配置，需要重启才能对现有终端生效"
 		op.Tags = []string{systemTag}
 	})
 }
