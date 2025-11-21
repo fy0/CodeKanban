@@ -19,6 +19,7 @@ import (
 	"github.com/valyala/fasthttp/fasthttpadaptor"
 	"go.uber.org/zap"
 
+	"code-kanban/api/ai_assistant"
 	"code-kanban/api/h"
 	"code-kanban/api/terminal"
 	"code-kanban/model"
@@ -330,6 +331,12 @@ func (c *terminalController) forwardPTY(ctx context.Context, session *terminal.S
 				}
 				_ = send(wsMessage{Type: "exit", Data: message})
 				return
+			case terminal.StreamEventMetadata:
+				if event.Metadata != nil {
+					if writeErr := send(wsMessage{Type: "metadata", Metadata: event.Metadata}); writeErr != nil {
+						return
+					}
+				}
 			default:
 				continue
 			}
@@ -393,6 +400,12 @@ func (c *terminalController) viewFromSnapshot(snapshot terminal.SessionSnapshot)
 		Rows:       snapshot.Rows,
 		Cols:       snapshot.Cols,
 		Encoding:   snapshot.Encoding,
+		// Process information
+		ProcessPID:         snapshot.ProcessPID,
+		ProcessStatus:      snapshot.ProcessStatus,
+		ProcessHasChildren: snapshot.ProcessHasChildren,
+		RunningCommand:     snapshot.RunningCommand,
+		AIAssistant:        snapshot.AIAssistant,
 	}
 }
 
@@ -480,6 +493,12 @@ type terminalSessionView struct {
 	Rows       int       `json:"rows"`
 	Cols       int       `json:"cols"`
 	Encoding   string    `json:"encoding"`
+	// Process information
+	ProcessPID         int32                          `json:"processPid,omitempty"`
+	ProcessStatus      string                         `json:"processStatus,omitempty"`
+	ProcessHasChildren bool                           `json:"processHasChildren,omitempty"`
+	RunningCommand     string                         `json:"runningCommand,omitempty"`
+	AIAssistant        *ai_assistant.AIAssistantInfo `json:"aiAssistant,omitempty"`
 }
 
 type terminalCountsResponse struct {

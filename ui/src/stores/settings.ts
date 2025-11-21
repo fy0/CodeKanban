@@ -179,7 +179,7 @@ function loadSettings(): GeneralSettings {
       return {
         theme: {
           ...defaultTheme,
-          ...(parsed.theme ?? {}),
+          ...parsed.theme,
         },
         recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
         maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),

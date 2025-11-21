@@ -68,7 +68,7 @@ const normalizePath = (path: string) => {
 const enhanceConfig = <Responded, Transformed>(
   config?: HttpConfig<Responded, Transformed>,
 ) => {
-  const nextConfig: HttpConfig<Responded, Transformed> = { ...(config ?? {}) };
+  const nextConfig: HttpConfig<Responded, Transformed> = { ...config };
   const originalTransform = nextConfig.transform;
 
   nextConfig.transform = async (...args) => {

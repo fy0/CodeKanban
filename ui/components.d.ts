@@ -8,6 +8,8 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AIApprovalNotifier: typeof import('./src/components/terminal/AIApprovalNotifier.vue')['default']
+    AICompletionNotifier: typeof import('./src/components/terminal/AICompletionNotifier.vue')['default']
     AppInitializer: typeof import('./src/components/common/AppInitializer.vue')['default']
     BranchListItem: typeof import('./src/components/branch/BranchListItem.vue')['default']
     GitStatusBadge: typeof import('./src/components/common/GitStatusBadge.vue')['default']

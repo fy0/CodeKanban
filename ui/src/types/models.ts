@@ -69,6 +69,28 @@ export interface TerminalSession {
   wsUrl: string;
   rows: number;
   cols: number;
+  // Process information
+  processPid?: number;
+  processStatus?: 'idle' | 'busy' | 'unknown';
+  processHasChildren?: boolean;
+  runningCommand?: string;
+  // AI Assistant information
+  aiAssistant?: {
+    type: string;
+    name: string;
+    displayName: string;
+    detected: boolean;
+    command?: string;
+    state?: string;
+    stateUpdatedAt?: string;
+    stats?: {
+      thinkingDuration: number;
+      executingDuration: number;
+      waitingApprovalDuration: number;
+      waitingInputDuration: number;
+      currentStateDuration: number;
+    };
+  };
 }
 
 export interface BranchInfo {

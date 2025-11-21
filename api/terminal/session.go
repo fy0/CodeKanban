@@ -17,7 +17,9 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 
+	"code-kanban/api/ai_assistant"
 	"code-kanban/utils"
+	"code-kanban/utils/process"
 )
 
 // SessionStatus describes the lifecycle stage of a terminal session.
@@ -46,19 +48,36 @@ type SessionSnapshot struct {
 	Rows       int
 	Cols       int
 	Encoding   string
+	// Process information
+	ProcessPID         int32  `json:"processPid,omitempty"`
+	ProcessStatus      string `json:"processStatus,omitempty"`
+	ProcessHasChildren bool   `json:"processHasChildren,omitempty"`
+	RunningCommand     string `json:"runningCommand,omitempty"`
+	// AI Assistant information
+	AIAssistant *ai_assistant.AIAssistantInfo `json:"aiAssistant"`
 }
 
 type StreamEventType string
 
 const (
-	StreamEventData StreamEventType = "data"
-	StreamEventExit StreamEventType = "exit"
+	StreamEventData     StreamEventType = "data"
+	StreamEventExit     StreamEventType = "exit"
+	StreamEventMetadata StreamEventType = "metadata"
 )
 
 type StreamEvent struct {
-	Type StreamEventType
-	Data []byte
-	Err  error
+	Type     StreamEventType
+	Data     []byte
+	Err      error
+	Metadata *SessionMetadata
+}
+
+type SessionMetadata struct {
+	ProcessPID         int32                        `json:"processPid,omitempty"`
+	ProcessStatus      string                       `json:"processStatus,omitempty"`
+	ProcessHasChildren bool                         `json:"processHasChildren,omitempty"`
+	RunningCommand     string                       `json:"runningCommand,omitempty"`
+	AIAssistant        *ai_assistant.AIAssistantInfo `json:"aiAssistant,omitempty"`
 }
 
 type SessionStream struct {
@@ -118,6 +137,8 @@ type Session struct {
 	encoding encoding.Encoding
 	encName  string
 
+	assistantTracker *ai_assistant.StatusTracker
+
 	mu sync.RWMutex
 
 	scrollMu        sync.RWMutex
@@ -128,6 +149,9 @@ type Session struct {
 	subMu       sync.RWMutex
 	subscribers map[string]*sessionSubscriber
 	exitOnce    sync.Once
+
+	metaMu       sync.RWMutex
+	lastMetadata *SessionMetadata
 }
 
 // SessionParams collects the data required to bootstrap a session.
@@ -172,22 +196,23 @@ func NewSession(params SessionParams) (*Session, error) {
 	}
 
 	session := &Session{
-		id:              params.ID,
-		projectID:       params.ProjectID,
-		worktreeID:      params.WorktreeID,
-		workingDir:      params.WorkingDir,
-		title:           params.Title,
-		command:         append([]string{}, params.Command...),
-		env:             append([]string{}, params.Env...),
-		rows:            params.Rows,
-		cols:            params.Cols,
-		createdAt:       time.Now(),
-		closed:          make(chan struct{}),
-		logger:          params.Logger,
-		encoding:        enc,
-		encName:         encName,
-		scrollbackLimit: scrollbackLimit,
-		subscribers:     make(map[string]*sessionSubscriber),
+		id:               params.ID,
+		projectID:        params.ProjectID,
+		worktreeID:       params.WorktreeID,
+		workingDir:       params.WorkingDir,
+		title:            params.Title,
+		command:          append([]string{}, params.Command...),
+		env:              append([]string{}, params.Env...),
+		rows:             params.Rows,
+		cols:             params.Cols,
+		createdAt:        time.Now(),
+		closed:           make(chan struct{}),
+		logger:           params.Logger,
+		encoding:         enc,
+		encName:          encName,
+		scrollbackLimit:  scrollbackLimit,
+		subscribers:      make(map[string]*sessionSubscriber),
+		assistantTracker: ai_assistant.NewStatusTracker(),
 	}
 
 	if session.title == "" {
@@ -252,6 +277,7 @@ func (s *Session) Start(ctx context.Context) error {
 
 	go s.wait(sessionCtx)
 	go s.consumePTY(sessionCtx)
+	go s.monitorMetadata(sessionCtx)
 
 	return nil
 }
@@ -278,12 +304,111 @@ func (s *Session) consumePTY(ctx context.Context) {
 			if len(normalized) > 0 {
 				s.appendScrollback(normalized)
 				s.broadcast(StreamEvent{Type: StreamEventData, Data: normalized})
+				s.handleAssistantOutput(normalized)
 			}
 		}
 		if err != nil {
 			return
 		}
 	}
+}
+
+func (s *Session) monitorMetadata(ctx context.Context) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkAndBroadcastMetadata()
+		}
+	}
+}
+
+func (s *Session) checkAndBroadcastMetadata() {
+	pid := s.getPID()
+	if pid <= 0 {
+		return
+	}
+
+	metadata := &SessionMetadata{
+		ProcessPID:         pid,
+		ProcessStatus:      process.GetProcessStatus(pid),
+		ProcessHasChildren: process.IsProcessBusy(pid),
+	}
+
+	tracker := s.assistantTracker
+	if metadata.ProcessHasChildren {
+		if cmd := process.GetForegroundCommand(pid); cmd != "" {
+			metadata.RunningCommand = cmd
+
+			// Detect AI Assistant
+			aiInfo := ai_assistant.Detect(cmd)
+			metadata.AIAssistant = s.enrichAssistantInfo(aiInfo)
+		} else if tracker != nil {
+			tracker.Deactivate()
+		}
+	} else if tracker != nil {
+		tracker.Deactivate()
+	}
+
+	if tracker != nil && metadata.AIAssistant != nil {
+		if state, ts, changed := tracker.EvaluateTimeout(time.Now()); changed {
+			metadata.AIAssistant.State = state
+			metadata.AIAssistant.StateUpdatedAt = ts
+		}
+	}
+
+	// Check if metadata changed
+	s.metaMu.RLock()
+	lastMeta := s.lastMetadata
+	s.metaMu.RUnlock()
+
+	if s.metadataChanged(lastMeta, metadata) {
+		s.metaMu.Lock()
+		s.lastMetadata = metadata
+		s.metaMu.Unlock()
+
+		// Broadcast metadata change
+		s.broadcast(StreamEvent{
+			Type:     StreamEventMetadata,
+			Metadata: metadata,
+		})
+	}
+}
+
+func (s *Session) metadataChanged(old, new *SessionMetadata) bool {
+	if old == nil {
+		return true
+	}
+	if new == nil {
+		return false
+	}
+
+	if old.ProcessPID != new.ProcessPID ||
+		old.ProcessStatus != new.ProcessStatus ||
+		old.ProcessHasChildren != new.ProcessHasChildren ||
+		old.RunningCommand != new.RunningCommand {
+		return true
+	}
+
+	// Check AI assistant changes
+	if (old.AIAssistant == nil) != (new.AIAssistant == nil) {
+		return true
+	}
+	if old.AIAssistant != nil && new.AIAssistant != nil {
+		if old.AIAssistant.Type != new.AIAssistant.Type ||
+			old.AIAssistant.DisplayName != new.AIAssistant.DisplayName ||
+			old.AIAssistant.Command != new.AIAssistant.Command ||
+			old.AIAssistant.State != new.AIAssistant.State ||
+			!old.AIAssistant.StateUpdatedAt.Equal(new.AIAssistant.StateUpdatedAt) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Reader exposes the PTY reader interface.
@@ -471,7 +596,8 @@ func (s *Session) Touch() {
 func (s *Session) Snapshot() SessionSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return SessionSnapshot{
+
+	snapshot := SessionSnapshot{
 		ID:         s.id,
 		ProjectID:  s.projectID,
 		WorktreeID: s.worktreeID,
@@ -484,6 +610,31 @@ func (s *Session) Snapshot() SessionSnapshot {
 		Cols:       s.cols,
 		Encoding:   s.encName,
 	}
+
+	// Get process information
+	if pid := s.getPID(); pid > 0 {
+		snapshot.ProcessPID = pid
+		snapshot.ProcessStatus = process.GetProcessStatus(pid)
+		snapshot.ProcessHasChildren = process.IsProcessBusy(pid)
+
+		// Get foreground command if there are children
+		if snapshot.ProcessHasChildren {
+			if cmd := process.GetForegroundCommand(pid); cmd != "" {
+				snapshot.RunningCommand = cmd
+				snapshot.AIAssistant = s.enrichAssistantInfo(ai_assistant.Detect(cmd))
+			}
+		}
+	}
+
+	return snapshot
+}
+
+// getPID returns the shell process PID, or 0 if not available.
+func (s *Session) getPID() int32 {
+	if s.cmd != nil && s.cmd.Process != nil {
+		return int32(s.cmd.Process.Pid)
+	}
+	return 0
 }
 
 func (s *Session) setStatus(status SessionStatus) {
@@ -614,6 +765,63 @@ func (s *Session) removeSubscriber(id string) {
 			close(sub.ch)
 		})
 	}
+}
+
+func (s *Session) handleAssistantOutput(chunk []byte) {
+	if len(chunk) == 0 || s.assistantTracker == nil {
+		return
+	}
+	state, ts, changed := s.assistantTracker.Process(chunk)
+	if !changed || state == ai_assistant.AIAssistantStateUnknown {
+		return
+	}
+	s.metaMu.Lock()
+	if s.lastMetadata == nil || s.lastMetadata.AIAssistant == nil {
+		s.metaMu.Unlock()
+		return
+	}
+	metadata := cloneSessionMetadata(s.lastMetadata)
+	metadata.AIAssistant.State = state
+	metadata.AIAssistant.StateUpdatedAt = ts
+	s.lastMetadata = metadata
+	s.metaMu.Unlock()
+
+	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: metadata})
+}
+
+func (s *Session) enrichAssistantInfo(info *ai_assistant.AIAssistantInfo) *ai_assistant.AIAssistantInfo {
+	tracker := s.assistantTracker
+	if info == nil {
+		if tracker != nil {
+			tracker.Deactivate()
+		}
+		return nil
+	}
+	if tracker != nil {
+		tracker.Activate(info.Type)
+		if state, ts := tracker.State(); state != ai_assistant.AIAssistantStateUnknown {
+			info.State = state
+			info.StateUpdatedAt = ts
+		} else {
+			info.State = ai_assistant.AIAssistantStateWaitingInput
+			info.StateUpdatedAt = time.Now()
+		}
+		// Attach state duration statistics
+		info.Stats = tracker.Stats()
+	}
+	return info
+}
+
+func cloneSessionMetadata(meta *SessionMetadata) *SessionMetadata {
+	if meta == nil {
+		return nil
+	}
+	copyMeta := *meta
+	if meta.AIAssistant != nil {
+		infoCopy := *meta.AIAssistant
+		copyMeta.AIAssistant = &infoCopy
+	}
+	return &copyMeta
 }
 
 func cloneBytes(src []byte) []byte {

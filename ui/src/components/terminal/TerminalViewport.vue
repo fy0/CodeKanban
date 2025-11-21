@@ -56,7 +56,7 @@ const shouldAutoFocus = computed(() => props.shouldAutoFocus !== false);
 
 const overlayMessage = computed(() => {
   const status = props.tab.clientStatus;
-  console.log('[Terminal Overlay] Status check:', status, 'sessionId:', props.tab.id);
+  // Removed debug log to avoid confusion with AI completion detection
   switch (status) {
     case 'connecting':
       return '正在连接终端…';
@@ -87,6 +87,12 @@ function handleMessage(payload: ServerMessage) {
     case 'error':
       if (payload.data) {
         terminal.writeln(`\r\n错误: ${payload.data}`);
+      }
+      break;
+    case 'metadata':
+      // Forward metadata to parent component via emitter
+      if (payload.metadata) {
+        props.emitter.emit('metadata', props.tab.id, payload.metadata);
       }
       break;
     default:

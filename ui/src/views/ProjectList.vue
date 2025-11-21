@@ -135,6 +135,7 @@
           :key="project.id"
           hoverable
           class="project-card"
+          :class="{ 'has-notifications': hasProjectNotifications(project.id) }"
           @click="goToProject(project.id)"
         >
           <template #header>
@@ -241,7 +242,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import { useTitle } from '@vueuse/core';
@@ -336,6 +337,37 @@ const handleAppNameClick = () => {
 };
 
 const terminalCounts = terminalStore.terminalCounts;
+
+// Track projects with unviewed notifications (completion or approval needed)
+const projectNotifications = ref<Map<string, number>>(new Map());
+
+// Handle AI completion notification
+function handleAICompletionForProject(event: any) {
+  const { projectId } = event;
+  if (projectId) {
+    const currentCount = projectNotifications.value.get(projectId) || 0;
+    projectNotifications.value.set(projectId, currentCount + 1);
+  }
+}
+
+// Handle AI approval needed notification
+function handleAIApprovalForProject(event: any) {
+  const { projectId } = event;
+  if (projectId) {
+    const currentCount = projectNotifications.value.get(projectId) || 0;
+    projectNotifications.value.set(projectId, currentCount + 1);
+  }
+}
+
+// Clear notifications for a project
+function clearProjectNotifications(projectId: string) {
+  projectNotifications.value.delete(projectId);
+}
+
+// Check if a project has notifications
+function hasProjectNotifications(projectId: string): boolean {
+  return (projectNotifications.value.get(projectId) || 0) > 0;
+}
 
 // 使用 useReq 定义优先级更新请求
 const { send: updatePriority, loading: priorityLoading } = useReq(
@@ -451,6 +483,16 @@ onMounted(() => {
   terminalStore.loadTerminalCounts();
   // 延迟检查更新，避免阻塞页面加载
   setTimeout(checkForUpdates, 2000);
+
+  // Listen for AI notifications
+  terminalStore.emitter.on('ai:completed', handleAICompletionForProject);
+  terminalStore.emitter.on('ai:approval-needed', handleAIApprovalForProject);
+});
+
+onUnmounted(() => {
+  // Clean up event listeners
+  terminalStore.emitter.off('ai:completed', handleAICompletionForProject);
+  terminalStore.emitter.off('ai:approval-needed', handleAIApprovalForProject);
 });
 
 watch(showEditDialog, value => {
@@ -460,6 +502,8 @@ watch(showEditDialog, value => {
 });
 
 function goToProject(id: string) {
+  // Clear notifications for this project when user navigates to it
+  clearProjectNotifications(id);
   router.push({ name: 'project', params: { id } });
 }
 
@@ -673,11 +717,26 @@ function getPriorityLabel(priority: number): string {
 
 .project-card {
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition: all 0.3s ease;
 }
 
 .project-card:hover {
   transform: translateY(-2px);
+}
+
+.project-card.has-notifications {
+  background: linear-gradient(135deg, rgba(18, 183, 106, 0.08) 0%, rgba(18, 183, 106, 0.02) 100%);
+  border-left: 3px solid #12b76a;
+  animation: notificationPulse 2s ease-in-out infinite;
+}
+
+@keyframes notificationPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(18, 183, 106, 0);
+  }
+  50% {
+    box-shadow: 0 0 20px 0 rgba(18, 183, 106, 0.3);
+  }
 }
 
 .path-text {

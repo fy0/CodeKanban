@@ -5,14 +5,16 @@ import (
 	"net/url"
 	"strings"
 
+	"code-kanban/api/terminal"
 	"code-kanban/utils"
 )
 
 type wsMessage struct {
-	Type string `json:"type"`
-	Data string `json:"data,omitempty"`
-	Cols int    `json:"cols,omitempty"`
-	Rows int    `json:"rows,omitempty"`
+	Type     string                   `json:"type"`
+	Data     string                   `json:"data,omitempty"`
+	Cols     int                      `json:"cols,omitempty"`
+	Rows     int                      `json:"rows,omitempty"`
+	Metadata *terminal.SessionMetadata `json:"metadata,omitempty"`
 }
 
 func buildWSURL(cfg *utils.AppConfig, path string) string {

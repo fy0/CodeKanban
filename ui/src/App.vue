@@ -6,6 +6,8 @@ import { zhCN, dateZhCN, enUS, dateEnUS, type GlobalThemeOverrides } from 'naive
 import { useI18n } from 'vue-i18n';
 import AppInitializer from '@/components/common/AppInitializer.vue';
 import NotePad from '@/components/notepad/NotePad.vue';
+import AICompletionNotifier from '@/components/terminal/AICompletionNotifier.vue';
+import AIApprovalNotifier from '@/components/terminal/AIApprovalNotifier.vue';
 import { useSettingsStore } from '@/stores/settings';
 import { darkenColor, lightenColor } from '@/utils/color';
 
@@ -70,6 +72,8 @@ watchEffect(() => {
               <AppInitializer />
               <RouterView />
               <NotePad />
+              <AICompletionNotifier />
+              <AIApprovalNotifier />
             </n-modal-provider>
           </n-message-provider>
         </n-notification-provider>

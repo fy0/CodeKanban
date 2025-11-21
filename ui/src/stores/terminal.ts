@@ -5,6 +5,7 @@ import Apis, { urlBase } from '@/api';
 import type { TerminalSession } from '@/types/models';
 import { resolveWsUrl } from '@/utils/ws';
 import { clearTerminalSnapshot } from '@/utils/terminalSnapshotCache';
+import { useProjectStore } from '@/stores/project';
 
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
 
@@ -13,10 +14,25 @@ export interface TerminalTabState extends TerminalSession {
 }
 
 export type ServerMessage = {
-  type: 'ready' | 'data' | 'exit' | 'error';
+  type: 'ready' | 'data' | 'exit' | 'error' | 'metadata';
   data?: string;
   cols?: number;
   rows?: number;
+  metadata?: {
+    processPid?: number;
+    processStatus?: string;
+    processHasChildren?: boolean;
+    runningCommand?: string;
+    aiAssistant?: {
+      type: string;
+      name: string;
+      displayName: string;
+      detected: boolean;
+      command?: string;
+      state?: string;
+      stateUpdatedAt?: string;
+    };
+  };
 };
 
 export type TerminalCreateOptions = {
@@ -163,6 +179,16 @@ export const useTerminalStore = defineStore('terminal', () => {
   const projectLoadTokens = new Map<string, number>();
   const emitter = new EventEmitter();
   const cachedCounts = reactive(new Map<string, number>());
+  // Track AI assistant state for each session to detect state changes
+  const aiPreviousStates = new Map<string, string>();
+  // Get project store for looking up project names
+  const projectStore = useProjectStore();
+
+  // Helper function to get project name by ID
+  function getProjectName(projectId: string): string | undefined {
+    const project = projectStore.projects.find((p) => p.id === projectId);
+    return project?.name;
+  }
 
   function getTabs(projectId?: string) {
     if (!projectId) {
@@ -334,6 +360,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         }
       }
       sessionIndex.delete(sessionId);
+      aiPreviousStates.delete(sessionId); // Clean up AI state tracking
       if (activeTabByProject.get(record.projectId) === sessionId) {
         const next = tabStore.get(record.projectId)?.[0];
         if (next) {
@@ -463,6 +490,27 @@ export const useTerminalStore = defineStore('terminal', () => {
     record.tab = bucket[index];
   }
 
+  function updateTabMetadata(sessionId: string, metadata: ServerMessage['metadata']) {
+    const record = sessionIndex.get(sessionId);
+    if (!record || !metadata) return;
+
+    const bucket = tabStore.get(record.projectId);
+    if (!bucket) return;
+
+    const index = bucket.findIndex(t => t.id === sessionId);
+    if (index === -1) return;
+
+    bucket[index] = {
+      ...bucket[index],
+      processPid: metadata.processPid,
+      processStatus: metadata.processStatus as 'idle' | 'busy' | 'unknown' | undefined,
+      processHasChildren: metadata.processHasChildren,
+      runningCommand: metadata.runningCommand,
+      aiAssistant: metadata.aiAssistant,
+    };
+    record.tab = bucket[index];
+  }
+
   function connect(tab: TerminalTabState) {
     const wsURL = resolveWsUrl(tab.wsUrl || tab.wsPath, urlBase);
     const socket = new WebSocket(wsURL);
@@ -488,6 +536,66 @@ export const useTerminalStore = defineStore('terminal', () => {
           updateTabStatus(tab.id, 'closed');
         } else if (payload.type === 'error') {
           updateTabStatus(tab.id, 'error');
+        } else if (payload.type === 'metadata' && payload.metadata) {
+          // Update tab metadata in realtime
+          updateTabMetadata(tab.id, payload.metadata);
+
+          // 🎯 Detect AI assistant completion
+          // Only trigger notification when transitioning from working state to waiting_input
+          const currentState = payload.metadata.aiAssistant?.state;
+          const previousState = aiPreviousStates.get(tab.id);
+
+          // Detect approval requests
+          if (currentState === 'waiting_approval') {
+            console.log(
+              `[Terminal] AI Approval Needed: ${payload.metadata.aiAssistant?.displayName || 'AI'} is waiting for approval`,
+              {
+                sessionId: tab.id,
+                sessionTitle: tab.title,
+                previousState,
+                currentState,
+                assistant: payload.metadata.aiAssistant,
+              }
+            );
+            emitter.emit('ai:approval-needed', {
+              sessionId: tab.id,
+              sessionTitle: tab.title,
+              projectId: tab.projectId,
+              projectName: getProjectName(tab.projectId),
+              assistant: payload.metadata.aiAssistant,
+            });
+          }
+
+          if (currentState === 'waiting_input' && previousState) {
+            // Check if transitioning from a working state (thinking or executing)
+            const isFromWorkingState = previousState === 'thinking' || previousState === 'executing';
+
+            if (isFromWorkingState) {
+              // Valid completion: working state → waiting input
+              console.log(
+                `[Terminal] AI Completion Detected: ${payload.metadata.aiAssistant?.displayName || 'AI'} completed execution`,
+                {
+                  sessionId: tab.id,
+                  sessionTitle: tab.title,
+                  previousState,
+                  currentState,
+                  assistant: payload.metadata.aiAssistant,
+                }
+              );
+              emitter.emit('ai:completed', {
+                sessionId: tab.id,
+                sessionTitle: tab.title,
+                projectId: tab.projectId,
+                projectName: getProjectName(tab.projectId),
+                assistant: payload.metadata.aiAssistant,
+              });
+            }
+          }
+
+          // Update previous state for next comparison
+          if (currentState) {
+            aiPreviousStates.set(tab.id, currentState);
+          }
         }
         emitter.emit(tab.id, payload);
       } catch {
