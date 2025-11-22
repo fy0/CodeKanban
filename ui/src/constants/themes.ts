@@ -36,8 +36,8 @@ export const THEME_PRESETS: ThemePreset[] = [
       bodyColor: '#1E1E1E',
       surfaceColor: '#252526',
       textColor: '#D4D4D4',
-      terminalBg: '#0F111A',
-      terminalFg: '#F6F8FF',
+      terminalBg: '#2E3440',
+      terminalFg: '#D8DEE9',
     },
   },
   {
@@ -51,8 +51,8 @@ export const THEME_PRESETS: ThemePreset[] = [
       bodyColor: '#22272E',
       surfaceColor: '#2D333B',
       textColor: '#BDC9D4',
-      terminalBg: '#1C2128',
-      terminalFg: '#CDD9E5',
+      terminalBg: '#0D1117',
+      terminalFg: '#E6EDF3',
     },
   },
   {
@@ -60,7 +60,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: '暖色',
     nameEn: 'Warm',
     isDark: false,
-    terminalThemeId: 'gruvbox-dark',
+    terminalThemeId: 'warm-light',
     colors: {
       primaryColor: '#D97706',
       bodyColor: '#FEF3C7',
@@ -105,7 +105,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Solarized 亮色',
     nameEn: 'Solarized Light',
     isDark: false,
-    terminalThemeId: 'solarized-dark',
+    terminalThemeId: 'solarized-light',
     colors: {
       primaryColor: '#268BD2',
       bodyColor: '#FDF6E3',
@@ -270,7 +270,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Gruvbox 亮色',
     nameEn: 'Gruvbox Light',
     isDark: false,
-    terminalThemeId: 'gruvbox-dark',
+    terminalThemeId: 'gruvbox-light',
     colors: {
       primaryColor: '#B57614',
       bodyColor: '#FBF1C7',
