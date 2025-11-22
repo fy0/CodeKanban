@@ -131,7 +131,7 @@ const handleStartWork = () => emit('start-work');
 
 .task-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 8px 16px var(--n-box-shadow-color, rgba(0, 0, 0, 0.12));
 }
 
 .task-card__header {

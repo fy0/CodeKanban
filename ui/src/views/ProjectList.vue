@@ -52,6 +52,7 @@
       <template #extra>
         <n-space align="center">
           <LanguageSwitcher />
+          <ThemeSwitcher />
           <n-button quaternary size="small" @click="goToSettings">
             <template #icon>
               <n-icon><SettingsOutline /></n-icon>
@@ -263,6 +264,7 @@ import {
 import ProjectCreateDialog from '@/components/project/ProjectCreateDialog.vue';
 import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
 import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
+import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
 import { useAppStore } from '@/stores/app';
@@ -647,19 +649,12 @@ function getPriorityLabel(priority: number): string {
 
 /* 搜索关键字高亮 */
 :deep(.search-highlight) {
-  background-color: #ffd60a;
-  color: #000;
+  background-color: color-mix(in srgb, var(--n-primary-color, #3b69a9) 20%, transparent);
+  color: var(--kanban-terminal-fg, var(--n-text-color-1, #1f1f1f));
   padding: 2px 4px;
   border-radius: 3px;
   font-weight: 500;
-}
-
-/* 深色模式下的高亮样式 */
-@media (prefers-color-scheme: dark) {
-  :deep(.search-highlight) {
-    background-color: #ffc107;
-    color: #000;
-  }
+  transition: background-color 0.2s ease;
 }
 
 /* 项目卡片过渡动画 */

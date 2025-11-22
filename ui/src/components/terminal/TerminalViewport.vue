@@ -1,7 +1,7 @@
 <template>
   <div class="terminal-viewport">
     <div ref="containerRef" class="terminal-shell"></div>
-    <div v-if="overlayMessage" class="terminal-overlay">
+    <div v-if="overlayMessage" class="terminal-overlay" :style="terminalOverlayStyle">
       <span>{{ overlayMessage }}</span>
     </div>
   </div>
@@ -9,6 +9,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, toRef } from 'vue';
+import { storeToRefs } from 'pinia';
 import type EventEmitter from 'eventemitter3';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -23,6 +24,9 @@ import {
   saveTerminalSnapshot,
   clearTerminalSnapshot,
 } from '@/utils/terminalSnapshotCache';
+import { useSettingsStore } from '@/stores/settings';
+import { getTerminalThemeById, getDefaultTerminalTheme } from '@/constants/terminalThemes';
+import { hexToRgba } from '@/utils/color';
 
 const props = defineProps<{
   tab: TerminalTabState;
@@ -30,6 +34,21 @@ const props = defineProps<{
   send: (sessionId: string, payload: any) => void;
   shouldAutoFocus?: boolean;
 }>();
+
+const settingsStore = useSettingsStore();
+const { terminalThemeId } = storeToRefs(settingsStore);
+
+const activeTerminalTheme = computed(() => {
+  return getTerminalThemeById(terminalThemeId.value) || getDefaultTerminalTheme();
+});
+
+const terminalOverlayStyle = computed(() => {
+  const theme = activeTerminalTheme.value.theme;
+  return {
+    '--terminal-overlay-bg': hexToRgba(theme.background || '#0f111a', 0.7),
+    '--terminal-overlay-color': theme.foreground ?? '#f6f8ff',
+  };
+});
 
 const containerRef = ref<HTMLDivElement>();
 let terminal: Terminal | null = null;
@@ -236,6 +255,9 @@ function handleTerminalResizeAll() {
 }
 
 onMounted(() => {
+  // 获取当前选择的终端主题
+  const selectedTheme = activeTerminalTheme.value;
+
   terminal = new Terminal({
     allowProposedApi: true,
     convertEol: true,
@@ -247,11 +269,7 @@ onMounted(() => {
     fontWeightBold: 'bold',
     lineHeight: 1.1,
     letterSpacing: 0,
-    theme: {
-      background: 'var(--kanban-terminal-bg, #0f111a)',
-      foreground: 'var(--kanban-terminal-fg, #f6f8ff)',
-      cursor: '#66d9ef',
-    },
+    theme: selectedTheme.theme,
   });
   // terminal = new Terminal(terminalOptions);
   console.log('[Terminal] Created terminal object:', terminal);
@@ -524,8 +542,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.35);
-  color: var(--kanban-terminal-fg, #f6f8ff);
+  background: var(--terminal-overlay-bg, rgba(0, 0, 0, 0.35));
+  color: var(--terminal-overlay-color, var(--kanban-terminal-fg, #f6f8ff));
   font-size: 13px;
 }
 </style>

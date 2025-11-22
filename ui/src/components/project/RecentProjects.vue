@@ -16,6 +16,7 @@
           {{ t('common.backToList') }}
         </n-button>
         <n-space>
+          <ThemeSwitcher />
           <n-button text :disabled="!currentProject" @click="emit('editCurrent')">
             <template #icon>
               <n-icon size="20">
@@ -170,6 +171,7 @@ import { useTerminalStore } from '@/stores/terminal';
 import { useAppStore } from '@/stores/app';
 import { CreateOutline, SettingsOutline, TerminalOutline, ArrowUpCircleOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
+import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import type { ProjectPriority } from '@/stores/project';
 import type { DropdownOption } from 'naive-ui';
 import Apis from '@/api';

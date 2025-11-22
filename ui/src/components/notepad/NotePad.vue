@@ -270,7 +270,7 @@ const loadTabs = async () => {
   try {
     // 先清空当前激活的tab，避免切换作用域时显示旧数据
     activeTabId.value = '';
-    
+
     const projectId =
       currentScope.value === 'project' && currentProjectId.value ? currentProjectId.value : undefined;
     const data = await notepadApi.list(projectId);
@@ -482,9 +482,9 @@ onMounted(() => {
   top: 80px;
   right: 0;
   bottom: 40px;
-  background: #fafafa;
-  border-left: 1px solid #e0e0e0;
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.08);
+  background: var(--app-body-color, #fafafa);
+  border-left: 1px solid var(--n-border-color, #e0e0e0);
+  box-shadow: -2px 0 8px var(--n-box-shadow-color, rgba(0, 0, 0, 0.08));
   transition: transform 0.3s ease;
   display: flex;
   flex-direction: column;
@@ -506,7 +506,7 @@ onMounted(() => {
 }
 
 .resize-handle:hover {
-  background: #1890ff;
+  background: var(--n-color-target, var(--n-primary-color, #1890ff));
 }
 
 .notepad-toggle {
@@ -517,7 +517,7 @@ onMounted(() => {
   width: 28px;
   height: 56px;
   background: var(--app-surface-color, #fafafa);
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--n-border-color, #e0e0e0);
   border-right: none;
   border-radius: 6px 0 0 6px;
   display: flex;
@@ -525,7 +525,7 @@ onMounted(() => {
   justify-content: center;
   cursor: pointer;
   transition: background-color 0.2s;
-  box-shadow: -2px 0 4px rgba(0, 0, 0, 0.05);
+  box-shadow: -2px 0 4px var(--n-box-shadow-color, rgba(0, 0, 0, 0.05));
 }
 
 .notepad-toggle:hover {
@@ -542,7 +542,7 @@ onMounted(() => {
 
 .notepad-header {
   padding: 8px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--n-border-color, #e0e0e0);
   background: var(--app-body-color, #fafafa);
 }
 
@@ -578,7 +578,7 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border: 1px solid #dedede;
+  border: 1px solid var(--n-border-color, #dedede);
   border-radius: 4px;
   font-size: 12px;
   background: var(--app-surface-color, #ffffff);
@@ -588,9 +588,9 @@ onMounted(() => {
 }
 
 .tab-item.active {
-  border-color: #1890ff;
-  color: #1890ff;
-  background: rgba(24, 144, 255, 0.1);
+  border-color: var(--n-primary-color, #1890ff);
+  color: var(--n-primary-color, #1890ff);
+  background: var(--n-primary-color-suppl, rgba(24, 144, 255, 0.1));
 }
 
 .tab-item:active {
@@ -615,7 +615,7 @@ onMounted(() => {
 }
 
 .tab-close-btn:hover {
-  color: #ff4d4f;
+  color: var(--n-color-error, #ff4d4f);
 }
 
 .tab-ghost {
@@ -631,7 +631,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #8c8c8c;
+  color: var(--n-text-color-3, #8c8c8c);
   margin-top: 6px;
 }
 

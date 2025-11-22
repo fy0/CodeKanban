@@ -1,10 +1,15 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
+import { THEME_PRESETS, DEFAULT_PRESET_ID, getPresetById, getDefaultPreset } from '@/constants/themes';
+import { DEFAULT_TERMINAL_THEME_ID } from '@/constants/terminalThemes';
 
 export interface ThemeSettings {
   primaryColor: string;
   surfaceColor: string;
   bodyColor: string;
+  textColor?: string;
+  terminalBg: string;
+  terminalFg: string;
 }
 
 export interface PanelShortcutSetting {
@@ -27,22 +32,22 @@ export interface EditorSettings {
 
 interface GeneralSettings {
   theme: ThemeSettings;
+  currentPresetId: string;
+  followSystemTheme: boolean;
+  customTheme: ThemeSettings | null;
   recentProjectsLimit: number;
   maxTerminalsPerProject: number;
   panelShortcuts: ShortcutSettings;
   editor: EditorSettings;
   confirmBeforeTerminalClose: boolean;
+  terminalThemeId: string;
 }
 
 const STORAGE_KEY = 'general_settings';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
 
-const defaultTheme: ThemeSettings = {
-  primaryColor: '#3B69A9',
-  surfaceColor: '#ffffff',
-  bodyColor: '#f7f8fa',
-};
+const defaultTheme: ThemeSettings = getDefaultPreset().colors;
 
 export const DEFAULT_TERMINAL_SHORTCUT: PanelShortcutSetting = {
   code: 'Backquote',
@@ -66,17 +71,24 @@ const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
 
 const defaultSettings: GeneralSettings = {
   theme: { ...defaultTheme },
+  currentPresetId: DEFAULT_PRESET_ID,
+  followSystemTheme: false,
+  customTheme: null,
   recentProjectsLimit: DEFAULT_RECENT_PROJECTS_LIMIT,
   maxTerminalsPerProject: DEFAULT_TERMINALS_PER_PROJECT_LIMIT,
   panelShortcuts: { ...DEFAULT_SHORTCUTS },
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
+  terminalThemeId: DEFAULT_TERMINAL_THEME_ID,
 };
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<GeneralSettings>(loadSettings());
 
   const theme = computed(() => settings.value.theme);
+  const currentPresetId = computed(() => settings.value.currentPresetId);
+  const followSystemTheme = computed(() => settings.value.followSystemTheme);
+  const customTheme = computed(() => settings.value.customTheme);
   const recentProjectsLimit = computed(() => settings.value.recentProjectsLimit);
   const maxTerminalsPerProject = computed(() => settings.value.maxTerminalsPerProject);
   const panelShortcuts = computed(() => settings.value.panelShortcuts);
@@ -84,6 +96,37 @@ export const useSettingsStore = defineStore('settings', () => {
   const notepadShortcut = computed(() => panelShortcuts.value.notepad);
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
+  const terminalThemeId = computed(() => settings.value.terminalThemeId);
+
+  /**
+   * 计算当前激活的主题
+   * 优先级: 跟随系统主题 > 自定义主题 > 预设主题
+   *
+   * 注意: 在 computed 中访问 window.matchMedia 是为了响应式地获取系统主题偏好
+   * App.vue 中会监听系统主题变化事件并更新 store，从而触发此 computed 重新计算
+   */
+  const activeTheme = computed<ThemeSettings>(() => {
+    // 优先级 1: 跟随系统主题
+    if (settings.value.followSystemTheme) {
+      // SSR 安全检查
+      if (typeof window === 'undefined') {
+        return defaultTheme;
+      }
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const autoPresetId = prefersDark ? 'dark' : 'light';
+      const preset = getPresetById(autoPresetId);
+      return preset?.colors ?? defaultTheme;
+    }
+
+    // 优先级 2: 自定义主题
+    if (settings.value.customTheme) {
+      return settings.value.customTheme;
+    }
+
+    // 优先级 3: 预设主题
+    const preset = getPresetById(settings.value.currentPresetId);
+    return preset?.colors ?? defaultTheme;
+  });
 
   watch(
     settings,
@@ -101,7 +144,13 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function resetTheme() {
-    settings.value.theme = { ...defaultTheme };
+    // 重置为默认预设主题，并清理自定义/系统跟随状态，保持与 activeTheme 计算逻辑一致
+    const preset = getPresetById(DEFAULT_PRESET_ID) ?? getDefaultPreset();
+    settings.value.currentPresetId = preset.id;
+    settings.value.followSystemTheme = false;
+    settings.value.customTheme = null;
+    settings.value.theme = { ...preset.colors };
+    settings.value.terminalThemeId = preset.terminalThemeId || DEFAULT_TERMINAL_THEME_ID;
   }
 
   function updateRecentProjectsLimit(limit: number) {
@@ -146,8 +195,60 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.confirmBeforeTerminalClose = value;
   }
 
+  function updateTerminalTheme(themeId: string) {
+    settings.value.terminalThemeId = themeId;
+  }
+
+  function selectPreset(presetId: string) {
+    const preset = getPresetById(presetId);
+    if (preset) {
+      settings.value.currentPresetId = presetId;
+      settings.value.theme = { ...preset.colors };
+      settings.value.customTheme = null;
+      // 同步更新终端主题
+      if (preset.terminalThemeId) {
+        settings.value.terminalThemeId = preset.terminalThemeId;
+      }
+    }
+  }
+
+  function toggleFollowSystemTheme(enabled: boolean) {
+    settings.value.followSystemTheme = enabled;
+    if (enabled) {
+      // 切换到跟随系统模式时，清除自定义主题
+      settings.value.customTheme = null;
+      // 根据当前系统主题更新预设ID
+      const prefersDark = typeof window !== 'undefined'
+        ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        : false;
+      const autoPresetId = prefersDark ? 'dark' : 'light';
+      const preset = getPresetById(autoPresetId);
+      if (preset) {
+        settings.value.currentPresetId = autoPresetId;
+        settings.value.theme = { ...preset.colors };
+        // 同步更新终端主题
+        if (preset.terminalThemeId) {
+          settings.value.terminalThemeId = preset.terminalThemeId;
+        }
+      }
+    }
+  }
+
+  function applyCustomTheme(themeColors: Partial<ThemeSettings>) {
+    settings.value.customTheme = {
+      ...activeTheme.value,
+      ...themeColors,
+    };
+    settings.value.theme = settings.value.customTheme;
+    settings.value.followSystemTheme = false;
+  }
+
   return {
     theme,
+    currentPresetId,
+    followSystemTheme,
+    customTheme,
+    activeTheme,
     recentProjectsLimit,
     maxTerminalsPerProject,
     panelShortcuts,
@@ -155,6 +256,7 @@ export const useSettingsStore = defineStore('settings', () => {
     notepadShortcut,
     editorSettings,
     confirmBeforeTerminalClose,
+    terminalThemeId,
     updateTheme,
     resetTheme,
     updateRecentProjectsLimit,
@@ -166,6 +268,10 @@ export const useSettingsStore = defineStore('settings', () => {
     resetNotepadShortcut,
     updateEditorSettings,
     updateConfirmBeforeTerminalClose,
+    updateTerminalTheme,
+    selectPreset,
+    toggleFollowSystemTheme,
+    applyCustomTheme,
   };
 });
 
@@ -176,16 +282,33 @@ function loadSettings(): GeneralSettings {
       const parsed = JSON.parse(stored) as Partial<GeneralSettings> & {
         panelShortcut?: PanelShortcutSetting;
       };
+
+      // 兼容旧版本：如果没有 currentPresetId，根据主题判断
+      let currentPresetId = parsed.currentPresetId ?? DEFAULT_PRESET_ID;
+      if (!parsed.currentPresetId && parsed.theme) {
+        // 尝试匹配现有主题到预设
+        const matchedPreset = THEME_PRESETS.find(
+          p => p.colors.primaryColor === parsed.theme?.primaryColor
+        );
+        if (matchedPreset) {
+          currentPresetId = matchedPreset.id;
+        }
+      }
+
       return {
         theme: {
           ...defaultTheme,
           ...parsed.theme,
         },
+        currentPresetId,
+        followSystemTheme: parsed.followSystemTheme ?? false,
+        customTheme: parsed.customTheme ?? null,
         recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
         maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
         panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
         editor: sanitizeEditorSettings(parsed.editor),
         confirmBeforeTerminalClose: parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
+        terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
       };
     }
   } catch (error) {
@@ -205,6 +328,10 @@ function saveSettings(settings: GeneralSettings) {
 function cloneDefaultSettings(): GeneralSettings {
   return {
     theme: { ...defaultSettings.theme },
+    currentPresetId: defaultSettings.currentPresetId,
+    followSystemTheme: defaultSettings.followSystemTheme,
+    terminalThemeId: defaultSettings.terminalThemeId,
+    customTheme: defaultSettings.customTheme,
     recentProjectsLimit: defaultSettings.recentProjectsLimit,
     maxTerminalsPerProject: defaultSettings.maxTerminalsPerProject,
     panelShortcuts: {

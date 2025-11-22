@@ -1177,7 +1177,7 @@ defineExpose({
   background-color: var(--n-card-color, #fff);
   border: 1px solid var(--n-border-color);
   border-radius: 8px;
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 -4px 16px var(--n-box-shadow-color, rgba(0, 0, 0, 0.15));
   display: flex;
   flex-direction: column;
   transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
@@ -1262,7 +1262,8 @@ defineExpose({
   gap: 12px;
   padding: 6px 12px 0;
   flex-shrink: 0;
-  background-color: var(--n-card-color, #fff);
+  background-color: var(--kanban-terminal-bg, var(--app-surface-color, var(--n-card-color, #fff)));
+  color: var(--kanban-terminal-fg, var(--n-text-color-1, #1f1f1f));
   border-bottom: 1px solid var(--n-border-color);
   z-index: 1;
   position: relative;
@@ -1286,6 +1287,31 @@ defineExpose({
 
 .tabs-container :deep(.n-tabs-tab:active) {
   cursor: grabbing;
+}
+
+.panel-header :deep(.n-tabs) {
+  --n-tab-color: var(--kanban-terminal-bg, var(--app-surface-color, var(--n-card-color, #fff)));
+  --n-tab-color-segment: var(--kanban-terminal-bg, var(--app-surface-color, var(--n-card-color, #fff)));
+  --n-tab-border-color: var(--n-border-color, rgba(255, 255, 255, 0.1));
+  --n-tab-text-color: var(--kanban-terminal-fg, var(--n-text-color-2, #d0d0d0));
+  --n-tab-text-color-hover: var(--kanban-terminal-fg, var(--n-text-color-1, #ffffff));
+  --n-tab-text-color-active: var(--kanban-terminal-fg, var(--n-text-color-1, #ffffff));
+}
+
+.panel-header :deep(.n-tabs .n-tabs-card-tabs) {
+  background-color: transparent;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-card-tabs .n-tabs-tab) {
+  background-color: color-mix(in srgb, var(--n-tab-color) 90%, transparent);
+  color: var(--n-tab-text-color);
+  border-color: var(--n-tab-border-color);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-card-tabs .n-tabs-tab.n-tabs-tab--active) {
+  background-color: var(--app-surface-color, color-mix(in srgb, var(--kanban-terminal-bg, #1e1e1e) 50%, var(--app-surface-color, #ffffff) 50%));
+  color: var(--n-tab-text-color-active);
 }
 
 .header-actions {
@@ -1435,7 +1461,7 @@ defineExpose({
   border-radius: 50%;
   display: inline-block;
   background-color: var(--n-text-color-disabled, #c0c4d8);
-  box-shadow: 0 0 0 1px rgba(15, 17, 26, 0.08);
+  box-shadow: 0 0 0 1px var(--n-box-shadow-color, rgba(15, 17, 26, 0.08));
 }
 
 .status-dot.ready {
@@ -1472,14 +1498,14 @@ defineExpose({
   min-height: 42px;
   padding: 0 16px;
   border-radius: 21px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background-color: #1a1a1a;
-  color: #fff;
+  border: 1px solid var(--n-border-color, rgba(255, 255, 255, 0.2));
+  background-color: var(--n-card-color, #1a1a1a);
+  color: var(--n-text-color-1, #fff);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 4px 10px var(--n-box-shadow-color, rgba(0, 0, 0, 0.25));
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;

@@ -27,6 +27,27 @@
     <n-space vertical size="large">
       <n-card :title="t('settings.themeSettings')" size="huge">
         <n-form label-placement="left" label-width="120">
+          <n-form-item :label="t('theme.presetTheme')">
+            <n-select
+              v-model:value="currentPresetValue"
+              :options="presetOptions"
+              :disabled="followSystemValue"
+              style="max-width: 240px"
+            />
+          </n-form-item>
+          <n-form-item :label="t('theme.followSystem')">
+            <n-space vertical size="small">
+              <n-switch v-model:value="followSystemValue" />
+              <span class="form-tip">{{ t('theme.customThemeHint') }}</span>
+            </n-space>
+          </n-form-item>
+
+          <n-divider style="margin: 16px 0">{{ t('theme.customTheme') }}</n-divider>
+
+          <n-alert v-if="hasCustomTheme" type="info" style="margin-bottom: 16px" :bordered="false">
+            {{ t('theme.customThemeHint') }}
+          </n-alert>
+
           <n-form-item :label="t('settings.primaryColor')">
             <n-color-picker v-model:value="primaryColor" :modes="['hex']" :actions="['confirm']" />
           </n-form-item>
@@ -58,6 +79,16 @@
             <n-space vertical size="small">
               <n-switch v-model:value="confirmTerminalCloseValue" />
               <span class="form-tip">{{ t('settings.confirmTerminalCloseTip') }}</span>
+            </n-space>
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalTheme')">
+            <n-space vertical size="small">
+              <n-select
+                v-model:value="terminalThemeValue"
+                :options="terminalThemeOptions"
+                style="max-width: 240px"
+              />
+              <span class="form-tip">{{ t('settings.terminalThemeTip') }}</span>
             </n-space>
           </n-form-item>
           <n-form-item :label="t('settings.terminalShortcut')">
@@ -184,10 +215,10 @@
       </n-card>
 
       <n-card :title="t('settings.realtimePreview')" size="huge">
-        <div class="preview-panel" :style="{ backgroundColor: surfaceColor }">
-          <div class="preview-banner" :style="{ backgroundColor: primaryColor }">
+        <div class="preview-panel" :style="previewPanelStyle">
+          <div class="preview-banner">
             <n-space align="center" size="small">
-              <n-icon size="24" color="#fff">
+              <n-icon size="24">
                 <ColorPaletteOutline />
               </n-icon>
               <span>{{ t('settings.previewTheme') }}</span>
@@ -226,13 +257,15 @@ import {
 } from '@/stores/settings';
 import { APP_NAME } from '@/constants/app';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
+import { useThemeOptions, useTerminalThemeOptions } from '@/composables/useThemeOptions';
+import { lightenColor, darkenColor, ensureHexWithHash, isDarkHex, getReadableTextColor } from '@/utils/color';
 import Apis from '@/api';
 import { useReq, useInit } from '@/api/composable';
 import type { AIAssistantStatusConfig } from '@/types/models';
 
 type ShortcutTarget = 'terminal' | 'notepad';
 
-const { t } = useLocale();
+const { t, locale } = useLocale();
 
 useTitle(`${t('settings.title')} - ${APP_NAME}`);
 
@@ -241,14 +274,41 @@ const message = useMessage();
 const settingsStore = useSettingsStore();
 const {
   theme,
+  currentPresetId,
+  followSystemTheme,
+  customTheme,
   recentProjectsLimit,
   maxTerminalsPerProject,
   terminalShortcut,
   notepadShortcut,
   editorSettings,
   confirmBeforeTerminalClose,
+  terminalThemeId,
 } = storeToRefs(settingsStore);
 const capturingTarget = ref<ShortcutTarget | null>(null);
+
+// 使用 composable 获取主题和终端配色选项
+const presetOptions = useThemeOptions();
+const terminalThemeOptions = useTerminalThemeOptions();
+
+// 当前预设 ID
+const currentPresetValue = computed({
+  get: () => currentPresetId.value,
+  set: (value: string) => {
+    settingsStore.selectPreset(value);
+  },
+});
+
+// 跟随系统主题
+const followSystemValue = computed({
+  get: () => followSystemTheme.value,
+  set: (value: boolean) => {
+    settingsStore.toggleFollowSystemTheme(value);
+  },
+});
+
+// 是否有自定义主题
+const hasCustomTheme = computed(() => customTheme.value !== null);
 
 // AI Assistant Status Tracking
 const aiStatusForm = reactive<AIAssistantStatusConfig>({
@@ -304,20 +364,49 @@ async function handleSaveAIStatus() {
 useInit(() => {
   loadAIStatus();
 });
-
 const primaryColor = computed({
   get: () => theme.value.primaryColor,
-  set: value => settingsStore.updateTheme({ primaryColor: value || '#3B69A9' }),
+  set: value => {
+    settingsStore.applyCustomTheme({ primaryColor: value || '#3B69A9' });
+  },
 });
 
 const bodyColor = computed({
   get: () => theme.value.bodyColor,
-  set: value => settingsStore.updateTheme({ bodyColor: value || '#f7f8fa' }),
+  set: value => {
+    settingsStore.applyCustomTheme({ bodyColor: value || '#f7f8fa' });
+  },
 });
 
 const surfaceColor = computed({
   get: () => theme.value.surfaceColor,
-  set: value => settingsStore.updateTheme({ surfaceColor: value || '#ffffff' }),
+  set: value => {
+    settingsStore.applyCustomTheme({ surfaceColor: value || '#ffffff' });
+  },
+});
+
+const fallbackTextColor = computed(() => {
+  if (theme.value.textColor) {
+    return theme.value.textColor;
+  }
+  const bodyHex = ensureHexWithHash(theme.value.bodyColor || '#ffffff');
+  return getReadableTextColor(bodyHex);
+});
+
+const previewPanelStyle = computed(() => {
+  const primaryHex = ensureHexWithHash(primaryColor.value || '#3B69A9', '#3B69A9');
+  const surfaceHex = ensureHexWithHash(surfaceColor.value || '#ffffff', '#ffffff');
+  const surfaceIsDark = isDarkHex(surfaceHex);
+  const contentBg = surfaceIsDark
+    ? lightenColor(surfaceHex, 0.08)
+    : darkenColor(surfaceHex, 0.04);
+  return {
+    '--preview-panel-bg': surfaceHex,
+    '--preview-banner-bg': primaryHex,
+    '--preview-banner-text': getReadableTextColor(primaryHex),
+    '--preview-content-bg': contentBg,
+    '--preview-content-text': fallbackTextColor.value,
+  };
 });
 
 const editorOptions = EDITOR_OPTIONS;
@@ -369,6 +458,11 @@ const terminalLimitValue = computed({
 const confirmTerminalCloseValue = computed({
   get: () => confirmBeforeTerminalClose.value,
   set: value => settingsStore.updateConfirmBeforeTerminalClose(value),
+});
+
+const terminalThemeValue = computed({
+  get: () => terminalThemeId.value,
+  set: (value: string) => settingsStore.updateTerminalTheme(value),
 });
 
 const terminalShortcutValue = computed(
@@ -496,10 +590,12 @@ function formatShortcutLabel(event: KeyboardEvent) {
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--n-border-color);
+  background-color: var(--preview-panel-bg, var(--app-surface-color, #fff));
 }
 
 .preview-banner {
-  color: #fff;
+  background-color: var(--preview-banner-bg, var(--n-primary-color, #3b69a9));
+  color: var(--preview-banner-text, var(--kanban-terminal-fg, #fff));
   padding: 16px;
   font-size: 16px;
   font-weight: 600;
@@ -507,7 +603,8 @@ function formatShortcutLabel(event: KeyboardEvent) {
 
 .preview-content {
   padding: 24px;
-  background-color: rgba(255, 255, 255, 0.8);
+  background-color: var(--preview-content-bg, var(--app-surface-color, #fff));
+  color: var(--preview-content-text, var(--kanban-terminal-fg, #1f1f1f));
 }
 
 .form-tip {

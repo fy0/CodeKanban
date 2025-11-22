@@ -103,9 +103,9 @@ function handleChange(event: any) {
 .kanban-column {
   display: flex;
   flex-direction: column;
-  background-color: #f5f5f5;
+  background-color: var(--app-surface-color, var(--n-color, #f5f5f5));
   border-radius: 8px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--n-border-color, #e0e0e0);
   height: 100%;
   overflow: hidden;
 }
