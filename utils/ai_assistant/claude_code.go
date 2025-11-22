@@ -15,10 +15,20 @@ var claudeCodePatterns = struct {
 	EscToInterrupt  *regexp.Regexp
 }{
 	Thinking: []*regexp.Regexp{
-		// Claude Code fixed formats
-		regexp.MustCompile(`∴\s*Thinking`),                                                   // ∴ Thinking…
-		regexp.MustCompile(`∴\s*Thought\s+for\s+[\d\w]+.*\(ctrl\+o\s+to\s+show\s+thinking\)`), // ∴ Thought for 4s (ctrl+o to show thinking)
-		regexp.MustCompile(`(?i)\(esc\s+to\s+interrupt`),                                      // (esc to interrupt · 54s · ↓ 2.2k tokens)
+		// Rule 1: [symbol] [space] [text] … (esc to interrupt ...)
+		// Must have ellipsis (…) before "(esc to interrupt"
+		// Examples:
+		// ✻ 浏览器验证最终效果… (esc to interrupt · ctrl+t to show todos · 4m 58s · ↑ 3.8k tokens)
+		// ✶ Vibing… (esc to interrupt)
+		// ∴ Thinking… (esc to interrupt · 54s · ↓ 2.2k tokens)
+		regexp.MustCompile(`^[✻✶∴·○◆●▪▫□■☐☑☒★☆✓✔✗✘⚬⚫⚪⬤◯▸▹►▻◂◃◄◅✢*]\s+.+…\s*\(esc\s+to\s+interrupt`),
+
+		// Rule 2: [symbol] [space] [text] (ctrl+o to show thinking)
+		// No ellipsis required for ctrl+o format
+		// Examples:
+		// ∴ Thought for 5s (ctrl+o to show thinking)
+		// ∴ Thought for 2m (ctrl+o to show thinking)
+		regexp.MustCompile(`^[✻✶∴·○◆●▪▫□■☐☑☒★☆✓✔✗✘⚬⚫⚪⬤◯▸▹►▻◂◃◄◅✢*]\s+.+\(ctrl\+o\s+to\s+show\s+thinking`),
 	},
 	Executing: []*regexp.Regexp{
 		regexp.MustCompile(`(?i)"type"\s*:\s*"tool[_\s-]?use"`),
@@ -36,11 +46,15 @@ var claudeCodePatterns = struct {
 		regexp.MustCompile(`(?i)agent[_\s-]?message`),
 	},
 	WaitingInput: []*regexp.Regexp{
-		regexp.MustCompile(`(?i)interrupted`),                // ⎿ Interrupted · What should Claude do instead?
+		// More precise pattern for user interruption: must have the special character ⎿ followed by "Interrupted"
+		regexp.MustCompile(`(?i)[⎿⌙]\s*Interrupted`),        // ⎿  Interrupted · What should Claude do instead?
 		regexp.MustCompile(`(?i)"done"\s*:\s*true`),
 		regexp.MustCompile(`(?i)"stop[_\s-]?reason"`),
 	},
-	EscToInterrupt: regexp.MustCompile(`(?i)\(esc\s+to\s+interrupt`),
+	// Matches both formats:
+	// 1. [symbol] [text] … (esc to interrupt - must have ellipsis
+	// 2. [symbol] [text] (ctrl+o to show thinking) - no ellipsis required
+	EscToInterrupt: regexp.MustCompile(`^[✻✶∴·○◆●▪▫□■☐☑☒★☆✓✔✗✘⚬⚫⚪⬤◯▸▹►▻◂◃◄◅✢*]\s+.+(?:…\s*\(esc\s+to\s+interrupt|\(ctrl\+o\s+to\s+show\s+thinking)`),
 }
 
 // DetectClaudeCodeState detects state from Claude Code output

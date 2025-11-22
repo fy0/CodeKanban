@@ -100,7 +100,7 @@ func run(forceMigrate bool, bind string, port int) {
 
 	logger.Info("Starting server", zap.String("listen", cfg.ServeAt))
 
-	if !runningAsService {
+	if !runningAsService && !cfg.DisableAutoOpenBrowser {
 		if url := utils.BuildLaunchURL(cfg); url != "" {
 			go func(target string) {
 				time.Sleep(800 * time.Millisecond)

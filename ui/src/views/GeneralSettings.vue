@@ -200,13 +200,7 @@
                 <span class="form-tip">{{ t('settings.aiStatusQwenSupport') }}</span>
               </n-space>
             </n-form-item>
-            <n-form-item>
-              <template #label>
-                {{ t('settings.aiAssistantCodex') }}
-                <n-tag size="small" type="warning" :bordered="false" style="margin-left: 4px;">
-                  {{ t('settings.aiStatusHasIssues') }}
-                </n-tag>
-              </template>
+            <n-form-item :label="t('settings.aiAssistantCodex')">
               <n-switch v-model:value="aiStatusForm.codex" />
             </n-form-item>
           </n-form>

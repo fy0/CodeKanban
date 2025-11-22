@@ -31,6 +31,7 @@ export type ServerMessage = {
       command?: string;
       state?: string;
       stateUpdatedAt?: string;
+      interrupted?: boolean;
     };
   };
 };
@@ -569,9 +570,10 @@ export const useTerminalStore = defineStore('terminal', () => {
           if (currentState === 'waiting_input' && previousState) {
             // Check if transitioning from a working state (thinking or executing)
             const isFromWorkingState = previousState === 'thinking' || previousState === 'executing';
+            const wasInterrupted = payload.metadata.aiAssistant?.interrupted === true;
 
-            if (isFromWorkingState) {
-              // Valid completion: working state → waiting input
+            if (isFromWorkingState && !wasInterrupted) {
+              // Valid completion: working state → waiting input (NOT interrupted)
               console.log(
                 `[Terminal] AI Completion Detected: ${payload.metadata.aiAssistant?.displayName || 'AI'} completed execution`,
                 {
@@ -589,6 +591,19 @@ export const useTerminalStore = defineStore('terminal', () => {
                 projectName: getProjectName(tab.projectId),
                 assistant: payload.metadata.aiAssistant,
               });
+            } else if (isFromWorkingState && wasInterrupted) {
+              // User interrupted the execution
+              console.log(
+                `[Terminal] AI Interrupted: ${payload.metadata.aiAssistant?.displayName || 'AI'} was interrupted by user`,
+                {
+                  sessionId: tab.id,
+                  sessionTitle: tab.title,
+                  previousState,
+                  currentState,
+                  assistant: payload.metadata.aiAssistant,
+                }
+              );
+              // Don't emit ai:completed for interrupted executions
             }
           }
 

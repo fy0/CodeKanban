@@ -165,6 +165,81 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 		op.Summary = "终端标签重命名"
 		op.Tags = []string{terminalTag}
 	})
+
+	huma.Get(group, "/terminals/{sessionId}/debug", func(
+		ctx context.Context,
+		input *struct {
+			SessionID string `path:"sessionId"`
+		},
+	) (*h.ItemResponse[terminal.DebugInfo], error) {
+		debugInfo, err := c.manager.GetSessionDebugInfo(input.SessionID)
+		if err != nil {
+			if errors.Is(err, terminal.ErrSessionNotFound) {
+				return nil, huma.Error404NotFound(err.Error())
+			}
+			return nil, huma.Error500InternalServerError("failed to get debug info", err)
+		}
+		resp := h.NewItemResponse(*debugInfo)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-session-debug"
+		op.Summary = "获取终端调试信息（包含完整输出内容）"
+		op.Tags = []string{terminalTag}
+		op.Description = "用于调试，返回终端的 scrollback 缓冲区内容、AI 助手状态、录制信息等"
+	})
+
+	huma.Get(group, "/terminals/{sessionId}/sim-term", func(
+		ctx context.Context,
+		input *struct {
+			SessionID string `path:"sessionId"`
+		},
+	) (*h.ItemResponse[terminal.SimulatedDisplay], error) {
+		display, err := c.manager.GetSessionSimulatedDisplay(input.SessionID)
+		if err != nil {
+			if errors.Is(err, terminal.ErrSessionNotFound) {
+				return nil, huma.Error404NotFound(err.Error())
+			}
+			return nil, huma.Error500InternalServerError("failed to get simulated display", err)
+		}
+		resp := h.NewItemResponse(*display)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-session-simulated-display"
+		op.Summary = "获取终端模拟显示内容"
+		op.Tags = []string{terminalTag}
+		op.Description = "模拟终端的实际显示效果，处理控制字符（如回车、换行、ANSI 颜色）后的内容"
+	})
+
+	huma.Get(group, "/terminals/{sessionId}/capture", func(
+		ctx context.Context,
+		input *struct {
+			SessionID string `path:"sessionId"`
+			Timeout   int    `query:"timeout" doc:"超时时间（秒），默认为 2 秒，0 表示使用默认值" minimum:"0" maximum:"10"`
+		},
+	) (*h.ItemResponse[terminal.CapturedChunk], error) {
+		timeout := 2 * time.Second
+		if input.Timeout > 0 {
+			timeout = time.Duration(input.Timeout) * time.Second
+		}
+
+		chunk, err := c.manager.CaptureChunk(ctx, input.SessionID, timeout)
+		if err != nil {
+			if errors.Is(err, terminal.ErrSessionNotFound) {
+				return nil, huma.Error404NotFound(err.Error())
+			}
+			return nil, huma.Error500InternalServerError("failed to capture chunk", err)
+		}
+		resp := h.NewItemResponse(*chunk)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-session-capture-chunk"
+		op.Summary = "触发 resize 并捕获下一个输出 chunk"
+		op.Tags = []string{terminalTag}
+		op.Description = "发送一个 resize 命令给终端，然后捕获并返回接下来的第一个输出 chunk，用于调试和测试"
+	})
 }
 
 func (c *terminalController) registerWebsocket(app *fiber.App) {

@@ -127,7 +127,7 @@ import type { HTMLAttributes } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useDialog, useMessage, NIcon, NInput } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
-import { ChevronDownOutline, ChevronUpOutline, TerminalOutline, CopyOutline, CreateOutline, SettingsOutline, CheckmarkOutline, ClipboardOutline } from '@vicons/ionicons5';
+import { ChevronDownOutline, ChevronUpOutline, TerminalOutline, CopyOutline, CreateOutline, SettingsOutline, CheckmarkOutline, InformationCircleOutline } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
 import { useTerminalClient, type TerminalCreateOptions, type TerminalTabState } from '@/composables/useTerminalClient';
 import type { DropdownOption } from 'naive-ui';
@@ -174,7 +174,7 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
     {
       label: t('terminal.copyProcessInfo'),
       key: 'copy-process-info',
-      icon: () => h(NIcon, null, { default: () => h(ClipboardOutline) }),
+      icon: () => h(NIcon, null, { default: () => h(InformationCircleOutline) }),
       disabled: !hasProcessInfo,
     },
   ];
@@ -993,6 +993,7 @@ function formatProcessInfo(tab: TerminalTabState): string {
   const lines: string[] = [];
 
   lines.push(`=== ${t('terminal.processInfo')} ===`);
+  lines.push(`${t('terminal.sessionId')}: ${tab.id}`);
   lines.push(`${t('terminal.terminalTitle')}: ${tab.title}`);
   lines.push(`${t('terminal.workingDirectory')}: ${tab.workingDir}`);
 

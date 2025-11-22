@@ -190,6 +190,33 @@ func (m *Manager) ListSessions(projectID string) []SessionSnapshot {
 	return results
 }
 
+// GetSessionDebugInfo returns comprehensive debug information for a session.
+func (m *Manager) GetSessionDebugInfo(id string) (*DebugInfo, error) {
+	session, err := m.GetSession(id)
+	if err != nil {
+		return nil, err
+	}
+	return session.GetDebugInfo(), nil
+}
+
+// GetSessionSimulatedDisplay returns the simulated terminal display for a session.
+func (m *Manager) GetSessionSimulatedDisplay(id string) (*SimulatedDisplay, error) {
+	session, err := m.GetSession(id)
+	if err != nil {
+		return nil, err
+	}
+	return session.GetSimulatedDisplay(), nil
+}
+
+// CaptureChunk triggers a resize and captures the next output chunk from a session.
+func (m *Manager) CaptureChunk(ctx context.Context, id string, timeout time.Duration) (*CapturedChunk, error) {
+	session, err := m.GetSession(id)
+	if err != nil {
+		return nil, err
+	}
+	return session.CaptureNextChunk(ctx, timeout)
+}
+
 func (m *Manager) shellCommand() ([]string, error) {
 	return utils.ResolveShellCommand("", m.cfg.Shell)
 }
@@ -283,4 +310,22 @@ func (m *Manager) sessionContext() context.Context {
 		return ctx
 	}
 	return context.Background()
+}
+
+// UpdateAIAssistantStatusConfig updates the AI assistant status configuration for all sessions.
+// This allows hot-reloading configuration without restarting the service.
+func (m *Manager) UpdateAIAssistantStatusConfig(newConfig utils.AIAssistantStatusConfig) {
+	m.sessionMu.Lock()
+	m.cfg.AIAssistantStatus = newConfig
+	m.sessionMu.Unlock()
+
+	// Update all active sessions
+	m.sessions.Range(func(_ string, session *Session) bool {
+		if session.assistantTracker != nil {
+			session.assistantTracker.SetStatusEnabledChecker(func(assistantType string) bool {
+				return newConfig.IsEnabled(assistantType)
+			})
+		}
+		return true
+	})
 }

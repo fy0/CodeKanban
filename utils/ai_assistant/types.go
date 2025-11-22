@@ -46,6 +46,7 @@ type AIAssistantInfo struct {
 	State          AIAssistantState `json:"state,omitempty"`
 	StateUpdatedAt time.Time        `json:"stateUpdatedAt,omitempty"`
 	Stats          *StateStats      `json:"stats,omitempty"`
+	Interrupted    bool             `json:"interrupted,omitempty"` // true if the last state change was due to user interruption (ESC)
 }
 
 // String returns the string representation of the assistant type.

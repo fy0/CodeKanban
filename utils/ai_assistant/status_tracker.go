@@ -19,7 +19,7 @@ const (
 	// Thresholds for detecting state transitions
 	escPresentThreshold = 3  // Need 3 consecutive chunks WITH "esc to interrupt" to confirm working state
 	escAbsentThreshold  = 3  // Default: need 3 consecutive chunks WITHOUT to confirm completion
-	codexEscAbsentThreshold = 10 // Codex: need 10 chunks (to handle spotlight animation frames)
+	codexEscAbsentThreshold = 3 // Codex: need 3 chunks (reduced from 10)
 )
 
 // StatusEnabledChecker is a function type that checks if status tracking is enabled for a given assistant type.
@@ -40,6 +40,7 @@ type StatusTracker struct {
 	escAbsentCount        int       // counts consecutive chunks WITHOUT "esc to interrupt"
 	confirmedWorking      bool      // true after seeing escPresentThreshold consecutive "esc to interrupt"
 	statusEnabledChecker  StatusEnabledChecker // optional function to check if tracking is enabled
+	lastWasInterrupted    bool      // tracks if the last state change was due to user interruption (ESC)
 
 	// State duration tracking
 	thinkingDuration        time.Duration
@@ -104,7 +105,7 @@ func (t *StatusTracker) getDebounceTime() time.Duration {
 // getAbsentThreshold returns the appropriate absent threshold based on assistant type
 func (t *StatusTracker) getAbsentThreshold() int {
 	if t.assistantType == AIAssistantCodex {
-		return codexEscAbsentThreshold // 10 for Codex (spotlight animation)
+		return codexEscAbsentThreshold // 3 for Codex
 	}
 	return escAbsentThreshold // 3 for others
 }
@@ -131,6 +132,7 @@ func (t *StatusTracker) Process(chunk []byte) (AIAssistantState, time.Time, bool
 	var newState AIAssistantState
 	now := time.Now()
 	hasEscToInterrupt := false
+	detectedInterrupted := false // tracks if "interrupted" keyword was detected in this chunk
 
 	for _, raw := range lines {
 		line := strings.TrimSpace(strings.TrimRight(raw, "\r"))
@@ -152,6 +154,12 @@ func (t *StatusTracker) Process(chunk []byte) (AIAssistantState, time.Time, bool
 				}
 				changed = true
 				newState = state
+
+				// Check if this is an interruption by detecting "interrupted" keyword
+				// Only mark as interrupted if transitioning to WaitingInput
+				if state == AIAssistantStateWaitingInput && t.detectInterruptedKeyword(line) {
+					detectedInterrupted = true
+				}
 			}
 			t.lastState = state
 			t.lastChangedAt = now
@@ -172,6 +180,11 @@ func (t *StatusTracker) Process(chunk []byte) (AIAssistantState, time.Time, bool
 		if t.escPresentCount >= escPresentThreshold {
 			t.confirmedWorking = true
 		}
+
+		// Clear interrupted flag when entering a working state
+		if t.lastState == AIAssistantStateThinking || t.lastState == AIAssistantStateExecuting {
+			t.lastWasInterrupted = false
+		}
 	} else if t.lastHadEscToInterrupt {
 		// "esc to interrupt" is absent
 		t.escAbsentCount++
@@ -182,6 +195,10 @@ func (t *StatusTracker) Process(chunk []byte) (AIAssistantState, time.Time, bool
 			// Haven't confirmed working yet, don't trigger completion via debounce
 			// But if we detected an explicit state change (e.g., "Interrupted" keyword), allow it through
 			if changed {
+				// If this was triggered by "interrupted" keyword, mark it
+				if detectedInterrupted {
+					t.lastWasInterrupted = true
+				}
 				return newState, now, true
 			}
 			return AIAssistantStateUnknown, time.Time{}, false
@@ -206,13 +223,14 @@ func (t *StatusTracker) Process(chunk []byte) (AIAssistantState, time.Time, bool
 				if !t.lastChangedAt.IsZero() {
 					t.accumulateDuration(t.lastState, now.Sub(t.lastChangedAt))
 				}
-				// Valid completion: working state → waiting input
+				// Valid completion: working state → waiting input (NOT interrupted, this is normal completion)
 				t.lastState = AIAssistantStateWaitingInput
 				t.lastChangedAt = now
 				t.lastHadEscToInterrupt = false
 				t.escAbsentCount = 0
 				t.escPresentCount = 0
 				t.confirmedWorking = false // Reset for next cycle
+				t.lastWasInterrupted = false // This is normal completion, not an interruption
 				return AIAssistantStateWaitingInput, now, true
 			} else {
 				// Not a working state, just clear flags
@@ -225,6 +243,132 @@ func (t *StatusTracker) Process(chunk []byte) (AIAssistantState, time.Time, bool
 	}
 
 	if changed {
+		// If this was triggered by "interrupted" keyword, mark it
+		if detectedInterrupted {
+			t.lastWasInterrupted = true
+		}
+		return newState, now, true
+	}
+	return AIAssistantStateUnknown, time.Time{}, false
+}
+
+// ProcessDisplay analyzes the current terminal display lines for AI assistant state.
+// This is more accurate than Process() as it works with rendered display content
+// rather than raw chunks, handling all terminal escape sequences correctly.
+func (t *StatusTracker) ProcessDisplay(lines []string) (AIAssistantState, time.Time, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.active || len(lines) == 0 {
+		return AIAssistantStateUnknown, time.Time{}, false
+	}
+
+	var changed bool
+	var newState AIAssistantState
+	now := time.Now()
+	hasEscToInterrupt := false
+	detectedInterrupted := false
+
+	// Use cross-line detection for interrupted state (more accurate)
+	// This checks the bottom portion of the display for the complete pattern
+	displayInterrupted := t.detectInterruptedFromDisplay(lines)
+
+	// Process all visible lines from terminal display
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Check if this line has "esc to interrupt" based on assistant type
+		if t.detectEscToInterruptByType(line) {
+			hasEscToInterrupt = true
+		}
+
+		// Detect state based on assistant type
+		if state := t.detectStateByType(line); state != AIAssistantStateUnknown {
+			if state != t.lastState {
+				// Accumulate duration for the previous state
+				if !t.lastChangedAt.IsZero() {
+					t.accumulateDuration(t.lastState, now.Sub(t.lastChangedAt))
+				}
+				changed = true
+				newState = state
+
+				// Check if this is an interruption using cross-line detection
+				if state == AIAssistantStateWaitingInput && displayInterrupted {
+					detectedInterrupted = true
+				}
+			}
+			t.lastState = state
+			t.lastChangedAt = now
+		}
+	}
+
+	// Two-phase detection for state transitions
+	if hasEscToInterrupt {
+		// "esc to interrupt" is present on screen
+		t.escPresentCount++
+		t.escAbsentCount = 0
+		t.lastHadEscToInterrupt = true
+		t.lastEscToInterruptAt = now
+
+		// Phase 1: Confirm we're really in working state
+		if t.escPresentCount >= escPresentThreshold {
+			t.confirmedWorking = true
+		}
+
+		// Clear interrupted flag when entering a working state
+		if t.lastState == AIAssistantStateThinking || t.lastState == AIAssistantStateExecuting {
+			t.lastWasInterrupted = false
+		}
+	} else if t.lastHadEscToInterrupt {
+		// "esc to interrupt" is no longer visible
+		t.escAbsentCount++
+		t.escPresentCount = 0
+
+		// Phase 2: Only check completion if we've confirmed working state
+		if !t.confirmedWorking {
+			if changed {
+				if detectedInterrupted {
+					t.lastWasInterrupted = true
+				}
+				return newState, now, true
+			}
+			return AIAssistantStateUnknown, time.Time{}, false
+		}
+
+		// Check completion conditions
+		chunkThresholdMet := t.escAbsentCount >= t.getAbsentThreshold()
+		timeThresholdMet := !t.lastEscToInterruptAt.IsZero() && now.Sub(t.lastEscToInterruptAt) >= t.getDebounceTime()
+
+		if chunkThresholdMet && timeThresholdMet {
+			isWorkingState := t.lastState == AIAssistantStateThinking || t.lastState == AIAssistantStateExecuting
+
+			if isWorkingState {
+				if !t.lastChangedAt.IsZero() {
+					t.accumulateDuration(t.lastState, now.Sub(t.lastChangedAt))
+				}
+				t.lastState = AIAssistantStateWaitingInput
+				t.lastChangedAt = now
+				t.lastHadEscToInterrupt = false
+				t.escAbsentCount = 0
+				t.escPresentCount = 0
+				t.confirmedWorking = false
+				t.lastWasInterrupted = false
+				return AIAssistantStateWaitingInput, now, true
+			} else {
+				t.lastHadEscToInterrupt = false
+				t.escAbsentCount = 0
+				t.escPresentCount = 0
+				t.confirmedWorking = false
+			}
+		}
+	}
+
+	if changed {
+		if detectedInterrupted {
+			t.lastWasInterrupted = true
+		}
 		return newState, now, true
 	}
 	return AIAssistantStateUnknown, time.Time{}, false
@@ -274,6 +418,7 @@ func (t *StatusTracker) resetLocked() {
 	t.escPresentCount = 0
 	t.escAbsentCount = 0
 	t.confirmedWorking = false
+	t.lastWasInterrupted = false
 	// Reset duration tracking
 	t.thinkingDuration = 0
 	t.executingDuration = 0
@@ -349,4 +494,107 @@ func (t *StatusTracker) detectEscToInterruptByType(line string) bool {
 		lower := strings.ToLower(cleaned)
 		return strings.Contains(lower, "esc to interrupt") || strings.Contains(lower, "esc to cancel")
 	}
+}
+
+// detectInterruptedKeyword checks if the line contains the specific interrupted pattern
+// indicating user interruption (ESC key press).
+// Pattern: ⎿  Interrupted · What should Claude do instead?
+// Must have the special character ⎿ (or ⌙) followed by "Interrupted" to avoid false positives.
+func (t *StatusTracker) detectInterruptedKeyword(line string) bool {
+	cleaned := CleanLine(line)
+	lower := strings.ToLower(cleaned)
+	// More precise pattern: must have the special character followed by "interrupted"
+	// This avoids false positives from random text containing "interrupted"
+	return strings.Contains(lower, "⎿") && strings.Contains(lower, "interrupted") ||
+		strings.Contains(lower, "⌙") && strings.Contains(lower, "interrupted")
+}
+
+// detectInterruptedFromDisplay checks if the display content shows an interrupted state.
+// This uses cross-line detection to ensure we're looking at the current input area,
+// not historical content in the scrollback.
+func (t *StatusTracker) detectInterruptedFromDisplay(lines []string) bool {
+	if len(lines) == 0 {
+		return false
+	}
+
+	// Join lines for cross-line pattern matching
+	// Only check the bottom portion of the display (last 20 lines) to avoid false positives from history
+	startIdx := 0
+	if len(lines) > 20 {
+		startIdx = len(lines) - 20
+	}
+	bottomLines := lines[startIdx:]
+	content := strings.Join(bottomLines, "\n")
+	lower := strings.ToLower(content)
+
+	switch t.assistantType {
+	case AIAssistantClaudeCode:
+		// Claude Code pattern:
+		// ⎿  Interrupted · What should Claude do instead?
+		// ────────────────────────
+		// > _
+		// Must have: interrupted keyword + input separator (─) or prompt (>)
+		hasInterrupted := (strings.Contains(lower, "⎿") || strings.Contains(lower, "⌙")) &&
+			strings.Contains(lower, "interrupted")
+		if !hasInterrupted {
+			return false
+		}
+		// Check for input area indicators after the interrupted message
+		interruptedIdx := strings.Index(lower, "interrupted")
+		afterInterrupted := lower[interruptedIdx:]
+		hasInputArea := strings.Contains(afterInterrupted, "─") || // separator line
+			strings.Contains(afterInterrupted, ">") // prompt
+		return hasInputArea
+
+	case AIAssistantCodex:
+		// Codex pattern:
+		// ■ Conversation interrupted - tell the model what to do differently...
+		// ›
+		//   11
+		//   100% context left
+		// Must have: ■ Conversation interrupted + empty › prompt + context left
+		if !strings.Contains(lower, "■") || !strings.Contains(lower, "conversation interrupted") {
+			return false
+		}
+		interruptedIdx := strings.Index(lower, "conversation interrupted")
+		afterInterrupted := lower[interruptedIdx:]
+		// Check for empty prompt (› followed by newline or spaces, not text input)
+		// and "context left" indicator
+		hasEmptyPrompt := false
+		hasContextLeft := strings.Contains(afterInterrupted, "context left")
+
+		// Look for › that's not followed by user input on the same line
+		for i, line := range bottomLines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "›") {
+				// Check if it's an empty prompt or just "›" followed by nothing significant
+				rest := strings.TrimPrefix(trimmed, "›")
+				rest = strings.TrimSpace(rest)
+				// Empty or just contains cursor/status info
+				if rest == "" || (i < len(bottomLines)-1 && !strings.Contains(rest, " ")) {
+					hasEmptyPrompt = true
+					break
+				}
+			}
+		}
+		return hasEmptyPrompt && hasContextLeft
+
+	default:
+		// Fallback: simple detection
+		return strings.Contains(lower, "interrupted")
+	}
+}
+
+// WasInterrupted returns whether the last state change was due to user interruption
+func (t *StatusTracker) WasInterrupted() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lastWasInterrupted
+}
+
+// ClearInterrupted clears the interrupted flag
+func (t *StatusTracker) ClearInterrupted() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.lastWasInterrupted = false
 }

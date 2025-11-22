@@ -38,9 +38,8 @@ var codexPatterns = struct {
 	WaitingInput: []*regexp.Regexp{
 		regexp.MustCompile(`(?i)"done"\s*:\s*true`),
 		regexp.MustCompile(`(?i)"stop[_\s-]?reason"`),
-		// Codex specific: interrupted state
+		// Codex specific: interrupted state (only match the fixed prefix)
 		regexp.MustCompile(`(?i)■\s*Conversation\s+interrupted`),
-		regexp.MustCompile(`(?i)tell\s+the\s+model\s+what\s+to\s+do\s+differently`),
 	},
 	// Codex format: "(5s • esc to interrupt)" - esc to interrupt at the end
 	EscToInterrupt: regexp.MustCompile(`(?i)esc\s+to\s+interrupt\)`),

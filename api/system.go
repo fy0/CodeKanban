@@ -46,7 +46,9 @@ type openEditorInput struct {
 	} `json:"body"`
 }
 
-func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig) {
+func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManager interface {
+	UpdateAIAssistantStatusConfig(utils.AIAssistantStatusConfig)
+}) {
 	huma.Get(group, "/system/version", func(ctx context.Context, input *struct{}) (*versionResponse, error) {
 		resp := &versionResponse{}
 		resp.Body.Name = appInfo.Name
@@ -157,13 +159,18 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig) {
 		// 写回配置文件
 		utils.WriteConfig(cfg)
 
-		resp := h.NewMessageResponse("AI assistant status config updated. Restart required for existing terminals.")
+		// 热重载：更新所有现有终端的配置
+		if terminalManager != nil {
+			terminalManager.UpdateAIAssistantStatusConfig(input.Body)
+		}
+
+		resp := h.NewMessageResponse("AI assistant status config updated and applied to all active terminals.")
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {
 		op.OperationID = "system-ai-assistant-status-update"
 		op.Summary = "更新 AI 助手状态监测配置"
-		op.Description = "更新 AI 助手状态监测的启用/禁用配置，需要重启才能对现有终端生效"
+		op.Description = "更新 AI 助手状态监测的启用/禁用配置，立即对所有终端生效"
 		op.Tags = []string{systemTag}
 	})
 }

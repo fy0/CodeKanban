@@ -619,6 +619,7 @@ export interface AIAssistantInfo {
   stateUpdatedAt?: string;
   stats?: StateStats;
   type: string;
+  interrupted?: boolean;
 }
 export interface TerminalSessionView {
   aiAssistant?: AIAssistantInfo;

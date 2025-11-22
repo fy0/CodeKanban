@@ -136,20 +136,20 @@ func TestStatusTracker_CodexWorkingDisappears(t *testing.T) {
 	waitForCodexDebounce()
 
 	// Working disappears - send chunks without "esc to interrupt"
-	// Codex needs 10 consecutive chunks (to handle spotlight animation)
-	for i := 1; i <= 9; i++ {
+	// Codex needs 3 consecutive chunks
+	for i := 1; i <= 2; i++ {
 		chunk := []byte(fmt.Sprintf("Output without esc to interrupt %d\n", i))
 		state, _, changed = tracker.Process(chunk)
 
-		// Should NOT trigger yet (threshold is 10 for Codex)
+		// Should NOT trigger yet (threshold is 3 for Codex)
 		if changed {
-			t.Errorf("Should not trigger on chunk %d (threshold = 10)", i)
+			t.Errorf("Should not trigger on chunk %d (threshold = 3)", i)
 		}
 	}
 
-	// 10th chunk without "esc to interrupt" → execution completed
-	chunk10 := []byte("Final output without esc\n")
-	state, _, changed = tracker.Process(chunk10)
+	// 3rd chunk without "esc to interrupt" → execution completed
+	finalChunk := []byte("Final output without esc\n")
+	state, _, changed = tracker.Process(finalChunk)
 
 	if !changed {
 		t.Error("Expected state change when Codex Working disappears after debounce")
@@ -188,11 +188,11 @@ func TestStatusTracker_CodexMultipleCycles(t *testing.T) {
 	tracker.Process([]byte("◦ Working (2s • esc to interrupt)\n"))
 	tracker.Process([]byte("◦ Working (3s • esc to interrupt)\n"))
 	waitForCodexDebounce()
-	// Need 10 chunks without esc to trigger (Codex threshold)
-	for i := 1; i <= 9; i++ {
+	// Need 3 chunks without esc to trigger (Codex threshold)
+	for i := 1; i <= 2; i++ {
 		tracker.Process([]byte(fmt.Sprintf("Output %d\n", i)))
 	}
-	state, _, changed := tracker.Process([]byte("Output 10\n"))
+	state, _, changed := tracker.Process([]byte("Output 3\n"))
 
 	if !changed || state != AIAssistantStateWaitingInput {
 		t.Error("Codex cycle 1: Expected WaitingInput")
@@ -203,11 +203,11 @@ func TestStatusTracker_CodexMultipleCycles(t *testing.T) {
 	tracker.Process([]byte("• Confirming (7s • esc to interrupt)\n"))
 	tracker.Process([]byte("• Confirming (8s • esc to interrupt)\n"))
 	waitForCodexDebounce()
-	// Need 10 chunks without esc to trigger (Codex threshold)
-	for i := 1; i <= 9; i++ {
+	// Need 3 chunks without esc to trigger (Codex threshold)
+	for i := 1; i <= 2; i++ {
 		tracker.Process([]byte(fmt.Sprintf("Output %c\n", 'A'+i-1)))
 	}
-	state, _, changed = tracker.Process([]byte("Output J\n"))
+	state, _, changed = tracker.Process([]byte("Output C\n"))
 
 	if !changed || state != AIAssistantStateWaitingInput {
 		t.Error("Codex cycle 2: Expected WaitingInput")
@@ -224,11 +224,11 @@ func TestStatusTracker_CodexDebounce(t *testing.T) {
 	tracker.Process([]byte("◦ Working (5s • esc to interrupt)\n"))
 	waitForCodexDebounce()
 
-	// Send 9 chunks without esc - should NOT trigger (Codex threshold is 10)
-	for i := 1; i <= 9; i++ {
+	// Send 2 chunks without esc - should NOT trigger (Codex threshold is 3)
+	for i := 1; i <= 2; i++ {
 		_, _, changed := tracker.Process([]byte(fmt.Sprintf("Output %d\n", i)))
 		if changed {
-			t.Errorf("Debounce: Should not trigger on chunk %d/10", i)
+			t.Errorf("Debounce: Should not trigger on chunk %d/3", i)
 		}
 	}
 
@@ -238,18 +238,18 @@ func TestStatusTracker_CodexDebounce(t *testing.T) {
 	tracker.Process([]byte("◦ Working (11s • esc to interrupt)\n"))
 	waitForCodexDebounce()
 
-	// Send 9 chunks without esc again - counter reset, should NOT trigger
-	for i := 1; i <= 9; i++ {
+	// Send 2 chunks without esc again - counter reset, should NOT trigger
+	for i := 1; i <= 2; i++ {
 		_, _, changed := tracker.Process([]byte(fmt.Sprintf("Reset output %d\n", i)))
 		if changed {
-			t.Errorf("Debounce: Should not trigger after counter reset (chunk %d/10)", i)
+			t.Errorf("Debounce: Should not trigger after counter reset (chunk %d/3)", i)
 		}
 	}
 
-	// 10th consecutive chunk without esc - NOW should trigger
-	state, _, changed := tracker.Process([]byte("Final output 10\n"))
+	// 3rd consecutive chunk without esc - NOW should trigger
+	state, _, changed := tracker.Process([]byte("Final output 3\n"))
 	if !changed {
-		t.Error("Debounce: Should trigger on 10th consecutive chunk without esc")
+		t.Error("Debounce: Should trigger on 3rd consecutive chunk without esc")
 	}
 	if state != AIAssistantStateWaitingInput {
 		t.Errorf("Debounce: Expected WaitingInput, got %v", state)

@@ -163,6 +163,11 @@ func TestStatusTracker_InterruptedState(t *testing.T) {
 		t.Error("Expected state change to Thinking")
 	}
 
+	// Should not be interrupted yet
+	if tracker.WasInterrupted() {
+		t.Error("Should not be interrupted yet")
+	}
+
 	// User interrupts - should immediately trigger WaitingInput due to "Interrupted" keyword
 	chunk := []byte("[Request interrupted by user]\n⎿ Interrupted · What should Claude do instead?\n")
 	state, _, changed = tracker.Process(chunk)
@@ -172,6 +177,11 @@ func TestStatusTracker_InterruptedState(t *testing.T) {
 	}
 	if state != AIAssistantStateWaitingInput {
 		t.Errorf("Expected WaitingInput after interrupt, got %v", state)
+	}
+
+	// CRITICAL: Should be marked as interrupted
+	if !tracker.WasInterrupted() {
+		t.Error("Expected WasInterrupted() to return true after user interruption")
 	}
 }
 
@@ -251,6 +261,265 @@ func TestStatusTracker_OnlyWorkingStateTriggersCompletion(t *testing.T) {
 
 	if changed {
 		t.Error("Should NOT trigger another completion from WaitingInput")
+	}
+}
+
+func TestStatusTracker_NormalCompletionVsInterruption(t *testing.T) {
+	tracker := NewStatusTracker()
+	tracker.Activate(AIAssistantClaudeCode)
+
+	// Test 1: Normal completion (not interrupted)
+	// Enter thinking state - state change happens on first chunk
+	state, _, changed := tracker.Process([]byte("✻ Brewing… (esc to interrupt · 5s)\n"))
+
+	if !changed || state != AIAssistantStateThinking {
+		t.Error("Should enter Thinking state")
+	}
+
+	// Send more chunks to confirm working state (need 3 total)
+	tracker.Process([]byte("✻ Brewing… (esc to interrupt · 6s)\n"))
+	tracker.Process([]byte("✻ Brewing… (esc to interrupt · 7s)\n"))
+
+	waitForDebounce()
+
+	// Normal completion - esc to interrupt disappears (need 3 chunks)
+	tracker.Process([]byte("Output line 1\n"))
+	tracker.Process([]byte("Output line 2\n"))
+	state, _, changed = tracker.Process([]byte("Output line 3\n"))
+
+	if !changed || state != AIAssistantStateWaitingInput {
+		t.Error("Should transition to WaitingInput on normal completion")
+	}
+
+	// CRITICAL: Normal completion should NOT be marked as interrupted
+	if tracker.WasInterrupted() {
+		t.Error("Normal completion should NOT be marked as interrupted")
+	}
+
+	// Test 2: User interruption
+	// Enter thinking state again - state change happens on first chunk
+	state, _, changed = tracker.Process([]byte("✻ Thinking… (esc to interrupt · 5s)\n"))
+
+	if !changed || state != AIAssistantStateThinking {
+		t.Error("Should enter Thinking state again")
+	}
+
+	// Send more chunks to confirm working state
+	tracker.Process([]byte("✻ Thinking… (esc to interrupt · 6s)\n"))
+	tracker.Process([]byte("✻ Thinking… (esc to interrupt · 7s)\n"))
+
+	// User presses ESC - interrupted keyword appears
+	chunk := []byte("[Request interrupted by user]\n⎿ Interrupted · What should Claude do instead?\n")
+	state, _, changed = tracker.Process(chunk)
+
+	if !changed || state != AIAssistantStateWaitingInput {
+		t.Error("Should transition to WaitingInput on interruption")
+	}
+
+	// CRITICAL: Interruption SHOULD be marked
+	if !tracker.WasInterrupted() {
+		t.Error("User interruption SHOULD be marked as interrupted")
+	}
+
+	// Test 3: Interrupted flag should clear when entering working state again
+	state, _, changed = tracker.Process([]byte("✻ Planning… (esc to interrupt · 5s)\n"))
+
+	if !changed || state != AIAssistantStateThinking {
+		t.Error("Should enter Thinking state once more")
+	}
+
+	// Send more chunks to confirm working state
+	tracker.Process([]byte("✻ Planning… (esc to interrupt · 6s)\n"))
+	tracker.Process([]byte("✻ Planning… (esc to interrupt · 7s)\n"))
+
+	// CRITICAL: Interrupted flag should be cleared when entering working state
+	if tracker.WasInterrupted() {
+		t.Error("Interrupted flag should be cleared when entering working state")
+	}
+}
+
+func TestStatusTracker_CustomTaskDescriptions(t *testing.T) {
+	tracker := NewStatusTracker()
+	tracker.Activate(AIAssistantClaudeCode)
+
+	// Test case 1: "✻ 浏览器验证最终效果… (esc to interrupt · ctrl+t to show todos · 4m 58s · ↑ 3.8k tokens)"
+	// This should be detected as Thinking state because it matches the strict format
+	chunk1 := []byte("✻ 浏览器验证最终效果… (esc to interrupt · ctrl+t to show todos · 4m 58s · ↑ 3.8k tokens)\n")
+	state, _, changed := tracker.Process(chunk1)
+
+	if !changed {
+		t.Error("Expected state change for custom task with esc to interrupt")
+	}
+	if state != AIAssistantStateThinking {
+		t.Errorf("Expected Thinking state for '✻ 浏览器验证最终效果…', got %v", state)
+	}
+
+	// Continue to confirm working state (need 3 chunks total)
+	chunk2 := []byte("✻ 浏览器验证最终效果… (esc to interrupt · ctrl+t to show todos · 4m 59s · ↑ 3.9k tokens)\n")
+	tracker.Process(chunk2)
+
+	chunk3 := []byte("✻ 浏览器验证最终效果… (esc to interrupt · ctrl+t to show todos · 5m 0s · ↑ 4.0k tokens)\n")
+	tracker.Process(chunk3)
+
+	// Verify we're still in Thinking state
+	currentState, _ := tracker.State()
+	if currentState != AIAssistantStateThinking {
+		t.Errorf("Expected Thinking state after multiple chunks, got %v", currentState)
+	}
+
+	// Test case 2: "✶ Vibing… (esc to interrupt)"
+	// Reset tracker for second test
+	tracker2 := NewStatusTracker()
+	tracker2.Activate(AIAssistantClaudeCode)
+
+	chunk4 := []byte("✶ Vibing… (esc to interrupt)\n")
+	state2, _, changed2 := tracker2.Process(chunk4)
+
+	if !changed2 {
+		t.Error("Expected state change for '✶ Vibing…' with esc to interrupt")
+	}
+	if state2 != AIAssistantStateThinking {
+		t.Errorf("Expected Thinking state for '✶ Vibing…', got %v", state2)
+	}
+
+	// Continue to confirm working state
+	chunk5 := []byte("✶ Vibing… (esc to interrupt)\n")
+	tracker2.Process(chunk5)
+
+	chunk6 := []byte("✶ Vibing… (esc to interrupt)\n")
+	tracker2.Process(chunk6)
+
+	// Verify working state is confirmed
+	currentState2, _ := tracker2.State()
+	if currentState2 != AIAssistantStateThinking {
+		t.Errorf("Expected Thinking state for '✶ Vibing…' after confirmation, got %v", currentState2)
+	}
+
+	// Test completion after debounce
+	waitForDebounce()
+
+	// Need 3 chunks without esc to trigger completion
+	tracker2.Process([]byte("Regular output 1\n"))
+	tracker2.Process([]byte("Regular output 2\n"))
+	finalState, _, finalChanged := tracker2.Process([]byte("Regular output 3\n"))
+
+	if !finalChanged {
+		t.Error("Expected state change to WaitingInput after esc disappears")
+	}
+	if finalState != AIAssistantStateWaitingInput {
+		t.Errorf("Expected WaitingInput after completion, got %v", finalState)
+	}
+}
+
+func TestStatusTracker_AvoidFalsePositives(t *testing.T) {
+	tracker := NewStatusTracker()
+	tracker.Activate(AIAssistantClaudeCode)
+
+	// Test case 1: Text contains "(esc to interrupt)" but not in the correct format
+	// Should NOT be detected as working state
+	falsePositives := []string{
+		"Some random text with (esc to interrupt) in the middle\n",
+		"Documentation: Press (esc to interrupt) the operation\n",
+		"Error message contains (esc to interrupt) text\n",
+		"No symbol before (esc to interrupt)\n",
+		"✻ Missing ellipsis (esc to interrupt)\n", // No … before (esc to interrupt)
+	}
+
+	for i, fp := range falsePositives {
+		_, _, changed := tracker.Process([]byte(fp))
+		if changed {
+			t.Errorf("Test %d: Should NOT detect false positive: %s", i+1, fp)
+		}
+	}
+
+	// Test case 2: Verify that correct format IS detected
+	correctFormat := "✻ Working on something… (esc to interrupt · 10s)\n"
+	state, _, changed := tracker.Process([]byte(correctFormat))
+
+	if !changed {
+		t.Error("Should detect correct format")
+	}
+	if state != AIAssistantStateThinking {
+		t.Errorf("Expected Thinking state for correct format, got %v", state)
+	}
+}
+
+func TestStatusTracker_VariousSymbols(t *testing.T) {
+	// Test various symbols that should all be recognized
+	symbols := []string{
+		"✻ Testing… (esc to interrupt)\n",
+		"✶ Testing… (esc to interrupt)\n",
+		"∴ Testing… (esc to interrupt)\n",
+		"· Testing… (esc to interrupt)\n",
+		"○ Testing… (esc to interrupt)\n",
+		"◆ Testing… (esc to interrupt)\n",
+		"● Testing… (esc to interrupt)\n",
+		"★ Testing… (esc to interrupt)\n",
+		"☆ Testing… (esc to interrupt)\n",
+		"✓ Testing… (esc to interrupt)\n",
+		"✔ Testing… (esc to interrupt)\n",
+	}
+
+	for i, symbol := range symbols {
+		tracker := NewStatusTracker()
+		tracker.Activate(AIAssistantClaudeCode)
+
+		state, _, changed := tracker.Process([]byte(symbol))
+
+		if !changed {
+			t.Errorf("Symbol test %d failed: %s should be detected", i+1, symbol)
+		}
+		if state != AIAssistantStateThinking {
+			t.Errorf("Symbol test %d: Expected Thinking state, got %v", i+1, state)
+		}
+	}
+}
+
+func TestStatusTracker_CompactingFormat(t *testing.T) {
+	testCases := []struct {
+		name          string
+		input         string
+		expectedState AIAssistantState
+	}{
+		{
+			name:          "Compacting conversation with full info",
+			input:         "· Compacting conversation… (esc to interrupt · ctrl+t to show todos · 8m 49s · ↓ 9.3k tokens)\n",
+			expectedState: AIAssistantStateThinking,
+		},
+		{
+			name:          "Compacting without todos",
+			input:         "· Compacting conversation… (esc to interrupt · 8m 49s · ↓ 9.3k tokens)\n",
+			expectedState: AIAssistantStateThinking,
+		},
+		{
+			name:          "Compacting minimal",
+			input:         "· Compacting… (esc to interrupt)\n",
+			expectedState: AIAssistantStateThinking,
+		},
+		{
+			name:          "Other actions with dot symbol",
+			input:         "· Processing files… (esc to interrupt · 2s)\n",
+			expectedState: AIAssistantStateThinking,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := NewStatusTracker()
+			tracker.Activate(AIAssistantClaudeCode)
+
+			// Process the chunk
+			state, _, changed := tracker.Process([]byte(tc.input))
+
+			if !changed {
+				t.Errorf("Expected state change for: %s", tc.input)
+			}
+
+			if state != tc.expectedState {
+				t.Errorf("Expected state %s, got %s for input: %s",
+					tc.expectedState, state, tc.input)
+			}
+		})
 	}
 }
 

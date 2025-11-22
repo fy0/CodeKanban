@@ -12,6 +12,7 @@ require (
 	github.com/gofiber/fiber/v2 v2.52.9
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/gorilla/websocket v1.5.3
+	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/kardianos/service v1.2.4
 	github.com/knadh/koanf/parsers/yaml v1.1.0

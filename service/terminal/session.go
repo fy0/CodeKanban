@@ -3,6 +3,7 @@ package terminal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/xpty"
+	"github.com/hinshun/vt10x"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -139,6 +141,10 @@ type Session struct {
 
 	assistantTracker *ai_assistant.StatusTracker
 
+	// Terminal emulator for accurate display simulation
+	emulator   vt10x.Terminal
+	emulatorMu sync.RWMutex
+
 	mu sync.RWMutex
 
 	scrollMu        sync.RWMutex
@@ -196,6 +202,16 @@ func NewSession(params SessionParams) (*Session, error) {
 		return nil, err
 	}
 
+	// Set default terminal size
+	cols := params.Cols
+	rows := params.Rows
+	if cols <= 0 {
+		cols = 80
+	}
+	if rows <= 0 {
+		rows = 24
+	}
+
 	session := &Session{
 		id:               params.ID,
 		projectID:        params.ProjectID,
@@ -204,8 +220,8 @@ func NewSession(params SessionParams) (*Session, error) {
 		title:            params.Title,
 		command:          append([]string{}, params.Command...),
 		env:              append([]string{}, params.Env...),
-		rows:             params.Rows,
-		cols:             params.Cols,
+		rows:             rows,
+		cols:             cols,
 		createdAt:        time.Now(),
 		closed:           make(chan struct{}),
 		logger:           params.Logger,
@@ -214,6 +230,7 @@ func NewSession(params SessionParams) (*Session, error) {
 		scrollbackLimit:  scrollbackLimit,
 		subscribers:      make(map[string]*sessionSubscriber),
 		assistantTracker: ai_assistant.NewStatusTracker(),
+		// emulator is created lazily when AI assistant is detected
 	}
 
 	// Set AI assistant status tracking checker if config is provided
@@ -464,8 +481,18 @@ func (s *Session) Resize(cols, rows int) error {
 		return err
 	}
 
+	s.mu.Lock()
 	s.cols = cols
 	s.rows = rows
+	s.mu.Unlock()
+
+	// Also resize terminal emulator
+	s.emulatorMu.Lock()
+	if s.emulator != nil {
+		s.emulator.Resize(cols, rows)
+	}
+	s.emulatorMu.Unlock()
+
 	s.Touch()
 
 	return nil
@@ -521,6 +548,7 @@ func (s *Session) Close() error {
 	var closeErr error
 	s.closeOnce.Do(func() {
 		s.setStatus(SessionStatusClosed)
+
 		if s.cancel != nil {
 			s.cancel()
 		}
@@ -718,6 +746,13 @@ func (s *Session) appendScrollback(chunk []byte) {
 		s.scrollback = s.scrollback[1:]
 	}
 	s.scrollMu.Unlock()
+
+	// Also write to terminal emulator for accurate display simulation
+	s.emulatorMu.Lock()
+	if s.emulator != nil {
+		s.emulator.Write(chunk)
+	}
+	s.emulatorMu.Unlock()
 }
 
 func (s *Session) broadcast(event StreamEvent) {
@@ -776,11 +811,57 @@ func (s *Session) removeSubscriber(id string) {
 	}
 }
 
+// getEmulatorVisibleLines returns the visible lines from the terminal emulator
+func (s *Session) getEmulatorVisibleLines() []string {
+	s.emulatorMu.RLock()
+	defer s.emulatorMu.RUnlock()
+
+	if s.emulator == nil {
+		return nil
+	}
+
+	s.mu.RLock()
+	rows := s.rows
+	cols := s.cols
+	s.mu.RUnlock()
+
+	lines := make([]string, 0, rows)
+	for i := 0; i < rows; i++ {
+		line := ""
+		for j := 0; j < cols; j++ {
+			cell := s.emulator.Cell(j, i)
+			if cell.Char != 0 {
+				line += string(cell.Char)
+			} else {
+				line += " "
+			}
+		}
+		// Trim trailing spaces for cleaner output
+		trimmed := strings.TrimRight(line, " ")
+		if trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	return lines
+}
+
 func (s *Session) handleAssistantOutput(chunk []byte) {
 	if len(chunk) == 0 || s.assistantTracker == nil {
 		return
 	}
-	state, ts, changed := s.assistantTracker.Process(chunk)
+
+	// Only process if emulator exists (AI assistant detected)
+	s.emulatorMu.RLock()
+	hasEmulator := s.emulator != nil
+	s.emulatorMu.RUnlock()
+	if !hasEmulator {
+		return
+	}
+
+	// Get visible lines from terminal emulator for accurate state detection
+	displayLines := s.getEmulatorVisibleLines()
+
+	state, ts, changed := s.assistantTracker.ProcessDisplay(displayLines)
 	if !changed || state == ai_assistant.AIAssistantStateUnknown {
 		return
 	}
@@ -804,8 +885,28 @@ func (s *Session) enrichAssistantInfo(info *ai_assistant.AIAssistantInfo) *ai_as
 		if tracker != nil {
 			tracker.Deactivate()
 		}
+		// Destroy emulator when AI assistant is no longer detected
+		s.emulatorMu.Lock()
+		s.emulator = nil
+		s.emulatorMu.Unlock()
 		return nil
 	}
+
+	// Create emulator lazily when AI assistant is first detected
+	s.emulatorMu.Lock()
+	if s.emulator == nil {
+		s.mu.RLock()
+		cols, rows := s.cols, s.rows
+		s.mu.RUnlock()
+		s.emulator = vt10x.New(vt10x.WithSize(cols, rows))
+		// Feed existing scrollback to emulator
+		scrollback := s.Scrollback()
+		for _, chunk := range scrollback {
+			s.emulator.Write(chunk)
+		}
+	}
+	s.emulatorMu.Unlock()
+
 	if tracker != nil {
 		tracker.Activate(info.Type)
 		if state, ts := tracker.State(); state != ai_assistant.AIAssistantStateUnknown {
@@ -813,11 +914,199 @@ func (s *Session) enrichAssistantInfo(info *ai_assistant.AIAssistantInfo) *ai_as
 			info.StateUpdatedAt = ts
 			// Attach state duration statistics only when tracking is active
 			info.Stats = tracker.Stats()
+			// Attach interrupted flag
+			info.Interrupted = tracker.WasInterrupted()
 		}
 		// When state is Unknown (tracking disabled), leave info.State as default (unknown)
 		// so frontend will only show the icon without status text
 	}
 	return info
+}
+
+// DebugInfo collects comprehensive debug information about the session.
+type DebugInfo struct {
+	SessionID         string                        `json:"sessionId"`
+	ProjectID         string                        `json:"projectId"`
+	WorktreeID        string                        `json:"worktreeId"`
+	Status            SessionStatus                 `json:"status"`
+	Rows              int                           `json:"rows"`
+	Cols              int                           `json:"cols"`
+	ScrollbackChunks []string                      `json:"scrollbackChunks"`
+	ScrollbackSize   int                           `json:"scrollbackSize"`
+	ScrollbackLimit  int                           `json:"scrollbackLimit"`
+	AIAssistant      *ai_assistant.AIAssistantInfo `json:"aiAssistant,omitempty"`
+}
+
+// GetDebugInfo returns comprehensive debugging information about the session.
+func (s *Session) GetDebugInfo() *DebugInfo {
+	s.mu.RLock()
+	rows := s.rows
+	cols := s.cols
+	s.mu.RUnlock()
+
+	info := &DebugInfo{
+		SessionID:       s.id,
+		ProjectID:       s.projectID,
+		WorktreeID:      s.worktreeID,
+		Status:          s.Status(),
+		Rows:            rows,
+		Cols:            cols,
+		ScrollbackLimit: s.scrollbackLimit,
+	}
+
+	// Get scrollback chunks
+	scrollback := s.Scrollback()
+	if len(scrollback) > 0 {
+		chunks := make([]string, 0, len(scrollback))
+		totalSize := 0
+		for _, chunk := range scrollback {
+			chunks = append(chunks, string(chunk))
+			totalSize += len(chunk)
+		}
+		info.ScrollbackChunks = chunks
+		info.ScrollbackSize = totalSize
+	}
+
+	// Get AI Assistant info
+	s.metaMu.RLock()
+	if s.lastMetadata != nil && s.lastMetadata.AIAssistant != nil {
+		aiCopy := *s.lastMetadata.AIAssistant
+		info.AIAssistant = &aiCopy
+	}
+	s.metaMu.RUnlock()
+
+	return info
+}
+
+// SimulatedDisplay contains the simulated terminal display
+type SimulatedDisplay struct {
+	SessionID      string   `json:"sessionId"`
+	Rows           int      `json:"rows"`
+	Cols           int      `json:"cols"`
+	CursorX        int      `json:"cursorX"`
+	CursorY        int      `json:"cursorY"`
+	DisplayContent string   `json:"displayContent"`
+	VisibleLines   []string `json:"visibleLines"`
+	CurrentLine    string   `json:"currentLine"`
+}
+
+// GetSimulatedDisplay returns the simulated terminal display
+func (s *Session) GetSimulatedDisplay() *SimulatedDisplay {
+	s.mu.RLock()
+	rows := s.rows
+	cols := s.cols
+	s.mu.RUnlock()
+
+	s.emulatorMu.RLock()
+	defer s.emulatorMu.RUnlock()
+
+	if s.emulator == nil {
+		return &SimulatedDisplay{
+			SessionID: s.id,
+			Rows:      rows,
+			Cols:      cols,
+		}
+	}
+
+	// Get cursor position from session's emulator
+	cursor := s.emulator.Cursor()
+	cursorX, cursorY := cursor.X, cursor.Y
+
+	// Extract visible lines from terminal
+	visibleLines := make([]string, 0, rows)
+	var currentLine string
+	for i := 0; i < rows; i++ {
+		line := ""
+		for j := 0; j < cols; j++ {
+			cell := s.emulator.Cell(j, i)
+			if cell.Char != 0 {
+				line += string(cell.Char)
+			} else {
+				line += " "
+			}
+		}
+		// Trim trailing spaces for cleaner output
+		trimmed := strings.TrimRight(line, " ")
+		if trimmed != "" || i == cursorY {
+			visibleLines = append(visibleLines, trimmed)
+		}
+		if i == cursorY {
+			currentLine = trimmed
+		}
+	}
+
+	// Build full display content
+	displayContent := strings.Join(visibleLines, "\n")
+
+	return &SimulatedDisplay{
+		SessionID:      s.id,
+		Rows:           rows,
+		Cols:           cols,
+		CursorX:        cursorX,
+		CursorY:        cursorY,
+		DisplayContent: displayContent,
+		VisibleLines:   visibleLines,
+		CurrentLine:    currentLine,
+	}
+}
+
+// CapturedChunk represents a captured output chunk
+type CapturedChunk struct {
+	Data      []byte    `json:"-"`
+	DataStr   string    `json:"data"`
+	Timestamp time.Time `json:"timestamp"`
+	Size      int       `json:"size"`
+}
+
+// CaptureNextChunk triggers a resize and captures the next output chunk.
+// timeout specifies how long to wait for the next chunk (default: 2 seconds).
+func (s *Session) CaptureNextChunk(ctx context.Context, timeout time.Duration) (*CapturedChunk, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+
+	// Subscribe to output stream
+	stream, err := s.Subscribe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to session: %w", err)
+	}
+	defer stream.Close()
+
+	// Trigger a resize to force terminal redraw
+	s.mu.RLock()
+	rows, cols := s.rows, s.cols
+	s.mu.RUnlock()
+
+	if err := s.Resize(cols, rows); err != nil {
+		return nil, fmt.Errorf("failed to trigger resize: %w", err)
+	}
+
+	// Wait for the next data chunk
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			return nil, fmt.Errorf("timeout waiting for output chunk")
+		case event, ok := <-stream.Events():
+			if !ok {
+				return nil, fmt.Errorf("stream closed before receiving chunk")
+			}
+			if event.Type == StreamEventData && len(event.Data) > 0 {
+				return &CapturedChunk{
+					Data:      event.Data,
+					DataStr:   string(event.Data),
+					Timestamp: time.Now(),
+					Size:      len(event.Data),
+				}, nil
+			}
+			// Ignore other event types and continue waiting
+		}
+	}
 }
 
 func cloneSessionMetadata(meta *SessionMetadata) *SessionMetadata {
