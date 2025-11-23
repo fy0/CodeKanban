@@ -614,12 +614,12 @@ export interface AIAssistantInfo {
   command?: string;
   detected: boolean;
   displayName: string;
+  interrupted?: boolean;
   name: string;
   state?: string;
   stateUpdatedAt?: string;
   stats?: StateStats;
   type: string;
-  interrupted?: boolean;
 }
 export interface TerminalSessionView {
   aiAssistant?: AIAssistantInfo;
@@ -765,6 +765,48 @@ export interface ItemsResponseTaskCommentTableBody {
    */
   items: TaskCommentTable[] | null;
 }
+export interface DebugInfo {
+  aiAssistant?: AIAssistantInfo;
+  cols: number;
+  projectId: string;
+  rows: number;
+  scrollbackChunks: string[] | null;
+  scrollbackLimit: number;
+  scrollbackSize: number;
+  sessionId: string;
+  status: string;
+  worktreeId: string;
+}
+export interface ItemResponseDebugInfoBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: DebugInfo;
+}
+export interface SimulatedDisplay {
+  cols: number;
+  currentLine: string;
+  cursorX: number;
+  cursorY: number;
+  displayContent: string;
+  rows: number;
+  sessionId: string;
+  visibleLines: string[] | null;
+}
+export interface ItemResponseSimulatedDisplayBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: SimulatedDisplay;
+}
 export interface UploadImageResponse {
   /**
    * 文件名
@@ -865,6 +907,21 @@ export interface ItemResponseTaskCommentTableBody {
    * 响应对象
    */
   item: TaskCommentTable;
+}
+export interface CapturedChunk {
+  data: string;
+  size: number;
+  timestamp: string;
+}
+export interface ItemResponseCapturedChunkBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: CapturedChunk;
 }
 export interface MergeResult {
   conflicts: string[] | null;
@@ -3100,6 +3157,7 @@ declare global {
        *       command?: string
        *       detected: boolean
        *       displayName: string
+       *       interrupted?: boolean
        *       name: string
        *       state?: string
        *       stateUpdatedAt?: string
@@ -3223,6 +3281,7 @@ declare global {
        *       command?: string
        *       detected: boolean
        *       displayName: string
+       *       interrupted?: boolean
        *       name: string
        *       state?: string
        *       stateUpdatedAt?: string
@@ -3315,6 +3374,7 @@ declare global {
        *       command?: string
        *       detected: boolean
        *       displayName: string
+       *       interrupted?: boolean
        *       name: string
        *       state?: string
        *       stateUpdatedAt?: string
@@ -3381,6 +3441,181 @@ declare global {
       terminalCounts<Config extends Alova2MethodConfig<TerminalCountsResponseBody>>(
         config?: Config
       ): Alova2Method<TerminalCountsResponseBody, 'terminalSession.terminalCounts', Config>;
+      /**
+       * ---
+       *
+       * [GET] 触发 resize 并捕获下一个输出 chunk
+       *
+       * **path:** /api/v1/terminals/{sessionId}/capture
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   sessionId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Query Parameters**
+       * ```ts
+       * type QueryParameters = {
+       *   // 超时时间（秒），默认为 2 秒，0 表示使用默认值
+       *   timeout?: number
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     data: string
+       *     size: number
+       *     timestamp: string
+       *   }
+       * }
+       * ```
+       */
+      captureChunk<
+        Config extends Alova2MethodConfig<ItemResponseCapturedChunkBody> & {
+          pathParams: {
+            sessionId: string;
+          };
+          params: {
+            /**
+             * 超时时间（秒），默认为 2 秒，0 表示使用默认值
+             */
+            timeout?: number;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseCapturedChunkBody, 'terminalSession.captureChunk', Config>;
+      /**
+       * ---
+       *
+       * [GET] 获取终端调试信息（包含完整输出内容）
+       *
+       * **path:** /api/v1/terminals/{sessionId}/debug
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   sessionId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     aiAssistant?: {
+       *       command?: string
+       *       detected: boolean
+       *       displayName: string
+       *       interrupted?: boolean
+       *       name: string
+       *       state?: string
+       *       stateUpdatedAt?: string
+       *       stats?: {
+       *         currentStateDuration: number
+       *         executingDuration: number
+       *         thinkingDuration: number
+       *         waitingApprovalDuration: number
+       *         waitingInputDuration: number
+       *       }
+       *       type: string
+       *     }
+       *     cols: number
+       *     projectId: string
+       *     rows: number
+       *     // [params1] start
+       *     // [items] start
+       *     // [items] end
+       *     // [params1] end
+       *     scrollbackChunks: string[] | null
+       *     scrollbackLimit: number
+       *     scrollbackSize: number
+       *     sessionId: string
+       *     status: string
+       *     worktreeId: string
+       *   }
+       * }
+       * ```
+       */
+      debug<
+        Config extends Alova2MethodConfig<ItemResponseDebugInfoBody> & {
+          pathParams: {
+            sessionId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseDebugInfoBody, 'terminalSession.debug', Config>;
+      /**
+       * ---
+       *
+       * [GET] 获取终端模拟显示内容
+       *
+       * **path:** /api/v1/terminals/{sessionId}/sim-term
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   sessionId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     cols: number
+       *     currentLine: string
+       *     cursorX: number
+       *     cursorY: number
+       *     displayContent: string
+       *     rows: number
+       *     sessionId: string
+       *     // [params1] start
+       *     // [items] start
+       *     // [items] end
+       *     // [params1] end
+       *     visibleLines: string[] | null
+       *   }
+       * }
+       * ```
+       */
+      simulatedDisplay<
+        Config extends Alova2MethodConfig<ItemResponseSimulatedDisplayBody> & {
+          pathParams: {
+            sessionId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseSimulatedDisplayBody, 'terminalSession.simulatedDisplay', Config>;
     };
     system: {
       /**

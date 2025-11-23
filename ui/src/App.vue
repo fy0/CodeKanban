@@ -132,7 +132,7 @@ watch(
     if (typeof document !== 'undefined') {
       const root = document.documentElement;
       Object.entries(vars).forEach(([key, value]) => {
-        root.style.setProperty(key, value);
+        root.style.setProperty(key, value ?? '');
       });
     }
   },

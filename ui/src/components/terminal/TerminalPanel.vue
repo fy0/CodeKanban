@@ -306,12 +306,12 @@ function updateActiveTabIndicator() {
 
     // 找到所有的标签元素
     const tabElements = wrapper.querySelectorAll('.n-tabs-tab');
-    let activeTabElement: HTMLElement | null = null;
+    let activeTabElement: Element | null = null;
 
     // 找到激活的标签
     tabElements.forEach((el) => {
       if (el.classList.contains('n-tabs-tab--active')) {
-        activeTabElement = el as HTMLElement;
+        activeTabElement = el;
       }
     });
 
@@ -326,7 +326,7 @@ function updateActiveTabIndicator() {
 
     // 计算激活标签的位置和宽度
     const wrapperRect = wrapper.getBoundingClientRect();
-    const activeRect = activeTabElement.getBoundingClientRect();
+    const activeRect = (activeTabElement as HTMLElement).getBoundingClientRect();
     const tabWidth = activeRect.width;
 
     // 根据标签宽度动态计算指示器宽度
