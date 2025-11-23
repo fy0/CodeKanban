@@ -311,6 +311,26 @@ const handleAddTab = async () => {
 };
 
 const handleCloseTab = async (tabId: string) => {
+  const tabToClose = tabs.value.find((tab) => tab.id === tabId);
+
+  // 检查标签是否有内容，如果有则弹窗确认
+  if (tabToClose && tabToClose.content && tabToClose.content.trim() !== '') {
+    dialog.warning({
+      title: t('notepad.closeConfirmTitle'),
+      content: t('notepad.closeConfirmContent'),
+      positiveText: t('common.confirm'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: async () => {
+        await performCloseTab(tabId);
+      },
+    });
+  } else {
+    // 如果没有内容，直接关闭
+    await performCloseTab(tabId);
+  }
+};
+
+const performCloseTab = async (tabId: string) => {
   try {
     await notepadApi.delete(tabId);
     const index = tabs.value.findIndex((tab) => tab.id === tabId);
@@ -582,15 +602,16 @@ onMounted(() => {
   border-radius: 4px;
   font-size: 12px;
   background: var(--app-surface-color, #ffffff);
+  color: var(--n-text-color-2, #333333);
   cursor: grab;
   user-select: none;
-  transition: border-color 0.2s, background-color 0.2s;
+  transition: border-color 0.2s, background-color 0.2s, color 0.2s;
 }
 
 .tab-item.active {
   border-color: var(--n-primary-color, #1890ff);
   color: var(--n-primary-color, #1890ff);
-  background: var(--n-primary-color-suppl, rgba(24, 144, 255, 0.1));
+  background: color-mix(in srgb, var(--n-primary-color, #1890ff) 8%, var(--app-surface-color, #ffffff));
 }
 
 .tab-item:active {

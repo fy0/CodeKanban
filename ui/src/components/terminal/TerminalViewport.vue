@@ -36,10 +36,10 @@ const props = defineProps<{
 }>();
 
 const settingsStore = useSettingsStore();
-const { terminalThemeId } = storeToRefs(settingsStore);
+const { effectiveTerminalThemeId } = storeToRefs(settingsStore);
 
 const activeTerminalTheme = computed(() => {
-  return getTerminalThemeById(terminalThemeId.value) || getDefaultTerminalTheme();
+  return getTerminalThemeById(effectiveTerminalThemeId.value) || getDefaultTerminalTheme();
 });
 
 const terminalOverlayStyle = computed(() => {
@@ -68,6 +68,16 @@ watch(
       from: oldStatus,
       to: newStatus,
     });
+  }
+);
+
+// 监听终端主题变化，动态更新终端主题
+watch(
+  activeTerminalTheme,
+  (newTheme) => {
+    if (terminal) {
+      terminal.options.theme = newTheme.theme;
+    }
   }
 );
 

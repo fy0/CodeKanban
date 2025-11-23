@@ -324,7 +324,7 @@ async function handleTaskStartWork(task: Task) {
 
 .board-header {
   padding: 16px 24px;
-  border-bottom: 1px solid var(--n-border-color);
+  border-bottom: var(--kanban-border, 1px solid var(--n-border-color));
 }
 
 .board-header h2 {

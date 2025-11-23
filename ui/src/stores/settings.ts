@@ -3,6 +3,11 @@ import { computed, ref, watch } from 'vue';
 import { THEME_PRESETS, DEFAULT_PRESET_ID, getPresetById, getDefaultPreset } from '@/constants/themes';
 import { DEFAULT_TERMINAL_THEME_ID } from '@/constants/terminalThemes';
 
+/**
+ * 终端主题跟随应用主题的特殊值
+ */
+export const TERMINAL_THEME_FOLLOW = 'follow-theme';
+
 export interface ThemeSettings {
   primaryColor: string;
   surfaceColor: string;
@@ -10,6 +15,23 @@ export interface ThemeSettings {
   textColor?: string;
   terminalBg: string;
   terminalFg: string;
+  terminalTabBg?: string;
+  terminalTabActiveBg?: string;
+  terminalHeaderBorder?: boolean | string; // 终端 header 边框：false=无边框, true=默认边框, string=自定义边框
+  // 完成提醒标签颜色
+  terminalTabCompletionBg?: string;
+  terminalTabCompletionBorder?: string;
+  // 审批提醒标签颜色
+  terminalTabApprovalBg?: string;
+  terminalTabApprovalBorder?: string;
+  // 浮动按钮颜色
+  terminalFloatingButtonBg?: string;
+  terminalFloatingButtonFg?: string;
+  // 看板相关颜色
+  kanbanBoardBg?: string;
+  kanbanCardBg?: string;
+  // 看板边框控制
+  kanbanBorderEnabled?: boolean;
 }
 
 export interface PanelShortcutSetting {
@@ -72,14 +94,14 @@ const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
 const defaultSettings: GeneralSettings = {
   theme: { ...defaultTheme },
   currentPresetId: DEFAULT_PRESET_ID,
-  followSystemTheme: false,
+  followSystemTheme: true,
   customTheme: null,
   recentProjectsLimit: DEFAULT_RECENT_PROJECTS_LIMIT,
   maxTerminalsPerProject: DEFAULT_TERMINALS_PER_PROJECT_LIMIT,
   panelShortcuts: { ...DEFAULT_SHORTCUTS },
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
-  terminalThemeId: DEFAULT_TERMINAL_THEME_ID,
+  terminalThemeId: TERMINAL_THEME_FOLLOW,
 };
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -97,6 +119,19 @@ export const useSettingsStore = defineStore('settings', () => {
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
+
+  /**
+   * 获取有效的终端主题 ID
+   * 如果设置为"跟随主题"，则返回当前应用主题预设关联的终端主题
+   */
+  const effectiveTerminalThemeId = computed(() => {
+    if (settings.value.terminalThemeId === TERMINAL_THEME_FOLLOW) {
+      // 跟随当前应用主题
+      const preset = getPresetById(settings.value.currentPresetId);
+      return preset?.terminalThemeId ?? DEFAULT_TERMINAL_THEME_ID;
+    }
+    return settings.value.terminalThemeId;
+  });
 
   /**
    * 计算当前激活的主题
@@ -150,7 +185,8 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.followSystemTheme = false;
     settings.value.customTheme = null;
     settings.value.theme = { ...preset.colors };
-    settings.value.terminalThemeId = preset.terminalThemeId || DEFAULT_TERMINAL_THEME_ID;
+    // 重置终端主题为"跟随主题"
+    settings.value.terminalThemeId = TERMINAL_THEME_FOLLOW;
   }
 
   function updateRecentProjectsLimit(limit: number) {
@@ -205,10 +241,21 @@ export const useSettingsStore = defineStore('settings', () => {
       settings.value.currentPresetId = presetId;
       settings.value.theme = { ...preset.colors };
       settings.value.customTheme = null;
-      // 同步更新终端主题
-      if (preset.terminalThemeId) {
-        settings.value.terminalThemeId = preset.terminalThemeId;
-      }
+      settings.value.followSystemTheme = false;
+      // 终端主题保持用户选择不变
+      // 如果是"跟随主题"，effectiveTerminalThemeId 会自动计算正确的值
+    }
+  }
+
+  // 专门用于系统主题变化时调用，不关闭 followSystemTheme
+  function applySystemThemePreset(presetId: string) {
+    const preset = getPresetById(presetId);
+    if (preset) {
+      settings.value.currentPresetId = presetId;
+      settings.value.theme = { ...preset.colors };
+      settings.value.customTheme = null;
+      // 终端主题保持用户选择不变
+      // 如果是"跟随主题"，effectiveTerminalThemeId 会自动计算正确的值
     }
   }
 
@@ -226,10 +273,8 @@ export const useSettingsStore = defineStore('settings', () => {
       if (preset) {
         settings.value.currentPresetId = autoPresetId;
         settings.value.theme = { ...preset.colors };
-        // 同步更新终端主题
-        if (preset.terminalThemeId) {
-          settings.value.terminalThemeId = preset.terminalThemeId;
-        }
+        // 终端主题保持用户选择不变
+        // 如果是"跟随主题"，effectiveTerminalThemeId 会自动计算正确的值
       }
     }
   }
@@ -257,6 +302,7 @@ export const useSettingsStore = defineStore('settings', () => {
     editorSettings,
     confirmBeforeTerminalClose,
     terminalThemeId,
+    effectiveTerminalThemeId,
     updateTheme,
     resetTheme,
     updateRecentProjectsLimit,
@@ -270,6 +316,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateConfirmBeforeTerminalClose,
     updateTerminalTheme,
     selectPreset,
+    applySystemThemePreset,
     toggleFollowSystemTheme,
     applyCustomTheme,
   };

@@ -2,8 +2,17 @@ package process
 
 import (
 	"fmt"
+	"time"
 
+	gocache "github.com/patrickmn/go-cache"
 	"github.com/shirou/gopsutil/v4/process"
+)
+
+var (
+	// processCache caches process query results to avoid repeated expensive system calls
+	processCache = gocache.New(3*time.Second, 10*time.Second)
+	// queryTimeout is the maximum time to wait for a process query
+	queryTimeout = 2 * time.Second
 )
 
 // ProcessInfo contains basic information about a process.
@@ -72,25 +81,48 @@ func GetForegroundCommand(pid int32) string {
 		return ""
 	}
 
-	proc, err := process.NewProcess(pid)
-	if err != nil {
-		return ""
+	// Check cache first
+	cacheKey := fmt.Sprintf("fg_cmd_%d", pid)
+	if cached, found := processCache.Get(cacheKey); found {
+		return cached.(string)
 	}
 
-	children, err := proc.Children()
-	if err != nil || len(children) == 0 {
-		return ""
-	}
-
-	// Get the first child's command (simple heuristic)
-	// In a real scenario, you might want to find the foreground process group
-	if len(children) > 0 {
-		if cmdline, err := children[0].Cmdline(); err == nil {
-			return cmdline
+	// Query with timeout
+	result := make(chan string, 1)
+	go func() {
+		proc, err := process.NewProcess(pid)
+		if err != nil {
+			result <- ""
+			return
 		}
-	}
 
-	return ""
+		children, err := proc.Children()
+		if err != nil || len(children) == 0 {
+			result <- ""
+			return
+		}
+
+		// Get the first child's command (simple heuristic)
+		// In a real scenario, you might want to find the foreground process group
+		if len(children) > 0 {
+			if cmdline, err := children[0].Cmdline(); err == nil {
+				result <- cmdline
+				return
+			}
+		}
+
+		result <- ""
+	}()
+
+	select {
+	case cmd := <-result:
+		processCache.Set(cacheKey, cmd, gocache.DefaultExpiration)
+		return cmd
+	case <-time.After(queryTimeout):
+		// Timeout - cache empty result to avoid repeated slow queries
+		processCache.Set(cacheKey, "", gocache.DefaultExpiration)
+		return ""
+	}
 }
 
 // IsProcessBusy checks if a process has any child processes.
@@ -100,17 +132,39 @@ func IsProcessBusy(pid int32) bool {
 		return false
 	}
 
-	proc, err := process.NewProcess(pid)
-	if err != nil {
-		return false
+	// Check cache first
+	cacheKey := fmt.Sprintf("busy_%d", pid)
+	if cached, found := processCache.Get(cacheKey); found {
+		return cached.(bool)
 	}
 
-	children, err := proc.Children()
-	if err != nil {
+	// Query with timeout
+	result := make(chan bool, 1)
+	go func() {
+		proc, err := process.NewProcess(pid)
+		if err != nil {
+			result <- false
+			return
+		}
+
+		children, err := proc.Children()
+		if err != nil {
+			result <- false
+			return
+		}
+
+		result <- len(children) > 0
+	}()
+
+	select {
+	case busy := <-result:
+		processCache.Set(cacheKey, busy, gocache.DefaultExpiration)
+		return busy
+	case <-time.After(queryTimeout):
+		// Timeout - assume not busy
+		processCache.Set(cacheKey, false, gocache.DefaultExpiration)
 		return false
 	}
-
-	return len(children) > 0
 }
 
 // GetProcessStatus returns a simple status string: "idle", "busy", or "unknown".
@@ -119,22 +173,44 @@ func GetProcessStatus(pid int32) string {
 		return "unknown"
 	}
 
-	proc, err := process.NewProcess(pid)
-	if err != nil {
+	// Check cache first
+	cacheKey := fmt.Sprintf("status_%d", pid)
+	if cached, found := processCache.Get(cacheKey); found {
+		return cached.(string)
+	}
+
+	// Query with timeout
+	result := make(chan string, 1)
+	go func() {
+		proc, err := process.NewProcess(pid)
+		if err != nil {
+			result <- "unknown"
+			return
+		}
+
+		// Check if process has children
+		children, err := proc.Children()
+		if err != nil {
+			result <- "unknown"
+			return
+		}
+
+		if len(children) > 0 {
+			result <- "busy"
+		} else {
+			result <- "idle"
+		}
+	}()
+
+	select {
+	case status := <-result:
+		processCache.Set(cacheKey, status, gocache.DefaultExpiration)
+		return status
+	case <-time.After(queryTimeout):
+		// Timeout - return unknown
+		processCache.Set(cacheKey, "unknown", gocache.DefaultExpiration)
 		return "unknown"
 	}
-
-	// Check if process has children
-	children, err := proc.Children()
-	if err != nil {
-		return "unknown"
-	}
-
-	if len(children) > 0 {
-		return "busy"
-	}
-
-	return "idle"
 }
 
 // GetDetailedProcessInfo returns comprehensive information about a process and its children.

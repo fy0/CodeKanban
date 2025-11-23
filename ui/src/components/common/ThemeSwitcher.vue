@@ -1,8 +1,8 @@
 <template>
   <n-dropdown :options="themeOptions" @select="handleSelect">
-    <n-button quaternary circle>
+    <n-button quaternary circle size="small" @click="handleQuickToggle">
       <template #icon>
-        <n-icon>
+        <n-icon size="18">
           <component :is="isDarkTheme ? MoonOutline : SunnyOutline" />
         </n-icon>
       </template>
@@ -85,5 +85,18 @@ const handleSelect = (key: string) => {
   } else {
     settingsStore.selectPreset(key);
   }
+};
+
+// 快速切换 dark/light 主题
+const handleQuickToggle = () => {
+  const currentId = currentPresetId.value;
+
+  // 只在 dark 和 light 之间切换
+  if (currentId === 'dark') {
+    settingsStore.selectPreset('light');
+  } else if (currentId === 'light') {
+    settingsStore.selectPreset('dark');
+  }
+  // 其他主题不做任何操作
 };
 </script>

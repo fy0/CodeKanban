@@ -25,42 +25,7 @@
     </n-page-header>
 
     <n-space vertical size="large">
-      <n-card :title="t('settings.themeSettings')" size="huge">
-        <n-form label-placement="left" label-width="120">
-          <n-form-item :label="t('theme.presetTheme')">
-            <n-select
-              v-model:value="currentPresetValue"
-              :options="presetOptions"
-              :disabled="followSystemValue"
-              style="max-width: 240px"
-            />
-          </n-form-item>
-          <n-form-item :label="t('theme.followSystem')">
-            <n-space vertical size="small">
-              <n-switch v-model:value="followSystemValue" />
-              <span class="form-tip">{{ t('theme.customThemeHint') }}</span>
-            </n-space>
-          </n-form-item>
-
-          <n-divider style="margin: 16px 0">{{ t('theme.customTheme') }}</n-divider>
-
-          <n-alert v-if="hasCustomTheme" type="info" style="margin-bottom: 16px" :bordered="false">
-            {{ t('theme.customThemeHint') }}
-          </n-alert>
-
-          <n-form-item :label="t('settings.primaryColor')">
-            <n-color-picker v-model:value="primaryColor" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
-          <n-form-item :label="t('settings.bodyColor')">
-            <n-color-picker v-model:value="bodyColor" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
-          <n-form-item :label="t('settings.surfaceColor')">
-            <n-color-picker v-model:value="surfaceColor" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
-        </n-form>
-      </n-card>
-
-
+      <!-- 项目与终端设置 -->
       <n-card :title="t('settings.projectAndTerminal')" size="huge">
         <n-form label-placement="left" label-width="160">
           <n-form-item :label="t('settings.recentProjectsLimit')">
@@ -79,16 +44,6 @@
             <n-space vertical size="small">
               <n-switch v-model:value="confirmTerminalCloseValue" />
               <span class="form-tip">{{ t('settings.confirmTerminalCloseTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalTheme')">
-            <n-space vertical size="small">
-              <n-select
-                v-model:value="terminalThemeValue"
-                :options="terminalThemeOptions"
-                style="max-width: 240px"
-              />
-              <span class="form-tip">{{ t('settings.terminalThemeTip') }}</span>
             </n-space>
           </n-form-item>
           <n-form-item :label="t('settings.terminalShortcut')">
@@ -208,6 +163,95 @@
         </n-spin>
       </n-card>
 
+      <!-- 主题设置 -->
+      <n-card :title="t('settings.themeSettings')" size="huge">
+        <n-form label-placement="left" label-width="140">
+          <n-form-item :label="t('theme.presetTheme')">
+            <n-select
+              v-model:value="currentPresetValue"
+              :options="presetOptions"
+              :disabled="followSystemValue"
+              style="max-width: 240px"
+            />
+          </n-form-item>
+          <n-form-item :label="t('theme.followSystem')">
+            <n-space vertical size="small">
+              <n-switch v-model:value="followSystemValue" />
+              <span class="form-tip">{{ t('theme.followSystemHint') }}</span>
+            </n-space>
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalTheme')">
+            <n-space vertical size="small">
+              <n-select
+                v-model:value="terminalThemeValue"
+                :options="terminalThemeOptions"
+                style="max-width: 240px"
+              />
+              <span class="form-tip">{{ t('settings.terminalThemeTip') }}</span>
+            </n-space>
+          </n-form-item>
+
+          <n-divider style="margin: 16px 0">{{ t('theme.customTheme') }}</n-divider>
+
+          <n-alert v-if="hasCustomTheme" type="info" style="margin-bottom: 16px" :bordered="false">
+            {{ t('theme.customThemeHint') }}
+          </n-alert>
+
+          <n-form-item :label="t('settings.primaryColor')">
+            <n-color-picker v-model:value="primaryColor" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.bodyColor')">
+            <n-color-picker v-model:value="bodyColor" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.surfaceColor')">
+            <n-color-picker v-model:value="surfaceColor" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.textColor')">
+            <n-color-picker v-model:value="textColor" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+
+          <n-divider style="margin: 16px 0">{{ t('theme.terminalColors') }}</n-divider>
+
+          <n-form-item :label="t('settings.terminalBg')">
+            <n-color-picker v-model:value="terminalBg" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalFg')">
+            <n-color-picker v-model:value="terminalFg" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalTabBg')">
+            <n-color-picker v-model:value="terminalTabBg" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalTabActiveBg')">
+            <n-color-picker v-model:value="terminalTabActiveBg" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+
+          <n-divider style="margin: 16px 0">{{ t('theme.statusColors') }}</n-divider>
+
+          <n-form-item :label="t('settings.terminalTabCompletionBg')">
+            <n-color-picker v-model:value="terminalTabCompletionBg" :modes="['hex', 'rgb']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalTabCompletionBorder')">
+            <n-color-picker v-model:value="terminalTabCompletionBorder" :modes="['hex', 'rgb']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalTabApprovalBg')">
+            <n-color-picker v-model:value="terminalTabApprovalBg" :modes="['hex', 'rgb']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalTabApprovalBorder')">
+            <n-color-picker v-model:value="terminalTabApprovalBorder" :modes="['hex', 'rgb']" :actions="['confirm']" />
+          </n-form-item>
+
+          <n-divider style="margin: 16px 0">{{ t('theme.floatingButtonColors') }}</n-divider>
+
+          <n-form-item :label="t('settings.terminalFloatingButtonBg')">
+            <n-color-picker v-model:value="terminalFloatingButtonBg" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalFloatingButtonFg')">
+            <n-color-picker v-model:value="terminalFloatingButtonFg" :modes="['hex']" :actions="['confirm']" />
+          </n-form-item>
+        </n-form>
+      </n-card>
+
+      <!-- 实时预览 -->
       <n-card :title="t('settings.realtimePreview')" size="huge">
         <div class="preview-panel" :style="previewPanelStyle">
           <div class="preview-banner">
@@ -385,6 +429,83 @@ const fallbackTextColor = computed(() => {
   }
   const bodyHex = ensureHexWithHash(theme.value.bodyColor || '#ffffff');
   return getReadableTextColor(bodyHex);
+});
+
+const textColor = computed({
+  get: () => theme.value.textColor || fallbackTextColor.value,
+  set: value => {
+    settingsStore.applyCustomTheme({ textColor: value || '#333333' });
+  },
+});
+
+const terminalBg = computed({
+  get: () => theme.value.terminalBg,
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalBg: value || '#0c0c0c' });
+  },
+});
+
+const terminalFg = computed({
+  get: () => theme.value.terminalFg,
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalFg: value || '#cccccc' });
+  },
+});
+
+const terminalTabBg = computed({
+  get: () => theme.value.terminalTabBg || theme.value.surfaceColor,
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalTabBg: value || '#F1F1F1' });
+  },
+});
+
+const terminalTabActiveBg = computed({
+  get: () => theme.value.terminalTabActiveBg || theme.value.terminalBg,
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalTabActiveBg: value || '#FFFFFF' });
+  },
+});
+
+const terminalTabCompletionBg = computed({
+  get: () => theme.value.terminalTabCompletionBg || 'rgba(16, 185, 129, 0.25)',
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalTabCompletionBg: value || 'rgba(16, 185, 129, 0.25)' });
+  },
+});
+
+const terminalTabCompletionBorder = computed({
+  get: () => theme.value.terminalTabCompletionBorder || 'rgba(16, 185, 129, 0.5)',
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalTabCompletionBorder: value || 'rgba(16, 185, 129, 0.5)' });
+  },
+});
+
+const terminalTabApprovalBg = computed({
+  get: () => theme.value.terminalTabApprovalBg || 'rgba(247, 144, 9, 0.25)',
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalTabApprovalBg: value || 'rgba(247, 144, 9, 0.25)' });
+  },
+});
+
+const terminalTabApprovalBorder = computed({
+  get: () => theme.value.terminalTabApprovalBorder || 'rgba(247, 144, 9, 0.5)',
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalTabApprovalBorder: value || 'rgba(247, 144, 9, 0.5)' });
+  },
+});
+
+const terminalFloatingButtonBg = computed({
+  get: () => theme.value.terminalFloatingButtonBg || '#1a1a1a',
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalFloatingButtonBg: value || '#1a1a1a' });
+  },
+});
+
+const terminalFloatingButtonFg = computed({
+  get: () => theme.value.terminalFloatingButtonFg || '#ffffff',
+  set: value => {
+    settingsStore.applyCustomTheme({ terminalFloatingButtonFg: value || '#ffffff' });
+  },
 });
 
 const previewPanelStyle = computed(() => {

@@ -148,7 +148,7 @@ func ReadConfig() *AppConfig {
 		AutoMigrate:            true,
 		OpenAPIEnabled:         true,
 		DocsPath:               "/docs",
-		APITitle:               "Go Template API",
+		APITitle:               "Code Kanban",
 		APIVersion:             "1.0.0",
 		AttachmentConfig: AttachmentConfig{
 			UseS3: false,

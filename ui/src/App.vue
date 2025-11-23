@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useCssVars, watch, onMounted, onBeforeUnmount } from 'vue';
+import { computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { RouterView } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { zhCN, dateZhCN, enUS, dateEnUS, darkTheme, type GlobalThemeOverrides } from 'naive-ui';
@@ -11,10 +11,34 @@ import AIApprovalNotifier from '@/components/terminal/AIApprovalNotifier.vue';
 import { useSettingsStore } from '@/stores/settings';
 import { darkenColor, lightenColor, isDarkHex } from '@/utils/color';
 import { createThemeOverrides } from '@/utils/themeOverrides';
+import { getPresetById } from '@/constants/themes';
 
 const settingsStore = useSettingsStore();
-const { activeTheme: theme, followSystemTheme } = storeToRefs(settingsStore);
+const { activeTheme: theme, followSystemTheme, currentPresetId } = storeToRefs(settingsStore);
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
+
+// 获取预设主题中的终端标签颜色（用于 fallback）
+// 当 followSystemTheme 为 true 时，根据系统主题选择预设
+const presetTerminalTabColors = computed(() => {
+  let presetId = currentPresetId.value;
+  if (followSystemTheme.value && typeof window !== 'undefined') {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    presetId = prefersDark ? 'dark' : 'light';
+  }
+  const preset = getPresetById(presetId);
+  return {
+    tabBg: preset?.colors.terminalTabBg,
+    tabActiveBg: preset?.colors.terminalTabActiveBg,
+    headerBorder: preset?.colors.terminalHeaderBorder,
+    completionBg: preset?.colors.terminalTabCompletionBg,
+    completionBorder: preset?.colors.terminalTabCompletionBorder,
+    approvalBg: preset?.colors.terminalTabApprovalBg,
+    approvalBorder: preset?.colors.terminalTabApprovalBorder,
+    kanbanBoardBg: preset?.colors.kanbanBoardBg,
+    kanbanCardBg: preset?.colors.kanbanCardBg,
+    kanbanBorderEnabled: preset?.colors.kanbanBorderEnabled,
+  };
+});
 
 const { locale } = useI18n();
 
@@ -48,15 +72,72 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
   );
 });
 
-useCssVars(() => ({
-  'app-body-color': theme.value.bodyColor,
-  'app-surface-color': theme.value.surfaceColor,
-  'kanban-terminal-bg': theme.value.terminalBg,
-  'kanban-terminal-fg': theme.value.terminalFg,
-  'app-text-color': resolvedTextColor.value,
-  'app-input-border-color': inputBorderColor.value,
-  'app-input-border-hover-color': inputBorderHoverColor.value,
+// 使用 watch 直接设置全局 CSS 变量到 :root，确保所有组件都能访问
+// （useCssVars 只设置在组件根元素上，无法被 :deep() 选择器访问）
+// 默认的完成/审批颜色（暗色主题）
+const defaultCompletionBg = 'rgba(16, 185, 129, 0.1)';
+const defaultCompletionBorder = 'rgba(16, 185, 129, 0.3)';
+const defaultApprovalBg = 'rgba(247, 144, 9, 0.12)';
+const defaultApprovalBorder = 'rgba(247, 144, 9, 0.35)';
+
+// 解析终端头部边框值：支持 boolean | string
+const resolvedTerminalHeaderBorder = computed(() => {
+  const borderValue = theme.value.terminalHeaderBorder ?? presetTerminalTabColors.value.headerBorder;
+
+  if (borderValue === false) {
+    return 'none';
+  } else if (borderValue === true) {
+    return '1px solid rgba(255, 255, 255, 0.09)';
+  } else if (typeof borderValue === 'string') {
+    // 处理 'transparent' 字符串，将其转换为完整的边框声明或 none
+    if (borderValue === 'transparent') {
+      return '1px solid transparent';
+    }
+    return borderValue;
+  }
+
+  // 默认值
+  return '1px solid rgba(255, 255, 255, 0.09)';
+});
+
+const cssVarsToSet = computed(() => ({
+  '--app-body-color': theme.value.bodyColor,
+  '--app-surface-color': theme.value.surfaceColor,
+  '--kanban-terminal-bg': theme.value.terminalBg,
+  '--kanban-terminal-fg': theme.value.terminalFg,
+  '--kanban-terminal-tab-bg': theme.value.terminalTabBg || presetTerminalTabColors.value.tabBg || theme.value.bodyColor,
+  '--kanban-terminal-tab-active-bg': theme.value.terminalTabActiveBg || presetTerminalTabColors.value.tabActiveBg || theme.value.surfaceColor,
+  '--kanban-terminal-header-border': resolvedTerminalHeaderBorder.value,
+  // 完成提醒颜色
+  '--kanban-terminal-tab-completion-bg': theme.value.terminalTabCompletionBg || presetTerminalTabColors.value.completionBg || defaultCompletionBg,
+  '--kanban-terminal-tab-completion-border': theme.value.terminalTabCompletionBorder || presetTerminalTabColors.value.completionBorder || defaultCompletionBorder,
+  // 审批提醒颜色
+  '--kanban-terminal-tab-approval-bg': theme.value.terminalTabApprovalBg || presetTerminalTabColors.value.approvalBg || defaultApprovalBg,
+  '--kanban-terminal-tab-approval-border': theme.value.terminalTabApprovalBorder || presetTerminalTabColors.value.approvalBorder || defaultApprovalBorder,
+  // 浮动按钮颜色
+  '--kanban-terminal-floating-button-bg': theme.value.terminalFloatingButtonBg || theme.value.surfaceColor,
+  '--kanban-terminal-floating-button-fg': theme.value.terminalFloatingButtonFg || theme.value.textColor,
+  // 看板颜色
+  '--kanban-board-bg': theme.value.kanbanBoardBg || presetTerminalTabColors.value.kanbanBoardBg || theme.value.bodyColor,
+  '--kanban-card-bg': theme.value.kanbanCardBg || presetTerminalTabColors.value.kanbanCardBg || theme.value.surfaceColor,
+  '--kanban-border': (theme.value.kanbanBorderEnabled ?? presetTerminalTabColors.value.kanbanBorderEnabled ?? true) ? '1px solid var(--n-border-color)' : 'none',
+  '--app-text-color': resolvedTextColor.value,
+  '--app-input-border-color': inputBorderColor.value,
+  '--app-input-border-hover-color': inputBorderHoverColor.value,
 }));
+
+watch(
+  cssVarsToSet,
+  (vars) => {
+    if (typeof document !== 'undefined') {
+      const root = document.documentElement;
+      Object.entries(vars).forEach(([key, value]) => {
+        root.style.setProperty(key, value);
+      });
+    }
+  },
+  { immediate: true, deep: true },
+);
 
 // 只更新 body 背景色（CSS变量已由 useCssVars 处理）
 watch(
@@ -81,10 +162,10 @@ onMounted(() => {
   mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
   handleChange = () => {
     if (followSystemTheme.value) {
-      // 系统主题变化时，重新应用主题
+      // 系统主题变化时，重新应用主题（使用专用方法，不关闭 followSystemTheme）
       const prefersDark = mediaQuery!.matches;
       const autoPresetId = prefersDark ? 'dark' : 'light';
-      settingsStore.selectPreset(autoPresetId);
+      settingsStore.applySystemThemePreset(autoPresetId);
     }
   };
 

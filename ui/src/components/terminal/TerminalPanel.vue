@@ -24,6 +24,7 @@
           type="card"
           :closable="true"
           size="small"
+          :theme-overrides="tabsThemeOverrides"
           @close="handleClose"
         >
           <n-tab-pane
@@ -55,6 +56,11 @@
             </template>
           </n-tab-pane>
         </n-tabs>
+        <!-- 激活标签指示器 -->
+        <div
+          class="active-tab-indicator"
+          :style="activeTabIndicatorStyle"
+        ></div>
       </div>
       <n-dropdown
         trigger="manual"
@@ -132,6 +138,7 @@ import TerminalViewport from './TerminalViewport.vue';
 import { useTerminalClient, type TerminalCreateOptions, type TerminalTabState } from '@/composables/useTerminalClient';
 import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
+import { getPresetById } from '@/constants/themes';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { usePanelStack } from '@/composables/usePanelStack';
 import { useLocale } from '@/composables/useLocale';
@@ -199,6 +206,7 @@ const MIN_HEIGHT = 200;
 const MAX_HEIGHT = 800;
 const MIN_MARGIN = 12;
 const MAX_MARGIN_PERCENT = 0.4; // 最大边距占窗口宽度的40%
+const MIN_PANEL_WIDTH = 375; // 终端面板最小宽度
 const DUPLICATE_SUFFIX = computed(() => t('terminal.duplicateSuffix'));
 const MAX_TAB_TITLE_WIDTH = 160;
 const TAB_LABEL_EXTRA_SPACE = 40;
@@ -225,7 +233,23 @@ const {
   useTerminalClient(projectIdRef);
 
 const settingsStore = useSettingsStore();
-const { maxTerminalsPerProject, terminalShortcut, confirmBeforeTerminalClose } = storeToRefs(settingsStore);
+const { maxTerminalsPerProject, terminalShortcut, confirmBeforeTerminalClose, activeTheme, currentPresetId } = storeToRefs(settingsStore);
+
+// Tabs 主题覆盖 - 用于控制标签背景色
+const tabsThemeOverrides = computed(() => {
+  const theme = activeTheme.value;
+  const preset = getPresetById(currentPresetId.value);
+
+  // 获取标签背景色，优先使用主题设置，然后是预设，最后是默认值
+  const tabBg = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
+  const tabActiveBg = theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+
+  return {
+    tabColor: tabBg,
+    tabColorSegment: tabActiveBg,
+  };
+});
+
 const terminalLimit = computed(() => Math.max(maxTerminalsPerProject.value || 1, 1));
 const isTerminalLimitReached = computed(() => tabs.value.length >= terminalLimit.value);
 const toggleShortcutCode = computed(() => terminalShortcut.value.code);
@@ -248,6 +272,93 @@ const refreshTabSortable = useDebounceFn(
   },
   100,
 );
+
+// 激活标签指示器的位置和宽度
+const activeTabIndicatorStyle = ref({
+  transform: 'translateX(0px)',
+  width: '0px',
+  opacity: '0',
+});
+
+// 更新激活标签指示器的位置
+function updateActiveTabIndicator() {
+  nextTick(() => {
+    const container = tabsContainerRef.value;
+    if (!container || !activeId.value) {
+      activeTabIndicatorStyle.value = {
+        transform: 'translateX(0px)',
+        width: '0px',
+        opacity: '0',
+      };
+      return;
+    }
+
+    // 查找激活的标签元素
+    const wrapper = container.querySelector('.n-tabs-wrapper') as HTMLElement | null;
+    if (!wrapper) {
+      activeTabIndicatorStyle.value = {
+        transform: 'translateX(0px)',
+        width: '0px',
+        opacity: '0',
+      };
+      return;
+    }
+
+    // 找到所有的标签元素
+    const tabElements = wrapper.querySelectorAll('.n-tabs-tab');
+    let activeTabElement: HTMLElement | null = null;
+
+    // 找到激活的标签
+    tabElements.forEach((el) => {
+      if (el.classList.contains('n-tabs-tab--active')) {
+        activeTabElement = el as HTMLElement;
+      }
+    });
+
+    if (!activeTabElement) {
+      activeTabIndicatorStyle.value = {
+        transform: 'translateX(0px)',
+        width: '0px',
+        opacity: '0',
+      };
+      return;
+    }
+
+    // 计算激活标签的位置和宽度
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const activeRect = activeTabElement.getBoundingClientRect();
+    const tabWidth = activeRect.width;
+
+    // 根据标签宽度动态计算指示器宽度
+    // 标签越宽，指示器占比越小；标签越窄，指示器占比越大
+    let indicatorWidth: number;
+    if (tabWidth > 150) {
+      // 宽标签：使用 35% 的宽度
+      indicatorWidth = tabWidth * 0.35;
+    } else if (tabWidth > 100) {
+      // 中等宽度：使用 45% 的宽度
+      indicatorWidth = tabWidth * 0.45;
+    } else if (tabWidth > 60) {
+      // 较窄标签：使用 60% 的宽度
+      indicatorWidth = tabWidth * 0.6;
+    } else {
+      // 很窄的标签：使用 75% 的宽度
+      indicatorWidth = tabWidth * 0.75;
+    }
+
+    // 限制指示器的最小和最大宽度
+    indicatorWidth = Math.max(20, Math.min(80, indicatorWidth));
+
+    // 计算居中偏移量
+    const offsetLeft = activeRect.left - wrapperRect.left + (tabWidth - indicatorWidth) / 2;
+
+    activeTabIndicatorStyle.value = {
+      transform: `translateX(${offsetLeft}px)`,
+      width: `${indicatorWidth}px`,
+      opacity: '1',
+    };
+  });
+}
 
 const activeId = computed({
   get: () => activeTabId.value,
@@ -292,6 +403,7 @@ useResizeObserver(tabsContainerRef, entries => {
   const width = entry.contentRect.width;
   if (width !== tabsContainerWidth.value) {
     recalcTabTitleWidth(width);
+    updateActiveTabIndicator();
   }
 });
 
@@ -300,6 +412,7 @@ watch(
   () => {
     nextTick(() => {
       recalcTabTitleWidth();
+      updateActiveTabIndicator();
     });
     refreshTabSortable();
   },
@@ -311,6 +424,8 @@ watch(
     if (value) {
       nextTick(() => {
         recalcTabTitleWidth();
+        updateActiveTabIndicator();
+        adjustPanelMarginsForMinWidth();
       });
       refreshTabSortable();
     } else {
@@ -336,12 +451,16 @@ nextTick(() => {
 
 onMounted(() => {
   refreshTabSortable();
+  updateActiveTabIndicator();
 
   // Listen for AI completion events
   emitter.on('ai:completed', handleAICompletion);
 
   // Listen for AI approval events
   emitter.on('ai:approval-needed', handleAIApproval);
+
+  // 初始化时检查并调整边距
+  adjustPanelMarginsForMinWidth();
 });
 
 function handleAICompletion(event: any) {
@@ -378,8 +497,50 @@ onBeforeUnmount(() => {
   emitter.off('ai:approval-needed', handleAIApproval);
 });
 
+// 处理窗口大小变化，当窗口缩小时自动调整边距以维持最小宽度
+function adjustPanelMarginsForMinWidth() {
+  if (typeof window === 'undefined' || !expanded.value) {
+    return;
+  }
+
+  const windowWidth = window.innerWidth;
+  const currentWidth = windowWidth - panelLeft.value - panelRight.value;
+
+  // 如果当前宽度小于最小宽度，需要调整边距
+  if (currentWidth < MIN_PANEL_WIDTH) {
+    const shortage = MIN_PANEL_WIDTH - currentWidth;
+
+    // 优先缩小左侧边距
+    const availableLeftReduction = panelLeft.value - MIN_MARGIN;
+    if (availableLeftReduction >= shortage) {
+      // 左侧空间足够
+      const newLeft = panelLeft.value - shortage;
+      if (newLeft !== panelLeft.value) {
+        panelLeft.value = newLeft;
+      }
+    } else {
+      // 左侧空间不够，需要同时调整右侧
+      const newLeft = MIN_MARGIN;
+      const remainingShortage = shortage - availableLeftReduction;
+      const newRight = Math.max(MIN_MARGIN, panelRight.value - remainingShortage);
+
+      // 只在值真的改变时才赋值，避免触发不必要的响应式更新
+      if (newLeft !== panelLeft.value) {
+        panelLeft.value = newLeft;
+      }
+      if (newRight !== panelRight.value) {
+        panelRight.value = newRight;
+      }
+    }
+  }
+}
+
+// 使用防抖函数包装，避免频繁调用（200ms防抖）
+const debouncedAdjustMargins = useDebounceFn(adjustPanelMarginsForMinWidth, 200);
+
 if (typeof window !== 'undefined') {
   useEventListener(window, 'keydown', handleTerminalToggleShortcut);
+  useEventListener(window, 'resize', debouncedAdjustMargins);
 }
 
 function setupTabSorting() {
@@ -437,6 +598,7 @@ function handleTabDragEnd(event: SortableEvent) {
   reorderTabsInStore(fromIndex, toIndex);
   nextTick(() => {
     scheduleResizeAll();
+    updateActiveTabIndicator();
   });
 }
 
@@ -503,6 +665,9 @@ watch(
         remainingUnviewedApprovals: newSet.size,
       });
     }
+
+    // Update active tab indicator
+    updateActiveTabIndicator();
 
     nextTick(() => {
       console.log('[Terminal Panel] Queued resize for active terminal:', newId);
@@ -642,7 +807,29 @@ function startResizeLeft(event: MouseEvent) {
     if (!isResizing.value) return;
 
     const deltaX = e.clientX - startX;
-    const newLeft = Math.max(MIN_MARGIN, Math.min(maxMargin, startLeft + deltaX));
+    let newLeft = Math.max(MIN_MARGIN, Math.min(maxMargin, startLeft + deltaX));
+    let newRight = panelRight.value;
+
+    // 计算当前宽度
+    const currentWidth = windowWidth - newLeft - newRight;
+
+    // 如果宽度小于最小宽度，尝试缩小右侧边距
+    if (currentWidth < MIN_PANEL_WIDTH) {
+      const shortage = MIN_PANEL_WIDTH - currentWidth;
+      const minRight = Math.max(MIN_MARGIN, newRight - shortage);
+      const actualReduction = newRight - minRight;
+
+      // 调整右侧边距
+      newRight = minRight;
+
+      // 如果右侧无法完全补偿，则限制左侧的移动
+      if (actualReduction < shortage) {
+        newLeft = windowWidth - MIN_PANEL_WIDTH - newRight;
+      }
+
+      panelRight.value = newRight;
+    }
+
     panelLeft.value = newLeft;
 
     // 拖动时实时调整终端大小（使用节流函数）
@@ -681,7 +868,29 @@ function startResizeRight(event: MouseEvent) {
     if (!isResizing.value) return;
 
     const deltaX = startX - e.clientX;
-    const newRight = Math.max(MIN_MARGIN, Math.min(maxMargin, startRight + deltaX));
+    let newRight = Math.max(MIN_MARGIN, Math.min(maxMargin, startRight + deltaX));
+    let newLeft = panelLeft.value;
+
+    // 计算当前宽度
+    const currentWidth = windowWidth - newLeft - newRight;
+
+    // 如果宽度小于最小宽度，尝试缩小左侧边距
+    if (currentWidth < MIN_PANEL_WIDTH) {
+      const shortage = MIN_PANEL_WIDTH - currentWidth;
+      const minLeft = Math.max(MIN_MARGIN, newLeft - shortage);
+      const actualReduction = newLeft - minLeft;
+
+      // 调整左侧边距
+      newLeft = minLeft;
+
+      // 如果左侧无法完全补偿，则限制右侧的移动
+      if (actualReduction < shortage) {
+        newRight = windowWidth - MIN_PANEL_WIDTH - newLeft;
+      }
+
+      panelLeft.value = newLeft;
+    }
+
     panelRight.value = newRight;
 
     // 拖动时实时调整终端大小（使用节流函数）
@@ -757,17 +966,64 @@ async function performClose(sessionId: string) {
   }
 }
 
+// 获取完成/审批提醒的颜色
+const completionColors = computed(() => {
+  const theme = activeTheme.value;
+  const preset = getPresetById(currentPresetId.value);
+  return {
+    bg: theme.terminalTabCompletionBg || preset?.colors.terminalTabCompletionBg || 'rgba(16, 185, 129, 0.25)',
+    border: theme.terminalTabCompletionBorder || preset?.colors.terminalTabCompletionBorder || 'rgba(16, 185, 129, 0.5)',
+  };
+});
+
+const approvalColors = computed(() => {
+  const theme = activeTheme.value;
+  const preset = getPresetById(currentPresetId.value);
+  return {
+    bg: theme.terminalTabApprovalBg || preset?.colors.terminalTabApprovalBg || 'rgba(247, 144, 9, 0.25)',
+    border: theme.terminalTabApprovalBorder || preset?.colors.terminalTabApprovalBorder || 'rgba(247, 144, 9, 0.5)',
+  };
+});
+
 function createTabProps(tab: TerminalTabState): HTMLAttributes {
   const props: HTMLAttributes = {
     onContextmenu: (event: MouseEvent) => handleTabContextMenu(event, tab),
   };
 
-  // Add class for unviewed approval (higher priority than completion)
+  const isActive = activeId.value === tab.id;
+  const theme = activeTheme.value;
+  const preset = getPresetById(currentPresetId.value);
+
+  // 检查是否需要隐藏边框
+  const hideHeaderBorder = theme.terminalHeaderBorder === false;
+
+  // 优先级: 审批提醒 > 完成提醒 > 激活/非激活状态的默认颜色
   if (hasUnviewedApproval(tab)) {
-    props.class = 'has-unviewed-approval';
+    props.style = {
+      backgroundColor: approvalColors.value.bg,
+      borderColor: approvalColors.value.border,
+      ...(isActive && hideHeaderBorder ? { borderBottom: 'none' } : {}),
+    };
   } else if (hasUnviewedCompletion(tab)) {
-    // Add class for unviewed completion
-    props.class = 'has-unviewed-completion';
+    props.style = {
+      backgroundColor: completionColors.value.bg,
+      borderColor: completionColors.value.border,
+      ...(isActive && hideHeaderBorder ? { borderBottom: 'none' } : {}),
+    };
+  } else {
+    // 设置普通标签的背景色（根据激活状态）
+    if (isActive) {
+      const bgColor = theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+      props.style = {
+        backgroundColor: bgColor,
+        ...(hideHeaderBorder ? { borderBottom: 'none' } : {}),
+      };
+    } else {
+      const bgColor = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
+      props.style = {
+        backgroundColor: bgColor,
+      };
+    }
   }
 
   return props;
@@ -1175,6 +1431,7 @@ defineExpose({
 .terminal-panel {
   position: fixed;
   bottom: 12px;
+  min-width: 375px;
   background-color: var(--n-card-color, #fff);
   border: 1px solid var(--n-border-color);
   border-radius: 8px;
@@ -1263,9 +1520,9 @@ defineExpose({
   gap: 12px;
   padding: 6px 12px 0;
   flex-shrink: 0;
-  background-color: var(--kanban-terminal-bg, var(--app-surface-color, var(--n-card-color, #fff)));
-  color: var(--kanban-terminal-fg, var(--n-text-color-1, #1f1f1f));
-  border-bottom: 1px solid var(--n-border-color);
+  background-color: var(--app-surface-color, var(--n-card-color, #fff));
+  color: var(--app-text-color, var(--n-text-color-1, #1f1f1f));
+  border-bottom: var(--kanban-terminal-header-border, 1px solid var(--n-border-color));
   z-index: 1;
   position: relative;
 }
@@ -1275,10 +1532,25 @@ defineExpose({
   min-width: 0;
   overflow: hidden;
   padding-right: 8px;
+  position: relative;
 }
 
 .tabs-container :deep(.n-tabs) {
   width: 100%;
+}
+
+/* 激活标签指示器 */
+.active-tab-indicator {
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  height: 2px;
+  background-color: var(--n-primary-color);
+  border-radius: 1px;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.3s ease;
+  z-index: 2;
 }
 
 .tabs-container :deep(.n-tabs-tab) {
@@ -1291,27 +1563,27 @@ defineExpose({
 }
 
 .panel-header :deep(.n-tabs) {
-  --n-tab-color: var(--kanban-terminal-bg, var(--app-surface-color, var(--n-card-color, #fff)));
-  --n-tab-color-segment: var(--kanban-terminal-bg, var(--app-surface-color, var(--n-card-color, #fff)));
-  --n-tab-border-color: var(--n-border-color, rgba(255, 255, 255, 0.1));
-  --n-tab-text-color: var(--kanban-terminal-fg, var(--n-text-color-2, #d0d0d0));
-  --n-tab-text-color-hover: var(--kanban-terminal-fg, var(--n-text-color-1, #ffffff));
-  --n-tab-text-color-active: var(--kanban-terminal-fg, var(--n-text-color-1, #ffffff));
+  --n-tab-border-color: var(--n-border-color, rgba(0, 0, 0, 0.1));
+  --n-tab-text-color: var(--app-text-color, var(--n-text-color-2, #666));
+  --n-tab-text-color-hover: var(--app-text-color, var(--n-text-color-1, #333));
+  --n-tab-text-color-active: var(--app-text-color, var(--n-text-color-1, #333));
 }
 
 .panel-header :deep(.n-tabs .n-tabs-card-tabs) {
   background-color: transparent;
 }
 
-.panel-header :deep(.n-tabs .n-tabs-card-tabs .n-tabs-tab) {
-  background-color: color-mix(in srgb, var(--n-tab-color) 90%, transparent);
+/* 非选中标签 */
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab) {
+  background-color: var(--kanban-terminal-tab-bg, #FFFFFF) !important;
   color: var(--n-tab-text-color);
   border-color: var(--n-tab-border-color);
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-.panel-header :deep(.n-tabs .n-tabs-card-tabs .n-tabs-tab.n-tabs-tab--active) {
-  background-color: var(--app-surface-color, color-mix(in srgb, var(--kanban-terminal-bg, #1e1e1e) 50%, var(--app-surface-color, #ffffff) 50%));
+/* 选中标签 - 覆盖 Naive UI 硬编码的 #0000 */
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.n-tabs-tab--active) {
+  background-color: var(--kanban-terminal-tab-active-bg, #E8E8E8) !important;
   color: var(--n-tab-text-color-active);
 }
 
@@ -1350,11 +1622,12 @@ defineExpose({
   align-items: center;
   gap: 4px;
   padding: 0 6px;
+  margin-bottom: 4px;
   border-radius: 999px;
   font-size: 10px;
   line-height: 16px;
-  background-color: rgba(99, 102, 241, 0.15);
-  color: var(--n-color-primary);
+  background-color: #eef2ff;
+  color: #6366f1;
   transition: all 0.2s ease;
 }
 
@@ -1384,32 +1657,32 @@ defineExpose({
 
 /* State colors */
 .ai-status-pill.state-thinking {
-  background-color: rgba(124, 58, 237, 0.16);
+  background-color: #eadffc;
   color: #7c3aed;
 }
 
 .ai-status-pill.state-executing {
-  background-color: rgba(14, 165, 233, 0.16);
+  background-color: #e0f2fe;
   color: #0ea5e9;
 }
 
 .ai-status-pill.state-waiting_approval {
-  background-color: rgba(247, 144, 9, 0.18);
+  background-color: #fed7aa;
   color: #f79009;
 }
 
 .ai-status-pill.state-replying {
-  background-color: rgba(16, 185, 129, 0.16);
+  background-color: #d1fae5;
   color: #12b76a;
 }
 
 .ai-status-pill.state-waiting_input {
-  background-color: rgba(148, 163, 184, 0.18);
+  background-color: #eceef2;
   color: #475467;
 }
 
 .ai-status-pill.state-unknown {
-  background-color: rgba(148, 163, 184, 0.12);
+  background-color: #f1f5f9;
   color: #94a3b8;
   padding: 0 4px;
 }
@@ -1436,24 +1709,24 @@ defineExpose({
 
 /* Tab with unviewed completion - green background */
 :deep(.n-tabs-tab.has-unviewed-completion) {
-  background-color: rgba(16, 185, 129, 0.1) !important;
-  border-color: rgba(16, 185, 129, 0.3) !important;
+  background-color: var(--kanban-terminal-tab-completion-bg, rgba(16, 185, 129, 0.1)) !important;
+  border-color: var(--kanban-terminal-tab-completion-border, rgba(16, 185, 129, 0.3)) !important;
 }
 
 :deep(.n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
-  background-color: rgba(16, 185, 129, 0.15) !important;
-  border-color: rgba(16, 185, 129, 0.4) !important;
+  background-color: var(--kanban-terminal-tab-completion-active-bg, rgba(16, 185, 129, 0.15)) !important;
+  border-color: var(--kanban-terminal-tab-completion-active-border, rgba(16, 185, 129, 0.4)) !important;
 }
 
 /* Tab with unviewed approval - orange background (higher priority than completion) */
 :deep(.n-tabs-tab.has-unviewed-approval) {
-  background-color: rgba(247, 144, 9, 0.12) !important;
-  border-color: rgba(247, 144, 9, 0.35) !important;
+  background-color: var(--kanban-terminal-tab-approval-bg, rgba(247, 144, 9, 0.12)) !important;
+  border-color: var(--kanban-terminal-tab-approval-border, rgba(247, 144, 9, 0.35)) !important;
 }
 
 :deep(.n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
-  background-color: rgba(247, 144, 9, 0.18) !important;
-  border-color: rgba(247, 144, 9, 0.45) !important;
+  background-color: var(--kanban-terminal-tab-approval-active-bg, rgba(247, 144, 9, 0.18)) !important;
+  border-color: var(--kanban-terminal-tab-approval-active-border, rgba(247, 144, 9, 0.45)) !important;
 }
 
 .status-dot {
@@ -1461,6 +1734,7 @@ defineExpose({
   height: 8px;
   border-radius: 50%;
   display: inline-block;
+  flex-shrink: 0;
   background-color: var(--n-text-color-disabled, #c0c4d8);
   box-shadow: 0 0 0 1px var(--n-box-shadow-color, rgba(15, 17, 26, 0.08));
 }
@@ -1500,8 +1774,8 @@ defineExpose({
   padding: 0 16px;
   border-radius: 21px;
   border: 1px solid var(--n-border-color, rgba(255, 255, 255, 0.2));
-  background-color: var(--n-card-color, #1a1a1a);
-  color: var(--n-text-color-1, #fff);
+  background-color: var(--kanban-terminal-floating-button-bg, var(--n-card-color, #1a1a1a));
+  color: var(--kanban-terminal-floating-button-fg, var(--n-text-color-1, #fff));
   display: inline-flex;
   align-items: center;
   justify-content: center;

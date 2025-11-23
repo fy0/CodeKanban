@@ -327,10 +327,10 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
     name: '亮色',
     nameEn: 'Light',
     theme: {
-      background: '#FAFAFA',
-      foreground: '#1E1E1E',
+      background: '#0c0c0c',
+      foreground: '#cccccc',
       cursor: '#3B69A9',
-      cursorAccent: '#FAFAFA',
+      cursorAccent: '#0c0c0c',
       selectionBackground: 'rgba(59, 105, 169, 0.2)',
       black: '#000000',
       red: '#C41A16',

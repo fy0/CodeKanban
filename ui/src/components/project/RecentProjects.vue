@@ -15,24 +15,32 @@
           </template>
           {{ t('common.backToList') }}
         </n-button>
-        <n-space>
+        <n-space align="center" :wrap="false" size="small">
           <ThemeSwitcher />
-          <n-button text :disabled="!currentProject" @click="emit('editCurrent')">
-            <template #icon>
-              <n-icon size="20">
-                <CreateOutline />
-              </n-icon>
+          <n-popover trigger="hover" placement="bottom">
+            <template #trigger>
+              <n-button quaternary circle size="small" :disabled="!currentProject" @click="emit('editCurrent')">
+                <template #icon>
+                  <n-icon size="18">
+                    <CreateOutline />
+                  </n-icon>
+                </template>
+              </n-button>
             </template>
             {{ t('common.edit') }}
-          </n-button>
-          <n-button text @click="handleGoToSettings">
-            <template #icon>
-              <n-icon size="20">
-                <SettingsOutline />
-              </n-icon>
+          </n-popover>
+          <n-popover trigger="hover" placement="bottom">
+            <template #trigger>
+              <n-button quaternary circle size="small" @click="handleGoToSettings">
+                <template #icon>
+                  <n-icon size="18">
+                    <SettingsOutline />
+                  </n-icon>
+                </template>
+              </n-button>
             </template>
             {{ t('nav.settings') }}
-          </n-button>
+          </n-popover>
         </n-space>
       </n-space>
     </div>

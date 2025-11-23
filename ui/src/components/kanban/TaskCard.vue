@@ -127,6 +127,7 @@ const handleStartWork = () => emit('start-work');
 .task-card {
   cursor: pointer;
   transition: all 0.2s ease;
+  --n-color: var(--kanban-card-bg, var(--app-surface-color, #ffffff));
 }
 
 .task-card:hover {
