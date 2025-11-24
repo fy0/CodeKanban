@@ -70,6 +70,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		Encoding:              cfg.Terminal.Encoding,
 		ScrollbackBytes:       cfg.Terminal.ScrollbackBytes,
 		AIAssistantStatus:     cfg.Terminal.AIAssistantStatus,
+		ScrollbackEnabled:     cfg.Developer.EnableTerminalScrollback,
 	}, theLogger)
 	terminalManager.StartBackground(ctx)
 

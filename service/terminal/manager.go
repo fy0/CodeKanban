@@ -22,6 +22,7 @@ type Config struct {
 	Encoding              string
 	ScrollbackBytes       int
 	AIAssistantStatus     utils.AIAssistantStatusConfig
+	ScrollbackEnabled     bool
 }
 
 // CreateSessionParams describes API level inputs.
@@ -108,7 +109,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 		Cols:            params.Cols,
 		Logger:          m.logger,
 		Encoding:        m.cfg.Encoding,
-		ScrollbackLimit: m.cfg.ScrollbackBytes,
+		ScrollbackLimit: m.scrollbackLimit(),
 		GetAIConfig: func() *utils.AIAssistantStatusConfig {
 			m.sessionMu.Lock()
 			defer m.sessionMu.Unlock()
@@ -288,6 +289,16 @@ func (m *Manager) cleanupIdle() {
 	}
 }
 
+func (m *Manager) scrollbackLimit() int {
+	if !m.cfg.ScrollbackEnabled {
+		return 0
+	}
+	if m.cfg.ScrollbackBytes <= 0 {
+		return 0
+	}
+	return m.cfg.ScrollbackBytes
+}
+
 func (m *Manager) setBaseContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -321,6 +332,22 @@ func (m *Manager) UpdateAIAssistantStatusConfig(newConfig utils.AIAssistantStatu
 		// Just touching the session will trigger the next metadata update cycle
 		// to re-evaluate the AI assistant with the new config
 		session.Touch()
+		return true
+	})
+}
+
+// UpdateScrollbackEnabled toggles scrollback buffering in real time for all sessions.
+func (m *Manager) UpdateScrollbackEnabled(enabled bool) {
+	m.sessionMu.Lock()
+	m.cfg.ScrollbackEnabled = enabled
+	limit := 0
+	if enabled && m.cfg.ScrollbackBytes > 0 {
+		limit = m.cfg.ScrollbackBytes
+	}
+	m.sessionMu.Unlock()
+
+	m.sessions.Range(func(_ string, session *Session) bool {
+		session.UpdateScrollbackLimit(limit)
 		return true
 	})
 }

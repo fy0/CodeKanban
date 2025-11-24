@@ -738,6 +738,30 @@ func (s *Session) appendScrollback(chunk []byte) {
 	s.scrollMu.Unlock()
 }
 
+// UpdateScrollbackLimit toggles scrollback buffering and trims existing data accordingly.
+func (s *Session) UpdateScrollbackLimit(limit int) {
+	if limit < 0 {
+		limit = 0
+	}
+
+	s.scrollMu.Lock()
+	s.scrollbackLimit = limit
+	if limit == 0 {
+		s.scrollback = nil
+		s.scrollbackTimestamps = nil
+		s.scrollbackSize = 0
+		s.scrollMu.Unlock()
+		return
+	}
+
+	for s.scrollbackSize > s.scrollbackLimit && len(s.scrollback) > 0 {
+		s.scrollbackSize -= len(s.scrollback[0])
+		s.scrollback = s.scrollback[1:]
+		s.scrollbackTimestamps = s.scrollbackTimestamps[1:]
+	}
+	s.scrollMu.Unlock()
+}
+
 func (s *Session) broadcast(event StreamEvent) {
 	listeners := s.snapshotSubscribers()
 	for _, sub := range listeners {

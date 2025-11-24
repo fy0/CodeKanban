@@ -458,6 +458,9 @@ export default {
     aiStatusSaveSuccess: 'AI assistant status tracking settings saved',
     aiStatusSaveFailed: 'Failed to save settings',
     aiStatusRestartNotice: 'New settings will take effect for newly created terminals',
+    developerOptions: 'Developer Options',
+    developerScrollback: 'Terminal Output Recording',
+    developerScrollbackTip: 'When disabled, the server stops caching PTY output to help debug stalls and reduce memory usage (default off, applies to all terminals immediately after saving).',
   },
   theme: {
     light: 'Light',

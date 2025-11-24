@@ -130,3 +130,7 @@ export interface AIAssistantStatusConfig {
   cursor: boolean;
   copilot: boolean;
 }
+
+export interface DeveloperConfig {
+  enableTerminalScrollback: boolean;
+}

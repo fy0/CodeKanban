@@ -458,6 +458,9 @@ export default {
     aiStatusSaveSuccess: 'AI 助手状态监测配置已保存',
     aiStatusSaveFailed: '保存配置失败',
     aiStatusRestartNotice: '新配置将在新建的终端中生效',
+    developerOptions: '开发者',
+    developerScrollback: '终端信息录制',
+    developerScrollbackTip: '关闭后服务端不再缓存终端输出，可帮助排查阻塞并减少内存占用（默认关闭，保存后立即作用于所有终端）',
   },
   theme: {
     light: '亮色',

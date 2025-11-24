@@ -27,6 +27,10 @@ type TerminalShellConfig struct {
 	Darwin  string `json:"darwin" yaml:"darwin"`
 }
 
+type DeveloperConfig struct {
+	EnableTerminalScrollback bool `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
+}
+
 type AIAssistantStatusConfig struct {
 	ClaudeCode bool `json:"claudeCode" yaml:"claudeCode"` // 状态监测准确，默认启用
 	Codex      bool `json:"codex" yaml:"codex"`           // 默认启用
@@ -111,6 +115,7 @@ type AppConfig struct {
 	PrintConfig            bool             `json:"printConfig" yaml:"printConfig"`
 	DisableAutoOpenBrowser bool             `json:"disableAutoOpenBrowser" yaml:"disableAutoOpenBrowser"`
 	Terminal               TerminalConfig   `json:"terminal" yaml:"terminal"`
+	Developer              DeveloperConfig  `json:"developer" yaml:"developer"`
 }
 
 var configStore = koanf.New(".")
@@ -184,6 +189,9 @@ func ReadConfig() *AppConfig {
 				Cursor:     false, // 未充分测试
 				Copilot:    false, // 未充分测试
 			},
+		},
+		Developer: DeveloperConfig{
+			EnableTerminalScrollback: false,
 		},
 	}
 

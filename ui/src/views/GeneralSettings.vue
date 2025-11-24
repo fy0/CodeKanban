@@ -163,6 +163,32 @@
         </n-spin>
       </n-card>
 
+      <n-card :title="t('settings.developerOptions')" size="huge">
+        <template #header-extra>
+          <n-button
+            size="small"
+            :loading="developerSaving"
+            :disabled="!developerDirty || developerLoading"
+            @click="handleSaveDeveloperConfig"
+          >
+            {{ t('common.save') }}
+          </n-button>
+        </template>
+        <n-spin :show="developerLoading">
+          <n-form label-placement="left" label-width="160">
+            <n-form-item :label="t('settings.developerScrollback')">
+              <n-space vertical size="small">
+                <n-switch
+                  v-model:value="developerForm.enableTerminalScrollback"
+                  :disabled="developerLoading"
+                />
+                <span class="form-tip">{{ t('settings.developerScrollbackTip') }}</span>
+              </n-space>
+            </n-form-item>
+          </n-form>
+        </n-spin>
+      </n-card>
+
       <!-- 主题设置 -->
       <n-card :title="t('settings.themeSettings')" size="huge">
         <n-form label-placement="left" label-width="140">
@@ -298,10 +324,15 @@ import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/
 import { useThemeOptions, useTerminalThemeOptions } from '@/composables/useThemeOptions';
 import { lightenColor, darkenColor, ensureHexWithHash, isDarkHex, getReadableTextColor } from '@/utils/color';
 import Apis from '@/api';
+import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
-import type { AIAssistantStatusConfig } from '@/types/models';
+import type { AIAssistantStatusConfig, DeveloperConfig } from '@/types/models';
 
 type ShortcutTarget = 'terminal' | 'notepad';
+
+type ItemResponse<T> = {
+  item?: T;
+};
 
 const { t, locale } = useLocale();
 
@@ -375,6 +406,25 @@ const { send: updateAIStatus, loading: saveLoading } = useReq(
   (config: AIAssistantStatusConfig) => Apis.system.aiAssistantStatusUpdate({ data: config })
 );
 
+const developerForm = reactive<DeveloperConfig>({
+  enableTerminalScrollback: false,
+});
+const developerOriginal = ref<DeveloperConfig | null>(null);
+const developerDirty = computed(() => {
+  if (!developerOriginal.value) {
+    return false;
+  }
+  return developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback;
+});
+
+const { send: fetchDeveloperConfig, loading: developerLoading } = useReq(
+  () => http.Get<ItemResponse<DeveloperConfig>>('/system/developer-config')
+);
+
+const { send: updateDeveloperConfig, loading: developerSaving } = useReq(
+  (config: DeveloperConfig) => http.Post('/system/developer-config/update', config)
+);
+
 async function loadAIStatus() {
   try {
     const resp = await fetchAIStatus();
@@ -399,8 +449,38 @@ async function handleSaveAIStatus() {
   }
 }
 
+async function loadDeveloperConfig() {
+  try {
+    const resp = await fetchDeveloperConfig();
+    const config = resp?.item;
+    if (config !== undefined && config !== null) {
+      Object.assign(developerForm, config);
+      developerOriginal.value = { ...config };
+    } else {
+      // 如果后端没有返回配置，使用默认值并标记为已加载
+      developerOriginal.value = { ...developerForm };
+    }
+  } catch (error) {
+    console.error('Failed to load developer config:', error);
+    // 即使失败，也设置 original 值，避免按钮一直禁用
+    developerOriginal.value = { ...developerForm };
+  }
+}
+
+async function handleSaveDeveloperConfig() {
+  try {
+    await updateDeveloperConfig({ ...developerForm });
+    developerOriginal.value = { ...developerForm };
+    message.success(t('common.saveSuccess'));
+  } catch (error) {
+    console.error('Failed to save developer config:', error);
+    message.error(t('common.saveFailed'));
+  }
+}
+
 useInit(() => {
   loadAIStatus();
+  loadDeveloperConfig();
 });
 const primaryColor = computed({
   get: () => theme.value.primaryColor,

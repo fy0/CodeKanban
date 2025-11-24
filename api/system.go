@@ -14,6 +14,11 @@ import (
 
 const systemTag = "system-系统工具"
 
+type systemTerminalManager interface {
+	UpdateAIAssistantStatusConfig(utils.AIAssistantStatusConfig)
+	UpdateScrollbackEnabled(bool)
+}
+
 type versionResponse struct {
 	Body struct {
 		Name    string `json:"name" doc:"应用名称"`
@@ -46,9 +51,7 @@ type openEditorInput struct {
 	} `json:"body"`
 }
 
-func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManager interface {
-	UpdateAIAssistantStatusConfig(utils.AIAssistantStatusConfig)
-}) {
+func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManager systemTerminalManager) {
 	huma.Get(group, "/system/version", func(ctx context.Context, input *struct{}) (*versionResponse, error) {
 		resp := &versionResponse{}
 		resp.Body.Name = appInfo.Name
@@ -171,6 +174,37 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 		op.OperationID = "system-ai-assistant-status-update"
 		op.Summary = "更新 AI 助手状态监测配置"
 		op.Description = "更新 AI 助手状态监测的启用/禁用配置，立即对所有终端生效"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Get(group, "/system/developer-config", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.DeveloperConfig], error) {
+		resp := h.NewItemResponse(cfg.Developer)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-developer-config-get"
+		op.Summary = "获取开发者调试配置"
+		op.Description = "返回开发者相关的实时调试配置，例如是否启用终端 scrollback"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/developer-config/update", func(ctx context.Context, input *struct {
+		Body utils.DeveloperConfig `json:"body"`
+	}) (*h.MessageResponse, error) {
+		cfg.Developer = input.Body
+		utils.WriteConfig(cfg)
+
+		if terminalManager != nil {
+			terminalManager.UpdateScrollbackEnabled(input.Body.EnableTerminalScrollback)
+		}
+
+		resp := h.NewMessageResponse("Developer config updated.")
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-developer-config-update"
+		op.Summary = "更新开发者调试配置"
+		op.Description = "更新开发者相关设置，例如终端 scrollback 是否启用，并实时应用到活动终端"
 		op.Tags = []string{systemTag}
 	})
 }
