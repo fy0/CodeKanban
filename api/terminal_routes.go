@@ -24,7 +24,7 @@ import (
 	"code-kanban/service"
 	"code-kanban/service/terminal"
 	"code-kanban/utils"
-	"code-kanban/utils/ai_assistant"
+	"code-kanban/utils/ai_assistant2"
 )
 
 const (
@@ -187,29 +187,6 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 		op.Summary = "获取终端调试信息（包含完整输出内容）"
 		op.Tags = []string{terminalTag}
 		op.Description = "用于调试，返回终端的 scrollback 缓冲区内容、AI 助手状态、录制信息等"
-	})
-
-	huma.Get(group, "/terminals/{sessionId}/sim-term", func(
-		ctx context.Context,
-		input *struct {
-			SessionID string `path:"sessionId"`
-		},
-	) (*h.ItemResponse[terminal.SimulatedDisplay], error) {
-		display, err := c.manager.GetSessionSimulatedDisplay(input.SessionID)
-		if err != nil {
-			if errors.Is(err, terminal.ErrSessionNotFound) {
-				return nil, huma.Error404NotFound(err.Error())
-			}
-			return nil, huma.Error500InternalServerError("failed to get simulated display", err)
-		}
-		resp := h.NewItemResponse(*display)
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-session-simulated-display"
-		op.Summary = "获取终端模拟显示内容"
-		op.Tags = []string{terminalTag}
-		op.Description = "模拟终端的实际显示效果，处理控制字符（如回车、换行、ANSI 颜色）后的内容"
 	})
 
 	huma.Get(group, "/terminals/{sessionId}/capture", func(
@@ -573,7 +550,7 @@ type terminalSessionView struct {
 	ProcessStatus      string                         `json:"processStatus,omitempty"`
 	ProcessHasChildren bool                           `json:"processHasChildren,omitempty"`
 	RunningCommand     string                         `json:"runningCommand,omitempty"`
-	AIAssistant        *ai_assistant.AIAssistantInfo `json:"aiAssistant,omitempty"`
+	AIAssistant        *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
 }
 
 type terminalCountsResponse struct {

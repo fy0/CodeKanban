@@ -9,6 +9,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, toRef } from 'vue';
+import { useDebounceFn } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import type EventEmitter from 'eventemitter3';
 import { Terminal } from '@xterm/xterm';
@@ -253,14 +254,17 @@ function handleResize() {
   }
 }
 
+// 防抖版本的 resize 处理，避免窗口调整时发送大量 resize 消息阻塞输入
+const debouncedResize = useDebounceFn(handleResize, 100);
+
 function handleTerminalResizeAll() {
   console.log('[Terminal Resize Event]', {
     sessionId: props.tab.id,
     title: props.tab.title,
   });
-  // 延迟一下确保 DOM 更新完成
+  // 延迟一下确保 DOM 更新完成，使用防抖版本避免阻塞输入
   setTimeout(() => {
-    handleResize();
+    debouncedResize();
   }, 10);
 }
 
@@ -500,7 +504,7 @@ onMounted(() => {
   props.emitter.on('terminal-resize-all', handleTerminalResizeAll);
   props.emitter.on(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
   props.emitter.on('terminal-blur-all', handleTerminalBlurEvent);
-  window.addEventListener('resize', handleResize);
+  window.addEventListener('resize', debouncedResize);
 });
 
 function handleTerminalBlurEvent() {
@@ -513,7 +517,7 @@ onBeforeUnmount(() => {
   props.emitter.off('terminal-resize-all', handleTerminalResizeAll);
   props.emitter.off(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
   props.emitter.off('terminal-blur-all', handleTerminalBlurEvent);
-  window.removeEventListener('resize', handleResize);
+  window.removeEventListener('resize', debouncedResize);
   if (containerRef.value) {
     if (dragOverHandler) {
       containerRef.value.removeEventListener('dragover', dragOverHandler);

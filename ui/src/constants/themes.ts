@@ -502,7 +502,7 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
 ];
 
-export const DEFAULT_PRESET_ID = 'dark';
+export const DEFAULT_PRESET_ID = 'light';
 
 export function getPresetById(id: string): ThemePreset | undefined {
   return THEME_PRESETS.find(preset => preset.id === id);

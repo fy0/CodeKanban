@@ -997,14 +997,19 @@ function createTabProps(tab: TerminalTabState): HTMLAttributes {
   // 检查是否需要隐藏边框
   const hideHeaderBorder = theme.terminalHeaderBorder === false;
 
+  // 构建 class 列表
+  const classes: string[] = [];
+
   // 优先级: 审批提醒 > 完成提醒 > 激活/非激活状态的默认颜色
   if (hasUnviewedApproval(tab)) {
+    classes.push('has-unviewed-approval');
     props.style = {
       backgroundColor: approvalColors.value.bg,
       borderColor: approvalColors.value.border,
       ...(isActive && hideHeaderBorder ? { borderBottom: 'none' } : {}),
     };
   } else if (hasUnviewedCompletion(tab)) {
+    classes.push('has-unviewed-completion');
     props.style = {
       backgroundColor: completionColors.value.bg,
       borderColor: completionColors.value.border,
@@ -1024,6 +1029,11 @@ function createTabProps(tab: TerminalTabState): HTMLAttributes {
         backgroundColor: bgColor,
       };
     }
+  }
+
+  // 添加 class 到 props
+  if (classes.length > 0) {
+    props.class = classes.join(' ');
   }
 
   return props;
@@ -1056,39 +1066,6 @@ function getTabTooltip(tab: TerminalTabState): string {
   if (tab.aiAssistant && tab.aiAssistant.detected) {
     lines.push('');
     lines.push(`🤖 ${getAssistantTooltip(tab)}`);
-
-    // Add state duration statistics
-    const stats = tab.aiAssistant.stats;
-    if (stats) {
-      const currentState = (tab.aiAssistant.state || 'waiting_input').toLowerCase();
-      lines.push('');
-      lines.push(t('terminal.aiStatsDurations'));
-
-      if (stats.thinkingDuration > 0 || currentState === 'thinking') {
-        const duration = currentState === 'thinking'
-          ? stats.thinkingDuration + stats.currentStateDuration
-          : stats.thinkingDuration;
-        lines.push(`  ${t('terminal.aiStatusThinking')}: ${formatDuration(duration)}`);
-      }
-      if (stats.executingDuration > 0 || currentState === 'executing') {
-        const duration = currentState === 'executing'
-          ? stats.executingDuration + stats.currentStateDuration
-          : stats.executingDuration;
-        lines.push(`  ${t('terminal.aiStatusExecuting')}: ${formatDuration(duration)}`);
-      }
-      if (stats.waitingApprovalDuration > 0 || currentState === 'waiting_approval') {
-        const duration = currentState === 'waiting_approval'
-          ? stats.waitingApprovalDuration + stats.currentStateDuration
-          : stats.waitingApprovalDuration;
-        lines.push(`  ${t('terminal.aiStatusWaitingApproval')}: ${formatDuration(duration)}`);
-      }
-      if (stats.waitingInputDuration > 0 || currentState === 'waiting_input') {
-        const duration = currentState === 'waiting_input'
-          ? stats.waitingInputDuration + stats.currentStateDuration
-          : stats.waitingInputDuration;
-        lines.push(`  ${t('terminal.aiStatusWaitingInput')}: ${formatDuration(duration)}`);
-      }
-    }
   }
 
   // Add process information if available
@@ -1127,14 +1104,10 @@ function getAssistantStateClass(tab: TerminalTabState) {
 function getAssistantStatusLabel(tab: TerminalTabState) {
   const state = tab.aiAssistant?.state?.toLowerCase();
   switch (state) {
-    case 'thinking':
-      return t('terminal.aiStatusThinking');
-    case 'executing':
-      return t('terminal.aiStatusExecuting');
+    case 'working':
+      return t('terminal.aiStatusWorking');
     case 'waiting_approval':
       return t('terminal.aiStatusWaitingApproval');
-    case 'replying':
-      return t('terminal.aiStatusReplying');
     case 'waiting_input':
       return t('terminal.aiStatusWaitingInput');
     default:
@@ -1218,14 +1191,10 @@ function getAssistantIcon(tab: TerminalTabState): string {
 function getAssistantStatusEmoji(tab: TerminalTabState): string {
   const state = tab.aiAssistant?.state?.toLowerCase();
   switch (state) {
-    case 'thinking':
-      return '🧠';
-    case 'executing':
-      return '⚙️';
+    case 'working':
+      return '🤔';
     case 'waiting_approval':
       return '✋';
-    case 'replying':
-      return '💬';
     case 'waiting_input':
       return '✓';
     default:
@@ -1622,7 +1591,7 @@ defineExpose({
   align-items: center;
   gap: 4px;
   padding: 0 6px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   border-radius: 999px;
   font-size: 10px;
   line-height: 16px;
@@ -1656,24 +1625,14 @@ defineExpose({
 }
 
 /* State colors */
-.ai-status-pill.state-thinking {
+.ai-status-pill.state-working {
   background-color: #eadffc;
   color: #7c3aed;
-}
-
-.ai-status-pill.state-executing {
-  background-color: #e0f2fe;
-  color: #0ea5e9;
 }
 
 .ai-status-pill.state-waiting_approval {
   background-color: #fed7aa;
   color: #f79009;
-}
-
-.ai-status-pill.state-replying {
-  background-color: #d1fae5;
-  color: #12b76a;
 }
 
 .ai-status-pill.state-waiting_input {
@@ -1709,24 +1668,24 @@ defineExpose({
 
 /* Tab with unviewed completion - green background */
 :deep(.n-tabs-tab.has-unviewed-completion) {
-  background-color: var(--kanban-terminal-tab-completion-bg, rgba(16, 185, 129, 0.1)) !important;
-  border-color: var(--kanban-terminal-tab-completion-border, rgba(16, 185, 129, 0.3)) !important;
+  background-color: var(--kanban-terminal-tab-completion-bg, rgba(16, 185, 129, 0.2)) !important;
+  border-color: var(--kanban-terminal-tab-completion-border, rgba(16, 185, 129, 0.5)) !important;
 }
 
 :deep(.n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
-  background-color: var(--kanban-terminal-tab-completion-active-bg, rgba(16, 185, 129, 0.15)) !important;
-  border-color: var(--kanban-terminal-tab-completion-active-border, rgba(16, 185, 129, 0.4)) !important;
+  background-color: var(--kanban-terminal-tab-completion-active-bg, rgba(16, 185, 129, 0.25)) !important;
+  border-color: var(--kanban-terminal-tab-completion-active-border, rgba(16, 185, 129, 0.6)) !important;
 }
 
 /* Tab with unviewed approval - orange background (higher priority than completion) */
 :deep(.n-tabs-tab.has-unviewed-approval) {
-  background-color: var(--kanban-terminal-tab-approval-bg, rgba(247, 144, 9, 0.12)) !important;
-  border-color: var(--kanban-terminal-tab-approval-border, rgba(247, 144, 9, 0.35)) !important;
+  background-color: var(--kanban-terminal-tab-approval-bg, rgba(247, 144, 9, 0.2)) !important;
+  border-color: var(--kanban-terminal-tab-approval-border, rgba(247, 144, 9, 0.5)) !important;
 }
 
 :deep(.n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
-  background-color: var(--kanban-terminal-tab-approval-active-bg, rgba(247, 144, 9, 0.18)) !important;
-  border-color: var(--kanban-terminal-tab-approval-active-border, rgba(247, 144, 9, 0.45)) !important;
+  background-color: var(--kanban-terminal-tab-approval-active-bg, rgba(247, 144, 9, 0.25)) !important;
+  border-color: var(--kanban-terminal-tab-approval-active-border, rgba(247, 144, 9, 0.6)) !important;
 }
 
 .status-dot {

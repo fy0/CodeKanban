@@ -60,7 +60,6 @@ export default {
   'terminalSession.terminalCounts': ['GET', '/api/v1/terminals/counts'],
   'terminalSession.captureChunk': ['GET', '/api/v1/terminals/{sessionId}/capture'],
   'terminalSession.debug': ['GET', '/api/v1/terminals/{sessionId}/debug'],
-  'terminalSession.simulatedDisplay': ['GET', '/api/v1/terminals/{sessionId}/sim-term'],
   'upload.clipboardImage': ['POST', '/api/v1/upload/clipboard-image'],
   'worktree.delete': ['POST', '/api/v1/worktrees/{id}'],
   'worktree.commit': ['POST', '/api/v1/worktrees/{id}/commit'],

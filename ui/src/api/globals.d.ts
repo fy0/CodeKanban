@@ -771,6 +771,7 @@ export interface DebugInfo {
   projectId: string;
   rows: number;
   scrollbackChunks: string[] | null;
+  scrollbackChunksTimestamp: string[] | null;
   scrollbackLimit: number;
   scrollbackSize: number;
   sessionId: string;

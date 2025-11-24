@@ -97,19 +97,24 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 	}
 
 	session, err := NewSession(SessionParams{
-		ID:                params.ID,
-		ProjectID:         params.ProjectID,
-		WorktreeID:        params.WorktreeID,
-		WorkingDir:        params.WorkingDir,
-		Title:             params.Title,
-		Command:           command,
-		Env:               params.Env,
-		Rows:              params.Rows,
-		Cols:              params.Cols,
-		Logger:            m.logger,
-		Encoding:          m.cfg.Encoding,
-		ScrollbackLimit:   m.cfg.ScrollbackBytes,
-		AIAssistantStatus: &m.cfg.AIAssistantStatus,
+		ID:              params.ID,
+		ProjectID:       params.ProjectID,
+		WorktreeID:      params.WorktreeID,
+		WorkingDir:      params.WorkingDir,
+		Title:           params.Title,
+		Command:         command,
+		Env:             params.Env,
+		Rows:            params.Rows,
+		Cols:            params.Cols,
+		Logger:          m.logger,
+		Encoding:        m.cfg.Encoding,
+		ScrollbackLimit: m.cfg.ScrollbackBytes,
+		GetAIConfig: func() *utils.AIAssistantStatusConfig {
+			m.sessionMu.Lock()
+			defer m.sessionMu.Unlock()
+			cfg := m.cfg.AIAssistantStatus
+			return &cfg
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -197,15 +202,6 @@ func (m *Manager) GetSessionDebugInfo(id string) (*DebugInfo, error) {
 		return nil, err
 	}
 	return session.GetDebugInfo(), nil
-}
-
-// GetSessionSimulatedDisplay returns the simulated terminal display for a session.
-func (m *Manager) GetSessionSimulatedDisplay(id string) (*SimulatedDisplay, error) {
-	session, err := m.GetSession(id)
-	if err != nil {
-		return nil, err
-	}
-	return session.GetSimulatedDisplay(), nil
 }
 
 // CaptureChunk triggers a resize and captures the next output chunk from a session.
@@ -319,13 +315,12 @@ func (m *Manager) UpdateAIAssistantStatusConfig(newConfig utils.AIAssistantStatu
 	m.cfg.AIAssistantStatus = newConfig
 	m.sessionMu.Unlock()
 
-	// Update all active sessions
+	// Trigger metadata refresh for all active sessions
+	// This will cause them to re-check their AI assistant status with the new config
 	m.sessions.Range(func(_ string, session *Session) bool {
-		if session.assistantTracker != nil {
-			session.assistantTracker.SetStatusEnabledChecker(func(assistantType string) bool {
-				return newConfig.IsEnabled(assistantType)
-			})
-		}
+		// Just touching the session will trigger the next metadata update cycle
+		// to re-evaluate the AI assistant with the new config
+		session.Touch()
 		return true
 	})
 }

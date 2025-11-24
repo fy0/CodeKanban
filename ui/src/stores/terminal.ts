@@ -568,8 +568,8 @@ export const useTerminalStore = defineStore('terminal', () => {
           }
 
           if (currentState === 'waiting_input' && previousState) {
-            // Check if transitioning from a working state (thinking or executing)
-            const isFromWorkingState = previousState === 'thinking' || previousState === 'executing';
+            // Check if transitioning from working state
+            const isFromWorkingState = previousState === 'working';
             const wasInterrupted = payload.metadata.aiAssistant?.interrupted === true;
 
             if (isFromWorkingState && !wasInterrupted) {

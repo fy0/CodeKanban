@@ -13,14 +13,14 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/xpty"
-	"github.com/hinshun/vt10x"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 
 	"code-kanban/utils"
-	"code-kanban/utils/ai_assistant"
+	"code-kanban/utils/ai_assistant2"
+	"code-kanban/utils/ai_assistant2/types"
 	"code-kanban/utils/process"
 )
 
@@ -56,7 +56,7 @@ type SessionSnapshot struct {
 	ProcessHasChildren bool   `json:"processHasChildren,omitempty"`
 	RunningCommand     string `json:"runningCommand,omitempty"`
 	// AI Assistant information
-	AIAssistant *ai_assistant.AIAssistantInfo `json:"aiAssistant"`
+	AIAssistant *ai_assistant2.AIAssistantInfo `json:"aiAssistant"`
 }
 
 type StreamEventType string
@@ -75,11 +75,11 @@ type StreamEvent struct {
 }
 
 type SessionMetadata struct {
-	ProcessPID         int32                        `json:"processPid,omitempty"`
-	ProcessStatus      string                       `json:"processStatus,omitempty"`
-	ProcessHasChildren bool                         `json:"processHasChildren,omitempty"`
-	RunningCommand     string                       `json:"runningCommand,omitempty"`
-	AIAssistant        *ai_assistant.AIAssistantInfo `json:"aiAssistant,omitempty"`
+	ProcessPID         int32                          `json:"processPid,omitempty"`
+	ProcessStatus      string                         `json:"processStatus,omitempty"`
+	ProcessHasChildren bool                           `json:"processHasChildren,omitempty"`
+	RunningCommand     string                         `json:"runningCommand,omitempty"`
+	AIAssistant        *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
 }
 
 type SessionStream struct {
@@ -139,18 +139,16 @@ type Session struct {
 	encoding encoding.Encoding
 	encName  string
 
-	assistantTracker *ai_assistant.StatusTracker
-
-	// Terminal emulator for accurate display simulation
-	emulator   vt10x.Terminal
-	emulatorMu sync.RWMutex
+	assistantTracker *ai_assistant2.StatusTracker
+	getAIConfig      func() *utils.AIAssistantStatusConfig
 
 	mu sync.RWMutex
 
-	scrollMu        sync.RWMutex
-	scrollback      [][]byte
-	scrollbackSize  int
-	scrollbackLimit int
+	scrollMu             sync.RWMutex
+	scrollback           [][]byte
+	scrollbackTimestamps []time.Time
+	scrollbackSize       int
+	scrollbackLimit      int
 
 	subMu       sync.RWMutex
 	subscribers map[string]*sessionSubscriber
@@ -162,19 +160,19 @@ type Session struct {
 
 // SessionParams collects the data required to bootstrap a session.
 type SessionParams struct {
-	ID                string
-	ProjectID         string
-	WorktreeID        string
-	WorkingDir        string
-	Title             string
-	Command           []string
-	Env               []string
-	Rows              int
-	Cols              int
-	Logger            *zap.Logger
-	Encoding          string
-	ScrollbackLimit   int
-	AIAssistantStatus *utils.AIAssistantStatusConfig
+	ID              string
+	ProjectID       string
+	WorktreeID      string
+	WorkingDir      string
+	Title           string
+	Command         []string
+	Env             []string
+	Rows            int
+	Cols            int
+	Logger          *zap.Logger
+	Encoding        string
+	ScrollbackLimit int
+	GetAIConfig     func() *utils.AIAssistantStatusConfig
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -229,17 +227,12 @@ func NewSession(params SessionParams) (*Session, error) {
 		encName:          encName,
 		scrollbackLimit:  scrollbackLimit,
 		subscribers:      make(map[string]*sessionSubscriber),
-		assistantTracker: ai_assistant.NewStatusTracker(),
-		// emulator is created lazily when AI assistant is detected
+		assistantTracker: ai_assistant2.NewStatusTracker(),
+		getAIConfig:      params.GetAIConfig,
 	}
 
-	// Set AI assistant status tracking checker if config is provided
-	if params.AIAssistantStatus != nil {
-		statusConfig := params.AIAssistantStatus
-		session.assistantTracker.SetStatusEnabledChecker(func(assistantType string) bool {
-			return statusConfig.IsEnabled(assistantType)
-		})
-	}
+	// Set state change callback for periodic checking
+	session.assistantTracker.SetStateChangeCallback(session.handleStateChangeFromTracker)
 
 	if session.title == "" {
 		session.title = session.id
@@ -371,20 +364,13 @@ func (s *Session) checkAndBroadcastMetadata() {
 			metadata.RunningCommand = cmd
 
 			// Detect AI Assistant
-			aiInfo := ai_assistant.Detect(cmd)
+			aiInfo := ai_assistant2.DetectFromCommand(cmd)
 			metadata.AIAssistant = s.enrichAssistantInfo(aiInfo)
 		} else if tracker != nil {
 			tracker.Deactivate()
 		}
 	} else if tracker != nil {
 		tracker.Deactivate()
-	}
-
-	if tracker != nil && metadata.AIAssistant != nil {
-		if state, ts, changed := tracker.EvaluateTimeout(time.Now()); changed {
-			metadata.AIAssistant.State = state
-			metadata.AIAssistant.StateUpdatedAt = ts
-		}
 	}
 
 	// Check if metadata changed
@@ -487,11 +473,10 @@ func (s *Session) Resize(cols, rows int) error {
 	s.mu.Unlock()
 
 	// Also resize terminal emulator
-	s.emulatorMu.Lock()
-	if s.emulator != nil {
-		s.emulator.Resize(cols, rows)
+	// Resize emulator in tracker if active
+	if s.assistantTracker != nil {
+		s.assistantTracker.Activate(s.assistantTracker.AssistantType(), rows, cols)
 	}
-	s.emulatorMu.Unlock()
 
 	s.Touch()
 
@@ -632,8 +617,6 @@ func (s *Session) Touch() {
 // Snapshot copies current state for API responses.
 func (s *Session) Snapshot() SessionSnapshot {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	snapshot := SessionSnapshot{
 		ID:         s.id,
 		ProjectID:  s.projectID,
@@ -647,9 +630,13 @@ func (s *Session) Snapshot() SessionSnapshot {
 		Cols:       s.cols,
 		Encoding:   s.encName,
 	}
+	pid := s.getPID()
+	rows := s.rows
+	cols := s.cols
+	s.mu.RUnlock()
 
 	// Get process information
-	if pid := s.getPID(); pid > 0 {
+	if pid > 0 {
 		snapshot.ProcessPID = pid
 		snapshot.ProcessStatus = process.GetProcessStatus(pid)
 		snapshot.ProcessHasChildren = process.IsProcessBusy(pid)
@@ -658,7 +645,7 @@ func (s *Session) Snapshot() SessionSnapshot {
 		if snapshot.ProcessHasChildren {
 			if cmd := process.GetForegroundCommand(pid); cmd != "" {
 				snapshot.RunningCommand = cmd
-				snapshot.AIAssistant = s.enrichAssistantInfo(ai_assistant.Detect(cmd))
+				snapshot.AIAssistant = s.enrichAssistantInfoWithSize(ai_assistant2.DetectFromCommand(cmd), rows, cols)
 			}
 		}
 	}
@@ -737,22 +724,18 @@ func (s *Session) appendScrollback(chunk []byte) {
 		return
 	}
 	data := cloneBytes(chunk)
+	timestamp := time.Now()
 
 	s.scrollMu.Lock()
 	s.scrollback = append(s.scrollback, data)
+	s.scrollbackTimestamps = append(s.scrollbackTimestamps, timestamp)
 	s.scrollbackSize += len(data)
 	for s.scrollbackSize > s.scrollbackLimit && len(s.scrollback) > 0 {
 		s.scrollbackSize -= len(s.scrollback[0])
 		s.scrollback = s.scrollback[1:]
+		s.scrollbackTimestamps = s.scrollbackTimestamps[1:]
 	}
 	s.scrollMu.Unlock()
-
-	// Also write to terminal emulator for accurate display simulation
-	s.emulatorMu.Lock()
-	if s.emulator != nil {
-		s.emulator.Write(chunk)
-	}
-	s.emulatorMu.Unlock()
 }
 
 func (s *Session) broadcast(event StreamEvent) {
@@ -811,130 +794,106 @@ func (s *Session) removeSubscriber(id string) {
 	}
 }
 
-// getEmulatorVisibleLines returns the visible lines from the terminal emulator
-func (s *Session) getEmulatorVisibleLines() []string {
-	s.emulatorMu.RLock()
-	defer s.emulatorMu.RUnlock()
-
-	if s.emulator == nil {
-		return nil
-	}
-
-	s.mu.RLock()
-	rows := s.rows
-	cols := s.cols
-	s.mu.RUnlock()
-
-	lines := make([]string, 0, rows)
-	for i := 0; i < rows; i++ {
-		line := ""
-		for j := 0; j < cols; j++ {
-			cell := s.emulator.Cell(j, i)
-			if cell.Char != 0 {
-				line += string(cell.Char)
-			} else {
-				line += " "
-			}
-		}
-		// Trim trailing spaces for cleaner output
-		trimmed := strings.TrimRight(line, " ")
-		if trimmed != "" {
-			lines = append(lines, trimmed)
-		}
-	}
-	return lines
-}
-
 func (s *Session) handleAssistantOutput(chunk []byte) {
 	if len(chunk) == 0 || s.assistantTracker == nil {
 		return
 	}
 
-	// Only process if emulator exists (AI assistant detected)
-	s.emulatorMu.RLock()
-	hasEmulator := s.emulator != nil
-	s.emulatorMu.RUnlock()
-	if !hasEmulator {
+	// Feed chunk to tracker's virtual terminal and detect state changes
+	state, ts, changed := s.assistantTracker.ProcessChunk(chunk)
+
+	if !changed || state == types.StateUnknown {
 		return
 	}
 
-	// Get visible lines from terminal emulator for accurate state detection
-	displayLines := s.getEmulatorVisibleLines()
-
-	state, ts, changed := s.assistantTracker.ProcessDisplay(displayLines)
-	if !changed || state == ai_assistant.AIAssistantStateUnknown {
-		return
-	}
 	s.metaMu.Lock()
 	if s.lastMetadata == nil || s.lastMetadata.AIAssistant == nil {
 		s.metaMu.Unlock()
 		return
 	}
 	metadata := cloneSessionMetadata(s.lastMetadata)
-	metadata.AIAssistant.State = state
-	metadata.AIAssistant.StateUpdatedAt = ts
+	ai_assistant2.SetState(metadata.AIAssistant, state, ts)
 	s.lastMetadata = metadata
 	s.metaMu.Unlock()
 
 	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: metadata})
 }
 
-func (s *Session) enrichAssistantInfo(info *ai_assistant.AIAssistantInfo) *ai_assistant.AIAssistantInfo {
+// handleStateChangeFromTracker is called by tracker when periodic check detects state change
+func (s *Session) handleStateChangeFromTracker(state types.State, ts time.Time) {
+	s.metaMu.Lock()
+	if s.lastMetadata == nil || s.lastMetadata.AIAssistant == nil {
+		s.metaMu.Unlock()
+		return
+	}
+	metadata := cloneSessionMetadata(s.lastMetadata)
+	ai_assistant2.SetState(metadata.AIAssistant, state, ts)
+	s.lastMetadata = metadata
+	s.metaMu.Unlock()
+
+	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: metadata})
+}
+
+func (s *Session) enrichAssistantInfo(info *types.AssistantInfo) *ai_assistant2.AIAssistantInfo {
+	s.mu.RLock()
+	cols, rows := s.cols, s.rows
+	s.mu.RUnlock()
+	return s.enrichAssistantInfoWithSize(info, rows, cols)
+}
+
+func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, cols int) *ai_assistant2.AIAssistantInfo {
 	tracker := s.assistantTracker
 	if info == nil {
 		if tracker != nil {
 			tracker.Deactivate()
 		}
-		// Destroy emulator when AI assistant is no longer detected
-		s.emulatorMu.Lock()
-		s.emulator = nil
-		s.emulatorMu.Unlock()
 		return nil
 	}
 
-	// Create emulator lazily when AI assistant is first detected
-	s.emulatorMu.Lock()
-	if s.emulator == nil {
-		s.mu.RLock()
-		cols, rows := s.cols, s.rows
-		s.mu.RUnlock()
-		s.emulator = vt10x.New(vt10x.WithSize(cols, rows))
-		// Feed existing scrollback to emulator
-		scrollback := s.Scrollback()
-		for _, chunk := range scrollback {
-			s.emulator.Write(chunk)
+	// Check if this assistant type is enabled in config
+	if s.getAIConfig != nil {
+		config := s.getAIConfig()
+		if config != nil && !config.IsEnabled(string(info.Type)) {
+			// Config disabled this assistant type, deactivate tracker
+			if tracker != nil {
+				tracker.Deactivate()
+			}
+			// Return AIAssistantInfo with unknown state to indicate it's disabled
+			aiInfo := ai_assistant2.ToAIAssistantInfo(info)
+			ai_assistant2.SetState(aiInfo, types.StateUnknown, time.Now())
+			return aiInfo
 		}
 	}
-	s.emulatorMu.Unlock()
 
+	// Convert to AIAssistantInfo
+	aiInfo := ai_assistant2.ToAIAssistantInfo(info)
+
+	// Activate tracker with terminal size
 	if tracker != nil {
-		tracker.Activate(info.Type)
-		if state, ts := tracker.State(); state != ai_assistant.AIAssistantStateUnknown {
-			info.State = state
-			info.StateUpdatedAt = ts
-			// Attach state duration statistics only when tracking is active
-			info.Stats = tracker.Stats()
-			// Attach interrupted flag
-			info.Interrupted = tracker.WasInterrupted()
+		tracker.Activate(info.Type, rows, cols)
+
+		// Get current state
+		if state, ts := tracker.State(); state != types.StateUnknown {
+			ai_assistant2.SetState(aiInfo, state, ts)
 		}
-		// When state is Unknown (tracking disabled), leave info.State as default (unknown)
-		// so frontend will only show the icon without status text
 	}
-	return info
+
+	return aiInfo
 }
 
 // DebugInfo collects comprehensive debug information about the session.
 type DebugInfo struct {
-	SessionID         string                        `json:"sessionId"`
-	ProjectID         string                        `json:"projectId"`
-	WorktreeID        string                        `json:"worktreeId"`
-	Status            SessionStatus                 `json:"status"`
-	Rows              int                           `json:"rows"`
-	Cols              int                           `json:"cols"`
-	ScrollbackChunks []string                      `json:"scrollbackChunks"`
-	ScrollbackSize   int                           `json:"scrollbackSize"`
-	ScrollbackLimit  int                           `json:"scrollbackLimit"`
-	AIAssistant      *ai_assistant.AIAssistantInfo `json:"aiAssistant,omitempty"`
+	SessionID                 string                         `json:"sessionId"`
+	ProjectID                 string                         `json:"projectId"`
+	WorktreeID                string                         `json:"worktreeId"`
+	Status                    SessionStatus                  `json:"status"`
+	Rows                      int                            `json:"rows"`
+	Cols                      int                            `json:"cols"`
+	ScrollbackChunks          []string                       `json:"scrollbackChunks"`
+	ScrollbackChunksTimestamp []time.Time                    `json:"scrollbackChunksTimestamp"`
+	ScrollbackSize            int                            `json:"scrollbackSize"`
+	ScrollbackLimit           int                            `json:"scrollbackLimit"`
+	AIAssistant               *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
 }
 
 // GetDebugInfo returns comprehensive debugging information about the session.
@@ -954,8 +913,13 @@ func (s *Session) GetDebugInfo() *DebugInfo {
 		ScrollbackLimit: s.scrollbackLimit,
 	}
 
-	// Get scrollback chunks
+	// Get scrollback chunks and timestamps
 	scrollback := s.Scrollback()
+	s.scrollMu.RLock()
+	timestamps := make([]time.Time, len(s.scrollbackTimestamps))
+	copy(timestamps, s.scrollbackTimestamps)
+	s.scrollMu.RUnlock()
+
 	if len(scrollback) > 0 {
 		chunks := make([]string, 0, len(scrollback))
 		totalSize := 0
@@ -964,6 +928,7 @@ func (s *Session) GetDebugInfo() *DebugInfo {
 			totalSize += len(chunk)
 		}
 		info.ScrollbackChunks = chunks
+		info.ScrollbackChunksTimestamp = timestamps
 		info.ScrollbackSize = totalSize
 	}
 
@@ -976,78 +941,6 @@ func (s *Session) GetDebugInfo() *DebugInfo {
 	s.metaMu.RUnlock()
 
 	return info
-}
-
-// SimulatedDisplay contains the simulated terminal display
-type SimulatedDisplay struct {
-	SessionID      string   `json:"sessionId"`
-	Rows           int      `json:"rows"`
-	Cols           int      `json:"cols"`
-	CursorX        int      `json:"cursorX"`
-	CursorY        int      `json:"cursorY"`
-	DisplayContent string   `json:"displayContent"`
-	VisibleLines   []string `json:"visibleLines"`
-	CurrentLine    string   `json:"currentLine"`
-}
-
-// GetSimulatedDisplay returns the simulated terminal display
-func (s *Session) GetSimulatedDisplay() *SimulatedDisplay {
-	s.mu.RLock()
-	rows := s.rows
-	cols := s.cols
-	s.mu.RUnlock()
-
-	s.emulatorMu.RLock()
-	defer s.emulatorMu.RUnlock()
-
-	if s.emulator == nil {
-		return &SimulatedDisplay{
-			SessionID: s.id,
-			Rows:      rows,
-			Cols:      cols,
-		}
-	}
-
-	// Get cursor position from session's emulator
-	cursor := s.emulator.Cursor()
-	cursorX, cursorY := cursor.X, cursor.Y
-
-	// Extract visible lines from terminal
-	visibleLines := make([]string, 0, rows)
-	var currentLine string
-	for i := 0; i < rows; i++ {
-		line := ""
-		for j := 0; j < cols; j++ {
-			cell := s.emulator.Cell(j, i)
-			if cell.Char != 0 {
-				line += string(cell.Char)
-			} else {
-				line += " "
-			}
-		}
-		// Trim trailing spaces for cleaner output
-		trimmed := strings.TrimRight(line, " ")
-		if trimmed != "" || i == cursorY {
-			visibleLines = append(visibleLines, trimmed)
-		}
-		if i == cursorY {
-			currentLine = trimmed
-		}
-	}
-
-	// Build full display content
-	displayContent := strings.Join(visibleLines, "\n")
-
-	return &SimulatedDisplay{
-		SessionID:      s.id,
-		Rows:           rows,
-		Cols:           cols,
-		CursorX:        cursorX,
-		CursorY:        cursorY,
-		DisplayContent: displayContent,
-		VisibleLines:   visibleLines,
-		CurrentLine:    currentLine,
-	}
 }
 
 // CapturedChunk represents a captured output chunk

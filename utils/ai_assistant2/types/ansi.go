@@ -1,4 +1,4 @@
-package ai_assistant
+package types
 
 import (
 	"regexp"
@@ -12,13 +12,9 @@ var (
 
 	// Matches control characters (except newline, tab, and carriage return)
 	controlCharsPattern = regexp.MustCompile(`[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]`)
-
-	// Matches carriage return followed by text (overwrites previous line)
-	crOverwritePattern = regexp.MustCompile(`\r[^\n]`)
 )
 
-// StripANSI removes ANSI escape sequences and control characters from text.
-// This is essential for reliable text matching in terminal output.
+// StripANSI removes ANSI escape sequences and control characters from text
 func StripANSI(text string) string {
 	if text == "" {
 		return ""
@@ -58,11 +54,4 @@ func handleCarriageReturns(text string) string {
 func CleanLine(line string) string {
 	cleaned := StripANSI(line)
 	return strings.TrimSpace(cleaned)
-}
-
-// ContainsClean checks if the cleaned version of text contains the substring
-func ContainsClean(text, substr string) bool {
-	cleanText := strings.ToLower(StripANSI(text))
-	cleanSubstr := strings.ToLower(substr)
-	return strings.Contains(cleanText, cleanSubstr)
 }

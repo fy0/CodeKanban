@@ -37,6 +37,7 @@ npm install -g codekanban
 - **笔记功能**：支持多标签笔记，自动保存，标签可重命名和排序 (快捷键1)
 - **编辑器集成**：快捷打开 VSCode、Cursor、Zed 等编辑器
 - **使用你喜欢的工具**: Claude Code, Codex, Gemini, Qwen Code, Droid, ... 啥都行
+- **AI 助手状态检测**：终端内自动检测 Claude Code/Codex 运行状态，任务完成时标签高亮提醒
 
 Tips: 中文用户注意，搜狗输入法在 ClaudeCode 中兼容性不佳，在VSCode中表现也是大差不差的。不过alt+v仍然可以粘贴图片。
 

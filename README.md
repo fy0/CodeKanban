@@ -37,6 +37,7 @@ npm install -g codekanban
 - **Notes Feature**: Supports multi-tab notes, auto-save, tabs can be renamed and sorted (Hotkey: 1)
 - **Editor Integration**: Quick open VSCode, Cursor, Zed and other editors
 - **Use Your Favorite Tools**: Claude Code, Codex, Gemini, Qwen Code, Droid, ... anything works
+- **AI Assistant Status Detection**: Auto-detect Claude Code/Codex running status in terminals, with tab highlighting when tasks complete
 
 ## Development Guide
 
