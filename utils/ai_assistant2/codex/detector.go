@@ -29,7 +29,8 @@ type StatusDetector struct {
 func NewStatusDetector() *StatusDetector {
 	return &StatusDetector{
 		// Match: symbol (◦ or •) + text + (time • esc to interrupt)
-		workingPattern: regexp.MustCompile(`^[◦•] .+\(\d+s • esc to interrupt\)`),
+		// (10h 19m 44s • esc to interrupt) codex#6729
+		workingPattern: regexp.MustCompile(`^[◦•] .+\((\d+h )?(\d+m )?\d+s • esc to interrupt\)`),
 
 		// Selection arrow: › followed by digit and dot
 		selectionPattern: regexp.MustCompile(`^› \d+\. `),

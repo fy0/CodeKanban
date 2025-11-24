@@ -90,27 +90,27 @@ func (c *AIAssistantStatusConfig) IsEnabled(assistantType string) bool {
 }
 
 type AppConfig struct {
-	ServeAt                 string           `json:"serveAt" yaml:"serveAt"`
-	Domain                  string           `json:"domain" yaml:"domain"`
-	RegisterOpen            bool             `json:"registerOpen" yaml:"registerOpen"`
-	WebUrl                  string           `json:"webUrl" yaml:"webUrl"`
-	AttachmentSizeLimit     int64            `json:"attachmentSizeLimit" yaml:"attachmentSizeLimit"`
-	ImageCompress           bool             `json:"imageCompress" yaml:"imageCompress"`
-	LogFile                 string           `json:"logFile" yaml:"logFile"`
-	LogLevel                string           `json:"logLevel" yaml:"logLevel"`
-	DBLogLevel              int              `json:"dbLogLevel" yaml:"dbLogLevel"`
-	CorsAllowOrigins        string           `json:"corsAllowOrigins" yaml:"corsAllowOrigins"`
-	UIOverwrite             string           `json:"uiOverwrite" yaml:"uiOverwrite"`
-	AutoMigrate             bool             `json:"autoMigrate" yaml:"autoMigrate"`
-	OpenAPIEnabled          bool             `json:"openapiEnabled" yaml:"openapiEnabled"`
-	DocsPath                string           `json:"docsPath" yaml:"docsPath"`
-	APITitle                string           `json:"apiTitle" yaml:"apiTitle"`
-	APIVersion              string           `json:"apiVersion" yaml:"apiVersion"`
-	AttachmentConfig        AttachmentConfig `json:"attachmentConfig" yaml:"attachmentConfig"`
-	DSN                     string           `json:"dbUrl" yaml:"dbUrl"`
-	PrintConfig             bool             `json:"printConfig" yaml:"printConfig"`
-	DisableAutoOpenBrowser  bool             `json:"disableAutoOpenBrowser" yaml:"disableAutoOpenBrowser"`
-	Terminal                TerminalConfig   `json:"terminal" yaml:"terminal"`
+	ServeAt                string           `json:"serveAt" yaml:"serveAt"`
+	Domain                 string           `json:"domain" yaml:"domain"`
+	RegisterOpen           bool             `json:"registerOpen" yaml:"registerOpen"`
+	WebUrl                 string           `json:"webUrl" yaml:"webUrl"`
+	AttachmentSizeLimit    int64            `json:"attachmentSizeLimit" yaml:"attachmentSizeLimit"`
+	ImageCompress          bool             `json:"imageCompress" yaml:"imageCompress"`
+	LogFile                string           `json:"logFile" yaml:"logFile"`
+	LogLevel               string           `json:"logLevel" yaml:"logLevel"`
+	DBLogLevel             int              `json:"dbLogLevel" yaml:"dbLogLevel"`
+	CorsAllowOrigins       string           `json:"corsAllowOrigins" yaml:"corsAllowOrigins"`
+	UIOverwrite            string           `json:"uiOverwrite" yaml:"uiOverwrite"`
+	AutoMigrate            bool             `json:"autoMigrate" yaml:"autoMigrate"`
+	OpenAPIEnabled         bool             `json:"openapiEnabled" yaml:"openapiEnabled"`
+	DocsPath               string           `json:"docsPath" yaml:"docsPath"`
+	APITitle               string           `json:"apiTitle" yaml:"apiTitle"`
+	APIVersion             string           `json:"apiVersion" yaml:"apiVersion"`
+	AttachmentConfig       AttachmentConfig `json:"attachmentConfig" yaml:"attachmentConfig"`
+	DSN                    string           `json:"dbUrl" yaml:"dbUrl"`
+	PrintConfig            bool             `json:"printConfig" yaml:"printConfig"`
+	DisableAutoOpenBrowser bool             `json:"disableAutoOpenBrowser" yaml:"disableAutoOpenBrowser"`
+	Terminal               TerminalConfig   `json:"terminal" yaml:"terminal"`
 }
 
 var configStore = koanf.New(".")
@@ -123,11 +123,20 @@ func ReadConfig() *AppConfig {
 	// 获取数据目录（npm 全局安装时使用 ~/.codekanban，否则使用 ./data）
 	dataDir := GetDataDir()
 
+	workDirConfig := "config.yaml"
+	dataDirConfig := fmt.Sprintf("%s/config.yaml", dataDir)
+
+	configPath := dataDirConfig
+	if _, err := os.Stat(workDirConfig); err == nil {
+		configPath = workDirConfig
+	}
+
 	// 打印工作目录信息
 	if cwd, err := os.Getwd(); err == nil {
 		fmt.Printf("Working directory: %s\n", cwd)
 	}
 	fmt.Printf("Data directory: %s\n", dataDir)
+	fmt.Printf("Config file: %s\n", configPath)
 	fmt.Println()
 
 	// Ensure data directory exists
@@ -136,25 +145,25 @@ func ReadConfig() *AppConfig {
 	}
 
 	defaults := AppConfig{
-		ServeAt:                ":3007",
-		Domain:                 "127.0.0.1:3007",
-		RegisterOpen:           true,
-		WebUrl:                 "/",
-		AttachmentSizeLimit:    8192,
-		ImageCompress:          true,
-		LogFile:                fmt.Sprintf("%s/service.log", dataDir),
-		LogLevel:               string(LogLevelInfo),
-		CorsAllowOrigins:       "*",
-		AutoMigrate:            true,
-		OpenAPIEnabled:         true,
-		DocsPath:               "/docs",
-		APITitle:               "Code Kanban",
-		APIVersion:             "1.0.0",
+		ServeAt:             ":3007",
+		Domain:              "127.0.0.1:3007",
+		RegisterOpen:        true,
+		WebUrl:              "/",
+		AttachmentSizeLimit: 8192,
+		ImageCompress:       true,
+		LogFile:             fmt.Sprintf("%s/service.log", dataDir),
+		LogLevel:            string(LogLevelInfo),
+		CorsAllowOrigins:    "*",
+		AutoMigrate:         true,
+		OpenAPIEnabled:      true,
+		DocsPath:            "/docs",
+		APITitle:            "Code Kanban",
+		APIVersion:          "1.0.0",
 		AttachmentConfig: AttachmentConfig{
 			UseS3: false,
 		},
 		DSN:                    fmt.Sprintf("%s/data.db", dataDir),
-		PrintConfig:            true,
+		PrintConfig:            false,
 		DisableAutoOpenBrowser: false,
 		Terminal: TerminalConfig{
 			Shell: TerminalShellConfig{
@@ -179,17 +188,6 @@ func ReadConfig() *AppConfig {
 	}
 
 	lo.Must0(configStore.Load(structs.Provider(&defaults, "yaml"), nil))
-
-	// 配置文件路径：优先使用工作目录的 config.yaml，如果不存在则使用数据目录的
-	workDirConfig := "config.yaml"
-	dataDirConfig := fmt.Sprintf("%s/config.yaml", dataDir)
-
-	var configPath string
-	if _, err := os.Stat(workDirConfig); err == nil {
-		configPath = workDirConfig
-	} else {
-		configPath = dataDirConfig
-	}
 
 	// Store the active config path for later use by WriteConfig
 	activeConfigPath = configPath
