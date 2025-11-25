@@ -37,7 +37,7 @@ export type ServerMessage = {
 };
 
 export type TerminalCreateOptions = {
-  worktreeId: string;
+  worktreeId?: string;
   workingDir?: string;
   title?: string;
   rows?: number;
@@ -259,9 +259,22 @@ export const useTerminalStore = defineStore('terminal', () => {
 
   async function createSession(projectId: string | undefined, options: TerminalCreateOptions) {
     const resolved = ensureProjectSelected(projectId);
-    if (!options.worktreeId) {
-      throw new Error('����ѡ�� Worktree');
+
+    // 如果没有提供 worktreeId，自动选择
+    let worktreeId = options.worktreeId;
+    if (!worktreeId) {
+      const projectStore = useProjectStore();
+      const worktrees = projectStore.worktrees;
+
+      if (worktrees.length === 0) {
+        throw new Error('当前项目没有可用的分支');
+      }
+
+      // 优先选择主分支，否则选择第一个
+      const mainWorktree = worktrees.find(w => w.isMain);
+      worktreeId = mainWorktree ? mainWorktree.id : worktrees[0].id;
     }
+
     const payload = {
       workingDir: options.workingDir ?? '',
       title: options.title ?? '',
@@ -272,7 +285,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       .create({
         pathParams: {
           projectId: resolved,
-          worktreeId: options.worktreeId,
+          worktreeId: worktreeId,
         },
         data: payload,
         cacheFor: 0,

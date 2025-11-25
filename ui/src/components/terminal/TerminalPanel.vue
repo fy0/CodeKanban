@@ -1,6 +1,5 @@
 <template>
   <div
-    v-if="tabs.length"
     class="terminal-panel"
     :class="{ 'is-collapsed': !expanded }"
     :style="panelStyle"
@@ -18,7 +17,7 @@
     <div class="resize-handle resize-handle-right" @mousedown="startResizeRight"></div>
 
     <div class="panel-header">
-      <div ref="tabsContainerRef" class="tabs-container">
+      <div v-if="tabs.length" ref="tabsContainerRef" class="tabs-container">
         <n-tabs
           v-model:value="activeId"
           type="card"
@@ -62,6 +61,9 @@
           :style="activeTabIndicatorStyle"
         ></div>
       </div>
+      <div v-else class="empty-tabs-placeholder">
+        <span class="empty-tabs-text">{{ t('terminal.emptyGuideTitle') }}</span>
+      </div>
       <n-dropdown
         trigger="manual"
         placement="bottom-start"
@@ -99,6 +101,37 @@
     </div>
 
     <div v-if="expanded" class="panel-body">
+      <div v-if="!tabs.length" class="empty-guide">
+        <div class="empty-guide-content">
+          <n-icon :size="48" class="empty-guide-icon">
+            <TerminalOutline />
+          </n-icon>
+          <h3 class="empty-guide-title">{{ t('terminal.emptyGuideTitle') }}</h3>
+          <p class="empty-guide-description">{{ t('terminal.emptyGuideDescription') }}</p>
+          <n-dropdown
+            v-if="worktrees.length > 1"
+            trigger="click"
+            :options="createTerminalOptions"
+            @select="handleCreateTerminalSelect"
+          >
+            <n-button type="primary" icon-placement="right">
+              {{ t('terminal.createNewTerminal') }}
+              <template #icon>
+                <n-icon>
+                  <ChevronDownOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </n-dropdown>
+          <n-button
+            v-else
+            type="primary"
+            @click="handleCreateTerminalClick"
+          >
+            {{ t('terminal.createNewTerminal') }}
+          </n-button>
+        </div>
+      </div>
       <TerminalViewport
         v-for="tab in tabs"
         v-show="tab.id === activeId"
@@ -111,7 +144,7 @@
     </div>
   </div>
   <button
-    v-if="tabs.length && !expanded"
+    v-if="!expanded"
     type="button"
     class="terminal-floating-button"
     :class="{ 'has-notifications': totalUnviewedCount > 0 }"
@@ -138,6 +171,7 @@ import TerminalViewport from './TerminalViewport.vue';
 import { useTerminalClient, type TerminalCreateOptions, type TerminalTabState } from '@/composables/useTerminalClient';
 import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
+import { useProjectStore } from '@/stores/project';
 import { getPresetById } from '@/constants/themes';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { usePanelStack } from '@/composables/usePanelStack';
@@ -151,10 +185,12 @@ const projectIdRef = toRef(props, 'projectId');
 const message = useMessage();
 const dialog = useDialog();
 const { t } = useLocale();
+const projectStore = useProjectStore();
+const { worktrees } = storeToRefs(projectStore);
 const expanded = useStorage('terminal-panel-expanded', true);
-const panelHeight = useStorage('terminal-panel-height', 320);
-const panelLeft = useStorage('terminal-panel-left', 12);
-const panelRight = useStorage('terminal-panel-right', 12);
+const panelHeight = useStorage('terminal-panel-height', 470);
+const panelLeft = useStorage('terminal-panel-left', 220);
+const panelRight = useStorage('terminal-panel-right', 170);
 const autoResize = useStorage('terminal-auto-resize', true);
 const isResizing = ref(false);
 const shouldAutoFocusTerminal = ref(true);
@@ -200,7 +236,19 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
     key: 'confirm-close',
     icon: confirmBeforeTerminalClose.value ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) }) : undefined,
   },
+  {
+    label: t('terminal.resetPosition'),
+    key: 'reset-position',
+  },
 ]);
+
+// 创建终端下拉菜单选项
+const createTerminalOptions = computed<DropdownOption[]>(() => {
+  return worktrees.value.map(worktree => ({
+    label: worktree.branchName,
+    key: worktree.id,
+  }));
+});
 
 const MIN_HEIGHT = 200;
 const MAX_HEIGHT = 800;
@@ -712,7 +760,7 @@ function toggleExpanded(arg?: ToggleOptions | MouseEvent) {
 }
 
 function handleTerminalToggleShortcut(event: KeyboardEvent) {
-  if (!tabs.value.length || event.defaultPrevented) {
+  if (event.defaultPrevented) {
     return;
   }
   if (event.repeat || !isToggleShortcut(event)) {
@@ -912,6 +960,19 @@ function startResizeRight(event: MouseEvent) {
   document.addEventListener('mouseup', handleMouseUp);
   document.body.style.cursor = 'ew-resize';
   document.body.style.userSelect = 'none';
+}
+
+// 处理创建终端按钮点击 - 如果只有一个分支，直接创建
+function handleCreateTerminalClick() {
+  if (worktrees.value.length === 1) {
+    openTerminal({ worktreeId: worktrees.value[0].id });
+  }
+  // 如果有多个分支，下拉菜单会自动显示
+}
+
+// 处理创建终端下拉菜单选择
+function handleCreateTerminalSelect(worktreeId: string) {
+  openTerminal({ worktreeId });
 }
 
 async function openTerminal(options: TerminalCreateOptions) {
@@ -1386,7 +1447,21 @@ function handleSettingsMenuSelect(key: string) {
     autoResize.value = !autoResize.value;
   } else if (key === 'confirm-close') {
     settingsStore.updateConfirmBeforeTerminalClose(!confirmBeforeTerminalClose.value);
+  } else if (key === 'reset-position') {
+    resetTerminalPosition();
   }
+}
+
+function resetTerminalPosition() {
+  // 重置为默认值
+  panelHeight.value = 470;
+  panelLeft.value = 220;
+  panelRight.value = 170;
+
+  // 重置后触发终端大小调整
+  nextTick(() => {
+    scheduleResizeAll();
+  });
 }
 
 defineExpose({
@@ -1569,6 +1644,7 @@ defineExpose({
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  background-color: var(--kanban-terminal-bg, #1e1e1e);
 }
 
 .tab-label {
@@ -1845,6 +1921,56 @@ defineExpose({
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+/* 空状态引导界面 */
+.empty-guide {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 40px;
+}
+
+.empty-guide-content {
+  text-align: center;
+  max-width: 400px;
+}
+
+.empty-guide-icon {
+  color: var(--kanban-terminal-empty-guide-fg, rgba(255, 255, 255, 0.7));
+  opacity: 0.7;
+  margin-bottom: 16px;
+}
+
+.empty-guide-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--kanban-terminal-empty-guide-fg, rgba(255, 255, 255, 0.95));
+  opacity: 0.95;
+  margin: 0 0 8px 0;
+}
+
+.empty-guide-description {
+  font-size: 14px;
+  color: var(--kanban-terminal-empty-guide-fg, rgba(255, 255, 255, 0.8));
+  opacity: 0.8;
+  margin: 0 0 24px 0;
+}
+
+/* 空标签页占位符 */
+.empty-tabs-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  min-height: 36px;
+}
+
+.empty-tabs-text {
+  font-size: 14px;
+  color: var(--app-text-color, var(--n-text-color-2, #666));
+  opacity: 0.8;
 }
 </style>
 

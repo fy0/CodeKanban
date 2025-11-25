@@ -117,6 +117,8 @@ const cssVarsToSet = computed(() => ({
   // 浮动按钮颜色
   '--kanban-terminal-floating-button-bg': theme.value.terminalFloatingButtonBg || theme.value.surfaceColor,
   '--kanban-terminal-floating-button-fg': theme.value.terminalFloatingButtonFg || theme.value.textColor,
+  // 空终端引导文字颜色
+  '--kanban-terminal-empty-guide-fg': theme.value.terminalEmptyGuideFg || theme.value.terminalFg,
   // 看板颜色
   '--kanban-board-bg': theme.value.kanbanBoardBg || presetTerminalTabColors.value.kanbanBoardBg || theme.value.bodyColor,
   '--kanban-card-bg': theme.value.kanbanCardBg || presetTerminalTabColors.value.kanbanCardBg || theme.value.surfaceColor,
