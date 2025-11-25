@@ -100,7 +100,7 @@
             :placeholder="t('worktree.selectBranch')"
           />
           <n-alert v-else type="warning" show-icon>
-            {{ t('worktree.noUpstreamBranch') }}
+            {{ branchOperation.type === 'merge' ? t('worktree.noTargetWorktree') : t('worktree.noUpstreamBranch') }}
           </n-alert>
         </div>
         <div v-if="branchOperation.type === 'merge'">
@@ -244,12 +244,15 @@ const showGitWarning = computed(
 );
 
 // 判断worktree是否有未提交的更改
-function hasUncommittedChanges(worktree: Worktree): boolean {
+function hasTrackedChanges(worktree: Worktree): boolean {
   return (
     (worktree.statusModified ?? 0) > 0 ||
-    (worktree.statusStaged ?? 0) > 0 ||
-    (worktree.statusUntracked ?? 0) > 0
+    (worktree.statusStaged ?? 0) > 0
   );
+}
+
+function hasPendingChanges(worktree: Worktree): boolean {
+  return hasTrackedChanges(worktree) || (worktree.statusUntracked ?? 0) > 0;
 }
 
 // 判断worktree是否可以进行sync/rebase操作
@@ -258,7 +261,7 @@ function canSyncWorktree(worktree: Worktree): boolean {
   // 注意：isMain 是指主worktree（项目根目录），不是main分支，所以要用 branchName 判断
   return (
     Boolean(defaultBranch.value) &&
-    !hasUncommittedChanges(worktree) &&
+    !hasTrackedChanges(worktree) &&
     worktree.branchName !== defaultBranch.value
   );
 }
@@ -269,7 +272,7 @@ function canMergeWorktree(worktree: Worktree): boolean {
   // 注意：isMain 是指主worktree（项目根目录），不是main分支，所以要用 branchName 判断
   return (
     Boolean(mainWorktree.value) &&
-    !hasUncommittedChanges(worktree) &&
+    !hasTrackedChanges(worktree) &&
     worktree.branchName !== defaultBranch.value
   );
 }
@@ -277,7 +280,7 @@ function canMergeWorktree(worktree: Worktree): boolean {
 // 判断worktree是否可以进行commit操作
 function canCommitWorktree(worktree: Worktree): boolean {
   // git功能可用，且有待提交的内容
-  return gitFeaturesAvailable.value && hasUncommittedChanges(worktree);
+  return gitFeaturesAvailable.value && hasPendingChanges(worktree);
 }
 
 type BranchOperationType = 'rebase' | 'merge';
@@ -347,10 +350,14 @@ const localBranchOptions = computed(() =>
   })),
 );
 
-const mergeTargetOptions = computed(() => {
-  const existing = new Set(projectStore.worktrees.map(worktree => worktree.branchName));
-  return localBranchOptions.value.filter(option => existing.has(option.value));
-});
+const mergeTargetOptions = computed(() =>
+  projectStore.worktrees
+    .filter(worktree => Boolean(worktree.branchName))
+    .map(worktree => ({
+      label: worktree.branchName,
+      value: worktree.branchName,
+    })),
+);
 
 watch(
   () => projectStore.currentProject?.id,
