@@ -109,7 +109,10 @@ type sessionSubscriber struct {
 	once   sync.Once
 }
 
-const subscriberBufferSize = 128
+const (
+	subscriberBufferSize     = 128
+	assistantOutputBufferLen = 32
+)
 
 // Session encapsulates a PTY-backed terminal command.
 type Session struct {
@@ -139,8 +142,9 @@ type Session struct {
 	encoding encoding.Encoding
 	encName  string
 
-	assistantTracker *ai_assistant2.StatusTracker
-	getAIConfig      func() *utils.AIAssistantStatusConfig
+	assistantTracker  *ai_assistant2.StatusTracker
+	getAIConfig       func() *utils.AIAssistantStatusConfig
+	assistantOutputCh chan []byte
 
 	mu sync.RWMutex
 
@@ -231,6 +235,7 @@ func NewSession(params SessionParams) (*Session, error) {
 		getAIConfig:      params.GetAIConfig,
 	}
 
+	session.assistantTracker.SetCaptureFunc(session.captureTerminalLines)
 	// Set state change callback for periodic checking
 	session.assistantTracker.SetStateChangeCallback(session.handleStateChangeFromTracker)
 
@@ -294,9 +299,12 @@ func (s *Session) Start(ctx context.Context) error {
 
 	s.setStatus(SessionStatusRunning)
 
+	s.assistantOutputCh = make(chan []byte, assistantOutputBufferLen)
+
 	go s.wait(sessionCtx)
 	go s.consumePTY(sessionCtx)
 	go s.monitorMetadata(sessionCtx)
+	go s.processAssistantOutput(sessionCtx)
 
 	return nil
 }
@@ -323,7 +331,7 @@ func (s *Session) consumePTY(ctx context.Context) {
 			if len(normalized) > 0 {
 				s.appendScrollback(normalized)
 				s.broadcast(StreamEvent{Type: StreamEventData, Data: normalized})
-				s.handleAssistantOutput(normalized)
+				s.enqueueAssistantOutput(normalized)
 			}
 		}
 		if err != nil {
@@ -342,6 +350,40 @@ func (s *Session) monitorMetadata(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.checkAndBroadcastMetadata()
+		}
+	}
+}
+
+func (s *Session) enqueueAssistantOutput(chunk []byte) {
+	if len(chunk) == 0 {
+		return
+	}
+
+	ch := s.assistantOutputCh
+	if ch == nil {
+		s.handleAssistantOutput(chunk)
+		return
+	}
+
+	select {
+	case ch <- chunk:
+	default:
+		// Drop if processor is backed up to avoid blocking PTY reader
+	}
+}
+
+func (s *Session) processAssistantOutput(ctx context.Context) {
+	ch := s.assistantOutputCh
+	if ch == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case chunk := <-ch:
+			s.handleAssistantOutput(chunk)
 		}
 	}
 }
@@ -819,32 +861,41 @@ func (s *Session) removeSubscriber(id string) {
 }
 
 func (s *Session) handleAssistantOutput(chunk []byte) {
-	if len(chunk) == 0 || s.assistantTracker == nil {
+	tracker := s.assistantTracker
+	if len(chunk) == 0 || tracker == nil {
 		return
 	}
+	tracker.ProcessChunkInvoke(chunk)
+}
 
-	// Feed chunk to tracker's virtual terminal and detect state changes
-	state, ts, changed := s.assistantTracker.ProcessChunk(chunk)
-
-	if !changed || state == types.StateUnknown {
-		return
+func (s *Session) captureTerminalLines(rows, cols int) ([]string, error) {
+	if rows <= 0 || cols <= 0 {
+		s.mu.RLock()
+		if rows <= 0 {
+			rows = s.rows
+		}
+		if cols <= 0 {
+			cols = s.cols
+		}
+		s.mu.RUnlock()
 	}
 
-	s.metaMu.Lock()
-	if s.lastMetadata == nil || s.lastMetadata.AIAssistant == nil {
-		s.metaMu.Unlock()
-		return
-	}
-	metadata := cloneSessionMetadata(s.lastMetadata)
-	ai_assistant2.SetState(metadata.AIAssistant, state, ts)
-	s.lastMetadata = metadata
-	s.metaMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
-	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: metadata})
+	chunk, err := s.CaptureNextChunk(ctx, time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return ai_assistant2.RenderLinesFromBuffer(chunk.Data, rows, cols), nil
 }
 
 // handleStateChangeFromTracker is called by tracker when periodic check detects state change
 func (s *Session) handleStateChangeFromTracker(state types.State, ts time.Time) {
+	s.applyAssistantState(state, ts)
+}
+
+func (s *Session) applyAssistantState(state types.State, ts time.Time) {
 	s.metaMu.Lock()
 	if s.lastMetadata == nil || s.lastMetadata.AIAssistant == nil {
 		s.metaMu.Unlock()
@@ -875,6 +926,7 @@ func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, c
 	}
 
 	// Check if this assistant type is enabled in config
+	trackingMode := ai_assistant2.TrackingModeCapture
 	if s.getAIConfig != nil {
 		config := s.getAIConfig()
 		if config != nil && !config.IsEnabled(string(info.Type)) {
@@ -887,6 +939,9 @@ func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, c
 			ai_assistant2.SetState(aiInfo, types.StateUnknown, time.Now())
 			return aiInfo
 		}
+		if config != nil && config.TrackingMode != "" {
+			trackingMode = ai_assistant2.ParseTrackingMode(config.TrackingMode)
+		}
 	}
 
 	// Convert to AIAssistantInfo
@@ -894,6 +949,7 @@ func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, c
 
 	// Activate tracker with terminal size
 	if tracker != nil {
+		tracker.SetTrackingMode(trackingMode)
 		tracker.Activate(info.Type, rows, cols)
 
 		// Get current state
@@ -918,6 +974,7 @@ type DebugInfo struct {
 	ScrollbackSize            int                            `json:"scrollbackSize"`
 	ScrollbackLimit           int                            `json:"scrollbackLimit"`
 	AIAssistant               *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
+	AIChunkCount              int64                          `json:"aiChunkCount,omitempty"`
 }
 
 // GetDebugInfo returns comprehensive debugging information about the session.
@@ -964,6 +1021,10 @@ func (s *Session) GetDebugInfo() *DebugInfo {
 	}
 	s.metaMu.RUnlock()
 
+	if s.assistantTracker != nil {
+		info.AIChunkCount = s.assistantTracker.ChunkCount()
+	}
+
 	return info
 }
 
@@ -982,7 +1043,7 @@ func (s *Session) CaptureNextChunk(ctx context.Context, timeout time.Duration) (
 		ctx = context.Background()
 	}
 	if timeout <= 0 {
-		timeout = 2 * time.Second
+		timeout = 1 * time.Second
 	}
 
 	// Subscribe to output stream

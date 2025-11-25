@@ -143,6 +143,7 @@ export interface AIAssistantStatusConfig {
   cursor: boolean;
   gemini: boolean;
   qwenCode: boolean;
+  trackingMode: string;
 }
 export interface OpenEditorInputBody {
   /**

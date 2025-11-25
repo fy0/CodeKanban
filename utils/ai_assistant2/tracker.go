@@ -12,10 +12,29 @@ import (
 	"code-kanban/utils/ai_assistant2/types"
 )
 
+type TrackingMode string
+
 const (
 	// periodicCheckInterval is how often we check state when no new chunks arrive
 	periodicCheckInterval = 500 * time.Millisecond
+	minProcessInterval    = 100 * time.Millisecond
+
+	TrackingModeCapture         TrackingMode = "capture"
+	TrackingModeVirtualTerminal TrackingMode = "virtual-terminal"
 )
+
+// ParseTrackingMode normalizes incoming config to a supported mode.
+func ParseTrackingMode(mode string) TrackingMode {
+	switch TrackingMode(mode) {
+	case TrackingModeVirtualTerminal:
+		return TrackingModeVirtualTerminal
+	default:
+		return TrackingModeCapture
+	}
+}
+
+// CaptureLinesFunc retrieves the latest terminal display as a list of visible lines.
+type CaptureLinesFunc func(rows, cols int) ([]string, error)
 
 // StateChangeCallback is called when state changes are detected
 type StateChangeCallback func(state types.State, ts time.Time)
@@ -31,9 +50,13 @@ type StatusTracker struct {
 	lastProcessTime time.Time // Time when ProcessChunk was last called
 
 	// Virtual terminal emulator for display simulation
-	emulator vt10x.Terminal
-	rows     int
-	cols     int
+	emulator     vt10x.Terminal
+	rows         int
+	cols         int
+	trackingMode TrackingMode
+	captureFunc  CaptureLinesFunc
+	captureBusy  bool
+	totalChunks  int64
 
 	// Status detector for the current assistant
 	detector types.StatusDetector
@@ -47,7 +70,35 @@ type StatusTracker struct {
 // NewStatusTracker creates a new status tracker
 func NewStatusTracker() *StatusTracker {
 	return &StatusTracker{
-		lastState: types.StateUnknown,
+		lastState:    types.StateUnknown,
+		trackingMode: TrackingModeCapture,
+	}
+}
+
+// SetCaptureFunc configures how capture mode retrieves the latest terminal lines.
+func (t *StatusTracker) SetCaptureFunc(fn CaptureLinesFunc) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.captureFunc = fn
+}
+
+// SetTrackingMode updates how the tracker collects lines.
+func (t *StatusTracker) SetTrackingMode(mode TrackingMode) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	mode = ParseTrackingMode(string(mode))
+	if t.trackingMode == mode {
+		return
+	}
+	t.trackingMode = mode
+	if !t.active {
+		return
+	}
+
+	if mode == TrackingModeVirtualTerminal {
+		t.emulator = vt10x.New(vt10x.WithSize(t.cols, t.rows))
+	} else {
+		t.emulator = nil
 	}
 }
 
@@ -73,7 +124,7 @@ func (t *StatusTracker) Activate(assistantType types.AssistantType, rows, cols i
 		if t.rows != rows || t.cols != cols {
 			t.rows = rows
 			t.cols = cols
-			if t.emulator != nil {
+			if t.trackingMode == TrackingModeVirtualTerminal && t.emulator != nil {
 				t.emulator.Resize(cols, rows)
 			}
 		}
@@ -85,7 +136,11 @@ func (t *StatusTracker) Activate(assistantType types.AssistantType, rows, cols i
 	t.active = true
 	t.rows = rows
 	t.cols = cols
-	t.emulator = vt10x.New(vt10x.WithSize(cols, rows))
+	if t.trackingMode == TrackingModeVirtualTerminal {
+		t.emulator = vt10x.New(vt10x.WithSize(cols, rows))
+	} else {
+		t.emulator = nil
+	}
 	t.detector = createDetector(assistantType)
 
 	// Initialize state and timestamps
@@ -132,82 +187,96 @@ func (t *StatusTracker) Deactivate() {
 	t.resetLocked()
 }
 
+func (t *StatusTracker) ProcessChunkInvoke(chunk []byte) {
+	if t.trackingMode == TrackingModeCapture {
+		go t.ProcessChunk(chunk)
+	} else {
+		t.ProcessChunk(chunk)
+	}
+}
+
 // ProcessChunk feeds a terminal output chunk to the emulator and detects state changes
 func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if !t.active || len(chunk) == 0 || t.emulator == nil {
+	if len(chunk) == 0 {
 		return types.StateUnknown, time.Time{}, false
 	}
-
-	// Feed chunk to virtual terminal
-	t.emulator.Write(chunk)
 
 	now := time.Now()
+	t.totalChunks++
 
-	// Skip if called too frequently (throttle to avoid excessive processing)
-	if !t.lastProcessTime.IsZero() {
-		if now.Sub(t.lastProcessTime) < 100*time.Millisecond {
-			return types.StateUnknown, time.Time{}, false
-		}
-	}
-
-	t.lastProcessTime = now // Track when ProcessChunk was last called
-
-	// Get visible lines from emulator
-	lines := t.getVisibleLinesLocked()
-	if len(lines) == 0 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.active || t.detector == nil {
 		return types.StateUnknown, time.Time{}, false
 	}
 
-	// Use detector to analyze display
-	var detectedState types.State = types.StateUnknown
-	var changeRecentUpdate bool = false
+	var lines []string
+	var err error
 
-	if t.detector != nil {
-		// Pass current state and recentUpdatedAt (time when same state was last detected)
-		detectedState, changeRecentUpdate = t.detector.DetectStateFromLines(lines, t.cols, now, t.lastState, t.recentUpdatedAt)
+	if t.trackingMode == TrackingModeCapture {
+		// 直接节流即可
+		if !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
+			return types.StateUnknown, time.Time{}, false
+		}
+
+		captureFn := t.captureFunc
+		if captureFn == nil || t.captureBusy {
+			return types.StateUnknown, time.Time{}, false
+		}
+
+		t.lastProcessTime = now
+
+		t.captureBusy = true
+		lines, err = captureFn(t.rows, t.cols)
+		t.captureBusy = false
+	} else {
+		// Virtual terminal mode processes chunks sequentially while holding the lock.
+		if t.emulator == nil {
+			t.emulator = vt10x.New(vt10x.WithSize(t.cols, t.rows))
+		}
+		t.emulator.Write(chunk)
+
+		// 节流，但必须确保写入chunk
+		if !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
+			return types.StateUnknown, time.Time{}, false
+		}
+
+		t.lastProcessTime = now
+		lines = getVisibleLinesLocked(t)
 	}
 
-	if detectedState != types.StateUnknown {
-		if changeRecentUpdate {
-			t.recentUpdatedAt = now
-		}
+	if err != nil || len(lines) == 0 || !t.active || t.detector == nil {
+		return types.StateUnknown, time.Time{}, false
+	}
 
-		if detectedState != t.lastState {
-			// State changed to a different state
-			t.lastState = detectedState
-			t.lastChangedAt = now
-			return detectedState, now, true
-		}
+	state, ts, changed := t.detectStateFromLinesLocked(lines, now)
+	if changed {
+		t.emitStateChangeLocked(state, ts)
+	}
+	return state, ts, changed
+}
+
+func (t *StatusTracker) detectStateFromLinesLocked(lines []string, now time.Time) (types.State, time.Time, bool) {
+	if t.detector == nil || len(lines) == 0 {
+		return types.StateUnknown, time.Time{}, false
+	}
+
+	detectedState, changeRecentUpdate := t.detector.DetectStateFromLines(lines, t.cols, now, t.lastState, t.recentUpdatedAt)
+	if detectedState == types.StateUnknown {
+		return types.StateUnknown, time.Time{}, false
+	}
+
+	if changeRecentUpdate {
+		t.recentUpdatedAt = now
+	}
+
+	if detectedState != t.lastState {
+		t.lastState = detectedState
+		t.lastChangedAt = now
+		return detectedState, now, true
 	}
 
 	return types.StateUnknown, time.Time{}, false
-}
-
-// getVisibleLinesLocked extracts visible lines from the emulator (must be called with lock held)
-func (t *StatusTracker) getVisibleLinesLocked() []string {
-	if t.emulator == nil {
-		return nil
-	}
-
-	lines := make([]string, 0, t.rows)
-	runes := make([]rune, 0, t.cols) // Reusable rune buffer for building each line
-
-	for row := 0; row < t.rows; row++ {
-		runes = runes[:0] // Reset buffer, reusing capacity
-
-		for col := 0; col < t.cols; col++ {
-			cell := t.emulator.Cell(col, row)
-			if cell.Char != 0 {
-				runes = append(runes, cell.Char)
-			}
-		}
-		lines = append(lines, string(runes))
-	}
-
-	return lines
 }
 
 // State returns the current state and timestamp
@@ -215,6 +284,20 @@ func (t *StatusTracker) State() (types.State, time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.lastState, t.lastChangedAt
+}
+
+// ChunkCount returns how many chunks have been processed.
+func (t *StatusTracker) ChunkCount() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.totalChunks
+}
+
+// TrackingMode returns the current tracking mode.
+func (t *StatusTracker) TrackingMode() TrackingMode {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.trackingMode
 }
 
 // AssistantType returns the current assistant type
@@ -268,7 +351,7 @@ func (t *StatusTracker) checkStateIfIdle() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if !t.active || t.emulator == nil || t.detector == nil {
+	if !t.active || t.detector == nil {
 		return
 	}
 
@@ -279,34 +362,36 @@ func (t *StatusTracker) checkStateIfIdle() {
 		return
 	}
 
-	// Get current terminal display (no new chunk, just re-check)
-	lines := t.getVisibleLinesLocked()
+	var lines []string
+	if t.trackingMode == TrackingModeCapture {
+		captureFn := t.captureFunc
+		if captureFn == nil || t.captureBusy {
+			return
+		}
+		rows, cols := t.rows, t.cols
+		t.captureBusy = true
+		t.mu.Unlock()
+		captured, err := captureFn(rows, cols)
+		t.mu.Lock()
+		t.captureBusy = false
+		if err != nil || len(captured) == 0 || !t.active || t.detector == nil {
+			return
+		}
+		lines = captured
+	} else {
+		if t.emulator == nil {
+			return
+		}
+		lines = getVisibleLinesLocked(t)
+	}
+
 	if len(lines) == 0 {
 		return
 	}
 
-	// Use detector to analyze display
-	detectedState, changeRecentUpdate := t.detector.DetectStateFromLines(lines, t.cols, now, t.lastState, t.recentUpdatedAt)
-
-	if detectedState != types.StateUnknown {
-		if changeRecentUpdate {
-			t.recentUpdatedAt = now
-		}
-
-		if detectedState != t.lastState {
-			// State changed to a different state
-			t.lastState = detectedState
-			t.lastChangedAt = now
-
-			// Call callback if set (must call without holding lock to avoid deadlock)
-			callback := t.callback
-			if callback != nil {
-				// Release lock before calling callback
-				t.mu.Unlock()
-				callback(detectedState, now)
-				t.mu.Lock()
-			}
-		}
+	state, ts, changed := t.detectStateFromLinesLocked(lines, now)
+	if changed {
+		t.emitStateChangeLocked(state, ts)
 	}
 }
 
@@ -322,4 +407,16 @@ func (t *StatusTracker) resetLocked() {
 	t.detector = nil
 	t.rows = 0
 	t.cols = 0
+	t.captureBusy = false
+	t.totalChunks = 0
+}
+
+func (t *StatusTracker) emitStateChangeLocked(state types.State, ts time.Time) {
+	callback := t.callback
+	if callback == nil {
+		return
+	}
+	t.mu.Unlock()
+	callback(state, ts)
+	t.mu.Lock()
 }

@@ -158,6 +158,21 @@
             <n-form-item :label="t('settings.aiAssistantCodex')">
               <n-switch v-model:value="aiStatusForm.codex" />
             </n-form-item>
+            <n-form-item :label="t('settings.aiAssistantTrackingMode')">
+              <n-space vertical size="small">
+                <n-radio-group v-model:value="aiStatusForm.trackingMode">
+                  <n-space size="small">
+                    <n-radio value="capture">
+                      {{ t('settings.aiAssistantTrackingModeCapture') }}
+                    </n-radio>
+                    <n-radio value="virtual-terminal">
+                      {{ t('settings.aiAssistantTrackingModeVirtual') }}
+                    </n-radio>
+                  </n-space>
+                </n-radio-group>
+                <span class="form-tip">{{ t('settings.aiAssistantTrackingModeTip') }}</span>
+              </n-space>
+            </n-form-item>
           </n-form>
           <span class="form-tip">{{ t('settings.aiAssistantStatusTrackingTip') }}</span>
         </n-spin>
@@ -387,6 +402,7 @@ const aiStatusForm = reactive<AIAssistantStatusConfig>({
   gemini: false,
   cursor: false,
   copilot: false,
+  trackingMode: 'capture',
 });
 const aiStatusOriginal = ref<AIAssistantStatusConfig | null>(null);
 const aiStatusDirty = computed(() => {
@@ -394,7 +410,11 @@ const aiStatusDirty = computed(() => {
   return (
     aiStatusForm.claudeCode !== aiStatusOriginal.value.claudeCode ||
     aiStatusForm.codex !== aiStatusOriginal.value.codex ||
-    aiStatusForm.qwenCode !== aiStatusOriginal.value.qwenCode
+    aiStatusForm.qwenCode !== aiStatusOriginal.value.qwenCode ||
+    aiStatusForm.gemini !== aiStatusOriginal.value.gemini ||
+    aiStatusForm.cursor !== aiStatusOriginal.value.cursor ||
+    aiStatusForm.copilot !== aiStatusOriginal.value.copilot ||
+    aiStatusForm.trackingMode !== aiStatusOriginal.value.trackingMode
   );
 });
 
@@ -431,7 +451,8 @@ async function loadAIStatus() {
     const config = resp?.item;
     if (config) {
       Object.assign(aiStatusForm, config);
-      aiStatusOriginal.value = { ...config };
+      aiStatusForm.trackingMode = config.trackingMode || 'capture';
+      aiStatusOriginal.value = { ...config, trackingMode: aiStatusForm.trackingMode };
     }
   } catch (error) {
     console.error('Failed to load AI status config:', error);

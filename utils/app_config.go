@@ -32,12 +32,13 @@ type DeveloperConfig struct {
 }
 
 type AIAssistantStatusConfig struct {
-	ClaudeCode bool `json:"claudeCode" yaml:"claudeCode"` // 状态监测准确，默认启用
-	Codex      bool `json:"codex" yaml:"codex"`           // 默认启用
-	QwenCode   bool `json:"qwenCode" yaml:"qwenCode"`     // 状态监测准确，默认启用
-	Gemini     bool `json:"gemini" yaml:"gemini"`         // 未充分测试，默认禁用
-	Cursor     bool `json:"cursor" yaml:"cursor"`         // 未充分测试，默认禁用
-	Copilot    bool `json:"copilot" yaml:"copilot"`       // 未充分测试，默认禁用
+	ClaudeCode   bool   `json:"claudeCode" yaml:"claudeCode"` // 状态监测准确，默认启用
+	Codex        bool   `json:"codex" yaml:"codex"`           // 默认启用
+	QwenCode     bool   `json:"qwenCode" yaml:"qwenCode"`     // 状态监测准确，默认启用
+	Gemini       bool   `json:"gemini" yaml:"gemini"`         // 未充分测试，默认禁用
+	Cursor       bool   `json:"cursor" yaml:"cursor"`         // 未充分测试，默认禁用
+	Copilot      bool   `json:"copilot" yaml:"copilot"`       // 未充分测试，默认禁用
+	TrackingMode string `json:"trackingMode" yaml:"trackingMode"`
 }
 
 type TerminalConfig struct {
@@ -182,12 +183,13 @@ func ReadConfig() *AppConfig {
 			Encoding:              "utf-8",
 			ScrollbackBytes:       262144,
 			AIAssistantStatus: AIAssistantStatusConfig{
-				ClaudeCode: true,  // 状态监测准确
-				Codex:      true,  // 默认启用
-				QwenCode:   true,  // 状态监测准确
-				Gemini:     false, // 未充分测试
-				Cursor:     false, // 未充分测试
-				Copilot:    false, // 未充分测试
+				ClaudeCode:   true,  // 状态监测准确
+				Codex:        true,  // 默认启用
+				QwenCode:     true,  // 状态监测准确
+				Gemini:       false, // 未充分测试
+				Cursor:       false, // 未充分测试
+				Copilot:      false, // 未充分测试
+				TrackingMode: "capture",
 			},
 		},
 		Developer: DeveloperConfig{
