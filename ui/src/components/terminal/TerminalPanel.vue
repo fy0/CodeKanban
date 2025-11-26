@@ -562,6 +562,7 @@ onMounted(() => {
 
   // Listen for AI approval events
   emitter.on('ai:approval-needed', handleAIApproval);
+  emitter.on('terminal:ensure-expanded', handleEnsureExpandedEvent);
 
   // 初始化时检查并调整边距
   adjustPanelMarginsForMinWidth();
@@ -599,6 +600,7 @@ onBeforeUnmount(() => {
   destroyTabSorting();
   emitter.off('ai:completed', handleAICompletion);
   emitter.off('ai:approval-needed', handleAIApproval);
+  emitter.off('terminal:ensure-expanded', handleEnsureExpandedEvent);
 });
 
 // 处理窗口大小变化，当窗口缩小时自动调整边距以维持最小宽度
@@ -770,6 +772,12 @@ watch(
       });
     }
 
+    // Notify AICompletionNotifier to clear notification for this session
+    // This ensures notifications are dismissed when user manually switches to the terminal
+    emitter.emit('terminal:viewed', {
+      sessionId: newId,
+    });
+
     // Update active tab indicator
     updateActiveTabIndicator();
 
@@ -813,6 +821,23 @@ function toggleExpanded(arg?: ToggleOptions | MouseEvent) {
       scheduleResizeAll();
     });
   }
+}
+
+function ensureExpanded(options?: ToggleOptions) {
+  if (expanded.value) {
+    bringTerminalPanelToFront();
+    return;
+  }
+  toggleExpanded(options);
+}
+
+type EnsureExpandedEvent = ToggleOptions & { projectId?: string };
+
+function handleEnsureExpandedEvent(payload?: EnsureExpandedEvent) {
+  if (payload?.projectId && payload.projectId !== projectIdRef.value) {
+    return;
+  }
+  ensureExpanded(payload);
 }
 
 function handleTerminalToggleShortcut(event: KeyboardEvent) {
@@ -1504,6 +1529,7 @@ defineExpose({
   createTerminal: openTerminal,
   reloadSessions,
   toggleExpanded,
+  ensureExpanded,
 });
 </script>
 

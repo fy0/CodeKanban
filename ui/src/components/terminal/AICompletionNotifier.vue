@@ -34,13 +34,15 @@ function handleAICompletion(event: any) {
   const assistantName = assistant?.displayName || assistant?.name || 'AI';
 
   // Build notification content with project name
-  const content = projectName
-    ? `[${projectName}] ${assistantName} ${t('terminal.hasCompletedExecution')} - ${sessionTitle}`
-    : `${assistantName} ${t('terminal.hasCompletedExecution')} - ${sessionTitle}`;
+  const title = projectName
+    ? `${t('terminal.aiCompleted')} - ${projectName}`
+    : t('terminal.aiCompleted');
+
+  const content = `${assistantName} - ${sessionTitle}`;
 
   // Show notification and track it
   const notificationInstance = notification.success({
-    title: t('terminal.aiCompleted'),
+    title,
     content,
     duration: 4000,
     closable: true,
@@ -73,6 +75,30 @@ function handleAIClosed(event: any) {
   }
 }
 
+function handleAIWorking(event: any) {
+  const { sessionId } = event;
+
+  // Destroy the completion notification when AI starts working again
+  const notificationInstance = activeNotifications.get(sessionId);
+  if (notificationInstance) {
+    notificationInstance.destroy();
+    activeNotifications.delete(sessionId);
+    console.log(`[AICompletionNotifier] Cleared completion notification for session ${sessionId} (AI resumed work)`);
+  }
+}
+
+function handleTerminalViewed(event: any) {
+  const { sessionId } = event;
+
+  // Destroy the notification when user manually switches to the terminal
+  const notificationInstance = activeNotifications.get(sessionId);
+  if (notificationInstance) {
+    notificationInstance.destroy();
+    activeNotifications.delete(sessionId);
+    console.log(`[AICompletionNotifier] Cleared notification for session ${sessionId} (user viewed terminal)`);
+  }
+}
+
 // Play a subtle completion sound
 function playCompletionSound() {
   try {
@@ -100,11 +126,15 @@ function playCompletionSound() {
 onMounted(() => {
   terminalStore.emitter.on('ai:completed', handleAICompletion);
   terminalStore.emitter.on('ai:closed', handleAIClosed);
+  terminalStore.emitter.on('ai:working', handleAIWorking);
+  terminalStore.emitter.on('terminal:viewed', handleTerminalViewed);
 });
 
 onUnmounted(() => {
   terminalStore.emitter.off('ai:completed', handleAICompletion);
   terminalStore.emitter.off('ai:closed', handleAIClosed);
+  terminalStore.emitter.off('ai:working', handleAIWorking);
+  terminalStore.emitter.off('terminal:viewed', handleTerminalViewed);
 
   // Clean up all active notifications when component is unmounted
   activeNotifications.forEach(notification => {

@@ -25,6 +25,7 @@ Try it instantly:
 npx codekanban
 # or
 npm install -g codekanban
+codekanban
 ```
 
 ## Core Features

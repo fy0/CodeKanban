@@ -63,6 +63,43 @@ function saveClickedNotifications() {
   }
 }
 
+function markNotificationsAsRead(notificationIds: string[]) {
+  let changed = false;
+  notificationIds.forEach((id) => {
+    if (id && !clickedNotifications.value.has(id)) {
+      clickedNotifications.value.add(id);
+      changed = true;
+    }
+  });
+  if (changed) {
+    saveClickedNotifications();
+  }
+}
+
+function clearReadStateForNotifications(notificationIds: string[]) {
+  let changed = false;
+  notificationIds.forEach((id) => {
+    if (id && clickedNotifications.value.delete(id)) {
+      changed = true;
+    }
+  });
+  if (changed) {
+    saveClickedNotifications();
+  }
+}
+
+function markSessionCompletionNotificationsAsRead(sessionId: string) {
+  if (!sessionId) {
+    return;
+  }
+  const ids = notifications.value
+    .filter((notification) => notification.type === 'completion' && notification.sessionId === sessionId)
+    .map((notification) => notification.id);
+  if (ids.length) {
+    markNotificationsAsRead(ids);
+  }
+}
+
 // 切换通知开关
 function toggleNotifications() {
   notificationsEnabled.value = !notificationsEnabled.value;
@@ -89,6 +126,7 @@ interface NotificationItem {
   assistantIcon?: string;
   assistantColor?: string;
   timestamp: Date;
+  state?: 'completed' | 'working';
 }
 
 type NotificationType = 'completion' | 'approval';
@@ -172,6 +210,37 @@ function getLocationLabel(notification: NotificationItem) {
   return notification.branchName || notification.projectName || '';
 }
 
+function getCompletionHeader(notification: NotificationItem) {
+  const projectLabel = notification.projectName || getLocationLabel(notification);
+  const titleKey = notification.state === 'working' ? 'terminal.aiWorking' : 'terminal.aiCompleted';
+  const baseTitle = t(titleKey);
+  return projectLabel ? `${baseTitle} - ${projectLabel}` : baseTitle;
+}
+
+function getApprovalHeader(notification: NotificationItem) {
+  const projectLabel = notification.projectName || getLocationLabel(notification);
+  return projectLabel ? `${t('terminal.aiNeedsApproval')} - ${projectLabel}` : t('terminal.aiNeedsApproval');
+}
+
+function getNotificationHeader(notification: NotificationItem) {
+  return notification.type === 'completion'
+    ? getCompletionHeader(notification)
+    : getApprovalHeader(notification);
+}
+
+function formatCompletionBody(notification: NotificationItem) {
+  return notification.title;
+}
+
+function getNotificationDescription(notification: NotificationItem) {
+  const location = getLocationLabel(notification);
+  const body =
+    notification.type === 'completion'
+      ? formatCompletionBody(notification)
+      : `${t('terminal.isWaitingForApproval')} - ${notification.title}`;
+  return location ? `[${location}] ${body}` : body;
+}
+
 function getAssistantName(info?: AssistantInfo) {
   return info?.displayName || info?.name || 'AI';
 }
@@ -205,6 +274,7 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
     assistantIcon: getAssistantIconByType(assistantType),
     assistantColor: getAssistantColorByType(assistantType),
     timestamp: record.completedAt ? new Date(record.completedAt) : new Date(),
+    state: 'completed',
   };
 }
 
@@ -239,10 +309,84 @@ function sortNotifications(list: NotificationItem[]) {
 function setNotificationsForType(type: NotificationType, items: NotificationItem[]) {
   const others = notifications.value.filter((item) => item.type !== type);
   notifications.value = sortNotifications([...others, ...items]);
+  if (type === 'completion') {
+    autoMarkActiveCompletionNotifications();
+  }
+}
+
+function getActiveSessionIds() {
+  const activeSessions = new Set<string>();
+  projectStore.projects.forEach((project) => {
+    const activeSessionId = terminalStore.getActiveTabId(project.id);
+    if (activeSessionId) {
+      activeSessions.add(activeSessionId);
+    }
+  });
+  return activeSessions;
+}
+
+function autoMarkActiveCompletionNotifications() {
+  const activeSessions = getActiveSessionIds();
+  if (!activeSessions.size) {
+    return;
+  }
+  const idsToMark = notifications.value
+    .filter((notification) => notification.type === 'completion' && activeSessions.has(notification.sessionId))
+    .map((notification) => notification.id);
+  if (idsToMark.length) {
+    markNotificationsAsRead(idsToMark);
+  }
 }
 
 function removeNotificationLocally(recordId: string) {
   notifications.value = notifications.value.filter((item) => item.recordId !== recordId);
+}
+
+function handleTerminalViewedEvent(event: any) {
+  const sessionId = event?.sessionId;
+  if (!sessionId) {
+    return;
+  }
+  markSessionCompletionNotificationsAsRead(sessionId);
+}
+
+function getNotificationClass(notification: NotificationItem) {
+  if (notification.type === 'completion') {
+    return notification.state === 'working' ? 'notification-working' : 'notification-completion';
+  }
+  return 'notification-approval';
+}
+
+function handleAIWorking(event: any) {
+  const { sessionId } = event || {};
+  if (!sessionId) {
+    return;
+  }
+
+  const updatedIds: string[] = [];
+  let changed = false;
+
+  notifications.value = notifications.value.map((notification) => {
+    if (notification.type === 'completion' && notification.sessionId === sessionId) {
+      if (notification.state !== 'working') {
+        changed = true;
+        updatedIds.push(notification.id);
+        return {
+          ...notification,
+          state: 'working',
+        };
+      }
+    }
+    return notification;
+  });
+
+  if (updatedIds.length) {
+    clearReadStateForNotifications(updatedIds);
+  }
+
+  if (changed) {
+    console.log('[AI Notification] Marked completion as working', { sessionId });
+  }
 }
 
 async function fetchCompletionRecords(options?: { playSound?: boolean }) {
@@ -353,10 +497,7 @@ function handleAIApproval() {
 // 点击通知，切换到对应的终端
 async function handleNotificationClick(notification: NotificationItem) {
   // 记录该通知已被点击
-  if (!clickedNotifications.value.has(notification.id)) {
-    clickedNotifications.value.add(notification.id);
-    saveClickedNotifications();
-  }
+  markNotificationsAsRead([notification.id]);
 
   const targetProjectId = notification.projectId;
   if (!targetProjectId) {
@@ -374,6 +515,11 @@ async function handleNotificationClick(notification: NotificationItem) {
       console.error('[AI Notification] Failed to switch project for notification', error);
     }
   }
+
+  // Ensure the terminal panel is visible when jumping from notifications
+  terminalStore.emitter.emit('terminal:ensure-expanded', {
+    projectId: targetProjectId,
+  });
 
   // 切换到对应的终端标签
   terminalStore.setActiveTab(targetProjectId, notification.sessionId);
@@ -502,6 +648,8 @@ onMounted(() => {
 
   terminalStore.emitter.on('ai:completed', handleAICompletion);
   terminalStore.emitter.on('ai:approval-needed', handleAIApproval);
+  terminalStore.emitter.on('ai:working', handleAIWorking);
+  terminalStore.emitter.on('terminal:viewed', handleTerminalViewedEvent);
 
   void fetchCompletionRecords();
   void fetchApprovalRecords();
@@ -513,6 +661,8 @@ onMounted(() => {
 onUnmounted(() => {
   terminalStore.emitter.off('ai:completed', handleAICompletion);
   terminalStore.emitter.off('ai:approval-needed', handleAIApproval);
+  terminalStore.emitter.off('ai:working', handleAIWorking);
+  terminalStore.emitter.off('terminal:viewed', handleTerminalViewedEvent);
 
   // 取消订阅所有终端
   subscribedSessions.forEach((sessionId) => {
@@ -587,7 +737,7 @@ watch(
         :key="notification.id"
         :class="[
           'notification-item',
-          `notification-${notification.type}`,
+          getNotificationClass(notification),
           { 'notification-clicked': isNotificationClicked(notification.id) }
         ]"
         @click="handleNotificationClick(notification)"
@@ -601,26 +751,37 @@ watch(
             ></span>
             <span class="notification-title">
               {{
-                notification.type === 'completion'
-                  ? t('terminal.aiCompleted')
-                  : t('terminal.aiNeedsApproval')
+                getNotificationHeader(notification)
               }}
             </span>
           </div>
           <div class="notification-body">
-            <div class="notification-description">
-              <span v-if="getLocationLabel(notification)" class="project-badge">
-                [{{ getLocationLabel(notification) }}]
-              </span>
-              <span class="notification-text">
-                {{
-                  notification.type === 'completion'
-                    ? t('terminal.hasCompletedExecution')
-                    : t('terminal.isWaitingForApproval')
-                }}
-                - {{ notification.title }}
-              </span>
-            </div>
+            <n-popover
+              trigger="hover"
+              :delay="1500"
+              placement="bottom-end"
+              :show-arrow="false"
+              class="notification-popover"
+            >
+              <template #trigger>
+                <div class="notification-description">
+                  <span v-if="getLocationLabel(notification)" class="project-badge">
+                    [{{ getLocationLabel(notification) }}]
+                  </span>
+                  <span class="notification-text">
+                    <template v-if="notification.type === 'completion'">
+                      {{ formatCompletionBody(notification) }}
+                    </template>
+                    <template v-else>
+                      {{ t('terminal.isWaitingForApproval') }} - {{ notification.title }}
+                    </template>
+                  </span>
+                </div>
+              </template>
+              <div class="notification-detail-text">
+                {{ getNotificationDescription(notification) }}
+              </div>
+            </n-popover>
             <div class="notification-action-hint">
               {{ t('terminal.clickToJumpTerminal') }}
             </div>
@@ -641,7 +802,7 @@ watch(
 <style scoped>
 .notification-bar-container {
   position: fixed;
-  top: 8px;
+  top: 6px;
   right: 8px;
   z-index: 5;
   pointer-events: none;
@@ -684,15 +845,16 @@ watch(
 .notification-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-width: 420px;
+  gap: 6px;
+  width: min(320px, calc(100vw - 32px));
+  max-width: 360px;
 }
 
 .notification-item {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 10px 14px;
   background: var(--app-surface-color, var(--body-color, #ffffff));
   border-radius: 12px;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
@@ -702,6 +864,7 @@ watch(
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-left: 4px solid transparent;
   min-width: 320px;
+  width: 100%;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -712,8 +875,9 @@ watch(
 }
 
 /* 已点击过的完成通知样式 - 左侧提示条变黑灰色，背景变白色 */
-.notification-completion.notification-clicked {
-  border-left-color: #333333 !important;
+.notification-completion.notification-clicked,
+.notification-working.notification-clicked {
+  border-left-color: #9ca3af !important;
   background: #ffffff !important;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
 }
@@ -738,6 +902,15 @@ watch(
   box-shadow: 0 12px 28px rgba(247, 144, 9, 0.15);
 }
 
+.notification-working {
+  --notification-working-fill: var(--kanban-terminal-tab-working-bg, rgba(237, 233, 254, 1));
+  --notification-working-accent: var(--kanban-terminal-tab-working-border, rgba(139, 92, 246, 1));
+  background: var(--notification-working-fill);
+  border-color: rgba(139, 92, 246, 0.3);
+  border-left-color: var(--notification-working-accent);
+  box-shadow: 0 12px 28px rgba(139, 92, 246, 0.15);
+}
+
 .notification-content {
   flex: 1;
   min-width: 0;
@@ -747,7 +920,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   font-weight: 600;
   font-size: 14px;
 }
@@ -773,6 +946,10 @@ watch(
   color: var(--notification-approval-accent, rgba(247, 144, 9, 1));
 }
 
+.notification-working .notification-icon {
+  color: var(--notification-working-accent, rgba(139, 92, 246, 1));
+}
+
 .notification-title {
   color: var(--text-color, #000000);
 }
@@ -780,17 +957,19 @@ watch(
 .notification-body {
   font-size: 13px;
   color: var(--text-color-secondary, #666666);
-  line-height: 1.4;
+  line-height: 1.3;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .notification-description {
   display: flex;
   align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  width: 100%;
+  min-width: 0;
+  gap: 4px;
 }
 
 .notification-action-hint {
@@ -802,10 +981,15 @@ watch(
 .project-badge {
   font-weight: 500;
   color: var(--text-color, #000000);
+  flex-shrink: 0;
 }
 
 .notification-text {
-  word-break: break-word;
+  display: inline-block;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .notification-close {
@@ -825,6 +1009,18 @@ watch(
 
 .notification-close:hover {
   opacity: 1;
+}
+
+.notification-detail-text {
+  max-width: 420px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-color, #000);
+  word-break: break-word;
+}
+
+.notification-popover :deep(.n-popover__content) {
+  padding: 10px 12px;
 }
 
 /* 动画 */

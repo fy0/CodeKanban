@@ -363,6 +363,7 @@ export default {
     aiAssistantDetected: 'AI Coding Agent',
     statusLabel: 'Status',
     aiCompleted: 'AI Execution Completed',
+    aiWorking: 'AI Working',
     hasCompletedExecution: 'has completed execution',
     aiNeedsApproval: 'AI Needs Approval',
     isWaitingForApproval: 'is waiting for your approval',

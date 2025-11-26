@@ -597,6 +597,27 @@ export const useTerminalStore = defineStore('terminal', () => {
             });
           }
 
+          // Detect AI starting to work again (after being idle/completed)
+          if (currentState === 'working' && previousState && previousState !== 'working') {
+            console.log(
+              `[Terminal] AI Started Working: ${payload.metadata.aiAssistant?.displayName || 'AI'} resumed work`,
+              {
+                sessionId: tab.id,
+                sessionTitle: tab.title,
+                previousState,
+                currentState,
+                assistant: payload.metadata.aiAssistant,
+              }
+            );
+            emitter.emit('ai:working', {
+              sessionId: tab.id,
+              sessionTitle: tab.title,
+              projectId: tab.projectId,
+              projectName: getProjectName(tab.projectId),
+              assistant: payload.metadata.aiAssistant,
+            });
+          }
+
           if (currentState === 'waiting_input' && previousState) {
             // Check if transitioning from working state
             const isFromWorkingState = previousState === 'working';
