@@ -225,9 +225,15 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 		}
 
 		t.lastProcessTime = now
-
 		t.captureBusy = true
-		lines, err = captureFn(t.rows, t.cols)
+
+		// Must unlock before calling captureFn to avoid deadlock
+		// captureFn -> CaptureNextChunk -> Resize -> assistantTracker.Activate -> t.mu.Lock()
+		rows, cols := t.rows, t.cols
+		t.mu.Unlock()
+		lines, err = captureFn(rows, cols)
+		t.mu.Lock()
+
 		t.captureBusy = false
 	} else {
 		// Virtual terminal mode processes chunks sequentially while holding the lock.
@@ -262,12 +268,13 @@ func (t *StatusTracker) detectStateFromLinesLocked(lines []string, now time.Time
 	}
 
 	detectedState, changeRecentUpdate := t.detector.DetectStateFromLines(lines, t.cols, now, t.lastState, t.recentUpdatedAt)
-	if detectedState == types.StateUnknown {
-		return types.StateUnknown, time.Time{}, false
-	}
 
 	if changeRecentUpdate {
 		t.recentUpdatedAt = now
+	}
+
+	if detectedState == types.StateUnknown {
+		return types.StateUnknown, time.Time{}, false
 	}
 
 	if detectedState != t.lastState {
