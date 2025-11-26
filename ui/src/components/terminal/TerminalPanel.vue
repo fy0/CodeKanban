@@ -75,6 +75,33 @@
         @clickoutside="contextMenuTab = null"
       />
       <div class="header-actions">
+        <!-- 创建终端按钮 - 始终显示 -->
+        <n-dropdown
+          v-if="worktrees.length > 1"
+          trigger="click"
+          :options="createTerminalOptionsWithHeader"
+          @select="handleCreateTerminalSelect"
+        >
+          <n-button text size="small">
+            <template #icon>
+              <n-icon>
+                <Add />
+              </n-icon>
+            </template>
+          </n-button>
+        </n-dropdown>
+        <n-button
+          v-else
+          text
+          size="small"
+          @click="handleCreateTerminalClick"
+        >
+          <template #icon>
+            <n-icon>
+              <Add />
+            </n-icon>
+          </template>
+        </n-button>
         <n-dropdown
           trigger="click"
           placement="bottom-end"
@@ -166,7 +193,7 @@ import type { HTMLAttributes } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useDialog, useMessage, NIcon, NInput } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
-import { ChevronDownOutline, ChevronUpOutline, TerminalOutline, CopyOutline, CreateOutline, SettingsOutline, CheckmarkOutline, InformationCircleOutline } from '@vicons/ionicons5';
+import { ChevronDownOutline, ChevronUpOutline, TerminalOutline, CopyOutline, CreateOutline, SettingsOutline, CheckmarkOutline, InformationCircleOutline, Add } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
 import { useTerminalClient, type TerminalCreateOptions, type TerminalTabState } from '@/composables/useTerminalClient';
 import type { DropdownOption } from 'naive-ui';
@@ -249,6 +276,34 @@ const createTerminalOptions = computed<DropdownOption[]>(() => {
     label: worktree.branchName,
     key: worktree.id,
   }));
+});
+
+// 创建终端下拉菜单选项（带提示头）
+const createTerminalOptionsWithHeader = computed<DropdownOption[]>(() => {
+  return [
+    {
+      label: t('terminal.createNewTerminal'),
+      key: 'header',
+      disabled: true,
+      type: 'render',
+      render: () => h('div', {
+        style: {
+          color: 'var(--n-text-color-3, #999)',
+          fontSize: '12px',
+          fontWeight: '500',
+          padding: '8px 12px 4px 12px',
+          borderBottom: '1px solid var(--n-divider-color, #eee)',
+          marginBottom: '4px',
+          cursor: 'default',
+          userSelect: 'none'
+        }
+      }, t('terminal.createNewTerminal'))
+    },
+    ...worktrees.value.map(worktree => ({
+      label: worktree.branchName,
+      key: worktree.id,
+    }))
+  ];
 });
 
 const MIN_HEIGHT = 200;
