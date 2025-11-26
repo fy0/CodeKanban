@@ -143,7 +143,6 @@ export interface AIAssistantStatusConfig {
   cursor: boolean;
   gemini: boolean;
   qwenCode: boolean;
-  trackingMode: string;
 }
 export interface DeveloperConfig {
   /**
@@ -3757,7 +3756,6 @@ declare global {
        *     cursor: boolean
        *     gemini: boolean
        *     qwenCode: boolean
-       *     trackingMode: string
        *   }
        * }
        * ```
@@ -3785,7 +3783,6 @@ declare global {
        *   cursor: boolean
        *   gemini: boolean
        *   qwenCode: boolean
-       *   trackingMode: string
        * }
        * ```
        *
