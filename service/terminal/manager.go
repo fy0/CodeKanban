@@ -12,6 +12,8 @@ import (
 	"go.uber.org/zap"
 
 	"code-kanban/utils"
+	"code-kanban/utils/ai_assistant2"
+	"code-kanban/utils/ai_assistant2/types"
 )
 
 // Config defines runtime constraints for terminal sessions.
@@ -40,13 +42,14 @@ type CreateSessionParams struct {
 
 // Manager orchestrates PTY sessions.
 type Manager struct {
-	cfg       Config
-	sessionMu sync.Mutex
-	sessions  utils.SyncMap[string, *Session]
-	logger    *zap.Logger
-	encoding  string
-	baseCtx   context.Context
-	baseCtxMu sync.RWMutex
+	cfg           Config
+	sessionMu     sync.Mutex
+	sessions      utils.SyncMap[string, *Session]
+	logger        *zap.Logger
+	encoding      string
+	baseCtx       context.Context
+	baseCtxMu     sync.RWMutex
+	recordManager *RecordManager
 }
 
 // NewManager builds a manager instance.
@@ -60,10 +63,11 @@ func NewManager(cfg Config, logger *zap.Logger) *Manager {
 	}
 
 	mgr := &Manager{
-		cfg:      cfg,
-		logger:   logger.Named("terminal-manager"),
-		encoding: cfg.Encoding,
-		baseCtx:  context.Background(),
+		cfg:           cfg,
+		logger:        logger.Named("terminal-manager"),
+		encoding:      cfg.Encoding,
+		baseCtx:       context.Background(),
+		recordManager: NewRecordManager(),
 	}
 	return mgr
 }
@@ -219,7 +223,9 @@ func (m *Manager) shellCommand() ([]string, error) {
 }
 
 func (m *Manager) watchSession(session *Session) {
+	go m.monitorAssistantRecords(session)
 	<-session.Closed()
+	m.recordManager.ClearSessionRecords(session.ID())
 	m.sessions.Delete(session.ID())
 }
 
@@ -350,4 +356,106 @@ func (m *Manager) UpdateScrollbackEnabled(enabled bool) {
 		session.UpdateScrollbackLimit(limit)
 		return true
 	})
+}
+
+// GetRecordManager 返回记录管理器实例
+func (m *Manager) GetRecordManager() *RecordManager {
+	return m.recordManager
+}
+
+func (m *Manager) monitorAssistantRecords(session *Session) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stream, err := session.Subscribe(ctx)
+	if err != nil {
+		return
+	}
+	defer stream.Close()
+
+	lastState := string(types.StateUnknown)
+
+	for event := range stream.Events() {
+		switch event.Type {
+		case StreamEventMetadata:
+			metadata := event.Metadata
+			if metadata == nil || metadata.AIAssistant == nil {
+				// AI 助手 detach 时，清除该 session 的所有记录
+				if lastState != string(types.StateUnknown) {
+					m.recordManager.ClearSessionRecords(session.ID())
+					lastState = string(types.StateUnknown)
+				}
+				continue
+			}
+			state := metadata.AIAssistant.State
+		if state == lastState && state != string(types.StateWaitingApproval) {
+			continue
+		}
+
+			switch state {
+			case string(types.StateWaitingInput):
+				// 只有从 working 状态变为 waiting_input 才算完成任务
+				// 避免在初始化时（unknown -> waiting_input）错误地创建完成记录
+				if lastState == string(types.StateWorking) {
+					m.handleSessionCompletionRecord(session, metadata.AIAssistant)
+				}
+			case string(types.StateWaitingApproval):
+				if lastState != string(types.StateWaitingApproval) {
+					m.handleSessionApprovalRecord(session, metadata.AIAssistant)
+				}
+			default:
+				if lastState == string(types.StateWaitingApproval) {
+					m.recordManager.ClearApprovalsBySession(session.ID())
+				}
+			}
+
+			lastState = state
+		case StreamEventExit:
+			return
+		}
+	}
+}
+
+func (m *Manager) handleSessionCompletionRecord(session *Session, info *ai_assistant2.AIAssistantInfo) {
+	if session == nil || info == nil {
+		return
+	}
+
+	record := &CompletionRecord{
+		ID:          utils.NewID(),
+		SessionID:   session.ID(),
+		ProjectID:   session.ProjectID(),
+		Title:       session.Title(),
+		Assistant:   cloneAssistantInfo(info),
+		CompletedAt: time.Now(),
+	}
+
+	m.recordManager.ClearCompletionsBySession(session.ID())
+	m.recordManager.AddCompletion(record)
+}
+
+func (m *Manager) handleSessionApprovalRecord(session *Session, info *ai_assistant2.AIAssistantInfo) {
+	if session == nil || info == nil {
+		return
+	}
+
+	record := &ApprovalRecord{
+		ID:          utils.NewID(),
+		SessionID:   session.ID(),
+		ProjectID:   session.ProjectID(),
+		Title:       session.Title(),
+		Assistant:   cloneAssistantInfo(info),
+		RequestedAt: time.Now(),
+	}
+
+	m.recordManager.ClearApprovalsBySession(session.ID())
+	m.recordManager.AddApproval(record)
+}
+
+func cloneAssistantInfo(info *ai_assistant2.AIAssistantInfo) *ai_assistant2.AIAssistantInfo {
+	if info == nil {
+		return nil
+	}
+	copyInfo := *info
+	return &copyInfo
 }

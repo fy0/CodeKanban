@@ -29,6 +29,9 @@ export interface ThemeSettings {
   terminalFloatingButtonFg?: string;
   // 空终端引导文字颜色
   terminalEmptyGuideFg?: string;
+  // AI 通知按钮颜色（边框和图标）
+  notificationButtonBorder?: string;
+  notificationButtonFg?: string;
   // 看板相关颜色
   kanbanBoardBg?: string;
   kanbanCardBg?: string;

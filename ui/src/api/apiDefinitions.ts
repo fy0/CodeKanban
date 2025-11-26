@@ -45,6 +45,8 @@ export default {
   'system.aiAssistantStatusGet': ['GET', '/api/v1/system/ai-assistant-status'],
   'system.aiAssistantStatusUpdate': ['POST', '/api/v1/system/ai-assistant-status/update'],
   'system.checkUpdate': ['GET', '/api/v1/system/check-update'],
+  'system.developerConfigGet': ['GET', '/api/v1/system/developer-config'],
+  'system.developerConfigUpdate': ['POST', '/api/v1/system/developer-config/update'],
   'system.openEditor': ['POST', '/api/v1/system/open-editor'],
   'system.openExplorer': ['POST', '/api/v1/system/open-explorer'],
   'system.openTerminal': ['POST', '/api/v1/system/open-terminal'],
@@ -57,6 +59,13 @@ export default {
   'task.delete': ['POST', '/api/v1/tasks/{id}/delete'],
   'task.move': ['POST', '/api/v1/tasks/{id}/move'],
   'task.update': ['POST', '/api/v1/tasks/{id}/update'],
+  'terminalSession.terminalApprovalRecordsList': ['GET', '/api/v1/terminals/approval-records'],
+  'terminalSession.terminalApprovalRecordDismiss': ['POST', '/api/v1/terminals/approval-records/{recordId}/dismiss'],
+  'terminalSession.terminalCompletionRecordsList': ['GET', '/api/v1/terminals/completion-records'],
+  'terminalSession.terminalCompletionRecordDismiss': [
+    'POST',
+    '/api/v1/terminals/completion-records/{recordId}/dismiss'
+  ],
   'terminalSession.terminalCounts': ['GET', '/api/v1/terminals/counts'],
   'terminalSession.captureChunk': ['GET', '/api/v1/terminals/{sessionId}/capture'],
   'terminalSession.debug': ['GET', '/api/v1/terminals/{sessionId}/debug'],

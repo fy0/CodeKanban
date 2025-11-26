@@ -145,6 +145,13 @@ export interface AIAssistantStatusConfig {
   qwenCode: boolean;
   trackingMode: string;
 }
+export interface DeveloperConfig {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  enableTerminalScrollback: boolean;
+}
 export interface OpenEditorInputBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -258,6 +265,16 @@ export interface CheckUpdateResponseBody {
    */
   updateUrl?: string;
 }
+export interface ItemResponseDeveloperConfigBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: DeveloperConfig;
+}
 export interface VersionResponseBody {
   /**
    * A URL to the JSON Schema for this object.
@@ -275,6 +292,55 @@ export interface VersionResponseBody {
    * 版本号
    */
   version: string;
+}
+export interface AIAssistantInfo {
+  command?: string;
+  detected: boolean;
+  displayName: string;
+  name: string;
+  state?: string;
+  stateUpdatedAt?: string;
+  type: string;
+}
+export interface ApprovalRecord {
+  assistant: AIAssistantInfo;
+  dismissed: boolean;
+  id: string;
+  projectId: string;
+  projectName?: string;
+  requestedAt: string;
+  sessionId: string;
+  title: string;
+}
+export interface ItemsResponseApprovalRecordBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应列表
+   */
+  items: ApprovalRecord[] | null;
+}
+export interface CompletionRecord {
+  assistant: AIAssistantInfo;
+  completedAt: string;
+  dismissed: boolean;
+  id: string;
+  projectId: string;
+  projectName?: string;
+  sessionId: string;
+  title: string;
+}
+export interface ItemsResponseCompletionRecordBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应列表
+   */
+  items: CompletionRecord[] | null;
 }
 export interface TerminalCountsResponseBody {
   /**
@@ -604,24 +670,6 @@ export interface ItemResponseRefreshAllResultBody {
    */
   item: RefreshAllResult;
 }
-export interface StateStats {
-  currentStateDuration: number;
-  executingDuration: number;
-  thinkingDuration: number;
-  waitingApprovalDuration: number;
-  waitingInputDuration: number;
-}
-export interface AIAssistantInfo {
-  command?: string;
-  detected: boolean;
-  displayName: string;
-  interrupted?: boolean;
-  name: string;
-  state?: string;
-  stateUpdatedAt?: string;
-  stats?: StateStats;
-  type: string;
-}
 export interface TerminalSessionView {
   aiAssistant?: AIAssistantInfo;
   cols: number;
@@ -768,6 +816,7 @@ export interface ItemsResponseTaskCommentTableBody {
 }
 export interface DebugInfo {
   aiAssistant?: AIAssistantInfo;
+  aiChunkCount?: number;
   cols: number;
   projectId: string;
   rows: number;
@@ -788,26 +837,6 @@ export interface ItemResponseDebugInfoBody {
    * 响应对象
    */
   item: DebugInfo;
-}
-export interface SimulatedDisplay {
-  cols: number;
-  currentLine: string;
-  cursorX: number;
-  cursorY: number;
-  displayContent: string;
-  rows: number;
-  sessionId: string;
-  visibleLines: string[] | null;
-}
-export interface ItemResponseSimulatedDisplayBody {
-  /**
-   * A URL to the JSON Schema for this object.
-   */
-  $schema?: string;
-  /**
-   * 响应对象
-   */
-  item: SimulatedDisplay;
 }
 export interface UploadImageResponse {
   /**
@@ -3159,17 +3188,9 @@ declare global {
        *       command?: string
        *       detected: boolean
        *       displayName: string
-       *       interrupted?: boolean
        *       name: string
        *       state?: string
        *       stateUpdatedAt?: string
-       *       stats?: {
-       *         currentStateDuration: number
-       *         executingDuration: number
-       *         thinkingDuration: number
-       *         waitingApprovalDuration: number
-       *         waitingInputDuration: number
-       *       }
        *       type: string
        *     }
        *     cols: number
@@ -3283,17 +3304,9 @@ declare global {
        *       command?: string
        *       detected: boolean
        *       displayName: string
-       *       interrupted?: boolean
        *       name: string
        *       state?: string
        *       stateUpdatedAt?: string
-       *       stats?: {
-       *         currentStateDuration: number
-       *         executingDuration: number
-       *         thinkingDuration: number
-       *         waitingApprovalDuration: number
-       *         waitingInputDuration: number
-       *       }
        *       type: string
        *     }
        *     cols: number
@@ -3376,17 +3389,9 @@ declare global {
        *       command?: string
        *       detected: boolean
        *       displayName: string
-       *       interrupted?: boolean
        *       name: string
        *       state?: string
        *       stateUpdatedAt?: string
-       *       stats?: {
-       *         currentStateDuration: number
-       *         executingDuration: number
-       *         thinkingDuration: number
-       *         waitingApprovalDuration: number
-       *         waitingInputDuration: number
-       *       }
        *       type: string
        *     }
        *     cols: number
@@ -3421,6 +3426,166 @@ declare global {
       >(
         config: Config
       ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.create', Config>;
+      /**
+       * ---
+       *
+       * [GET] 获取所有未关闭的审批记录
+       *
+       * **path:** /api/v1/terminals/approval-records
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应列表
+       *   // [params1] start
+       *   // [items] start
+       *   // [items] end
+       *   // [params1] end
+       *   items: Array<{
+       *     assistant: {
+       *       command?: string
+       *       detected: boolean
+       *       displayName: string
+       *       name: string
+       *       state?: string
+       *       stateUpdatedAt?: string
+       *       type: string
+       *     }
+       *     dismissed: boolean
+       *     id: string
+       *     projectId: string
+       *     projectName?: string
+       *     requestedAt: string
+       *     sessionId: string
+       *     title: string
+       *   }> | null
+       * }
+       * ```
+       */
+      terminalApprovalRecordsList<Config extends Alova2MethodConfig<ItemsResponseApprovalRecordBody>>(
+        config?: Config
+      ): Alova2Method<ItemsResponseApprovalRecordBody, 'terminalSession.terminalApprovalRecordsList', Config>;
+      /**
+       * ---
+       *
+       * [POST] 关闭审批记录
+       *
+       * **path:** /api/v1/terminals/approval-records/{recordId}/dismiss
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   recordId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      terminalApprovalRecordDismiss<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          pathParams: {
+            recordId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'terminalSession.terminalApprovalRecordDismiss', Config>;
+      /**
+       * ---
+       *
+       * [GET] 获取所有未关闭的完成记录
+       *
+       * **path:** /api/v1/terminals/completion-records
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应列表
+       *   // [params1] start
+       *   // [items] start
+       *   // [items] end
+       *   // [params1] end
+       *   items: Array<{
+       *     assistant: {
+       *       command?: string
+       *       detected: boolean
+       *       displayName: string
+       *       name: string
+       *       state?: string
+       *       stateUpdatedAt?: string
+       *       type: string
+       *     }
+       *     completedAt: string
+       *     dismissed: boolean
+       *     id: string
+       *     projectId: string
+       *     projectName?: string
+       *     sessionId: string
+       *     title: string
+       *   }> | null
+       * }
+       * ```
+       */
+      terminalCompletionRecordsList<Config extends Alova2MethodConfig<ItemsResponseCompletionRecordBody>>(
+        config?: Config
+      ): Alova2Method<ItemsResponseCompletionRecordBody, 'terminalSession.terminalCompletionRecordsList', Config>;
+      /**
+       * ---
+       *
+       * [POST] 关闭完成记录
+       *
+       * **path:** /api/v1/terminals/completion-records/{recordId}/dismiss
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   recordId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      terminalCompletionRecordDismiss<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          pathParams: {
+            recordId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'terminalSession.terminalCompletionRecordDismiss', Config>;
       /**
        * ---
        *
@@ -3529,19 +3694,12 @@ declare global {
        *       command?: string
        *       detected: boolean
        *       displayName: string
-       *       interrupted?: boolean
        *       name: string
        *       state?: string
        *       stateUpdatedAt?: string
-       *       stats?: {
-       *         currentStateDuration: number
-       *         executingDuration: number
-       *         thinkingDuration: number
-       *         waitingApprovalDuration: number
-       *         waitingInputDuration: number
-       *       }
        *       type: string
        *     }
+       *     aiChunkCount?: number
        *     cols: number
        *     projectId: string
        *     rows: number
@@ -3550,6 +3708,11 @@ declare global {
        *     // [items] end
        *     // [params1] end
        *     scrollbackChunks: string[] | null
+       *     // [params1] start
+       *     // [items] start
+       *     // [items] end
+       *     // [params1] end
+       *     scrollbackChunksTimestamp: string[] | null
        *     scrollbackLimit: number
        *     scrollbackSize: number
        *     sessionId: string
@@ -3568,56 +3731,6 @@ declare global {
       >(
         config: Config
       ): Alova2Method<ItemResponseDebugInfoBody, 'terminalSession.debug', Config>;
-      /**
-       * ---
-       *
-       * [GET] 获取终端模拟显示内容
-       *
-       * **path:** /api/v1/terminals/{sessionId}/sim-term
-       *
-       * ---
-       *
-       * **Path Parameters**
-       * ```ts
-       * type PathParameters = {
-       *   sessionId: string
-       * }
-       * ```
-       *
-       * ---
-       *
-       * **Response**
-       * ```ts
-       * type Response = {
-       *   // A URL to the JSON Schema for this object.
-       *   $schema?: string
-       *   // 响应对象
-       *   item: {
-       *     cols: number
-       *     currentLine: string
-       *     cursorX: number
-       *     cursorY: number
-       *     displayContent: string
-       *     rows: number
-       *     sessionId: string
-       *     // [params1] start
-       *     // [items] start
-       *     // [items] end
-       *     // [params1] end
-       *     visibleLines: string[] | null
-       *   }
-       * }
-       * ```
-       */
-      simulatedDisplay<
-        Config extends Alova2MethodConfig<ItemResponseSimulatedDisplayBody> & {
-          pathParams: {
-            sessionId: string;
-          };
-        }
-      >(
-        config: Config
-      ): Alova2Method<ItemResponseSimulatedDisplayBody, 'terminalSession.simulatedDisplay', Config>;
     };
     system: {
       /**
@@ -3644,6 +3757,7 @@ declare global {
        *     cursor: boolean
        *     gemini: boolean
        *     qwenCode: boolean
+       *     trackingMode: string
        *   }
        * }
        * ```
@@ -3671,6 +3785,7 @@ declare global {
        *   cursor: boolean
        *   gemini: boolean
        *   qwenCode: boolean
+       *   trackingMode: string
        * }
        * ```
        *
@@ -3723,6 +3838,69 @@ declare global {
       checkUpdate<Config extends Alova2MethodConfig<CheckUpdateResponseBody>>(
         config?: Config
       ): Alova2Method<CheckUpdateResponseBody, 'system.checkUpdate', Config>;
+      /**
+       * ---
+       *
+       * [GET] 获取开发者调试配置
+       *
+       * **path:** /api/v1/system/developer-config
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     // A URL to the JSON Schema for this object.
+       *     $schema?: string
+       *     enableTerminalScrollback: boolean
+       *   }
+       * }
+       * ```
+       */
+      developerConfigGet<Config extends Alova2MethodConfig<ItemResponseDeveloperConfigBody>>(
+        config?: Config
+      ): Alova2Method<ItemResponseDeveloperConfigBody, 'system.developerConfigGet', Config>;
+      /**
+       * ---
+       *
+       * [POST] 更新开发者调试配置
+       *
+       * **path:** /api/v1/system/developer-config/update
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   enableTerminalScrollback: boolean
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      developerConfigUpdate<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          data: DeveloperConfig;
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'system.developerConfigUpdate', Config>;
       /**
        * ---
        *

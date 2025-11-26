@@ -366,6 +366,11 @@ export default {
     hasCompletedExecution: 'has completed execution',
     aiNeedsApproval: 'AI Needs Approval',
     isWaitingForApproval: 'is waiting for your approval',
+    clickToJumpTerminal: 'Click to jump to this terminal',
+    enableNotifications: 'Enable AI Completion Alerts',
+    disableNotifications: 'Disable AI Completion Alerts',
+    notificationsEnabled: 'AI alerts enabled',
+    notificationsDisabled: 'AI alerts disabled',
     aiStatsDurations: 'State Durations:',
   },
   notepad: {

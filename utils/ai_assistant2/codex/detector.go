@@ -74,6 +74,10 @@ func (d *StatusDetector) detectFromDisplay(lines []string) types.State {
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := lines[i]
 
+		if d.isWorkedLine(line) {
+			return types.StateWaitingInput
+		}
+
 		// Check for working state (fast path first)
 		if d.isWorkingLine(line) {
 			return types.StateWorking
@@ -93,6 +97,13 @@ func (d *StatusDetector) detectFromDisplay(lines []string) types.State {
 	return types.StateWaitingInput
 }
 
+func (d *StatusDetector) isWorkedLine(line string) bool {
+	if strings.HasPrefix(line, "─ Worked for ") && strings.HasSuffix(line, "─────────") {
+		return true
+	}
+	return false
+}
+
 // isWorkingLine checks if a line indicates Codex is working
 func (d *StatusDetector) isWorkingLine(line string) bool {
 	if line == "" {
@@ -104,7 +115,16 @@ func (d *StatusDetector) isWorkingLine(line string) bool {
 		return false
 	}
 
-	return d.workingPattern.MatchString(line)
+	ret := d.workingPattern.MatchString(line)
+
+	if ret {
+		// 启动时的mcp加载
+		if strings.Contains(line, "Starting MCP servers)") {
+			return false
+		}
+	}
+
+	return ret
 }
 
 // Default detector instance

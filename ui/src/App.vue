@@ -6,8 +6,7 @@ import { zhCN, dateZhCN, enUS, dateEnUS, darkTheme, type GlobalThemeOverrides } 
 import { useI18n } from 'vue-i18n';
 import AppInitializer from '@/components/common/AppInitializer.vue';
 import NotePad from '@/components/notepad/NotePad.vue';
-import AICompletionNotifier from '@/components/terminal/AICompletionNotifier.vue';
-import AIApprovalNotifier from '@/components/terminal/AIApprovalNotifier.vue';
+import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import { useSettingsStore } from '@/stores/settings';
 import { darkenColor, lightenColor, isDarkHex } from '@/utils/color';
 import { createThemeOverrides } from '@/utils/themeOverrides';
@@ -119,6 +118,9 @@ const cssVarsToSet = computed(() => ({
   '--kanban-terminal-floating-button-fg': theme.value.terminalFloatingButtonFg || theme.value.textColor,
   // 空终端引导文字颜色
   '--kanban-terminal-empty-guide-fg': theme.value.terminalEmptyGuideFg || theme.value.terminalFg,
+  // AI 通知按钮颜色
+  '--kanban-notification-button-border': theme.value.notificationButtonBorder || 'rgba(0, 0, 0, 0.2)',
+  '--kanban-notification-button-fg': theme.value.notificationButtonFg || theme.value.textColor,
   // 看板颜色
   '--kanban-board-bg': theme.value.kanbanBoardBg || presetTerminalTabColors.value.kanbanBoardBg || theme.value.bodyColor,
   '--kanban-card-bg': theme.value.kanbanCardBg || presetTerminalTabColors.value.kanbanCardBg || theme.value.surfaceColor,
@@ -197,8 +199,7 @@ onBeforeUnmount(() => {
               <AppInitializer />
               <RouterView />
               <NotePad />
-              <AICompletionNotifier />
-              <AIApprovalNotifier />
+              <AINotificationBar />
             </n-modal-provider>
           </n-message-provider>
         </n-notification-provider>

@@ -4,7 +4,7 @@
 
 [中文](README.zh-CN.md) | [English](README.md)
 
-An auxiliary programming tool for the AI era, helping you speed up 10x.
+One panel, 10× faster coding.
 
 [Core Features](#core-features) • [Quick Start](#quick-start) • [Development Guide](#development-guide) • [About](#about)
 
@@ -30,14 +30,11 @@ npm install -g codekanban
 ## Core Features
 
 - **Ready to Use**: Single file, local database, double-click to use
-- **Multi-Project Multi-Terminal Management**: Easily switch between 3-4 code repositories and dozens of terminals, each running different AI programming tasks
-- **Git Worktree Management**: Lightweight branch management, let AI develop multiple features simultaneously, rollback anytime if unsatisfied
-- **Task Kanban**: Visualize development task management with support for task status tracking and branch association
-- **Web Terminal Integration**: Web terminal using the same technology stack as VSC, supports tab management, drag sorting, collapse/expand, etc. (Hotkey: `)
-- **Notes Feature**: Supports multi-tab notes, auto-save, tabs can be renamed and sorted (Hotkey: 1)
-- **Editor Integration**: Quick open VSCode, Cursor, Zed and other editors
-- **Use Your Favorite Tools**: Claude Code, Codex, Gemini, Qwen Code, Droid, ... anything works
-- **AI Assistant Status Detection**: Auto-detect Claude Code/Codex running status in terminals, with tab highlighting when tasks complete
+- **Terminal Hub**: All your projects, terminals and coding agents in one place (Hotkey: `)
+- **Coding Agent Monitor**: Auto-detect Claude Code/Codex running status in terminals, notify when tasks complete
+- **Task Kanban**: Visualize development task management
+- **Worktree Management**: Create worktree branches, support rebase and merge back to main branch
+- **Notes**: Simple multi-tab notes for quick problem tracking (Hotkey: 1)
 
 ## Development Guide
 

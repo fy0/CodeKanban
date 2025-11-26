@@ -217,6 +217,71 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 		op.Tags = []string{terminalTag}
 		op.Description = "发送一个 resize 命令给终端，然后捕获并返回接下来的第一个输出 chunk，用于调试和测试"
 	})
+
+	// 完成记录相关 API
+	huma.Get(group, "/terminals/completion-records", func(
+		ctx context.Context,
+		input *struct{},
+	) (*h.ItemsResponse[*terminal.CompletionRecord], error) {
+		records := c.manager.GetRecordManager().GetCompletions()
+		resp := h.NewItemsResponse(records)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-completion-records-list"
+		op.Summary = "获取所有未关闭的完成记录"
+		op.Tags = []string{terminalTag}
+	})
+
+	huma.Get(group, "/terminals/approval-records", func(
+		ctx context.Context,
+		input *struct{},
+	) (*h.ItemsResponse[*terminal.ApprovalRecord], error) {
+		records := c.manager.GetRecordManager().GetApprovals()
+		resp := h.NewItemsResponse(records)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-approval-records-list"
+		op.Summary = "获取所有未关闭的审批记录"
+		op.Tags = []string{terminalTag}
+	})
+
+	huma.Post(group, "/terminals/completion-records/{recordId}/dismiss", func(
+		ctx context.Context,
+		input *struct {
+			RecordID string `path:"recordId"`
+		},
+	) (*h.MessageResponse, error) {
+		if !c.manager.GetRecordManager().DismissCompletion(input.RecordID) {
+			return nil, huma.Error404NotFound("record not found")
+		}
+		resp := h.NewMessageResponse("record dismissed")
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-completion-record-dismiss"
+		op.Summary = "关闭完成记录"
+		op.Tags = []string{terminalTag}
+	})
+
+	huma.Post(group, "/terminals/approval-records/{recordId}/dismiss", func(
+		ctx context.Context,
+		input *struct {
+			RecordID string `path:"recordId"`
+		},
+	) (*h.MessageResponse, error) {
+		if !c.manager.GetRecordManager().DismissApproval(input.RecordID) {
+			return nil, huma.Error404NotFound("record not found")
+		}
+		resp := h.NewMessageResponse("record dismissed")
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-approval-record-dismiss"
+		op.Summary = "关闭审批记录"
+		op.Tags = []string{terminalTag}
+	})
 }
 
 func (c *terminalController) registerWebsocket(app *fiber.App) {

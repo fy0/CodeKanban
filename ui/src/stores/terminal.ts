@@ -733,6 +733,10 @@ export const useTerminalStore = defineStore('terminal', () => {
     await Promise.allSettled(closePromises);
   }
 
+  function getSessionById(sessionId: string) {
+    return sessionIndex.get(sessionId)?.tab;
+  }
+
   return {
     emitter,
     getTabs,
@@ -750,5 +754,6 @@ export const useTerminalStore = defineStore('terminal', () => {
     getTerminalCount,
     terminalCounts: cachedCounts,
     loadTerminalCounts,
+    getSessionById,
   };
 });
