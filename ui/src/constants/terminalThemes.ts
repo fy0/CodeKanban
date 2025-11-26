@@ -331,7 +331,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       foreground: '#cccccc',
       cursor: '#3B69A9',
       cursorAccent: '#0c0c0c',
-      selectionBackground: 'rgba(59, 105, 169, 0.2)',
+      selectionBackground: 'rgba(180, 200, 230, 0.5)',
       black: '#000000',
       red: '#C41A16',
       green: '#007400',
