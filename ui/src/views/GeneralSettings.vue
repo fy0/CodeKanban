@@ -149,28 +149,16 @@
                 <span class="form-tip">{{ t('settings.aiStatusClaudeSupport') }}</span>
               </n-space>
             </n-form-item>
+            <n-form-item :label="t('settings.aiAssistantCodex')">
+              <n-space align="center">
+                <n-switch v-model:value="aiStatusForm.codex" />
+                <span class="form-tip">{{ t('settings.aiStatusCodexSupport') }}</span>
+              </n-space>
+            </n-form-item>
             <n-form-item :label="t('settings.aiAssistantQwenCode')">
               <n-space align="center">
                 <n-switch v-model:value="aiStatusForm.qwenCode" />
                 <span class="form-tip">{{ t('settings.aiStatusQwenSupport') }}</span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.aiAssistantCodex')">
-              <n-switch v-model:value="aiStatusForm.codex" />
-            </n-form-item>
-            <n-form-item :label="t('settings.aiAssistantTrackingMode')">
-              <n-space vertical size="small">
-                <n-radio-group v-model:value="aiStatusForm.trackingMode">
-                  <n-space size="small">
-                    <n-radio value="capture">
-                      {{ t('settings.aiAssistantTrackingModeCapture') }}
-                    </n-radio>
-                    <n-radio value="virtual-terminal">
-                      {{ t('settings.aiAssistantTrackingModeVirtual') }}
-                    </n-radio>
-                  </n-space>
-                </n-radio-group>
-                <span class="form-tip">{{ t('settings.aiAssistantTrackingModeTip') }}</span>
               </n-space>
             </n-form-item>
           </n-form>
@@ -402,7 +390,6 @@ const aiStatusForm = reactive<AIAssistantStatusConfig>({
   gemini: false,
   cursor: false,
   copilot: false,
-  trackingMode: 'capture',
 });
 const aiStatusOriginal = ref<AIAssistantStatusConfig | null>(null);
 const aiStatusDirty = computed(() => {
@@ -413,8 +400,7 @@ const aiStatusDirty = computed(() => {
     aiStatusForm.qwenCode !== aiStatusOriginal.value.qwenCode ||
     aiStatusForm.gemini !== aiStatusOriginal.value.gemini ||
     aiStatusForm.cursor !== aiStatusOriginal.value.cursor ||
-    aiStatusForm.copilot !== aiStatusOriginal.value.copilot ||
-    aiStatusForm.trackingMode !== aiStatusOriginal.value.trackingMode
+    aiStatusForm.copilot !== aiStatusOriginal.value.copilot
   );
 });
 
@@ -451,8 +437,7 @@ async function loadAIStatus() {
     const config = resp?.item;
     if (config) {
       Object.assign(aiStatusForm, config);
-      aiStatusForm.trackingMode = config.trackingMode || 'capture';
-      aiStatusOriginal.value = { ...config, trackingMode: aiStatusForm.trackingMode };
+      aiStatusOriginal.value = { ...config };
     }
   } catch (error) {
     console.error('Failed to load AI status config:', error);

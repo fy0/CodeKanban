@@ -19,6 +19,7 @@ const (
 	periodicCheckInterval = 500 * time.Millisecond
 	minProcessInterval    = 100 * time.Millisecond
 
+	// NOTE: TrackingModeCapture 失败了，往往连续1s从系统终端中拿到的行都不变，无法应对codex这种不总是显示工作状态的cli
 	TrackingModeCapture         TrackingMode = "capture"
 	TrackingModeVirtualTerminal TrackingMode = "virtual-terminal"
 )
@@ -188,11 +189,7 @@ func (t *StatusTracker) Deactivate() {
 }
 
 func (t *StatusTracker) ProcessChunkInvoke(chunk []byte) {
-	if t.trackingMode == TrackingModeCapture {
-		go t.ProcessChunk(chunk)
-	} else {
-		t.ProcessChunk(chunk)
-	}
+	t.ProcessChunk(chunk)
 }
 
 // ProcessChunk feeds a terminal output chunk to the emulator and detects state changes
@@ -213,43 +210,19 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 	var lines []string
 	var err error
 
-	if t.trackingMode == TrackingModeCapture {
-		// 直接节流即可
-		if !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
-			return types.StateUnknown, time.Time{}, false
-		}
-
-		captureFn := t.captureFunc
-		if captureFn == nil || t.captureBusy {
-			return types.StateUnknown, time.Time{}, false
-		}
-
-		t.lastProcessTime = now
-		t.captureBusy = true
-
-		// Must unlock before calling captureFn to avoid deadlock
-		// captureFn -> CaptureNextChunk -> Resize -> assistantTracker.Activate -> t.mu.Lock()
-		rows, cols := t.rows, t.cols
-		t.mu.Unlock()
-		lines, err = captureFn(rows, cols)
-		t.mu.Lock()
-
-		t.captureBusy = false
-	} else {
-		// Virtual terminal mode processes chunks sequentially while holding the lock.
-		if t.emulator == nil {
-			t.emulator = vt10x.New(vt10x.WithSize(t.cols, t.rows))
-		}
-		t.emulator.Write(chunk)
-
-		// 节流，但必须确保写入chunk
-		if !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
-			return types.StateUnknown, time.Time{}, false
-		}
-
-		t.lastProcessTime = now
-		lines = getVisibleLinesLocked(t)
+	// Virtual terminal mode processes chunks sequentially while holding the lock.
+	if t.emulator == nil {
+		t.emulator = vt10x.New(vt10x.WithSize(t.cols, t.rows))
 	}
+	t.emulator.Write(chunk)
+
+	// 节流，但必须确保写入chunk
+	if !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
+		return types.StateUnknown, time.Time{}, false
+	}
+
+	t.lastProcessTime = now
+	lines = getVisibleLinesLocked(t)
 
 	if err != nil || len(lines) == 0 || !t.active || t.detector == nil {
 		return types.StateUnknown, time.Time{}, false
@@ -369,28 +342,10 @@ func (t *StatusTracker) checkStateIfIdle() {
 		return
 	}
 
-	var lines []string
-	if t.trackingMode == TrackingModeCapture {
-		captureFn := t.captureFunc
-		if captureFn == nil || t.captureBusy {
-			return
-		}
-		rows, cols := t.rows, t.cols
-		t.captureBusy = true
-		t.mu.Unlock()
-		captured, err := captureFn(rows, cols)
-		t.mu.Lock()
-		t.captureBusy = false
-		if err != nil || len(captured) == 0 || !t.active || t.detector == nil {
-			return
-		}
-		lines = captured
-	} else {
-		if t.emulator == nil {
-			return
-		}
-		lines = getVisibleLinesLocked(t)
+	if t.emulator == nil {
+		return
 	}
+	lines := getVisibleLinesLocked(t)
 
 	if len(lines) == 0 {
 		return

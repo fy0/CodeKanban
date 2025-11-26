@@ -926,7 +926,6 @@ func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, c
 	}
 
 	// Check if this assistant type is enabled in config
-	trackingMode := ai_assistant2.TrackingModeCapture
 	if s.getAIConfig != nil {
 		config := s.getAIConfig()
 		if config != nil && !config.IsEnabled(string(info.Type)) {
@@ -939,9 +938,6 @@ func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, c
 			ai_assistant2.SetState(aiInfo, types.StateUnknown, time.Now())
 			return aiInfo
 		}
-		if config != nil && config.TrackingMode != "" {
-			trackingMode = ai_assistant2.ParseTrackingMode(config.TrackingMode)
-		}
 	}
 
 	// Convert to AIAssistantInfo
@@ -949,7 +945,6 @@ func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, c
 
 	// Activate tracker with terminal size
 	if tracker != nil {
-		tracker.SetTrackingMode(trackingMode)
 		tracker.Activate(info.Type, rows, cols)
 
 		// Get current state

@@ -129,7 +129,6 @@ export interface AIAssistantStatusConfig {
   gemini: boolean;
   cursor: boolean;
   copilot: boolean;
-  trackingMode: string;
 }
 
 export interface DeveloperConfig {

@@ -119,7 +119,7 @@ func (d *StatusDetector) isWorkingLine(line string) bool {
 
 	if ret {
 		// 启动时的mcp加载
-		if strings.Contains(line, "Starting MCP servers)") {
+		if strings.Contains(line, "Starting MCP servers") {
 			return false
 		}
 	}

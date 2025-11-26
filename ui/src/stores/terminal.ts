@@ -559,6 +559,23 @@ export const useTerminalStore = defineStore('terminal', () => {
           const currentState = payload.metadata.aiAssistant?.state;
           const previousState = aiPreviousStates.get(tab.id);
 
+          // 🔍 Detect AI assistant closure (detected: false)
+          // When agent is closed, clear any existing notifications
+          const isAgentDetected = payload.metadata.aiAssistant?.detected;
+          if (isAgentDetected === false) {
+            console.log(
+              `[Terminal] AI Agent Closed: Clearing notifications for session ${tab.id}`,
+              {
+                sessionId: tab.id,
+                sessionTitle: tab.title,
+                assistant: payload.metadata.aiAssistant,
+              }
+            );
+            emitter.emit('ai:closed', {
+              sessionId: tab.id,
+            });
+          }
+
           // Detect approval requests
           if (currentState === 'waiting_approval') {
             console.log(
