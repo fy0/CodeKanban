@@ -523,6 +523,16 @@ watch(
 );
 
 watch(
+  tabs,
+  () => {
+    nextTick(() => {
+      updateActiveTabIndicator();
+    });
+  },
+  { deep: true },
+);
+
+watch(
   () => expanded.value,
   value => {
     if (value) {
