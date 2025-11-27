@@ -16,6 +16,8 @@ type CompletionRecord struct {
 	Title       string                         `json:"title"`
 	Assistant   *ai_assistant2.AIAssistantInfo `json:"assistant"`
 	CompletedAt time.Time                      `json:"completedAt"`
+	// State 表示当前卡片状态，working 时仍保留卡片
+	State string `json:"state,omitempty"`
 	// Dismissed 标记用户是否已主动关闭此通知
 	Dismissed bool `json:"dismissed"`
 }
@@ -61,6 +63,9 @@ func (rm *RecordManager) AddCompletion(record *CompletionRecord) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
+	if record.State == "" {
+		record.State = "completed"
+	}
 	rm.completions[record.ID] = record
 	rm.sessionCompletions[record.SessionID] = append(rm.sessionCompletions[record.SessionID], record.ID)
 }
@@ -147,6 +152,23 @@ func (rm *RecordManager) ClearApprovalsBySession(sessionID string) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 	rm.clearApprovalsLocked(sessionID)
+}
+
+// UpdateCompletionStateBySession 更新 session 对应的完成记录状态（例如切回 working）
+func (rm *RecordManager) UpdateCompletionStateBySession(sessionID string, state string) bool {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	updated := false
+	if recordIDs, exists := rm.sessionCompletions[sessionID]; exists {
+		for _, recordID := range recordIDs {
+			if record, ok := rm.completions[recordID]; ok {
+				record.State = state
+				updated = true
+			}
+		}
+	}
+	return updated
 }
 
 // GetCompletion 获取单个完成记录

@@ -146,6 +146,7 @@ interface CompletionRecordResponse {
   assistant?: AssistantInfo;
   completedAt?: string;
   dismissed?: boolean;
+  state?: 'completed' | 'working';
 }
 
 interface ApprovalRecordResponse {
@@ -274,7 +275,7 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
     assistantIcon: getAssistantIconByType(assistantType),
     assistantColor: getAssistantColorByType(assistantType),
     timestamp: record.completedAt ? new Date(record.completedAt) : new Date(),
-    state: 'completed',
+    state: record.state === 'working' ? 'working' : 'completed',
   };
 }
 
@@ -386,6 +387,9 @@ function handleAIWorking(event: any) {
 
   if (changed) {
     console.log('[AI Notification] Marked completion as working', { sessionId });
+  } else {
+    // 如果当前列表里没有对应记录（可能是第一次就进入 working 状态），主动刷新
+    void fetchCompletionRecords();
   }
 }
 
@@ -874,16 +878,6 @@ watch(
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.22);
 }
 
-/* 已点击过的完成通知样式 - 左侧提示条变黑灰色，背景变白色 */
-.notification-completion.notification-clicked,
-.notification-working.notification-clicked {
-  border-left-color: #9ca3af !important;
-  background: #ffffff !important;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
-}
-
-/* 批准通知已读后不改变样式 */
-
 .notification-completion {
   --notification-completion-fill: var(--kanban-terminal-tab-completion-bg, rgba(16, 185, 129, 0.3));
   --notification-completion-accent: var(--kanban-terminal-tab-completion-border, rgba(16, 185, 129, 0.6));
@@ -893,6 +887,14 @@ watch(
   box-shadow: 0 12px 28px rgba(16, 185, 129, 0.15);
 }
 
+/* 已点击过的完成通知样式 - 左侧提示条变黑灰色，背景变白色 */
+.notification-completion.notification-clicked {
+  border-left-color: #9ca3af !important;
+  background: #ffffff !important;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
+}
+
+/* 工作中 / 审批通知在已读后保持原样 */
 .notification-approval {
   --notification-approval-fill: var(--kanban-terminal-tab-approval-bg, rgba(247, 144, 9, 0.25));
   --notification-approval-accent: var(--kanban-terminal-tab-approval-border, rgba(247, 144, 9, 0.55));

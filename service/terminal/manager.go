@@ -388,9 +388,9 @@ func (m *Manager) monitorAssistantRecords(session *Session) {
 				continue
 			}
 			state := metadata.AIAssistant.State
-		if state == lastState && state != string(types.StateWaitingApproval) {
-			continue
-		}
+			if state == lastState && state != string(types.StateWaitingApproval) {
+				continue
+			}
 
 			switch state {
 			case string(types.StateWaitingInput):
@@ -402,6 +402,15 @@ func (m *Manager) monitorAssistantRecords(session *Session) {
 			case string(types.StateWaitingApproval):
 				if lastState != string(types.StateWaitingApproval) {
 					m.handleSessionApprovalRecord(session, metadata.AIAssistant)
+				}
+			case string(types.StateWorking):
+				// 确保有对应的通知，并标记为 working
+				if !m.recordManager.UpdateCompletionStateBySession(session.ID(), "working") {
+					m.handleSessionWorkingRecord(session, metadata.AIAssistant)
+				}
+				if lastState == string(types.StateWaitingApproval) {
+					// 从审批状态恢复工作时也需要清理审批记录
+					m.recordManager.ClearApprovalsBySession(session.ID())
 				}
 			default:
 				if lastState == string(types.StateWaitingApproval) {
@@ -428,6 +437,27 @@ func (m *Manager) handleSessionCompletionRecord(session *Session, info *ai_assis
 		Title:       session.Title(),
 		Assistant:   cloneAssistantInfo(info),
 		CompletedAt: time.Now(),
+		State:       "completed",
+	}
+
+	m.recordManager.ClearCompletionsBySession(session.ID())
+	m.recordManager.AddCompletion(record)
+}
+
+func (m *Manager) handleSessionWorkingRecord(session *Session, info *ai_assistant2.AIAssistantInfo) {
+	if session == nil {
+		return
+	}
+
+	// 如果已经有记录则由调用方负责更新状态，这里仅在不存在时创建
+	record := &CompletionRecord{
+		ID:          utils.NewID(),
+		SessionID:   session.ID(),
+		ProjectID:   session.ProjectID(),
+		Title:       session.Title(),
+		Assistant:   cloneAssistantInfo(info),
+		CompletedAt: time.Now(),
+		State:       "working",
 	}
 
 	m.recordManager.ClearCompletionsBySession(session.ID())
