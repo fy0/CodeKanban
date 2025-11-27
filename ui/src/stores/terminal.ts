@@ -50,8 +50,10 @@ type SessionRecord = {
 };
 
 const TAB_ORDER_STORAGE_KEY = 'kanban-terminal-tab-order';
+const LAST_ACTIVE_TAB_STORAGE_KEY = 'kanban-terminal-last-active';
 
 const storedTabOrders = loadStoredTabOrders();
+const storedActiveTabs = loadStoredActiveTabs();
 
 function loadStoredTabOrders() {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -134,6 +136,82 @@ function ordersEqual(current: string[] | undefined, next: string[]) {
   return true;
 }
 
+function loadStoredActiveTabs() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return new Map<string, string>();
+  }
+  try {
+    const raw = window.localStorage.getItem(LAST_ACTIVE_TAB_STORAGE_KEY);
+    if (!raw) {
+      return new Map<string, string>();
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const result = new Map<string, string>();
+    Object.entries(parsed).forEach(([projectId, value]) => {
+      if (!projectId || typeof value !== 'string') {
+        return;
+      }
+      const normalized = value.trim();
+      if (normalized) {
+        result.set(projectId, normalized);
+      }
+    });
+    return result;
+  } catch (error) {
+    console.warn('[Terminal Store] Failed to parse stored active tabs', error);
+    return new Map<string, string>();
+  }
+}
+
+function persistStoredActiveTabs() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  if (!storedActiveTabs.size) {
+    window.localStorage.removeItem(LAST_ACTIVE_TAB_STORAGE_KEY);
+    return;
+  }
+  const payload: Record<string, string> = {};
+  storedActiveTabs.forEach((tabId, projectId) => {
+    if (tabId) {
+      payload[projectId] = tabId;
+    }
+  });
+  if (Object.keys(payload).length === 0) {
+    window.localStorage.removeItem(LAST_ACTIVE_TAB_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(LAST_ACTIVE_TAB_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function rememberStoredActiveTab(projectId: string, tabId: string) {
+  if (!projectId) {
+    return;
+  }
+  const normalized = tabId.trim();
+  if (!normalized) {
+    forgetStoredActiveTab(projectId);
+    return;
+  }
+  const current = storedActiveTabs.get(projectId);
+  if (current === normalized) {
+    return;
+  }
+  storedActiveTabs.set(projectId, normalized);
+  persistStoredActiveTabs();
+}
+
+function forgetStoredActiveTab(projectId: string) {
+  if (!projectId) {
+    return;
+  }
+  if (!storedActiveTabs.has(projectId)) {
+    return;
+  }
+  storedActiveTabs.delete(projectId);
+  persistStoredActiveTabs();
+}
+
 function sortSessionsWithStoredOrder(projectId: string, sessions: TerminalSession[]) {
   if (!sessions.length) {
     return sessions;
@@ -204,29 +282,45 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
     const bucket = tabStore.get(projectId);
     if (!bucket || bucket.length === 0) {
-      activeTabByProject.delete(projectId);
       return '';
     }
     const current = activeTabByProject.get(projectId);
     if (current && bucket.some(tab => tab.id === current)) {
+      rememberStoredActiveTab(projectId, current);
       return current;
+    }
+    if (tryRestoreActiveTabFromStorage(projectId)) {
+      const restored = activeTabByProject.get(projectId) ?? '';
+      if (restored) {
+        rememberStoredActiveTab(projectId, restored);
+        return restored;
+      }
     }
     const fallback = bucket[0]?.id ?? '';
     if (fallback) {
-      activeTabByProject.set(projectId, fallback);
+      setActiveTab(projectId, fallback);
+      return fallback;
     }
-    return fallback;
+    return '';
   }
 
-  function setActiveTab(projectId: string | undefined, tabId: string) {
+  function setActiveTab(projectId: string | undefined, tabId?: string) {
     if (!projectId) {
       return;
     }
-    if (tabId) {
-      activeTabByProject.set(projectId, tabId);
-    } else {
+    const normalized = typeof tabId === 'string' ? tabId.trim() : '';
+    if (normalized) {
+      const current = activeTabByProject.get(projectId);
+      if (current !== normalized) {
+        activeTabByProject.set(projectId, normalized);
+      }
+      rememberStoredActiveTab(projectId, normalized);
+      return;
+    }
+    if (activeTabByProject.has(projectId)) {
       activeTabByProject.delete(projectId);
     }
+    forgetStoredActiveTab(projectId);
   }
 
   function prepareProject(projectId: string) {
@@ -376,12 +470,8 @@ export const useTerminalStore = defineStore('terminal', () => {
       sessionIndex.delete(sessionId);
       aiPreviousStates.delete(sessionId); // Clean up AI state tracking
       if (activeTabByProject.get(record.projectId) === sessionId) {
-        const next = tabStore.get(record.projectId)?.[0];
-        if (next) {
-          activeTabByProject.set(record.projectId, next.id);
-        } else {
-          activeTabByProject.delete(record.projectId);
-        }
+        const nextId = tabStore.get(record.projectId)?.[0]?.id;
+        setActiveTab(record.projectId, nextId);
       }
       clearTerminalSnapshot(sessionId);
     }
@@ -399,20 +489,44 @@ export const useTerminalStore = defineStore('terminal', () => {
     return bucket;
   }
 
+  function tryRestoreActiveTabFromStorage(projectId: string) {
+    if (!projectId) {
+      return false;
+    }
+    const storedId = storedActiveTabs.get(projectId);
+    if (!storedId) {
+      return false;
+    }
+    const bucket = tabStore.get(projectId);
+    if (!bucket || bucket.length === 0) {
+      return false;
+    }
+    const exists = bucket.some(tab => tab.id === storedId);
+    if (!exists) {
+      forgetStoredActiveTab(projectId);
+      return false;
+    }
+    setActiveTab(projectId, storedId);
+    return true;
+  }
+
   function ensureActiveTab(projectId: string) {
     if (!projectId) {
       return;
     }
     const bucket = tabStore.get(projectId);
     if (!bucket || bucket.length === 0) {
-      activeTabByProject.delete(projectId);
       return;
     }
     const current = activeTabByProject.get(projectId);
     if (current && bucket.some(tab => tab.id === current)) {
+      rememberStoredActiveTab(projectId, current);
       return;
     }
-    activeTabByProject.set(projectId, bucket[0].id);
+    if (tryRestoreActiveTabFromStorage(projectId)) {
+      return;
+    }
+    setActiveTab(projectId, bucket[0].id);
   }
 
   function reorderTabs(projectId: string | undefined, fromIndex: number, toIndex: number) {
@@ -484,7 +598,12 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (options?.activate) {
       setActiveTab(resolvedProjectId, tab.id);
     } else if (!activeTabByProject.get(resolvedProjectId)) {
-      setActiveTab(resolvedProjectId, tab.id);
+      const storedId = storedActiveTabs.get(resolvedProjectId);
+      if (!storedId) {
+        setActiveTab(resolvedProjectId, tab.id);
+      } else if (storedId === tab.id) {
+        setActiveTab(resolvedProjectId, tab.id);
+      }
     }
     connect(tab);
     return tab;
@@ -705,8 +824,13 @@ export const useTerminalStore = defineStore('terminal', () => {
     for (const session of orderedSessions) {
       attachOrUpdateSession(session, { projectIdOverride: projectId });
     }
-    ensureActiveTab(projectId);
-    captureProjectOrder(projectId, tabStore.get(projectId));
+    const finalBucket = tabStore.get(projectId);
+    if (!finalBucket || finalBucket.length === 0) {
+      setActiveTab(projectId, undefined);
+    } else {
+      ensureActiveTab(projectId);
+    }
+    captureProjectOrder(projectId, finalBucket);
   }
 
   function ensureProjectSelected(projectId?: string) {
