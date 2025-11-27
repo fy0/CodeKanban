@@ -19,11 +19,11 @@ COPY ui/ ./
 RUN pnpm build
 
 # Build stage for backend
-FROM golang:1.24-alpine AS backend-builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS backend-builder
 
 WORKDIR /app
 
-# Install build dependencies (only for amd64 CGO builds)
+# Install build dependencies
 RUN apk add --no-cache git gcc musl-dev sqlite-dev
 
 # Copy go mod files
@@ -38,23 +38,15 @@ COPY . .
 # Copy built frontend assets
 COPY --from=frontend-builder /app/ui/dist ./static
 
-# Build backend with architecture-specific optimizations
-# amd64: Use CGO with static linking for better performance
-# arm64: Use pure Go build (no CGO) for faster compilation
+# Build backend with cross-compilation
+# Use build platform (amd64) to compile for target platform (amd64/arm64)
 ARG TARGETARCH
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
-      CGO_ENABLED=1 go build \
-        -ldflags="-s -w -extldflags '-static'" \
-        -tags "sqlite_omit_load_extension" \
-        -trimpath \
-        -o CodeKanban; \
-    else \
-      CGO_ENABLED=0 go build \
-        -ldflags="-s -w" \
-        -tags "sqlite_omit_load_extension" \
-        -trimpath \
-        -o CodeKanban; \
-    fi
+ARG TARGETOS
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w" \
+    -tags "sqlite_omit_load_extension" \
+    -trimpath \
+    -o CodeKanban
 
 # Final stage
 FROM alpine:latest
