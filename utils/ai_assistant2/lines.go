@@ -28,6 +28,18 @@ func renderLinesFromTerminal(term vt10x.Terminal, rows, cols int) []string {
 		return nil
 	}
 
+	termCols, termRows := term.Size()
+	if termCols <= 0 || termRows <= 0 {
+		return nil
+	}
+
+	if rows > termRows {
+		rows = termRows
+	}
+	if cols > termCols {
+		cols = termCols
+	}
+
 	lines := make([]string, 0, rows)
 	runes := make([]rune, 0, cols)
 

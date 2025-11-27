@@ -513,7 +513,7 @@ func (c *terminalController) viewFromSnapshot(snapshot terminal.SessionSnapshot)
 		LastActive: snapshot.LastActive,
 		Status:     string(snapshot.Status),
 		WsPath:     wsPath,
-		WsURL:      c.buildWSURL(wsPath),
+		WsURL:      wsPath,
 		Rows:       snapshot.Rows,
 		Cols:       snapshot.Cols,
 		Encoding:   snapshot.Encoding,
@@ -552,10 +552,6 @@ func (c *terminalController) resolveWorkingDir(root, user string) (string, error
 		return "", fmt.Errorf("working directory escapes the worktree root")
 	}
 	return target, nil
-}
-
-func (c *terminalController) buildWSURL(path string) string {
-	return buildWSURL(c.cfg, path)
 }
 
 func isSubPath(root, target string) bool {

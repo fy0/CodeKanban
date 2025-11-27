@@ -128,7 +128,9 @@ func mountStatic(app *fiber.App, cfg *utils.AppConfig, assets embed.FS, logger *
 	app.Use(mountPath, filesystem.New(filesystem.Config{
 		Root:       fs,
 		PathPrefix: "static",
+		Index:      "index.html",
 		MaxAge:     300,
+		Browse:     false,
 	}))
 }
 

@@ -125,9 +125,7 @@ func (t *StatusTracker) Activate(assistantType types.AssistantType, rows, cols i
 		if t.rows != rows || t.cols != cols {
 			t.rows = rows
 			t.cols = cols
-			if t.trackingMode == TrackingModeVirtualTerminal && t.emulator != nil {
-				t.emulator.Resize(cols, rows)
-			}
+			t.ensureEmulatorSizeLocked(cols, rows)
 		}
 		return
 	}
@@ -211,8 +209,9 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 	var err error
 
 	// Virtual terminal mode processes chunks sequentially while holding the lock.
+	t.ensureEmulatorSizeLocked(t.cols, t.rows)
 	if t.emulator == nil {
-		t.emulator = vt10x.New(vt10x.WithSize(t.cols, t.rows))
+		return types.StateUnknown, time.Time{}, false
 	}
 	t.emulator.Write(chunk)
 
@@ -355,6 +354,24 @@ func (t *StatusTracker) checkStateIfIdle() {
 	if changed {
 		t.emitStateChangeLocked(state, ts)
 	}
+}
+
+// ensureEmulatorSizeLocked lazily creates or resizes the vt10x emulator to match the current terminal size.
+func (t *StatusTracker) ensureEmulatorSizeLocked(cols, rows int) {
+	if cols <= 0 || rows <= 0 {
+		return
+	}
+
+	if t.emulator == nil {
+		t.emulator = vt10x.New(vt10x.WithSize(cols, rows))
+		return
+	}
+
+	curCols, curRows := t.emulator.Size()
+	if curCols == cols && curRows == rows {
+		return
+	}
+	t.emulator.Resize(cols, rows)
 }
 
 func (t *StatusTracker) resetLocked() {

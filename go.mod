@@ -21,6 +21,7 @@ require (
 	github.com/knadh/koanf/v2 v2.3.0
 	github.com/matoous/go-nanoid/v2 v2.1.0
 	github.com/mattn/go-sqlite3 v1.14.22
+	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/samber/lo v1.51.0
 	github.com/shirou/gopsutil/v4 v4.25.10
 	github.com/valyala/fasthttp v1.62.0
@@ -67,7 +68,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
-	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pjbgf/sha1cd v0.3.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
