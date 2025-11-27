@@ -3,12 +3,14 @@ FROM node:22.12-alpine AS frontend-builder
 
 WORKDIR /app/ui
 
+# Install pnpm using npm
+RUN npm install -g pnpm@latest
+
 # Copy frontend package files
 COPY ui/package.json ui/pnpm-lock.yaml ./
 
-# Install pnpm and dependencies
-RUN corepack enable pnpm && \
-    pnpm install --frozen-lockfile
+# Install dependencies
+RUN pnpm install --frozen-lockfile
 
 # Copy frontend source code
 COPY ui/ ./
