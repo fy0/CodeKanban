@@ -202,7 +202,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRef, watch } from 'vue';
+import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, toRef, watch } from 'vue';
 import type { HTMLAttributes } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useDialog, useMessage, NIcon, NInput } from 'naive-ui';
@@ -218,6 +218,12 @@ import { getAssistantIconByType } from '@/utils/assistantIcon';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { usePanelStack } from '@/composables/usePanelStack';
 import { useLocale } from '@/composables/useLocale';
+import { http } from '@/api/http';
+import type { DeveloperConfig } from '@/types/models';
+
+type ItemResponse<T> = {
+  item?: T;
+};
 
 const props = defineProps<{
   projectId: string;
@@ -236,6 +242,14 @@ const panelRight = useStorage('terminal-panel-right', 170);
 const autoResize = useStorage('terminal-auto-resize', true);
 const isResizing = ref(false);
 const shouldAutoFocusTerminal = ref(true);
+const developerConfigState = reactive<DeveloperConfig>({
+  enableTerminalScrollback: false,
+  renameSessionTitleEachCommand: false,
+});
+const developerConfigLoaded = ref(false);
+const developerConfigLoading = ref(false);
+const renameTitleToggleLoading = ref(false);
+let developerConfigLoadPromise: Promise<boolean> | null = null;
 
 // 右键菜单相关状态
 const contextMenuTab = ref<string | null>(null);
@@ -307,10 +321,82 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
     icon: confirmBeforeTerminalClose.value ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) }) : undefined,
   },
   {
+    label: t('terminal.codeAgents'),
+    key: 'code-agents',
+    children: [
+      {
+        label: t('terminal.renameTitleEachCommand'),
+        key: 'rename-title-each-command',
+        icon: developerConfigState.renameSessionTitleEachCommand
+          ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+          : undefined,
+        disabled: developerConfigLoading.value || renameTitleToggleLoading.value,
+      },
+    ],
+  },
+  {
     label: t('terminal.resetPosition'),
     key: 'reset-position',
   },
 ]);
+
+async function ensureDeveloperConfigLoaded() {
+  if (developerConfigLoaded.value) {
+    return true;
+  }
+  if (developerConfigLoadPromise) {
+    return developerConfigLoadPromise;
+  }
+  developerConfigLoadPromise = (async () => {
+    developerConfigLoading.value = true;
+    try {
+      const response = await http
+        .Get<ItemResponse<DeveloperConfig>>('/system/developer-config', { cacheFor: 0 })
+        .send();
+      const config = response?.item;
+      developerConfigState.enableTerminalScrollback = config?.enableTerminalScrollback ?? false;
+      developerConfigState.renameSessionTitleEachCommand =
+        config?.renameSessionTitleEachCommand ?? false;
+      developerConfigLoaded.value = true;
+      return true;
+    } catch (error) {
+      console.error('Failed to load developer config', error);
+      message.error(t('common.loadFailed'));
+      return false;
+    } finally {
+      developerConfigLoading.value = false;
+      developerConfigLoadPromise = null;
+    }
+  })();
+  return developerConfigLoadPromise;
+}
+
+async function toggleRenameTitleEachCommandSetting() {
+  if (renameTitleToggleLoading.value) {
+    return;
+  }
+  const ready = await ensureDeveloperConfigLoaded();
+  if (!ready) {
+    return;
+  }
+  renameTitleToggleLoading.value = true;
+  const nextValue = !developerConfigState.renameSessionTitleEachCommand;
+  try {
+    await http
+      .Post('/system/developer-config/update', {
+        enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
+        renameSessionTitleEachCommand: nextValue,
+      })
+      .send();
+    developerConfigState.renameSessionTitleEachCommand = nextValue;
+    message.success(t('common.saveSuccess'));
+  } catch (error) {
+    console.error('Failed to update rename title setting', error);
+    message.error(t('common.saveFailed'));
+  } finally {
+    renameTitleToggleLoading.value = false;
+  }
+}
 
 // 创建终端下拉菜单选项
 const createTerminalOptions = computed<DropdownOption[]>(() => {
@@ -621,6 +707,7 @@ onMounted(() => {
 
   // 初始化时检查并调整边距
   adjustPanelMarginsForMinWidth();
+  void ensureDeveloperConfigLoaded();
 });
 
 function handleAICompletion(event: any) {
@@ -1609,6 +1696,8 @@ function handleSettingsMenuSelect(key: string) {
     autoResize.value = !autoResize.value;
   } else if (key === 'confirm-close') {
     settingsStore.updateConfirmBeforeTerminalClose(!confirmBeforeTerminalClose.value);
+  } else if (key === 'rename-title-each-command') {
+    void toggleRenameTitleEachCommandSetting();
   } else if (key === 'reset-position') {
     resetTerminalPosition();
   }

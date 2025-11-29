@@ -322,6 +322,8 @@ export default {
     rename: 'Rename',
     autoResize: 'Auto resize terminal when scaling',
     confirmClose: 'Confirm before closing terminal',
+    codeAgents: 'Code Agents',
+    renameTitleEachCommand: 'Auto-update tab title after every instruction',
     resetPosition: 'Reset Terminal Position',
     duplicateSuffix: ' Copy',
     emptyGuideTitle: 'No Terminal',
@@ -482,6 +484,8 @@ export default {
     developerOptions: 'Developer Options',
     developerScrollback: 'Terminal Output Recording',
     developerScrollbackTip: 'When disabled, the server stops caching PTY output to help debug stalls and reduce memory usage (default off, applies to all terminals immediately after saving).',
+    renameSessionTitleEachCommand: 'Auto-update tab title on every instruction',
+    renameSessionTitleEachCommandTip: 'When enabled, each captured AI command refreshes the terminal title; when disabled, only the first captured command updates the title.',
   },
   theme: {
     light: 'Light',

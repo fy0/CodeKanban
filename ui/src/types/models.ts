@@ -134,4 +134,5 @@ export interface AIAssistantStatusConfig {
 
 export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
+  renameSessionTitleEachCommand: boolean;
 }

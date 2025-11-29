@@ -18,13 +18,14 @@ import (
 
 // Config defines runtime constraints for terminal sessions.
 type Config struct {
-	Shell                 utils.TerminalShellConfig
-	IdleTimeout           time.Duration
-	MaxSessionsPerProject int
-	Encoding              string
-	ScrollbackBytes       int
-	AIAssistantStatus     utils.AIAssistantStatusConfig
-	ScrollbackEnabled     bool
+	Shell                  utils.TerminalShellConfig
+	IdleTimeout            time.Duration
+	MaxSessionsPerProject  int
+	Encoding               string
+	ScrollbackBytes        int
+	AIAssistantStatus      utils.AIAssistantStatusConfig
+	ScrollbackEnabled      bool
+	RenameTitleEachCommand bool
 }
 
 // CreateSessionParams describes API level inputs.
@@ -121,7 +122,8 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 			cfg := m.cfg.AIAssistantStatus
 			return &cfg
 		},
-		TaskID: params.TaskID,
+		TaskID:                 params.TaskID,
+		RenameTitleEachCommand: m.cfg.RenameTitleEachCommand,
 	})
 	if err != nil {
 		return nil, err
@@ -378,6 +380,18 @@ func (m *Manager) UpdateScrollbackEnabled(enabled bool) {
 
 	m.sessions.Range(func(_ string, session *Session) bool {
 		session.UpdateScrollbackLimit(limit)
+		return true
+	})
+}
+
+// UpdateRenameTitleEachCommand toggles whether AI inputs rename terminal titles every time.
+func (m *Manager) UpdateRenameTitleEachCommand(enabled bool) {
+	m.sessionMu.Lock()
+	m.cfg.RenameTitleEachCommand = enabled
+	m.sessionMu.Unlock()
+
+	m.sessions.Range(func(_ string, session *Session) bool {
+		session.SetRenameTitleEachCommand(enabled)
 		return true
 	})
 }

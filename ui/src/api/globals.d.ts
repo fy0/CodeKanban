@@ -150,6 +150,7 @@ export interface DeveloperConfig {
    */
   $schema?: string;
   enableTerminalScrollback: boolean;
+  renameSessionTitleEachCommand: boolean;
 }
 export interface OpenEditorInputBody {
   /**

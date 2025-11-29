@@ -322,6 +322,8 @@ export default {
     rename: '重命名',
     autoResize: '缩放时自动改变终端大小',
     confirmClose: '关闭终端时需要确认',
+    codeAgents: 'Code Agents',
+    renameTitleEachCommand: '每次指令后自动更新终端标题',
     resetPosition: '重置终端位置',
     duplicateSuffix: ' 副本',
     emptyGuideTitle: '暂无终端',
@@ -482,6 +484,8 @@ export default {
     developerOptions: '开发者',
     developerScrollback: '终端信息录制',
     developerScrollbackTip: '关闭后服务端不再缓存终端输出，可帮助排查阻塞并减少内存占用（默认关闭，保存后立即作用于所有终端）',
+    renameSessionTitleEachCommand: '每条指令都自动更新终端标题',
+    renameSessionTitleEachCommandTip: '开启后，每次 AI 捕获新的指令都会同步刷新终端标题；关闭时仅首次指令会更新标题',
   },
   theme: {
     light: '亮色',

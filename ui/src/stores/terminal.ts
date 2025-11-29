@@ -23,6 +23,7 @@ export type ServerMessage = {
   cols?: number;
   rows?: number;
   metadata?: {
+    title?: string;
     processPid?: number;
     processStatus?: string;
     processHasChildren?: boolean;
@@ -725,6 +726,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (index === -1) return;
 
     const nextTaskId = metadata.taskId ?? bucket[index].taskId;
+    const nextTitle = metadata.title;
 
     bucket[index] = {
       ...bucket[index],
@@ -734,6 +736,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       runningCommand: metadata.runningCommand,
       aiAssistant: metadata.aiAssistant,
       taskId: nextTaskId,
+      title: typeof nextTitle === 'string' ? nextTitle : bucket[index].title,
     };
     record.tab = bucket[index];
     updateSessionTaskMapping(sessionId, nextTaskId ?? undefined);

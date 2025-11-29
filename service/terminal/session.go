@@ -77,6 +77,7 @@ type StreamEvent struct {
 }
 
 type SessionMetadata struct {
+	Title                  string                         `json:"title,omitempty"`
 	ProcessPID             int32                          `json:"processPid,omitempty"`
 	ProcessStatus          string                         `json:"processStatus,omitempty"`
 	ProcessHasChildren     bool                           `json:"processHasChildren,omitempty"`
@@ -116,6 +117,7 @@ type sessionSubscriber struct {
 const (
 	subscriberBufferSize     = 128
 	assistantOutputBufferLen = 32
+	maxSessionTitleLength    = 64
 )
 
 // Session encapsulates a PTY-backed terminal command.
@@ -150,9 +152,11 @@ type Session struct {
 	getAIConfig       func() *utils.AIAssistantStatusConfig
 	assistantOutputCh chan []byte
 
-	associatedTaskID string
-	lockedTitle      string
-	lastRecentInput  string
+	associatedTaskID       string
+	lockedTitle            string
+	lastRecentInput        string
+	renameTitleEachCommand atomic.Bool
+	autoTitleAssigned      atomic.Bool
 
 	mu sync.RWMutex
 
@@ -172,20 +176,21 @@ type Session struct {
 
 // SessionParams collects the data required to bootstrap a session.
 type SessionParams struct {
-	ID              string
-	ProjectID       string
-	WorktreeID      string
-	WorkingDir      string
-	Title           string
-	Command         []string
-	Env             []string
-	Rows            int
-	Cols            int
-	Logger          *zap.Logger
-	Encoding        string
-	ScrollbackLimit int
-	GetAIConfig     func() *utils.AIAssistantStatusConfig
-	TaskID          string
+	ID                     string
+	ProjectID              string
+	WorktreeID             string
+	WorkingDir             string
+	Title                  string
+	Command                []string
+	Env                    []string
+	Rows                   int
+	Cols                   int
+	Logger                 *zap.Logger
+	Encoding               string
+	ScrollbackLimit        int
+	GetAIConfig            func() *utils.AIAssistantStatusConfig
+	TaskID                 string
+	RenameTitleEachCommand bool
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -244,6 +249,7 @@ func NewSession(params SessionParams) (*Session, error) {
 		getAIConfig:      params.GetAIConfig,
 		associatedTaskID: params.TaskID,
 	}
+	session.renameTitleEachCommand.Store(params.RenameTitleEachCommand)
 
 	session.assistantTracker.SetCaptureFunc(session.captureTerminalLines)
 	// Set state change callback for periodic checking
@@ -409,6 +415,7 @@ func (s *Session) checkAndBroadcastMetadata() {
 		ProcessStatus:      process.GetProcessStatus(pid),
 		ProcessHasChildren: process.IsProcessBusy(pid),
 		TaskID:             s.TaskID(),
+		Title:              s.Title(),
 	}
 
 	tracker := s.assistantTracker
@@ -452,7 +459,8 @@ func (s *Session) metadataChanged(old, new *SessionMetadata) bool {
 		return false
 	}
 
-	if old.ProcessPID != new.ProcessPID ||
+	if old.Title != new.Title ||
+		old.ProcessPID != new.ProcessPID ||
 		old.ProcessStatus != new.ProcessStatus ||
 		old.ProcessHasChildren != new.ProcessHasChildren ||
 		old.RunningCommand != new.RunningCommand ||
@@ -685,6 +693,11 @@ func (s *Session) UpdateTitle(title string) error {
 		s.lockedTitle = title
 	}
 	return nil
+}
+
+// SetRenameTitleEachCommand toggles whether AI input renames should run on each instruction.
+func (s *Session) SetRenameTitleEachCommand(enabled bool) {
+	s.renameTitleEachCommand.Store(enabled)
 }
 
 // CreatedAt returns the spawn timestamp.
@@ -1014,6 +1027,9 @@ func (s *Session) handleRecentInput(event ai_assistant2.StateChangeEvent) {
 	}
 
 	s.appendInputToTask(taskID, input, ts, s.assistantDisplayName())
+	if s.autoUpdateTitleFromInput(input) {
+		s.notifyTitleChanged()
+	}
 }
 
 func (s *Session) autoCreateTaskFromInput(input string, ts time.Time) (string, error) {
@@ -1152,6 +1168,52 @@ func (s *Session) appendInputToTask(taskID, input string, ts time.Time, assistan
 			s.logger.Warn("failed to append task comment from recent input", zap.String("taskId", taskID), zap.Error(err))
 		}
 	}
+}
+
+func (s *Session) autoUpdateTitleFromInput(input string) bool {
+	candidate := truncateString(sanitizeCapturedInput(input), maxSessionTitleLength)
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.lockedTitle != "" {
+		return false
+	}
+
+	if !s.renameTitleEachCommand.Load() && s.autoTitleAssigned.Load() {
+		return false
+	}
+
+	if s.title == candidate {
+		if !s.autoTitleAssigned.Load() {
+			s.autoTitleAssigned.Store(true)
+		}
+		return false
+	}
+
+	s.title = candidate
+	s.autoTitleAssigned.Store(true)
+	return true
+}
+
+func (s *Session) notifyTitleChanged() {
+	title := s.Title()
+	s.metaMu.Lock()
+	if s.lastMetadata == nil {
+		s.lastMetadata = &SessionMetadata{}
+	}
+	s.lastMetadata.Title = title
+	meta := cloneSessionMetadata(s.lastMetadata)
+	s.metaMu.Unlock()
+	if meta == nil {
+		meta = &SessionMetadata{Title: title}
+	}
+	meta.TaskID = s.TaskID()
+	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: meta})
 }
 
 func sanitizeCapturedInput(value string) string {

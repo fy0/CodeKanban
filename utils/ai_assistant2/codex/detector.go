@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -224,11 +223,6 @@ func (d *StatusDetector) captureRecentInput(inputLines []string, isEmpty bool) {
 	if len(inputLines) == 0 {
 		return
 	}
-
-	for _, x := range inputLines {
-		fmt.Println("ASD", x)
-	}
-	fmt.Println("==", isEmpty)
 
 	var recentInput string
 

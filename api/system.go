@@ -17,6 +17,7 @@ const systemTag = "system-系统工具"
 type systemTerminalManager interface {
 	UpdateAIAssistantStatusConfig(utils.AIAssistantStatusConfig)
 	UpdateScrollbackEnabled(bool)
+	UpdateRenameTitleEachCommand(bool)
 }
 
 type versionResponse struct {
@@ -196,6 +197,7 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 
 		if terminalManager != nil {
 			terminalManager.UpdateScrollbackEnabled(input.Body.EnableTerminalScrollback)
+			terminalManager.UpdateRenameTitleEachCommand(input.Body.RenameSessionTitleEachCommand)
 		}
 
 		resp := h.NewMessageResponse("Developer config updated.")

@@ -188,6 +188,15 @@
                 <span class="form-tip">{{ t('settings.developerScrollbackTip') }}</span>
               </n-space>
             </n-form-item>
+            <n-form-item :label="t('settings.renameSessionTitleEachCommand')">
+              <n-space vertical size="small">
+                <n-switch
+                  v-model:value="developerForm.renameSessionTitleEachCommand"
+                  :disabled="developerLoading"
+                />
+                <span class="form-tip">{{ t('settings.renameSessionTitleEachCommandTip') }}</span>
+              </n-space>
+            </n-form-item>
           </n-form>
         </n-spin>
       </n-card>
@@ -414,13 +423,17 @@ const { send: updateAIStatus, loading: saveLoading } = useReq(
 
 const developerForm = reactive<DeveloperConfig>({
   enableTerminalScrollback: false,
+  renameSessionTitleEachCommand: false,
 });
 const developerOriginal = ref<DeveloperConfig | null>(null);
 const developerDirty = computed(() => {
   if (!developerOriginal.value) {
     return false;
   }
-  return developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback;
+  return (
+    developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback
+    || developerForm.renameSessionTitleEachCommand !== developerOriginal.value.renameSessionTitleEachCommand
+  );
 });
 
 const { send: fetchDeveloperConfig, loading: developerLoading } = useReq(
@@ -460,8 +473,9 @@ async function loadDeveloperConfig() {
     const resp = await fetchDeveloperConfig();
     const config = resp?.item;
     if (config !== undefined && config !== null) {
-      Object.assign(developerForm, config);
-      developerOriginal.value = { ...config };
+      developerForm.enableTerminalScrollback = config.enableTerminalScrollback ?? false;
+      developerForm.renameSessionTitleEachCommand = config.renameSessionTitleEachCommand ?? false;
+      developerOriginal.value = { ...developerForm };
     } else {
       // 如果后端没有返回配置，使用默认值并标记为已加载
       developerOriginal.value = { ...developerForm };

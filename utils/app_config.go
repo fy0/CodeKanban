@@ -28,7 +28,8 @@ type TerminalShellConfig struct {
 }
 
 type DeveloperConfig struct {
-	EnableTerminalScrollback bool `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
+	EnableTerminalScrollback      bool `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
+	RenameSessionTitleEachCommand bool `json:"renameSessionTitleEachCommand" yaml:"renameSessionTitleEachCommand"`
 }
 
 type AIAssistantStatusConfig struct {
@@ -191,7 +192,8 @@ func ReadConfig() *AppConfig {
 			},
 		},
 		Developer: DeveloperConfig{
-			EnableTerminalScrollback: false,
+			EnableTerminalScrollback:      false,
+			RenameSessionTitleEachCommand: false,
 		},
 	}
 
