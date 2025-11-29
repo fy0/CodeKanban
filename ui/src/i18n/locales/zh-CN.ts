@@ -307,6 +307,16 @@ export default {
     conflictFiles: '冲突文件：{files}',
     hasConflictsManual: '存在冲突，请手动处理',
     rebaseDescription: '将在 Worktree「{branch}」中执行 rebase，来源分支：{source}',
+    // Disabled reasons
+    actionDisabledGeneric: '当前操作不可用，请检查 Worktree 状态后重试。',
+    rebaseDisabledNoDefault: '请先在项目设置中配置默认分支，再执行 Rebase。',
+    rebaseDisabledOnDefault: '当前已位于默认分支，无需对自身执行 Rebase。',
+    rebaseDisabledDirty: 'Rebase 需要干净的工作区，请先提交或暂存已跟踪的改动。',
+    mergeDisabledNoMainWorktree: '尚未检测到主 Worktree，刷新后才能执行合并。',
+    mergeDisabledOnDefault: '默认分支不能作为源分支发起合并。',
+    mergeDisabledDirty: '存在未提交的已跟踪改动，请处理后再合并。',
+    commitDisabledGit: '当前项目暂不可用 Git 能力，请先同步主 Worktree。',
+    commitDisabledClean: '没有可提交的改动。',
   },
   terminal: {
     title: '终端',

@@ -60,6 +60,9 @@
           :can-sync="canSyncWorktree(worktree)"
           :can-merge="canMergeWorktree(worktree)"
           :can-commit="canCommitWorktree(worktree)"
+          :sync-disabled-reason="getSyncDisabledReason(worktree)"
+          :merge-disabled-reason="getMergeDisabledReason(worktree)"
+          :commit-disabled-reason="getCommitDisabledReason(worktree)"
           :is-deleting="deletingWorktreeId === worktree.id"
           :default-editor="defaultEditorPreference"
           :editor-options="worktreeEditorOptions"
@@ -281,6 +284,51 @@ function canMergeWorktree(worktree: Worktree): boolean {
 function canCommitWorktree(worktree: Worktree): boolean {
   // git功能可用，且有待提交的内容
   return gitFeaturesAvailable.value && hasPendingChanges(worktree);
+}
+
+function getSyncDisabledReason(worktree: Worktree): string {
+  if (canSyncWorktree(worktree)) {
+    return '';
+  }
+  if (!defaultBranch.value) {
+    return t('worktree.rebaseDisabledNoDefault');
+  }
+  if (worktree.branchName === defaultBranch.value) {
+    return t('worktree.rebaseDisabledOnDefault');
+  }
+  if (hasTrackedChanges(worktree)) {
+    return t('worktree.rebaseDisabledDirty');
+  }
+  return t('worktree.actionDisabledGeneric');
+}
+
+function getMergeDisabledReason(worktree: Worktree): string {
+  if (canMergeWorktree(worktree)) {
+    return '';
+  }
+  if (!mainWorktree.value) {
+    return t('worktree.mergeDisabledNoMainWorktree');
+  }
+  if (worktree.branchName === defaultBranch.value) {
+    return t('worktree.mergeDisabledOnDefault');
+  }
+  if (hasTrackedChanges(worktree)) {
+    return t('worktree.mergeDisabledDirty');
+  }
+  return t('worktree.actionDisabledGeneric');
+}
+
+function getCommitDisabledReason(worktree: Worktree): string {
+  if (canCommitWorktree(worktree)) {
+    return '';
+  }
+  if (!gitFeaturesAvailable.value) {
+    return t('worktree.commitDisabledGit');
+  }
+  if (!hasPendingChanges(worktree)) {
+    return t('worktree.commitDisabledClean');
+  }
+  return t('worktree.actionDisabledGeneric');
 }
 
 type BranchOperationType = 'rebase' | 'merge';

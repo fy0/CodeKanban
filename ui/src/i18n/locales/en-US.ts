@@ -307,6 +307,16 @@ export default {
     conflictFiles: 'Conflict files: {files}',
     hasConflictsManual: 'Conflicts detected, please resolve manually',
     rebaseDescription: 'Will execute rebase in Worktree "{branch}", source branch: {source}',
+    // Disabled reasons
+    actionDisabledGeneric: 'This action is currently unavailable for the selected Worktree.',
+    rebaseDisabledNoDefault: 'Configure a default branch for the project before running Rebase.',
+    rebaseDisabledOnDefault: 'You are already on the default branch, rebase is unnecessary.',
+    rebaseDisabledDirty: 'Rebase requires a clean working tree. Commit or stash tracked changes first.',
+    mergeDisabledNoMainWorktree: 'The main Worktree is missing. Refresh Worktrees to sync it before merging.',
+    mergeDisabledOnDefault: 'The default branch cannot be used as the source branch for this merge.',
+    mergeDisabledDirty: 'Please commit or stash tracked changes before merging.',
+    commitDisabledGit: 'Git features are unavailable until the main Worktree is detected for this project.',
+    commitDisabledClean: 'There are no changes to commit in this Worktree.',
   },
   terminal: {
     title: 'Terminal',

@@ -72,25 +72,52 @@
     </n-space>
 
     <div class="worktree-card__actions" @click.stop>
-      <n-button size="tiny" tertiary :disabled="!canSync" @click="emit('sync-default', worktree)">
-        Rebase
-      </n-button>
-      <n-button
-        size="tiny"
-        tertiary
-        :disabled="!canMerge"
-        @click="emit('merge-to-default', { worktree, strategy: 'squash' })"
+      <n-popover
+        trigger="hover"
+        placement="bottom"
+        :disabled="!syncDisabledReason"
       >
-        {{ t('worktree.mergeTo') }}
-      </n-button>
-      <n-button
-        size="tiny"
-        tertiary
-        :disabled="!canCommit"
-        @click="emit('commit-worktree', worktree)"
+        <template #trigger>
+          <n-button size="tiny" tertiary :disabled="!canSync" @click="emit('sync-default', worktree)">
+            Rebase
+          </n-button>
+        </template>
+        <span>{{ syncDisabledReason }}</span>
+      </n-popover>
+      <n-popover
+        trigger="hover"
+        placement="bottom"
+        :disabled="!mergeDisabledReason"
       >
-        Commit
-      </n-button>
+        <template #trigger>
+          <n-button
+            size="tiny"
+            tertiary
+            :disabled="!canMerge"
+            @click="emit('merge-to-default', { worktree, strategy: 'squash' })"
+          >
+            {{ t('worktree.mergeTo') }}
+          </n-button>
+        </template>
+        <span>{{ mergeDisabledReason }}</span>
+      </n-popover>
+      <n-popover
+        trigger="hover"
+        placement="bottom"
+        :disabled="!commitDisabledReason"
+      >
+        <template #trigger>
+          <n-button
+            size="tiny"
+            tertiary
+            :disabled="!canCommit"
+            @click="emit('commit-worktree', worktree)"
+          >
+            Commit
+          </n-button>
+        </template>
+        <span>{{ commitDisabledReason }}</span>
+      </n-popover>
     </div>
   </n-card>
 </template>
@@ -123,12 +150,18 @@ const props = withDefaults(defineProps<{
   canSync?: boolean;
   canMerge?: boolean;
   canCommit?: boolean;
+  syncDisabledReason?: string;
+  mergeDisabledReason?: string;
+  commitDisabledReason?: string;
   isDeleting?: boolean;
   defaultEditor?: EditorPreference;
   editorOptions?: EditorOption[];
 }>(), {
   defaultEditor: DEFAULT_EDITOR,
   editorOptions: () => EDITOR_OPTIONS.map(option => ({ ...option })),
+  syncDisabledReason: '',
+  mergeDisabledReason: '',
+  commitDisabledReason: '',
 });
 
 const emit = defineEmits<{

@@ -3,7 +3,6 @@ package git
 import (
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing"
@@ -84,8 +83,7 @@ func (r *GitRepo) CreateBranch(name, base string) error {
 		args = append(args, base)
 	}
 
-	cmd := exec.Command("git", args...)
-	cmd.Dir = r.Path
+	cmd := newGitCommand(r.Path, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("create branch failed: %s", strings.TrimSpace(string(output)))
 	}
@@ -109,8 +107,7 @@ func (r *GitRepo) DeleteBranch(name string, force bool) error {
 		args = append(args, "-d", branch)
 	}
 
-	cmd := exec.Command("git", args...)
-	cmd.Dir = r.Path
+	cmd := newGitCommand(r.Path, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("delete branch failed: %s", strings.TrimSpace(string(output)))
 	}
@@ -127,8 +124,7 @@ func (r *GitRepo) CheckoutBranch(name string) error {
 		return errors.New("branch name is required")
 	}
 
-	cmd := exec.Command("git", "checkout", branch)
-	cmd.Dir = r.Path
+	cmd := newGitCommand(r.Path, "checkout", branch)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("checkout failed: %s", strings.TrimSpace(string(output)))
 	}
@@ -154,8 +150,7 @@ func (r *GitRepo) ValidateBranchName(name string) error {
 	}
 
 	ref := fmt.Sprintf("refs/heads/%s", branch)
-	cmd := exec.Command("git", "check-ref-format", "--allow-onelevel", ref)
-	cmd.Dir = r.Path
+	cmd := newGitCommand(r.Path, "check-ref-format", "--allow-onelevel", ref)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {

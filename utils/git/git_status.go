@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -54,8 +53,7 @@ func (r *GitRepo) GetWorktreeStatus(path string) (*WorktreeStatus, error) {
 }
 
 func collectWorktreeStatusViaGit(path string) (*WorktreeStatus, error) {
-	cmd := exec.Command("git", "status", "--porcelain=2", "--branch")
-	cmd.Dir = path
+	cmd := newGitCommand(path, "status", "--porcelain=2", "--branch")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -227,8 +225,7 @@ func parseAheadBehindToken(token string) int {
 }
 
 func lastCommitInfo(path string) (*CommitInfo, error) {
-	cmd := exec.Command("git", "log", "-1", "--pretty=format:%H%x00%an%x00%ad%x00%s", "--date=iso-strict")
-	cmd.Dir = path
+	cmd := newGitCommand(path, "log", "-1", "--pretty=format:%H%x00%an%x00%ad%x00%s", "--date=iso-strict")
 	output, err := cmd.Output()
 	if err != nil || len(output) == 0 {
 		return nil, err
@@ -254,8 +251,7 @@ func lastCommitInfo(path string) (*CommitInfo, error) {
 }
 
 func getAheadBehind(path string) (ahead, behind int) {
-	cmd := exec.Command("git", "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
-	cmd.Dir = path
+	cmd := newGitCommand(path, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, 0
@@ -284,8 +280,7 @@ func firstLine(msg string) string {
 }
 
 func describeBranch(path string) string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = path
+	cmd := newGitCommand(path, "rev-parse", "--abbrev-ref", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""

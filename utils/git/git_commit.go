@@ -3,7 +3,6 @@ package git
 import (
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
@@ -15,8 +14,7 @@ func (r *GitRepo) runInWorktree(path string, args ...string) error {
 	if target == "" {
 		target = r.Path
 	}
-	cmd := exec.Command("git", args...)
-	cmd.Dir = target
+	cmd := newGitCommand(target, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(output)))
 	}

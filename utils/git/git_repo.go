@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -113,8 +112,7 @@ func (r *GitRepo) ConfigValue(key string) (string, bool) {
 func loadGitConfig(path string) map[string]string {
 	results := make(map[string]string)
 
-	cmd := exec.Command("git", "config", "--list")
-	cmd.Dir = path
+	cmd := newGitCommand(path, "config", "--list")
 
 	output, err := cmd.Output()
 	if err != nil || len(output) == 0 {

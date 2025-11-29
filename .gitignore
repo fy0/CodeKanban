@@ -33,6 +33,7 @@ data.db
 
 database_schema_postgres.sql
 .worktrees/
+worktrees/
 
 # NPM 构建产物（由 build-npm-multipackage.py 生成）
 /package.json

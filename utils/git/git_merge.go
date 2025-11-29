@@ -46,11 +46,11 @@ func (r *GitRepo) MergeBranch(worktreePath, sourceBranch string, strategy MergeS
 func buildMergeCommand(strategy MergeStrategy, sourceBranch string) *exec.Cmd {
 	switch strategy {
 	case MergeStrategyRebase:
-		return exec.Command("git", "rebase", sourceBranch)
+		return newGitCommand("", "rebase", sourceBranch)
 	case MergeStrategySquash:
-		return exec.Command("git", "merge", "--squash", sourceBranch)
+		return newGitCommand("", "merge", "--squash", sourceBranch)
 	default:
-		return exec.Command("git", "merge", sourceBranch)
+		return newGitCommand("", "merge", sourceBranch)
 	}
 }
 
@@ -61,8 +61,7 @@ func (r *GitRepo) GetConflictFiles(worktreePath string) []string {
 		path = r.Path
 	}
 
-	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
-	cmd.Dir = path
+	cmd := newGitCommand(path, "diff", "--name-only", "--diff-filter=U")
 	output, err := cmd.Output()
 	if err != nil {
 		return []string{}

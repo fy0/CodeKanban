@@ -3,7 +3,6 @@ package git
 import (
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -27,8 +26,7 @@ func (r *GitRepo) ListWorktrees() ([]WorktreeInfo, error) {
 	// Prune stale entries first so list output matches actual filesystem state.
 	_ = r.PruneWorktrees()
 
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	cmd.Dir = r.Path
+	cmd := newGitCommand(r.Path, "worktree", "list", "--porcelain")
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -71,8 +69,7 @@ func (r *GitRepo) AddWorktree(path, branch string, createBranch bool) error {
 		args = append(args, targetPath, branch)
 	}
 
-	cmd := exec.Command("git", args...)
-	cmd.Dir = r.Path
+	cmd := newGitCommand(r.Path, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("add worktree failed: %s", strings.TrimSpace(string(output)))
 	}
@@ -94,8 +91,7 @@ func (r *GitRepo) RemoveWorktree(path string, force bool) error {
 	}
 	args = append(args, path)
 
-	cmd := exec.Command("git", args...)
-	cmd.Dir = r.Path
+	cmd := newGitCommand(r.Path, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		errMsg := strings.TrimSpace(string(output))
 		// If the error indicates the worktree doesn't exist, try pruning
@@ -116,8 +112,7 @@ func (r *GitRepo) PruneWorktrees() error {
 	if r == nil {
 		return errors.New("git repository is not initialized")
 	}
-	cmd := exec.Command("git", "worktree", "prune")
-	cmd.Dir = r.Path
+	cmd := newGitCommand(r.Path, "worktree", "prune")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("prune worktrees failed: %s", strings.TrimSpace(string(output)))
 	}
