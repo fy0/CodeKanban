@@ -393,6 +393,8 @@ export default {
     aiNeedsApproval: 'AI Needs Approval',
     isWaitingForApproval: 'is waiting for your approval',
     clickToJumpTerminal: 'Click to jump to this terminal',
+    tabLabel: 'Tab Name',
+    latestAgentCommand: 'Latest Code Agent Instruction',
     enableNotifications: 'Enable AI Completion Alerts',
     disableNotifications: 'Disable AI Completion Alerts',
     notificationsEnabled: 'AI alerts enabled',

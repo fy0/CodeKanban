@@ -127,6 +127,7 @@ interface NotificationItem {
   assistantColor?: string;
   timestamp: Date;
   state?: 'completed' | 'working';
+  lastAgentCommand?: string;
 }
 
 type NotificationType = 'completion' | 'approval';
@@ -211,15 +212,30 @@ function getLocationLabel(notification: NotificationItem) {
   return notification.branchName || notification.projectName || '';
 }
 
+function getProjectBranchLabel(notification: NotificationItem) {
+  const project = (notification.projectName || '').trim();
+  const branch = (notification.branchName || '').trim();
+  if (project && branch) {
+    return `${project} [${branch}]`;
+  }
+  if (project) {
+    return project;
+  }
+  if (branch) {
+    return `[${branch}]`;
+  }
+  return '';
+}
+
 function getCompletionHeader(notification: NotificationItem) {
-  const projectLabel = notification.projectName || getLocationLabel(notification);
+  const projectLabel = getProjectBranchLabel(notification);
   const titleKey = notification.state === 'working' ? 'terminal.aiWorking' : 'terminal.aiCompleted';
   const baseTitle = t(titleKey);
   return projectLabel ? `${baseTitle} - ${projectLabel}` : baseTitle;
 }
 
 function getApprovalHeader(notification: NotificationItem) {
-  const projectLabel = notification.projectName || getLocationLabel(notification);
+  const projectLabel = getProjectBranchLabel(notification);
   return projectLabel ? `${t('terminal.aiNeedsApproval')} - ${projectLabel}` : t('terminal.aiNeedsApproval');
 }
 
@@ -242,6 +258,14 @@ function getNotificationDescription(notification: NotificationItem) {
   return location ? `[${location}] ${body}` : body;
 }
 
+function getTabLabel(notification: NotificationItem) {
+  return notification.title?.trim() || 'AI Session';
+}
+
+function getLatestAgentCommand(notification: NotificationItem) {
+  return notification.lastAgentCommand?.trim() || '';
+}
+
 function getAssistantName(info?: AssistantInfo) {
   return info?.displayName || info?.name || 'AI';
 }
@@ -259,6 +283,7 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
   const worktreeId = session?.worktreeId;
   const branchName = resolveBranchName(record.projectId, worktreeId);
   const assistantType = record.assistant?.type;
+  const lastAgentCommand = session?.lastAgentCommand?.trim();
 
   return {
     id: record.id,
@@ -276,6 +301,7 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
     assistantColor: getAssistantColorByType(assistantType),
     timestamp: record.completedAt ? new Date(record.completedAt) : new Date(),
     state: record.state === 'working' ? 'working' : 'completed',
+    lastAgentCommand: lastAgentCommand || undefined,
   };
 }
 
@@ -284,6 +310,7 @@ function mapApprovalRecord(record: ApprovalRecordResponse): NotificationItem {
   const worktreeId = session?.worktreeId;
   const branchName = resolveBranchName(record.projectId, worktreeId);
   const assistantType = record.assistant?.type;
+  const lastAgentCommand = session?.lastAgentCommand?.trim();
 
   return {
     id: record.id,
@@ -300,6 +327,7 @@ function mapApprovalRecord(record: ApprovalRecordResponse): NotificationItem {
     assistantIcon: getAssistantIconByType(assistantType),
     assistantColor: getAssistantColorByType(assistantType),
     timestamp: record.requestedAt ? new Date(record.requestedAt) : new Date(),
+    lastAgentCommand: lastAgentCommand || undefined,
   };
 }
 
@@ -364,29 +392,43 @@ function handleAIWorking(event: any) {
     return;
   }
 
-  const updatedIds: string[] = [];
+  const eventCommand =
+    typeof event?.latestCommand === 'string' && event.latestCommand.trim()
+      ? event.latestCommand.trim()
+      : '';
+  const sessionCommand = terminalStore.getSessionById(sessionId)?.lastAgentCommand?.trim() || '';
+  const latestCommand = eventCommand || sessionCommand;
+
+  const stateUpdatedIds: string[] = [];
   let changed = false;
 
   notifications.value = notifications.value.map((notification) => {
     if (notification.type === 'completion' && notification.sessionId === sessionId) {
-      if (notification.state !== 'working') {
+      const shouldUpdateState = notification.state !== 'working';
+      const shouldUpdateCommand =
+        Boolean(latestCommand) && latestCommand !== notification.lastAgentCommand;
+
+      if (shouldUpdateState || shouldUpdateCommand) {
         changed = true;
-        updatedIds.push(notification.id);
+        if (shouldUpdateState) {
+          stateUpdatedIds.push(notification.id);
+        }
         return {
           ...notification,
           state: 'working',
+          lastAgentCommand: shouldUpdateCommand ? latestCommand : notification.lastAgentCommand,
         };
       }
     }
     return notification;
   });
 
-  if (updatedIds.length) {
-    clearReadStateForNotifications(updatedIds);
+  if (stateUpdatedIds.length) {
+    clearReadStateForNotifications(stateUpdatedIds);
   }
 
   if (changed) {
-    console.log('[AI Notification] Marked completion as working', { sessionId });
+    console.log('[AI Notification] Updated working completion', { sessionId, latestCommand });
   } else {
     // 如果当前列表里没有对应记录（可能是第一次就进入 working 状态），主动刷新
     void fetchCompletionRecords();
@@ -767,24 +809,24 @@ watch(
               :show-arrow="false"
               class="notification-popover"
             >
-              <template #trigger>
-                <div class="notification-description">
-                  <span v-if="getLocationLabel(notification)" class="project-badge">
-                    [{{ getLocationLabel(notification) }}]
+          <template #trigger>
+            <div class="notification-description">
+              <span class="notification-text">
+                <span class="notification-tab-label">
+                  {{ getTabLabel(notification) }}
+                </span>
+                <template v-if="getLatestAgentCommand(notification)">
+                  <span class="notification-text-separator">: </span>
+                  <span class="notification-command-text">
+                    {{ getLatestAgentCommand(notification) }}
                   </span>
-                  <span class="notification-text">
-                    <template v-if="notification.type === 'completion'">
-                      {{ formatCompletionBody(notification) }}
-                    </template>
-                    <template v-else>
-                      {{ t('terminal.isWaitingForApproval') }} - {{ notification.title }}
-                    </template>
-                  </span>
-                </div>
-              </template>
-              <div class="notification-detail-text">
-                {{ getNotificationDescription(notification) }}
-              </div>
+                </template>
+              </span>
+            </div>
+          </template>
+          <div class="notification-detail-text">
+            {{ getNotificationDescription(notification) }}
+          </div>
             </n-popover>
             <div class="notification-action-hint">
               {{ t('terminal.clickToJumpTerminal') }}
@@ -980,18 +1022,25 @@ watch(
   font-weight: 500;
 }
 
-.project-badge {
-  font-weight: 500;
-  color: var(--text-color, #000000);
-  flex-shrink: 0;
-}
-
 .notification-text {
   display: inline-block;
   flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.notification-tab-label {
+  color: var(--n-color-primary, #3b82f6);
+  font-weight: 600;
+}
+
+.notification-command-text {
+  color: var(--text-color, #111);
+}
+
+.notification-text-separator {
+  color: var(--text-color-secondary, #6b7280);
 }
 
 .notification-close {

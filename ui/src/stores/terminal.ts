@@ -15,6 +15,7 @@ export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
 
 export interface TerminalTabState extends TerminalSession {
   clientStatus: ClientStatus;
+  lastAgentCommand?: string;
 }
 
 export type ServerMessage = {
@@ -727,6 +728,10 @@ export const useTerminalStore = defineStore('terminal', () => {
 
     const nextTaskId = metadata.taskId ?? bucket[index].taskId;
     const nextTitle = metadata.title;
+    const latestCommand =
+      typeof metadata.aiAssistantRecentInput === 'string' && metadata.aiAssistantRecentInput.trim()
+        ? metadata.aiAssistantRecentInput.trim()
+        : '';
 
     bucket[index] = {
       ...bucket[index],
@@ -737,6 +742,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       aiAssistant: metadata.aiAssistant,
       taskId: nextTaskId,
       title: typeof nextTitle === 'string' ? nextTitle : bucket[index].title,
+      lastAgentCommand: latestCommand || bucket[index].lastAgentCommand,
     };
     record.tab = bucket[index];
     updateSessionTaskMapping(sessionId, nextTaskId ?? undefined);
@@ -771,7 +777,12 @@ export const useTerminalStore = defineStore('terminal', () => {
           // Update tab metadata in realtime
           updateTabMetadata(tab.id, payload.metadata);
 
-          if (payload.metadata.aiAssistantRecentInput) {
+          const trimmedAssistantInput =
+            typeof payload.metadata.aiAssistantRecentInput === 'string'
+              ? payload.metadata.aiAssistantRecentInput.trim()
+              : '';
+
+          if (trimmedAssistantInput) {
             console.log(
               `[Terminal] AI Input Captured: ${payload.metadata.aiAssistantRecentInput}`,
               {
@@ -845,6 +856,7 @@ export const useTerminalStore = defineStore('terminal', () => {
               projectId: tab.projectId,
               projectName: getProjectName(tab.projectId),
               assistant: payload.metadata.aiAssistant,
+              latestCommand: trimmedAssistantInput,
             });
           }
 

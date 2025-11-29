@@ -393,6 +393,8 @@ export default {
     aiNeedsApproval: 'AI 需要批准',
     isWaitingForApproval: '正在等待您的批准',
     clickToJumpTerminal: '点击跳转对应终端',
+    tabLabel: '标签名',
+    latestAgentCommand: '最近一次 Code Agent 指令',
     enableNotifications: '启用 AI 完成提醒',
     disableNotifications: '禁用 AI 完成提醒',
     notificationsEnabled: 'AI 提醒已启用',
