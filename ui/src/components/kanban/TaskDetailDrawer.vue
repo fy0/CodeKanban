@@ -370,5 +370,7 @@ const formatDate = (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm');
 
 .task-detail__comment .content {
   margin-bottom: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

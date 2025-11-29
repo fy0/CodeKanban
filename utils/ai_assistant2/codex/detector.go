@@ -10,6 +10,8 @@ import (
 	"code-kanban/utils/ai_assistant2/types"
 )
 
+var contextLeftLinePattern = regexp.MustCompile(`^  \d+% context left`)
+
 const (
 	// minWorkingExitInterval is the minimum time required to exit from working state
 	// This prevents false negatives when working indicator temporarily disappears between chunks
@@ -189,7 +191,17 @@ func (d *StatusDetector) containsTipLine(line string) bool {
 
 func detectInputWindow(lines []string, raw [][]vt10x.Glyph) (start, end int, isEmpty bool) {
 	// 最后一行一般总是空行 所以跳过。接下来是 xx% context left
-	for end = len(lines) - 2; end >= 0; end-- {
+	// 更新: 上面这个想法不准确，因为有多空行的情况被发现，所以要先找到正确的行
+	contextConfirmed := false
+
+	for end = len(lines) - 1; end >= 0; end-- {
+		if !contextConfirmed {
+			if isContextLeftLine(lines[end]) {
+				contextConfirmed = true
+			}
+			continue
+		}
+
 		if !isBlankLine(lines[end]) {
 			continue
 		}
@@ -213,6 +225,10 @@ func detectInputWindow(lines []string, raw [][]vt10x.Glyph) (start, end int, isE
 		}
 	}
 	return -1, -1, false
+}
+
+func isContextLeftLine(line string) bool {
+	return contextLeftLinePattern.MatchString(line)
 }
 
 func isBlankLine(line string) bool {

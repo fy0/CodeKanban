@@ -1136,7 +1136,12 @@ func (s *Session) appendInputToTask(taskID, input string, ts time.Time, assistan
 		return
 	}
 
-	entry := fmt.Sprintf("%s\n%s - %s", input, ts.Format("2006-01-02 15:04:05"), assistantName)
+	descriptionEntry := fmt.Sprintf("%s\n%s - %s", input, ts.Format("2006-01-02 15:04:05"), assistantName)
+
+	commentEntry := input
+	if trimmed := strings.TrimSpace(assistantName); trimmed != "" {
+		commentEntry = fmt.Sprintf("%s - %s", commentEntry, trimmed)
+	}
 
 	existing := strings.TrimRight(task.Description, "\n")
 	var builder strings.Builder
@@ -1144,12 +1149,9 @@ func (s *Session) appendInputToTask(taskID, input string, ts time.Time, assistan
 	if strings.TrimSpace(existing) != "" {
 		builder.WriteString("\n\n")
 	}
-	builder.WriteString(entry)
-	if assistantName != "" {
-		// entry already includes assistant name
-	}
+	builder.WriteString(descriptionEntry)
 
-	updates := map[string]interface{}{
+	updates := map[string]any{
 		"description": builder.String(),
 	}
 	if task.Status == "todo" {
@@ -1163,7 +1165,7 @@ func (s *Session) appendInputToTask(taskID, input string, ts time.Time, assistan
 		return
 	}
 
-	if _, err := commentSvc.CreateComment(ctx, taskID, entry); err != nil {
+	if _, err := commentSvc.CreateComment(ctx, taskID, commentEntry); err != nil {
 		if s.logger != nil {
 			s.logger.Warn("failed to append task comment from recent input", zap.String("taskId", taskID), zap.Error(err))
 		}
