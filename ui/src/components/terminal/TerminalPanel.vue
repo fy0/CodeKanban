@@ -33,25 +33,39 @@
             :tab-props="createTabProps(tab)"
           >
             <template #tab>
-              <span class="tab-label" :title="getTabTooltip(tab)">
-                <span v-if="!hideStatusDots" class="status-dot" :class="tab.clientStatus" />
-                <span class="tab-title" :style="tabTitleStyle">
-                  {{ tab.title }}
-                </span>
-                <span
-                  v-if="showAssistantStatus(tab)"
-                  class="ai-status-pill"
+                <span class="tab-label" :title="getTabTooltip(tab)">
+                  <span v-if="!hideStatusDots" class="status-dot" :class="tab.clientStatus" />
+                  <span class="tab-title" :style="tabTitleStyle">
+                    {{ tab.title }}
+                  </span>
+                  <span
+                    v-if="showAssistantStatus(tab)"
+                    class="ai-status-pill"
                   :class="[
                     `state-${getAssistantStateClass(tab)}`,
                     getAssistantPillSizeClass(tab)
                   ]"
-                  :title="getAssistantTooltip(tab)"
-                >
-                  <span class="ai-status-icon" v-html="getAssistantIcon(tab)"></span>
-                  <span class="ai-status-text">{{ getAssistantStatusLabel(tab) }}</span>
-                  <span class="ai-status-emoji">{{ getAssistantStatusEmoji(tab) }}</span>
+                    :title="getAssistantTooltip(tab)"
+                  >
+                    <span
+                      v-if="resolveTabTaskId(tab)"
+                      class="ai-status-icon task-icon"
+                      role="button"
+                      tabindex="0"
+                      :title="t('terminal.viewLinkedTask')"
+                      @click.stop="handleViewTask(tab)"
+                      @keydown.enter.prevent.stop="handleViewTask(tab)"
+                      @keydown.space.prevent.stop="handleViewTask(tab)"
+                    >
+                      <n-icon size="12">
+                        <ClipboardOutline />
+                      </n-icon>
+                    </span>
+                    <span class="ai-status-icon" v-html="getAssistantIcon(tab)"></span>
+                    <span class="ai-status-text">{{ getAssistantStatusLabel(tab) }}</span>
+                    <span class="ai-status-emoji">{{ getAssistantStatusEmoji(tab) }}</span>
+                  </span>
                 </span>
-              </span>
             </template>
           </n-tab-pane>
         </n-tabs>
@@ -193,7 +207,7 @@ import type { HTMLAttributes } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useDialog, useMessage, NIcon, NInput } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
-import { ChevronDownOutline, ChevronUpOutline, TerminalOutline, CopyOutline, CreateOutline, SettingsOutline, CheckmarkOutline, InformationCircleOutline, Add } from '@vicons/ionicons5';
+import { ChevronDownOutline, ChevronUpOutline, TerminalOutline, CopyOutline, CreateOutline, SettingsOutline, CheckmarkOutline, InformationCircleOutline, Add, TrashOutline, ClipboardOutline } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
 import { useTerminalClient, type TerminalCreateOptions, type TerminalTabState } from '@/composables/useTerminalClient';
 import type { DropdownOption } from 'naive-ui';
@@ -227,11 +241,21 @@ const shouldAutoFocusTerminal = ref(true);
 const contextMenuTab = ref<string | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
-const contextMenuOptions = computed<DropdownOption[]>(() => {
-  const tab = contextMenuTab.value ? tabs.value.find(t => t.id === contextMenuTab.value) : null;
-  const hasProcessInfo = tab?.processPid != null;
+function resolveTabTaskId(tab: TerminalTabState | null | undefined) {
+  if (!tab) {
+    return undefined;
+  }
+  return tab.taskId || getLinkedTaskId(tab.id);
+}
 
-  return [
+const contextMenuOptions = computed<DropdownOption[]>(() => {
+  const tabId = contextMenuTab.value;
+  const tab = tabId ? tabs.value.find(t => t.id === tabId) : null;
+  const hasProcessInfo = tab?.processPid != null;
+  const linkedTaskId = resolveTabTaskId(tab);
+  const hasLinkedTask = Boolean(linkedTaskId);
+
+  const options: DropdownOption[] = [
     {
       label: t('terminal.duplicateTab'),
       key: 'duplicate',
@@ -248,7 +272,25 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       icon: () => h(NIcon, null, { default: () => h(InformationCircleOutline) }),
       disabled: !hasProcessInfo,
     },
+    {
+      type: 'divider',
+      key: 'task-actions-divider',
+    },
+    {
+      label: t('terminal.viewLinkedTask'),
+      key: 'view-task',
+      icon: () => h(NIcon, null, { default: () => h(ClipboardOutline) }),
+      disabled: !hasLinkedTask,
+    },
+    {
+      label: t('terminal.unlinkTask'),
+      key: 'unlink-task',
+      icon: () => h(NIcon, null, { default: () => h(TrashOutline) }),
+      disabled: !hasLinkedTask,
+    },
   ];
+
+  return options;
 });
 
 // 设置菜单相关状态
@@ -333,6 +375,9 @@ const {
   send,
   disconnectTab,
   reorderTabs: reorderTabsInStore,
+  unlinkTask,
+  focusSession: focusSessionInStore,
+  getLinkedTaskId,
 } =
   useTerminalClient(projectIdRef);
 
@@ -1428,7 +1473,53 @@ async function handleContextMenuSelect(key: string) {
   }
   if (key === 'copy-process-info') {
     copyProcessInfo(tab);
+    return;
   }
+  if (key === 'view-task') {
+    handleViewTask(tab);
+    return;
+  }
+  if (key === 'unlink-task') {
+    promptUnlinkTask(tab);
+    return;
+  }
+}
+
+function handleViewTask(tab: TerminalTabState) {
+  const taskId = resolveTabTaskId(tab);
+  if (!taskId) {
+    message.warning(t('terminal.noLinkedTask'));
+    return;
+  }
+  emitter.emit('task:view', {
+    sessionId: tab.id,
+    taskId,
+    projectId: props.projectId,
+  });
+}
+
+function promptUnlinkTask(tab: TerminalTabState) {
+  const taskId = resolveTabTaskId(tab);
+  if (!taskId) {
+    message.warning(t('terminal.noLinkedTask'));
+    return;
+  }
+  dialog.warning({
+    title: t('terminal.unlinkTask'),
+    content: t('terminal.unlinkTaskConfirm', { title: tab.title }),
+    positiveText: t('common.confirm'),
+    negativeText: t('common.cancel'),
+    showIcon: false,
+    maskClosable: false,
+    onPositiveClick: async () => {
+      try {
+        await unlinkTask(tab.id);
+        message.success(t('terminal.taskUnlinked'));
+      } catch (error: any) {
+        message.error(error?.message ?? t('terminal.taskUnlinkFailed'));
+      }
+    },
+  });
 }
 
 async function duplicateTab(tab: TerminalTabState) {
@@ -1535,11 +1626,19 @@ function resetTerminalPosition() {
   });
 }
 
+function focusTerminal(sessionId?: string) {
+  if (!sessionId) {
+    return;
+  }
+  focusSessionInStore(sessionId);
+}
+
 defineExpose({
   createTerminal: openTerminal,
   reloadSessions,
   toggleExpanded,
   ensureExpanded,
+  focusTerminal,
 });
 </script>
 
@@ -1803,6 +1902,17 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   line-height: 1;
+}
+
+.ai-status-icon.task-icon {
+  color: rgba(71, 84, 103, 0.9);
+  margin-right: 2px;
+  cursor: pointer;
+}
+
+.ai-status-icon.task-icon:focus-visible {
+  outline: 2px solid var(--n-color-primary);
+  border-radius: 4px;
 }
 
 .ai-status-icon :deep(svg) {

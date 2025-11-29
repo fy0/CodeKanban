@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hinshun/vt10x"
+	"github.com/tuzig/vt10x"
 
 	"code-kanban/utils/ai_assistant2/claude_code"
 	"code-kanban/utils/ai_assistant2/codex"
@@ -37,8 +37,16 @@ func ParseTrackingMode(mode string) TrackingMode {
 // CaptureLinesFunc retrieves the latest terminal display as a list of visible lines.
 type CaptureLinesFunc func(rows, cols int) ([]string, error)
 
+// StateChangeEvent describes a detected state transition.
+type StateChangeEvent struct {
+	State         types.State
+	PreviousState types.State
+	Timestamp     time.Time
+	RecentInput   string
+}
+
 // StateChangeCallback is called when state changes are detected
-type StateChangeCallback func(state types.State, ts time.Time)
+type StateChangeCallback func(event StateChangeEvent)
 
 // StatusTracker tracks AI assistant state from terminal display
 type StatusTracker struct {
@@ -61,6 +69,11 @@ type StatusTracker struct {
 
 	// Status detector for the current assistant
 	detector types.StatusDetector
+
+	// Cached glyph grid reused across detections
+	raw     [][]vt10x.Glyph
+	rawRows int
+	rawCols int
 
 	// Periodic state checking
 	checkCtx    context.Context
@@ -98,8 +111,14 @@ func (t *StatusTracker) SetTrackingMode(mode TrackingMode) {
 
 	if mode == TrackingModeVirtualTerminal {
 		t.emulator = vt10x.New(vt10x.WithSize(t.cols, t.rows))
+		t.raw = ensureGlyphGrid(t.raw, t.rows, t.cols)
+		t.rawCols = t.cols
+		t.rawRows = t.rows
 	} else {
 		t.emulator = nil
+		t.raw = nil
+		t.rawCols = 0
+		t.rawRows = 0
 	}
 }
 
@@ -137,8 +156,14 @@ func (t *StatusTracker) Activate(assistantType types.AssistantType, rows, cols i
 	t.cols = cols
 	if t.trackingMode == TrackingModeVirtualTerminal {
 		t.emulator = vt10x.New(vt10x.WithSize(cols, rows))
+		t.raw = ensureGlyphGrid(t.raw, rows, cols)
+		t.rawCols = cols
+		t.rawRows = rows
 	} else {
 		t.emulator = nil
+		t.raw = nil
+		t.rawCols = 0
+		t.rawRows = 0
 	}
 	t.detector = createDetector(assistantType)
 
@@ -205,9 +230,6 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 		return types.StateUnknown, time.Time{}, false
 	}
 
-	var lines []string
-	var err error
-
 	// Virtual terminal mode processes chunks sequentially while holding the lock.
 	t.ensureEmulatorSizeLocked(t.cols, t.rows)
 	if t.emulator == nil {
@@ -221,25 +243,31 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 	}
 
 	t.lastProcessTime = now
-	lines = getVisibleLinesLocked(t)
+	lines, raw := getVisibleLinesLocked(t)
 
-	if err != nil || len(lines) == 0 || !t.active || t.detector == nil {
+	if len(lines) == 0 || !t.active || t.detector == nil {
 		return types.StateUnknown, time.Time{}, false
 	}
 
-	state, ts, changed := t.detectStateFromLinesLocked(lines, now)
+	prevState := t.lastState
+	state, ts, changed := t.detectStateFromLinesLocked(lines, raw, now, t.emulator.Cursor())
 	if changed {
-		t.emitStateChangeLocked(state, ts)
+		t.emitStateChangeLocked(StateChangeEvent{
+			State:         state,
+			PreviousState: prevState,
+			Timestamp:     ts,
+			RecentInput:   t.getRecentInputForTransitionLocked(prevState, state),
+		})
 	}
 	return state, ts, changed
 }
 
-func (t *StatusTracker) detectStateFromLinesLocked(lines []string, now time.Time) (types.State, time.Time, bool) {
+func (t *StatusTracker) detectStateFromLinesLocked(lines []string, raw [][]vt10x.Glyph, now time.Time, cursor vt10x.Cursor) (types.State, time.Time, bool) {
 	if t.detector == nil || len(lines) == 0 {
 		return types.StateUnknown, time.Time{}, false
 	}
 
-	detectedState, changeRecentUpdate := t.detector.DetectStateFromLines(lines, t.cols, now, t.lastState, t.recentUpdatedAt)
+	detectedState, changeRecentUpdate := t.detector.DetectStateFromLines(lines, raw, t.cols, now, t.lastState, t.recentUpdatedAt, cursor.X, cursor.Y)
 
 	if changeRecentUpdate {
 		t.recentUpdatedAt = now
@@ -344,34 +372,48 @@ func (t *StatusTracker) checkStateIfIdle() {
 	if t.emulator == nil {
 		return
 	}
-	lines := getVisibleLinesLocked(t)
+	t.ensureEmulatorSizeLocked(t.cols, t.rows)
+	lines, raw := getVisibleLinesLocked(t)
 
 	if len(lines) == 0 {
 		return
 	}
 
-	state, ts, changed := t.detectStateFromLinesLocked(lines, now)
+	prevState := t.lastState
+	state, ts, changed := t.detectStateFromLinesLocked(lines, raw, now, t.emulator.Cursor())
 	if changed {
-		t.emitStateChangeLocked(state, ts)
+		t.emitStateChangeLocked(StateChangeEvent{
+			State:         state,
+			PreviousState: prevState,
+			Timestamp:     ts,
+			RecentInput:   t.getRecentInputForTransitionLocked(prevState, state),
+		})
 	}
 }
 
 // ensureEmulatorSizeLocked lazily creates or resizes the vt10x emulator to match the current terminal size.
 func (t *StatusTracker) ensureEmulatorSizeLocked(cols, rows int) {
 	if cols <= 0 || rows <= 0 {
+		t.raw = nil
+		t.rawCols = 0
+		t.rawRows = 0
 		return
 	}
 
 	if t.emulator == nil {
 		t.emulator = vt10x.New(vt10x.WithSize(cols, rows))
-		return
+	} else {
+		curCols, curRows := t.emulator.Size()
+		if curCols != cols || curRows != rows {
+			t.emulator.Resize(cols, rows)
+		}
 	}
 
-	curCols, curRows := t.emulator.Size()
-	if curCols == cols && curRows == rows {
-		return
+	if t.raw == nil || t.rawCols != cols || t.rawRows != rows {
+		t.raw = ensureGlyphGrid(t.raw, rows, cols)
+		t.rawCols = cols
+		t.rawRows = rows
 	}
-	t.emulator.Resize(cols, rows)
 }
 
 func (t *StatusTracker) resetLocked() {
@@ -388,14 +430,24 @@ func (t *StatusTracker) resetLocked() {
 	t.cols = 0
 	t.captureBusy = false
 	t.totalChunks = 0
+	t.raw = nil
+	t.rawCols = 0
+	t.rawRows = 0
 }
 
-func (t *StatusTracker) emitStateChangeLocked(state types.State, ts time.Time) {
+func (t *StatusTracker) emitStateChangeLocked(event StateChangeEvent) {
 	callback := t.callback
 	if callback == nil {
 		return
 	}
 	t.mu.Unlock()
-	callback(state, ts)
+	callback(event)
 	t.mu.Lock()
+}
+
+func (t *StatusTracker) getRecentInputForTransitionLocked(prev, curr types.State) string {
+	if prev != types.StateWaitingInput || curr != types.StateWorking || t.detector == nil {
+		return ""
+	}
+	return t.detector.GetRecentInput()
 }

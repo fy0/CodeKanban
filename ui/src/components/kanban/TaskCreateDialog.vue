@@ -52,7 +52,7 @@
 import { ref, computed, watch, type CSSProperties } from 'vue';
 import { useMessage, type FormInst, type FormRules } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
-import { useTaskActions } from '@/composables/useTaskActions';
+import { taskActions } from '@/composables/useTaskActions';
 import { extractItem } from '@/api/response';
 import type { Task } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
@@ -71,7 +71,7 @@ const emit = defineEmits<{
 }>();
 
 const projectStore = useProjectStore();
-const { createTask } = useTaskActions();
+const { createTask } = taskActions;
 const message = useMessage();
 const resolvedStatus = computed<Task['status']>(() => props.defaultStatus ?? 'todo');
 

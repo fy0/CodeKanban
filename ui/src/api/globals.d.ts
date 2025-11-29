@@ -329,6 +329,7 @@ export interface CompletionRecord {
   projectId: string;
   projectName?: string;
   sessionId: string;
+  state?: string;
   title: string;
 }
 export interface ItemsResponseCompletionRecordBody {
@@ -465,6 +466,16 @@ export interface TerminalRenameInputBody {
    */
   title: string;
 }
+export interface TerminalTaskLinkInputBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 要关联的任务ID
+   */
+  taskId: string;
+}
 export interface Worktree_create_request {
   /**
    * A URL to the JSON Schema for this object.
@@ -496,6 +507,10 @@ export interface TerminalCreateInputBody {
    * 终端行数
    */
   rows: number;
+  /**
+   * 要关联的任务ID
+   */
+  taskId?: string;
   /**
    * 终端标题
    */
@@ -683,6 +698,7 @@ export interface TerminalSessionView {
   rows: number;
   runningCommand?: string;
   status: string;
+  taskId?: string;
   title: string;
   workingDir: string;
   worktreeId: string;
@@ -698,6 +714,16 @@ export interface ItemsResponseTerminalSessionViewBody {
    * 响应列表
    */
   items: TerminalSessionView[] | null;
+}
+export interface ItemResponseTerminalSessionViewBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: TerminalSessionView;
 }
 export interface Worktree {
   branchName: string;
@@ -917,16 +943,6 @@ export interface PaginatedResponseTaskTableBody {
    * 记录总数
    */
   total: number;
-}
-export interface ItemResponseTerminalSessionViewBody {
-  /**
-   * A URL to the JSON Schema for this object.
-   */
-  $schema?: string;
-  /**
-   * 响应对象
-   */
-  item: TerminalSessionView;
 }
 export interface ItemResponseTaskCommentTableBody {
   /**
@@ -3204,6 +3220,7 @@ declare global {
        *     rows: number
        *     runningCommand?: string
        *     status: string
+       *     taskId?: string
        *     title: string
        *     workingDir: string
        *     worktreeId: string
@@ -3320,6 +3337,7 @@ declare global {
        *     rows: number
        *     runningCommand?: string
        *     status: string
+       *     taskId?: string
        *     title: string
        *     workingDir: string
        *     worktreeId: string
@@ -3340,6 +3358,153 @@ declare global {
       >(
         config: Config
       ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.rename', Config>;
+      /**
+       * ---
+       *
+       * [POST] 关联任务到终端会话
+       *
+       * **path:** /api/v1/projects/{projectId}/terminals/{sessionId}/tasks/link
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       *   sessionId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **RequestBody**
+       * ```ts
+       * type RequestBody = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 要关联的任务ID
+       *   taskId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     aiAssistant?: {
+       *       command?: string
+       *       detected: boolean
+       *       displayName: string
+       *       name: string
+       *       state?: string
+       *       stateUpdatedAt?: string
+       *       type: string
+       *     }
+       *     cols: number
+       *     createdAt: string
+       *     encoding: string
+       *     id: string
+       *     lastActive: string
+       *     processHasChildren?: boolean
+       *     processPid?: number
+       *     processStatus?: string
+       *     projectId: string
+       *     rows: number
+       *     runningCommand?: string
+       *     status: string
+       *     taskId?: string
+       *     title: string
+       *     workingDir: string
+       *     worktreeId: string
+       *     wsPath: string
+       *     wsUrl: string
+       *   }
+       * }
+       * ```
+       */
+      linkTask<
+        Config extends Alova2MethodConfig<ItemResponseTerminalSessionViewBody> & {
+          pathParams: {
+            projectId: string;
+            sessionId: string;
+          };
+          data: TerminalTaskLinkInputBody;
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.linkTask', Config>;
+      /**
+       * ---
+       *
+       * [POST] 解除终端与任务的关联
+       *
+       * **path:** /api/v1/projects/{projectId}/terminals/{sessionId}/tasks/unlink
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       *   sessionId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应对象
+       *   item: {
+       *     aiAssistant?: {
+       *       command?: string
+       *       detected: boolean
+       *       displayName: string
+       *       name: string
+       *       state?: string
+       *       stateUpdatedAt?: string
+       *       type: string
+       *     }
+       *     cols: number
+       *     createdAt: string
+       *     encoding: string
+       *     id: string
+       *     lastActive: string
+       *     processHasChildren?: boolean
+       *     processPid?: number
+       *     processStatus?: string
+       *     projectId: string
+       *     rows: number
+       *     runningCommand?: string
+       *     status: string
+       *     taskId?: string
+       *     title: string
+       *     workingDir: string
+       *     worktreeId: string
+       *     wsPath: string
+       *     wsUrl: string
+       *   }
+       * }
+       * ```
+       */
+      unlinkTask<
+        Config extends Alova2MethodConfig<ItemResponseTerminalSessionViewBody> & {
+          pathParams: {
+            projectId: string;
+            sessionId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.unlinkTask', Config>;
       /**
        * ---
        *
@@ -3368,6 +3533,8 @@ declare global {
        *   cols: number
        *   // 终端行数
        *   rows: number
+       *   // 要关联的任务ID
+       *   taskId?: string
        *   // 终端标题
        *   title: string
        *   // 工作目录
@@ -3405,6 +3572,7 @@ declare global {
        *     rows: number
        *     runningCommand?: string
        *     status: string
+       *     taskId?: string
        *     title: string
        *     workingDir: string
        *     worktreeId: string
@@ -3540,6 +3708,7 @@ declare global {
        *     projectId: string
        *     projectName?: string
        *     sessionId: string
+       *     state?: string
        *     title: string
        *   }> | null
        * }

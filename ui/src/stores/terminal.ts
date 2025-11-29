@@ -1,11 +1,15 @@
 import { defineStore } from 'pinia';
 import { reactive } from 'vue';
 import EventEmitter from 'eventemitter3';
-import Apis, { urlBase } from '@/api';
-import type { TerminalSession } from '@/types/models';
+import Apis, { alovaInstance, urlBase } from '@/api';
+import { extractItem } from '@/api/response';
+import type { TerminalCreateInputBody } from '@/api/globals';
+import type { Task, TerminalSession } from '@/types/models';
 import { resolveWsUrl } from '@/utils/ws';
 import { clearTerminalSnapshot } from '@/utils/terminalSnapshotCache';
 import { useProjectStore } from '@/stores/project';
+import { useTaskStore } from '@/stores/task';
+import { taskActions } from '@/composables/useTaskActions';
 
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
 
@@ -23,6 +27,8 @@ export type ServerMessage = {
     processStatus?: string;
     processHasChildren?: boolean;
     runningCommand?: string;
+    aiAssistantRecentInput?: string;
+    taskId?: string;
     aiAssistant?: {
       type: string;
       name: string;
@@ -42,6 +48,7 @@ export type TerminalCreateOptions = {
   title?: string;
   rows?: number;
   cols?: number;
+  taskId?: string;
 };
 
 type SessionRecord = {
@@ -262,11 +269,57 @@ export const useTerminalStore = defineStore('terminal', () => {
   const aiPreviousStates = new Map<string, string>();
   // Get project store for looking up project names
   const projectStore = useProjectStore();
+  const taskStore = useTaskStore();
+  const sessionToTaskMap = reactive(new Map<string, string>());
+  const taskToSessionMap = reactive(new Map<string, string>());
+  const pendingTaskFetch = new Set<string>();
 
   // Helper function to get project name by ID
   function getProjectName(projectId: string): string | undefined {
-    const project = projectStore.projects.find((p) => p.id === projectId);
+    const project = projectStore.projects.find(p => p.id === projectId);
     return project?.name;
+  }
+
+  function updateSessionTaskMapping(sessionId: string, nextTaskId?: string | null) {
+    const previousTaskId = sessionToTaskMap.get(sessionId);
+    const record = sessionIndex.get(sessionId);
+    if (previousTaskId && previousTaskId !== nextTaskId) {
+      sessionToTaskMap.delete(sessionId);
+      if (taskToSessionMap.get(previousTaskId) === sessionId) {
+        taskToSessionMap.delete(previousTaskId);
+      }
+    }
+    if (nextTaskId) {
+      sessionToTaskMap.set(sessionId, nextTaskId);
+      taskToSessionMap.set(nextTaskId, sessionId);
+    } else if (!nextTaskId) {
+      sessionToTaskMap.delete(sessionId);
+    }
+
+    if (nextTaskId && nextTaskId !== previousTaskId) {
+      void ensureTaskLoaded(nextTaskId);
+    }
+  }
+
+  async function ensureTaskLoaded(taskId: string) {
+    if (!taskId || pendingTaskFetch.has(taskId)) {
+      return;
+    }
+    if (taskStore.tasks.some(task => task.id === taskId)) {
+      return;
+    }
+    pendingTaskFetch.add(taskId);
+    try {
+      const response = await taskActions.getTask.send(taskId);
+      const task = response?.item as unknown as Task | undefined;
+      if (task) {
+        taskStore.upsertTask(task);
+      }
+    } catch (error) {
+      console.error(`[Terminal] Failed to fetch linked task ${taskId}`, error);
+    } finally {
+      pendingTaskFetch.delete(taskId);
+    }
   }
 
   function getTabs(projectId?: string) {
@@ -369,12 +422,15 @@ export const useTerminalStore = defineStore('terminal', () => {
       worktreeId = mainWorktree ? mainWorktree.id : worktrees[0].id;
     }
 
-    const payload = {
+    const payload: TerminalCreateInputBody = {
       workingDir: options.workingDir ?? '',
       title: options.title ?? '',
       rows: options.rows ?? 0,
       cols: options.cols ?? 0,
     };
+    if (options.taskId) {
+      payload.taskId = options.taskId;
+    }
     const response = await Apis.terminalSession
       .create({
         pathParams: {
@@ -434,6 +490,38 @@ export const useTerminalStore = defineStore('terminal', () => {
     disconnectTab(sessionId, true);
   }
 
+  async function linkSessionTask(projectId: string | undefined, sessionId: string, taskId: string) {
+    const resolved = ensureProjectSelected(projectId);
+    const response = await alovaInstance
+      .Post(`/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/link`, {
+        data: { taskId },
+        cacheFor: 0,
+      })
+      .send();
+    const session = extractItem(response) as unknown as TerminalSession | undefined;
+    if (session) {
+      attachOrUpdateSession(session, { projectIdOverride: resolved });
+    }
+    updateSessionTaskMapping(sessionId, taskId);
+    return session;
+  }
+
+  async function unlinkSessionTask(projectId: string | undefined, sessionId: string) {
+    const resolved = ensureProjectSelected(projectId);
+    const response = await alovaInstance
+      .Post(`/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/unlink`, {
+        data: {},
+        cacheFor: 0,
+      })
+      .send();
+    const session = extractItem(response) as unknown as TerminalSession | undefined;
+    if (session) {
+      attachOrUpdateSession(session, { projectIdOverride: resolved });
+    }
+    updateSessionTaskMapping(sessionId);
+    return session;
+  }
+
   function send(sessionId: string, message: any) {
     const socket = sockets.get(sessionId);
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -469,6 +557,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       }
       sessionIndex.delete(sessionId);
       aiPreviousStates.delete(sessionId); // Clean up AI state tracking
+      updateSessionTaskMapping(sessionId);
       if (activeTabByProject.get(record.projectId) === sessionId) {
         const nextId = tabStore.get(record.projectId)?.[0]?.id;
         setActiveTab(record.projectId, nextId);
@@ -554,7 +643,7 @@ export const useTerminalStore = defineStore('terminal', () => {
 
   function attachOrUpdateSession(
     session: TerminalSession,
-    options?: { activate?: boolean; projectIdOverride?: string },
+    options?: { activate?: boolean; projectIdOverride?: string }
   ) {
     const existing = sessionIndex.get(session.id);
     if (existing) {
@@ -567,13 +656,14 @@ export const useTerminalStore = defineStore('terminal', () => {
           'payload project:',
           payloadProjectId,
           'tracked as:',
-          immutableProjectId,
+          immutableProjectId
         );
       }
       Object.assign(existing.tab, {
         ...session,
         projectId: immutableProjectId,
       });
+      updateSessionTaskMapping(session.id, existing.tab.taskId ?? undefined);
       if (options?.activate) {
         setActiveTab(immutableProjectId, session.id);
       }
@@ -594,6 +684,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     };
     bucket.push(tab);
     sessionIndex.set(tab.id, { projectId: resolvedProjectId, tab });
+    updateSessionTaskMapping(tab.id, tab.taskId ?? undefined);
     captureProjectOrder(resolvedProjectId, bucket);
     if (options?.activate) {
       setActiveTab(resolvedProjectId, tab.id);
@@ -633,6 +724,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     const index = bucket.findIndex(t => t.id === sessionId);
     if (index === -1) return;
 
+    const nextTaskId = metadata.taskId ?? bucket[index].taskId;
+
     bucket[index] = {
       ...bucket[index],
       processPid: metadata.processPid,
@@ -640,8 +733,10 @@ export const useTerminalStore = defineStore('terminal', () => {
       processHasChildren: metadata.processHasChildren,
       runningCommand: metadata.runningCommand,
       aiAssistant: metadata.aiAssistant,
+      taskId: nextTaskId,
     };
     record.tab = bucket[index];
+    updateSessionTaskMapping(sessionId, nextTaskId ?? undefined);
   }
 
   function connect(tab: TerminalTabState) {
@@ -656,7 +751,7 @@ export const useTerminalStore = defineStore('terminal', () => {
           type: 'resize',
           cols: tab.cols,
           rows: tab.rows,
-        }),
+        })
       );
     });
 
@@ -672,6 +767,19 @@ export const useTerminalStore = defineStore('terminal', () => {
         } else if (payload.type === 'metadata' && payload.metadata) {
           // Update tab metadata in realtime
           updateTabMetadata(tab.id, payload.metadata);
+
+          if (payload.metadata.aiAssistantRecentInput) {
+            console.log(
+              `[Terminal] AI Input Captured: ${payload.metadata.aiAssistantRecentInput}`,
+              {
+                sessionId: tab.id,
+                sessionTitle: tab.title,
+                assistant: payload.metadata.aiAssistant,
+              }
+            );
+
+            taskActions.invalidateTaskCache();
+          }
 
           // 🎯 Detect AI assistant completion
           // Only trigger notification when transitioning from working state to waiting_input
@@ -854,7 +962,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         'payload:',
         fromPayload,
         'requested:',
-        requestedProjectId,
+        requestedProjectId
       );
     }
     return fromPayload || requestedProjectId;
@@ -899,6 +1007,41 @@ export const useTerminalStore = defineStore('terminal', () => {
     return sessionIndex.get(sessionId)?.tab;
   }
 
+  function getLinkedTaskId(sessionId: string) {
+    return sessionToTaskMap.get(sessionId) ?? undefined;
+  }
+
+  function focusSession(projectId: string | undefined, sessionId?: string) {
+    if (!projectId || !sessionId) {
+      return false;
+    }
+    const bucket = tabStore.get(projectId);
+    if (!bucket || !bucket.some(tab => tab.id === sessionId)) {
+      return false;
+    }
+    setActiveTab(projectId, sessionId);
+    emitter.emit('terminal:ensure-expanded', { projectId });
+    return true;
+  }
+
+  function getSessionByTask(taskId: string | undefined, projectId?: string) {
+    if (!taskId) {
+      return undefined;
+    }
+    const sessionId = taskToSessionMap.get(taskId);
+    if (!sessionId) {
+      return undefined;
+    }
+    const record = sessionIndex.get(sessionId);
+    if (!record) {
+      return undefined;
+    }
+    if (projectId && record.projectId !== projectId) {
+      return undefined;
+    }
+    return record.tab;
+  }
+
   return {
     emitter,
     getTabs,
@@ -917,5 +1060,10 @@ export const useTerminalStore = defineStore('terminal', () => {
     terminalCounts: cachedCounts,
     loadTerminalCounts,
     getSessionById,
+    linkSessionTask,
+    unlinkSessionTask,
+    focusSession,
+    getSessionByTask,
+    getLinkedTaskId,
   };
 });

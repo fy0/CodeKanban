@@ -31,11 +31,13 @@
         <template #item="{ element }">
           <TaskCard
             :task="element"
+            :linked-terminal="linkedTerminals ? linkedTerminals[element.id] : undefined"
             @click="emit('task-clicked', element)"
             @edit="emit('task-edit', element)"
             @delete="emit('task-delete', element)"
             @copy="emit('task-copy', element)"
             @start-work="emit('task-start-work', element)"
+            @view-terminal="emit('view-terminal', element)"
           />
         </template>
       </draggable>
@@ -50,12 +52,19 @@ import draggable from 'vuedraggable';
 import TaskCard from './TaskCard.vue';
 import type { Task } from '@/types/models';
 
+type LinkedTerminalSummary = {
+  sessionId: string;
+  status?: string;
+  sessionTitle: string;
+};
+
 const props = defineProps<{
   title: string;
   status: Task['status'];
   tasks: Task[];
   showAddButton?: boolean;
   addDisabled?: boolean;
+  linkedTerminals?: Record<string, LinkedTerminalSummary>;
 }>();
 
 const emit = defineEmits<{
@@ -65,6 +74,7 @@ const emit = defineEmits<{
   'task-delete': [Task];
   'task-copy': [Task];
   'task-start-work': [Task];
+  'view-terminal': [Task];
   'add-click': [];
 }>();
 

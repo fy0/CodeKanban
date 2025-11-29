@@ -1,6 +1,10 @@
 package types
 
-import "time"
+import (
+	"time"
+
+	"github.com/tuzig/vt10x"
+)
 
 // AssistantType represents the type of AI assistant
 type AssistantType string
@@ -76,13 +80,16 @@ func (t AssistantType) SupportsProgressTracking() bool {
 
 // StatusDetector is an interface for detecting AI assistant states from terminal output
 type StatusDetector interface {
-	// DetectStateFromLines analyzes multiple lines and returns the detected state
-	// cols is the terminal width, required for structure-based detection
-	// timestamp is when these lines were captured
-	// currentState is the current detected state (for stability checking)
-	// lastDetectedAt is when the current state was last detected (updated every chunk, for stability checking)
+	// DetectStateFromLines analyzes multiple lines and returns the detected state.
+	// raw contains the glyph grid for the same viewport, allowing detectors to inspect attributes without re-rendering.
+	// cols is the terminal width, required for structure-based detection.
+	// timestamp is when these lines were captured.
+	// currentState is the current detected state (for stability checking).
+	// lastDetectedAt is when the current state was last detected (updated every chunk, for stability checking).
 	// Returns:
 	//   - state: the detected state (may be forced by stability checking)
 	//   - actuallyDetected: true if the state was actually detected from display (not forced by stability check)
-	DetectStateFromLines(lines []string, cols int, timestamp time.Time, currentState State, lastDetectedAt time.Time) (state State, actuallyDetected bool)
+	DetectStateFromLines(lines []string, raw [][]vt10x.Glyph, cols int, timestamp time.Time, currentState State, lastDetectedAt time.Time, cursorX int, cursorY int) (state State, actuallyDetected bool)
+
+	GetRecentInput() string
 }

@@ -24,6 +24,7 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/samber/lo v1.51.0
 	github.com/shirou/gopsutil/v4 v4.25.10
+	github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188
 	github.com/valyala/fasthttp v1.62.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/text v0.28.0
@@ -96,3 +97,5 @@ require (
 )
 
 replace github.com/danielgtaylor/huma/v2 => github.com/fy0/huma/v2 v2.0.0-20250928113553-954c3a7f416c
+
+replace github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188 => github.com/fy0/vt10x v0.0.0-20251129150011-c2f2317a3188

@@ -39,6 +39,8 @@ export default {
   'terminalSession.list': ['GET', '/api/v1/projects/{projectId}/terminals'],
   'terminalSession.close': ['POST', '/api/v1/projects/{projectId}/terminals/{sessionId}/close'],
   'terminalSession.rename': ['POST', '/api/v1/projects/{projectId}/terminals/{sessionId}/rename'],
+  'terminalSession.linkTask': ['POST', '/api/v1/projects/{projectId}/terminals/{sessionId}/tasks/link'],
+  'terminalSession.unlinkTask': ['POST', '/api/v1/projects/{projectId}/terminals/{sessionId}/tasks/unlink'],
   'worktree.listByProject': ['GET', '/api/v1/projects/{projectId}/worktrees'],
   'worktree.create': ['POST', '/api/v1/projects/{projectId}/worktrees/create'],
   'terminalSession.create': ['POST', '/api/v1/projects/{projectId}/worktrees/{worktreeId}/terminals'],

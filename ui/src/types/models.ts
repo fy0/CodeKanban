@@ -91,6 +91,7 @@ export interface TerminalSession {
       currentStateDuration: number;
     };
   };
+  taskId?: string;
 }
 
 export interface BranchInfo {

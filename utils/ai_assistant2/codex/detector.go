@@ -1,9 +1,12 @@
 package codex
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/tuzig/vt10x"
 
 	"code-kanban/utils/ai_assistant2/types"
 )
@@ -12,6 +15,11 @@ const (
 	// minWorkingExitInterval is the minimum time required to exit from working state
 	// This prevents false negatives when working indicator temporarily disappears between chunks
 	minWorkingExitInterval = 1000 * time.Millisecond
+)
+
+const (
+	codexInputPrompt  = "› "
+	codexIndentPrefix = "  "
 )
 
 // StatusDetector implements state detection for Codex
@@ -23,6 +31,9 @@ type StatusDetector struct {
 
 	// Selection arrow pattern for approval
 	selectionPattern *regexp.Regexp
+
+	recentInput  string
+	recentInput2 string
 }
 
 // NewStatusDetector creates a new Codex state detector
@@ -37,14 +48,15 @@ func NewStatusDetector() *StatusDetector {
 	}
 }
 
-// DetectStateFromLines analyzes multiple lines and returns the detected state
-func (d *StatusDetector) DetectStateFromLines(lines []string, cols int, timestamp time.Time, currentState types.State, lastDetectedAt time.Time) (types.State, bool) {
+// DetectStateFromLines analyzes multiple lines and returns the detected state.
+// The raw glyph grid is currently unused but provided for future heuristics.
+func (d *StatusDetector) DetectStateFromLines(lines []string, raw [][]vt10x.Glyph, cols int, timestamp time.Time, currentState types.State, lastDetectedAt time.Time, cursorX int, cursorY int) (types.State, bool) {
 	if len(lines) == 0 {
 		return types.StateUnknown, true
 	}
 
 	// Detect new state from current display
-	newState := d.detectFromDisplay(lines)
+	newState := d.detectFromDisplay(lines, raw)
 
 	// If nothing detected from display
 	if newState == types.StateUnknown {
@@ -69,7 +81,11 @@ func (d *StatusDetector) DetectStateFromLines(lines []string, cols int, timestam
 }
 
 // detectFromDisplay analyzes display lines and returns the detected state (without stability checks)
-func (d *StatusDetector) detectFromDisplay(lines []string) types.State {
+func (d *StatusDetector) detectFromDisplay(lines []string, raw [][]vt10x.Glyph) types.State {
+	if state := d.detectStateWorkingAndWaiting(lines, raw); state != types.StateUnknown {
+		return state
+	}
+
 	// Search from bottom to top
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := lines[i]
@@ -131,6 +147,121 @@ func (d *StatusDetector) isWorkingLine(line string) bool {
 var defaultDetector = NewStatusDetector()
 
 // DetectStateFromLines uses the default detector to analyze multiple lines
-func DetectStateFromLines(lines []string, cols int, timestamp time.Time, currentState types.State, lastDetectedAt time.Time) (types.State, bool) {
-	return defaultDetector.DetectStateFromLines(lines, cols, timestamp, currentState, lastDetectedAt)
+func DetectStateFromLines(lines []string, raw [][]vt10x.Glyph, cols int, timestamp time.Time, currentState types.State, lastDetectedAt time.Time, cursorX int, cursorY int) (types.State, bool) {
+	return defaultDetector.DetectStateFromLines(lines, raw, cols, timestamp, currentState, lastDetectedAt, cursorX, cursorY)
+}
+
+func (d *StatusDetector) GetRecentInput() string {
+	if d.recentInput == "" {
+		return d.recentInput2
+	}
+	return d.recentInput
+}
+
+func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt10x.Glyph) types.State {
+	if len(lines) == 0 {
+		return types.StateUnknown
+	}
+
+	startIdx, endIdx, isEmpty := detectInputWindow(lines, raw)
+	if !(startIdx == -1 || endIdx == -1) {
+		d.captureRecentInput(lines[startIdx:endIdx], isEmpty)
+	}
+
+	currentLine := startIdx - 1
+	for ; currentLine >= 0; currentLine-- {
+		line := lines[currentLine]
+		if d.containsTipLine(line) {
+			if currentLine > 0 && d.isWorkingLine(lines[currentLine-1]) {
+				return types.StateWorking
+			}
+		}
+		if d.isWorkingLine(line) {
+			return types.StateWorking
+		}
+	}
+
+	return types.StateWaitingInput
+}
+
+func (d *StatusDetector) containsTipLine(line string) bool {
+	return strings.HasPrefix(line, "  ?  Tip: ")
+}
+
+func detectInputWindow(lines []string, raw [][]vt10x.Glyph) (start, end int, isEmpty bool) {
+	// 最后一行一般总是空行 所以跳过。接下来是 xx% context left
+	for end = len(lines) - 2; end >= 0; end-- {
+		if !isBlankLine(lines[end]) {
+			continue
+		}
+
+		for start = end - 1; start >= 0; start-- {
+			line := lines[start]
+			switch {
+			case strings.HasPrefix(line, codexInputPrompt):
+				// check raw mode
+				if raw[start][2].Mode&int16(vt10x.AttrFaint) != 0 {
+					// faint text, empty line
+					return start, end, true
+				}
+				return start, end, false
+			case strings.HasPrefix(line, codexIndentPrefix):
+				continue
+			case isBlankLine(line):
+				start = -1
+			}
+			break
+		}
+	}
+	return -1, -1, false
+}
+
+func isBlankLine(line string) bool {
+	return strings.TrimSpace(line) == ""
+}
+
+func (d *StatusDetector) captureRecentInput(inputLines []string, isEmpty bool) {
+	if len(inputLines) == 0 {
+		return
+	}
+
+	for _, x := range inputLines {
+		fmt.Println("ASD", x)
+	}
+	fmt.Println("==", isEmpty)
+
+	var recentInput string
+
+	if !isEmpty {
+		var builder strings.Builder
+		for idx, rawLine := range inputLines {
+			line := strings.TrimRight(rawLine, "\r")
+			switch {
+			case idx == 0 && strings.HasPrefix(line, codexInputPrompt):
+				line = strings.TrimSpace(strings.TrimPrefix(line, codexInputPrompt))
+			case strings.HasPrefix(line, codexIndentPrefix):
+				line = strings.TrimSpace(strings.TrimPrefix(line, codexIndentPrefix))
+			default:
+				line = strings.TrimSpace(line)
+			}
+
+			if line == "" {
+				continue
+			}
+
+			if builder.Len() > 0 {
+				builder.WriteByte('\n')
+			}
+			builder.WriteString(line)
+		}
+
+		recentInput = builder.String()
+	}
+
+	if recentInput == "" || recentInput == d.recentInput {
+		return
+	}
+
+	d.recentInput2 = d.recentInput
+	d.recentInput = recentInput
 }

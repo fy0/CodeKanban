@@ -83,6 +83,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	registerSystemRoutes(v1, cfg, terminalManager)
 	registerUploadRoutes(v1, cfg, theLogger)
 	registerTerminalRoutes(app, v1, cfg, terminalManager, theLogger)
+	registerCaptureDebugRoute(app, terminalManager, theLogger)
 	mountStatic(app, cfg, assets, theLogger)
 	exposeOpenAPI(app, humaAPI, cfg, theLogger)
 

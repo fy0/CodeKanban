@@ -46,11 +46,24 @@
       <n-spin :show="boardLoading">
         <n-empty v-if="!projectId" :description="t('task.noProject')" />
         <div v-else class="board-columns">
-          <KanbanColumn v-for="column in columns" :key="column.key" :title="column.title" :status="column.key"
-            :tasks="filteredTasksByStatus[column.key] ?? []" :show-add-button="projectId ? column.allowQuickAdd : false"
-            :add-disabled="!projectId" @task-moved="handleTaskMoved" @task-clicked="handleTaskClicked"
-            @task-edit="handleTaskEdit" @task-delete="handleTaskDeleteRequest" @task-copy="handleTaskCopy"
-            @task-start-work="handleTaskStartWork" @add-click="handleColumnQuickAdd(column.key)" />
+          <KanbanColumn
+            v-for="column in columns"
+            :key="column.key"
+            :title="column.title"
+            :status="column.key"
+            :tasks="filteredTasksByStatus[column.key] ?? []"
+            :show-add-button="projectId ? column.allowQuickAdd : false"
+            :add-disabled="!projectId"
+            :linked-terminals="linkedTerminals"
+            @task-moved="handleTaskMoved"
+            @task-clicked="handleTaskClicked"
+            @task-edit="handleTaskEdit"
+            @task-delete="handleTaskDeleteRequest"
+            @task-copy="handleTaskCopy"
+            @task-start-work="handleTaskStartWork"
+            @view-terminal="handleTaskViewTerminal"
+            @add-click="handleColumnQuickAdd(column.key)"
+          />
         </div>
       </n-spin>
     </div>
@@ -64,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref, watch, type Ref } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useClipboard } from '@vueuse/core';
 import { useDialog, useMessage } from 'naive-ui';
@@ -73,7 +86,8 @@ import KanbanColumn from './KanbanColumn.vue';
 import TaskCreateDialog from './TaskCreateDialog.vue';
 import TaskDetailDrawer from './TaskDetailDrawer.vue';
 import { useTaskStore } from '@/stores/task';
-import { useTaskActions } from '@/composables/useTaskActions';
+import { useTerminalStore } from '@/stores/terminal';
+import { taskActions } from '@/composables/useTaskActions';
 import { useProjectStore } from '@/stores/project';
 import { useLocale } from '@/composables/useLocale';
 import { extractItems, extractItem } from '@/api/response';
@@ -86,12 +100,19 @@ const props = defineProps<{
   projectId?: string;
 }>();
 
+type LinkedTerminalSummary = {
+  sessionId: string;
+  status?: string;
+  sessionTitle: string;
+};
+
 const taskStore = useTaskStore();
 const projectStore = useProjectStore();
+const terminalStore = useTerminalStore();
 const message = useMessage();
 const dialog = useDialog();
 const { copy: copyTaskTitle, isSupported: clipboardSupported } = useClipboard();
-const { listTasks, moveTask, deleteTask } = useTaskActions();
+const { listTasks, moveTask, deleteTask } = taskActions;
 
 // 注入终端面板引用
 const terminalPanelRef = inject<Ref<InstanceType<typeof TerminalPanel> | null>>('terminalPanelRef');
@@ -152,6 +173,24 @@ const filteredTasksByStatus = computed(() => {
   return buckets;
 });
 
+const terminalTabs = computed(() => terminalStore.getTabs(currentProjectId.value));
+
+const linkedTerminals = computed<Record<string, LinkedTerminalSummary>>(() => {
+  const map: Record<string, LinkedTerminalSummary> = {};
+  const sessions = terminalTabs.value ?? [];
+  sessions.forEach(session => {
+    if (!session.taskId) {
+      return;
+    }
+    map[session.taskId] = {
+      sessionId: session.id,
+      status: session.aiAssistant?.state,
+      sessionTitle: session.title,
+    };
+  });
+  return map;
+});
+
 watch(
   () => currentProjectId.value,
   id => {
@@ -163,6 +202,14 @@ watch(
   },
   { immediate: true },
 );
+
+onMounted(() => {
+  terminalStore.emitter.on('task:view', handleTaskViewEvent);
+});
+
+onBeforeUnmount(() => {
+  terminalStore.emitter.off('task:view', handleTaskViewEvent);
+});
 
 async function fetchTasks(projectId: string) {
   boardLoading.value = true;
@@ -271,8 +318,33 @@ function handleTaskCreated(task: Task) {
   taskStore.upsertTask(task);
 }
 
+function focusLinkedTerminal(task: Task): boolean {
+  const session = terminalStore.getSessionByTask(task.id, currentProjectId.value);
+  if (!session) {
+    return false;
+  }
+  if (terminalPanelRef?.value?.focusTerminal) {
+    terminalPanelRef.value.focusTerminal(session.id);
+  } else {
+    terminalStore.focusSession(currentProjectId.value, session.id);
+  }
+  return true;
+}
+
+function handleTaskViewTerminal(task: Task) {
+  if (!focusLinkedTerminal(task)) {
+    message.warning(t('task.noLinkedTerminal'));
+  } else {
+    message.success(t('task.jumpToLinkedTerminal'));
+  }
+}
+
 async function handleTaskStartWork(task: Task) {
   try {
+    if (focusLinkedTerminal(task)) {
+      message.success(t('task.jumpToLinkedTerminal'));
+      return;
+    }
     // 确定要使用的worktree
     let targetWorktreeId = task.worktreeId;
     let targetWorktree = targetWorktreeId
@@ -291,10 +363,11 @@ async function handleTaskStartWork(task: Task) {
 
     // 使用终端面板创建终端会话（会自动展开终端面板）
     if (terminalPanelRef?.value) {
-      terminalPanelRef.value.createTerminal({
+      await terminalPanelRef.value.createTerminal({
         worktreeId: targetWorktreeId!,
         title: task.title,
         workingDir: targetWorktree.path,
+        taskId: task.id,
       });
     }
 
@@ -311,6 +384,27 @@ async function handleTaskStartWork(task: Task) {
   } catch (error: any) {
     message.error(error?.message ?? t('task.startWorkFailed'));
   }
+}
+
+function handleTaskViewEvent(event: { taskId?: string; projectId?: string }) {
+  if (!event?.taskId) {
+    return;
+  }
+  if (event.projectId && event.projectId !== currentProjectId.value) {
+    return;
+  }
+  const task = taskStore.tasks.find(item => item.id === event.taskId);
+  if (!task) {
+    message.warning(t('task.taskNotFound'));
+    return;
+  }
+  taskStore.selectTask(task.id);
+  showDetailDrawer.value = true;
+  const focused = focusLinkedTerminal(task);
+  if (!focused) {
+    message.warning(t('task.noLinkedTerminal'));
+  }
+  message.success(t('task.openedLinkedTaskPanel'));
 }
 </script>
 

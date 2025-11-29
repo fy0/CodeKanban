@@ -3,6 +3,7 @@
     width="520"
     placement="right"
     :show="show"
+    :on-after-enter="handleAfterEnter"
     @update:show="emit('update:show', $event as boolean)"
     @after-leave="emit('closed')"
   >
@@ -16,7 +17,12 @@
             </n-form-item>
 
             <n-form-item :label="t('task.fieldDescription')">
-              <n-input v-model:value="form.description" type="textarea" rows="5" :placeholder="t('task.useMarkdown')" />
+              <n-input
+                v-model:value="form.description"
+                type="textarea"
+                rows="5"
+                :placeholder="t('task.useMarkdown')"
+              />
             </n-form-item>
 
             <n-form-item :label="t('task.fieldPriority')">
@@ -60,7 +66,12 @@
                 rows="3"
                 :placeholder="t('task.commentPlaceholder')"
               />
-              <n-button type="primary" size="small" :loading="commentLoading" @click="handleCreateComment">
+              <n-button
+                type="primary"
+                size="small"
+                :loading="commentLoading"
+                @click="handleCreateComment"
+              >
                 {{ t('task.publishComment') }}
               </n-button>
             </n-space>
@@ -72,7 +83,12 @@
                     <div class="content">{{ comment.content }}</div>
                     <n-text depth="3">{{ formatDate(comment.createdAt) }}</n-text>
                   </div>
-                  <n-button quaternary type="error" size="tiny" @click="handleDeleteComment(comment.id)">
+                  <n-button
+                    quaternary
+                    type="error"
+                    size="tiny"
+                    @click="handleDeleteComment(comment.id)"
+                  >
                     {{ t('task.deleteComment') }}
                   </n-button>
                 </n-space>
@@ -87,8 +103,12 @@
         <n-space justify="space-between" style="width: 100%">
           <n-button tertiary @click="emit('update:show', false)">{{ t('common.close') }}</n-button>
           <n-space>
-            <n-button type="error" tertiary :loading="deleteLoading" @click="confirmDelete">{{ t('task.deleteTask') }}</n-button>
-            <n-button type="primary" :loading="saveLoading" @click="handleSave">{{ t('task.saveChanges') }}</n-button>
+            <n-button type="error" tertiary :loading="deleteLoading" @click="confirmDelete">{{
+              t('task.deleteTask')
+            }}</n-button>
+            <n-button type="primary" :loading="saveLoading" @click="handleSave">{{
+              t('task.saveChanges')
+            }}</n-button>
           </n-space>
         </n-space>
       </template>
@@ -102,7 +122,7 @@ import { useDialog, useMessage } from 'naive-ui';
 import dayjs from 'dayjs';
 import { useTaskStore } from '@/stores/task';
 import { useProjectStore } from '@/stores/project';
-import { useTaskActions } from '@/composables/useTaskActions';
+import { taskActions } from '@/composables/useTaskActions';
 import { extractItem, extractItems } from '@/api/response';
 import type { Task, TaskComment } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
@@ -122,7 +142,16 @@ const emit = defineEmits<{
 
 const taskStore = useTaskStore();
 const projectStore = useProjectStore();
-const { updateTask, bindWorktree, deleteTask, listComments, createComment, deleteCommentReq } = useTaskActions();
+const {
+  getTask,
+  updateTask,
+  bindWorktree,
+  deleteTask,
+  listComments,
+  createComment,
+  deleteCommentReq,
+  invalidateTaskCache,
+} = taskActions;
 const message = useMessage();
 const dialog = useDialog();
 
@@ -160,7 +189,7 @@ const worktreeOptions = computed(() =>
   (projectStore.worktrees ?? []).map(worktree => ({
     label: worktree.branchName,
     value: worktree.id,
-  })),
+  }))
 );
 
 const priorityOptions = computed(() => [
@@ -186,34 +215,29 @@ watch(
     };
     originalWorktreeId.value = value.worktreeId ?? null;
   },
-  { immediate: true },
+  { immediate: true }
 );
 
-watch(
-  () => props.taskId,
-  id => {
-    if (props.show && id) {
-      loadComments(id);
-    }
-  },
-  { immediate: true },
-);
+const handleAfterEnter = () => {
+  void loadData();
+};
 
-watch(
-  () => props.show,
-  value => {
-    if (value && props.taskId) {
-      loadComments(props.taskId);
-    }
-  },
-);
-
-async function loadComments(taskId: string) {
+async function loadData() {
+  if (!props.show || !props.taskId) {
+    return;
+  }
   detailLoading.value = true;
   try {
-    const response = await listComments.send(taskId);
-    const items = extractItems(response) as unknown as TaskComment[];
-    taskStore.setComments(taskId, items);
+    const [taskResponse, commentsResponse] = await Promise.all([
+      getTask.send(props.taskId),
+      listComments.send(props.taskId),
+    ]);
+    const freshTask = extractItem(taskResponse) as unknown as Task | undefined;
+    if (freshTask) {
+      taskStore.upsertTask(freshTask);
+    }
+    const items = extractItems(commentsResponse) as unknown as TaskComment[];
+    taskStore.setComments(props.taskId, items);
   } catch (error: any) {
     message.error(error?.message ?? t('task.loadCommentsFailed'));
   } finally {
@@ -246,6 +270,8 @@ async function handleSave() {
       taskStore.upsertTask(updated);
       originalWorktreeId.value = updated.worktreeId ?? null;
     }
+    // 更新后使缓存失效，确保其他地方获取最新数据
+    invalidateTaskCache();
     message.success(t('task.taskUpdated'));
   } catch (error: any) {
     message.error(error?.message ?? t('task.saveFailed'));

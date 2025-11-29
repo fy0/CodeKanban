@@ -3,6 +3,7 @@ package claude_code
 import (
 	"code-kanban/utils/ai_assistant2/types"
 	"fmt"
+	"strings"
 )
 
 func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, cols int) types.State {
@@ -33,6 +34,19 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, cols int) 
 
 	if firstSepIdx == -1 || secondSepIdx == -1 {
 		return types.StateUnknown
+	}
+
+	// 顺手取出两线之中的内容
+	recentInputs := lines[secondSepIdx+1 : firstSepIdx]
+	for i := range recentInputs {
+		recentInputs[i] = strings.TrimSpace(recentInputs[i])
+	}
+	recentInput := strings.Join(recentInputs, "")
+	recentInput, _ = strings.CutPrefix(recentInput, ">")
+	recentInput = strings.TrimSpace(recentInput)
+	if recentInput != d.recentInput {
+		d.recentInput2 = d.recentInput
+		d.recentInput = recentInput
 	}
 
 	// If we found the input text box (two separator lines)

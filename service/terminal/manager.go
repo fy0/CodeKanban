@@ -38,6 +38,7 @@ type CreateSessionParams struct {
 	Rows       int
 	Cols       int
 	Encoding   string
+	TaskID     string
 }
 
 // Manager orchestrates PTY sessions.
@@ -120,6 +121,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 			cfg := m.cfg.AIAssistantStatus
 			return &cfg
 		},
+		TaskID: params.TaskID,
 	})
 	if err != nil {
 		return nil, err
@@ -174,7 +176,9 @@ func (m *Manager) RenameSession(projectID, sessionID, title string) (*Session, e
 		return nil, ErrSessionNotFound
 	}
 
-	session.UpdateTitle(normalized)
+	if err := session.UpdateTitle(normalized); err != nil {
+		return nil, err
+	}
 	return session, nil
 }
 
@@ -185,6 +189,26 @@ func (m *Manager) CloseSession(id string) error {
 		return err
 	}
 	return session.Close()
+}
+
+// LinkTask associates a task with a terminal session.
+func (m *Manager) LinkTask(sessionID, taskID string) (*Session, error) {
+	session, err := m.GetSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	session.AssociateTask(taskID)
+	return session, nil
+}
+
+// UnlinkTask removes the task association from a terminal session.
+func (m *Manager) UnlinkTask(sessionID string) (*Session, error) {
+	session, err := m.GetSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	session.ClearTaskAssociation()
+	return session, nil
 }
 
 // ListSessions enumerates sessions, optionally filtering by project.

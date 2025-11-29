@@ -69,6 +69,17 @@
         {{ tag }}
       </n-tag>
     </n-space>
+
+    <button
+      v-if="linkedTerminal"
+      type="button"
+      :class="['task-card__terminal-status', linkedTerminalStateClass]"
+      :title="linkedTerminalTitle"
+      @click.stop="emit('view-terminal')"
+    >
+      <span class="task-card__status-dot" :class="linkedTerminalStateClass"></span>
+      <span class="task-card__terminal-text">{{ linkedTerminalLabel }}</span>
+    </button>
   </n-card>
 </template>
 
@@ -81,8 +92,15 @@ import { useLocale } from '@/composables/useLocale';
 
 const { t } = useLocale();
 
+type LinkedTerminalSummary = {
+  sessionId: string;
+  status?: string;
+  sessionTitle: string;
+};
+
 const props = defineProps<{
   task: Task;
+  linkedTerminal?: LinkedTerminalSummary;
 }>();
 
 const emit = defineEmits<{
@@ -91,6 +109,7 @@ const emit = defineEmits<{
   delete: [];
   copy: [];
   'start-work': [];
+  'view-terminal': [];
 }>();
 
 const priorityMap = computed((): Record<number, { label: string; type: 'default' | 'info' | 'warning' | 'error' }> => ({
@@ -117,6 +136,22 @@ const isOverdue = computed(() => {
 
 const formatDate = (value: string) => dayjs(value).format('MM-DD');
 
+const linkedTerminalStatus = computed(() => props.linkedTerminal?.status ?? 'unknown');
+const linkedTerminalLabel = computed(() => {
+  switch (linkedTerminalStatus.value) {
+    case 'working':
+      return t('terminal.aiStatusWorking');
+    case 'waiting_approval':
+      return t('terminal.aiStatusWaitingApproval');
+    case 'waiting_input':
+      return t('terminal.aiStatusWaitingInput');
+    default:
+      return t('terminal.processStatusUnknown');
+  }
+});
+const linkedTerminalStateClass = computed(() => `status-${linkedTerminalStatus.value}`);
+const linkedTerminalTitle = computed(() => props.linkedTerminal?.sessionTitle ?? '');
+
 const handleEdit = () => emit('edit');
 const handleDelete = () => emit('delete');
 const handleCopy = () => emit('copy');
@@ -128,6 +163,7 @@ const handleStartWork = () => emit('start-work');
   cursor: pointer;
   transition: all 0.2s ease;
   --n-color: var(--kanban-card-bg, var(--app-surface-color, #ffffff));
+  position: relative;
 }
 
 .task-card:hover {
@@ -179,5 +215,59 @@ const handleStartWork = () => emit('start-work');
 
 .task-card__meta {
   margin-bottom: 8px;
+}
+
+.task-card__terminal-status {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: none;
+  background-color: var(--kanban-terminal-pill-bg, #eef2ff);
+  color: var(--kanban-terminal-pill-fg, #4c1d95);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.task-card__terminal-status.status-waiting_input {
+  background-color: var(--kanban-terminal-pill-bg-muted, #eceef2);
+  color: var(--kanban-terminal-pill-fg-muted, #475467);
+}
+
+.task-card__terminal-status:focus-visible {
+  outline: 2px solid var(--n-color-primary);
+  outline-offset: 2px;
+}
+
+.task-card__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.task-card__status-dot.status-working {
+  background-color: #7c3aed;
+}
+
+.task-card__status-dot.status-waiting_approval {
+  background-color: #f79009;
+}
+
+.task-card__status-dot.status-waiting_input {
+  background-color: #94a3b8;
+}
+
+.task-card__status-dot.status-unknown {
+  background-color: #94a3b8;
+}
+
+.task-card__terminal-text {
+  font-weight: 600;
 }
 </style>

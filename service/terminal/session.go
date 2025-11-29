@@ -18,6 +18,7 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 
+	"code-kanban/model"
 	"code-kanban/utils"
 	"code-kanban/utils/ai_assistant2"
 	"code-kanban/utils/ai_assistant2/types"
@@ -57,6 +58,7 @@ type SessionSnapshot struct {
 	RunningCommand     string `json:"runningCommand,omitempty"`
 	// AI Assistant information
 	AIAssistant *ai_assistant2.AIAssistantInfo `json:"aiAssistant"`
+	TaskID      string                         `json:"taskId,omitempty"`
 }
 
 type StreamEventType string
@@ -75,11 +77,13 @@ type StreamEvent struct {
 }
 
 type SessionMetadata struct {
-	ProcessPID         int32                          `json:"processPid,omitempty"`
-	ProcessStatus      string                         `json:"processStatus,omitempty"`
-	ProcessHasChildren bool                           `json:"processHasChildren,omitempty"`
-	RunningCommand     string                         `json:"runningCommand,omitempty"`
-	AIAssistant        *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
+	ProcessPID             int32                          `json:"processPid,omitempty"`
+	ProcessStatus          string                         `json:"processStatus,omitempty"`
+	ProcessHasChildren     bool                           `json:"processHasChildren,omitempty"`
+	RunningCommand         string                         `json:"runningCommand,omitempty"`
+	AIAssistant            *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
+	TaskID                 string                         `json:"taskId,omitempty"`
+	AIAssistantRecentInput string                         `json:"aiAssistantRecentInput,omitempty"`
 }
 
 type SessionStream struct {
@@ -146,6 +150,10 @@ type Session struct {
 	getAIConfig       func() *utils.AIAssistantStatusConfig
 	assistantOutputCh chan []byte
 
+	associatedTaskID string
+	lockedTitle      string
+	lastRecentInput  string
+
 	mu sync.RWMutex
 
 	scrollMu             sync.RWMutex
@@ -177,6 +185,7 @@ type SessionParams struct {
 	Encoding        string
 	ScrollbackLimit int
 	GetAIConfig     func() *utils.AIAssistantStatusConfig
+	TaskID          string
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -233,6 +242,7 @@ func NewSession(params SessionParams) (*Session, error) {
 		subscribers:      make(map[string]*sessionSubscriber),
 		assistantTracker: ai_assistant2.NewStatusTracker(),
 		getAIConfig:      params.GetAIConfig,
+		associatedTaskID: params.TaskID,
 	}
 
 	session.assistantTracker.SetCaptureFunc(session.captureTerminalLines)
@@ -398,6 +408,7 @@ func (s *Session) checkAndBroadcastMetadata() {
 		ProcessPID:         pid,
 		ProcessStatus:      process.GetProcessStatus(pid),
 		ProcessHasChildren: process.IsProcessBusy(pid),
+		TaskID:             s.TaskID(),
 	}
 
 	tracker := s.assistantTracker
@@ -444,7 +455,8 @@ func (s *Session) metadataChanged(old, new *SessionMetadata) bool {
 	if old.ProcessPID != new.ProcessPID ||
 		old.ProcessStatus != new.ProcessStatus ||
 		old.ProcessHasChildren != new.ProcessHasChildren ||
-		old.RunningCommand != new.RunningCommand {
+		old.RunningCommand != new.RunningCommand ||
+		old.TaskID != new.TaskID {
 		return true
 	}
 
@@ -609,6 +621,41 @@ func (s *Session) ProjectID() string {
 	return s.projectID
 }
 
+// TaskID returns the task associated with this session, if any.
+func (s *Session) TaskID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.associatedTaskID
+}
+
+// AssociateTask links a task to the session.
+func (s *Session) AssociateTask(taskID string) bool {
+	s.mu.Lock()
+	changed := s.associatedTaskID != taskID
+	s.associatedTaskID = taskID
+	s.mu.Unlock()
+
+	if changed {
+		s.broadcastMetadataSnapshot()
+	}
+	return changed
+}
+
+// ClearTaskAssociation removes the task link from the session.
+func (s *Session) ClearTaskAssociation() bool {
+	s.mu.Lock()
+	if s.associatedTaskID == "" {
+		s.mu.Unlock()
+		return false
+	}
+	s.associatedTaskID = ""
+	s.lockedTitle = ""
+	s.mu.Unlock()
+
+	s.broadcastMetadataSnapshot()
+	return true
+}
+
 // WorktreeID returns the associated worktree identifier.
 func (s *Session) WorktreeID() string {
 	return s.worktreeID
@@ -627,10 +674,17 @@ func (s *Session) Title() string {
 }
 
 // UpdateTitle mutates the tab label in a threadsafe manner.
-func (s *Session) UpdateTitle(title string) {
+func (s *Session) UpdateTitle(title string) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lockedTitle != "" && s.lockedTitle != title {
+		return ErrSessionTitleLocked
+	}
 	s.title = title
-	s.mu.Unlock()
+	if s.associatedTaskID != "" && s.lockedTitle == "" {
+		s.lockedTitle = title
+	}
+	return nil
 }
 
 // CreatedAt returns the spawn timestamp.
@@ -691,6 +745,8 @@ func (s *Session) Snapshot() SessionSnapshot {
 			}
 		}
 	}
+
+	snapshot.TaskID = s.TaskID()
 
 	return snapshot
 }
@@ -891,22 +947,230 @@ func (s *Session) captureTerminalLines(rows, cols int) ([]string, error) {
 }
 
 // handleStateChangeFromTracker is called by tracker when periodic check detects state change
-func (s *Session) handleStateChangeFromTracker(state types.State, ts time.Time) {
-	s.applyAssistantState(state, ts)
+func (s *Session) handleStateChangeFromTracker(event ai_assistant2.StateChangeEvent) {
+	s.applyAssistantState(event)
+	if event.RecentInput != "" {
+		go s.handleRecentInput(event)
+	}
 }
 
-func (s *Session) applyAssistantState(state types.State, ts time.Time) {
+func (s *Session) applyAssistantState(event ai_assistant2.StateChangeEvent) {
 	s.metaMu.Lock()
 	if s.lastMetadata == nil || s.lastMetadata.AIAssistant == nil {
 		s.metaMu.Unlock()
 		return
 	}
 	metadata := cloneSessionMetadata(s.lastMetadata)
-	ai_assistant2.SetState(metadata.AIAssistant, state, ts)
+	ai_assistant2.SetState(metadata.AIAssistant, event.State, event.Timestamp)
+	metadata.TaskID = s.TaskID()
+	metadata.AIAssistantRecentInput = ""
+	if event.PreviousState == types.StateWaitingInput &&
+		event.State == types.StateWorking &&
+		event.RecentInput != "" {
+		metadata.AIAssistantRecentInput = event.RecentInput
+	}
 	s.lastMetadata = metadata
 	s.metaMu.Unlock()
 
 	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: metadata})
+}
+
+func (s *Session) handleRecentInput(event ai_assistant2.StateChangeEvent) {
+	input := strings.TrimSpace(event.RecentInput)
+	if input == "" {
+		return
+	}
+
+	s.mu.Lock()
+	if input == s.lastRecentInput {
+		s.mu.Unlock()
+		return
+	}
+	s.lastRecentInput = input
+	taskID := s.associatedTaskID
+	s.mu.Unlock()
+
+	if taskID == "" {
+		var err error
+		taskID, err = s.autoCreateTaskFromInput(input, event.Timestamp)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Warn("failed to auto create task from recent input",
+					zap.String("sessionId", s.id),
+					zap.Error(err))
+			}
+			s.mu.Lock()
+			if s.lastRecentInput == input {
+				s.lastRecentInput = ""
+			}
+			s.mu.Unlock()
+			return
+		}
+	}
+
+	ts := event.Timestamp
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+
+	s.appendInputToTask(taskID, input, ts, s.assistantDisplayName())
+}
+
+func (s *Session) autoCreateTaskFromInput(input string, ts time.Time) (string, error) {
+	projectID := strings.TrimSpace(s.projectID)
+	if projectID == "" {
+		return "", fmt.Errorf("session missing project id")
+	}
+
+	taskSvc := &model.TaskService{}
+	ctx := context.Background()
+
+	var worktreeID *string
+	if trimmed := strings.TrimSpace(s.worktreeID); trimmed != "" {
+		worktreeID = &trimmed
+	}
+
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+
+	title := sanitizeCapturedInput(input)
+	if title == "" {
+		title = "AI task"
+	}
+	title = truncateString(title, 100)
+
+	description := s.buildAutoTaskDescription(input, ts)
+
+	task, err := taskSvc.CreateTask(ctx, &model.CreateTaskRequest{
+		ProjectID:   projectID,
+		WorktreeID:  worktreeID,
+		Title:       title,
+		Description: description,
+		Status:      "in_progress",
+		Priority:    0,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	s.AssociateTask(task.ID)
+
+	return task.ID, nil
+}
+
+func (s *Session) buildAutoTaskDescription(input string, ts time.Time) string {
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	sessionLabel := s.Title()
+	if strings.TrimSpace(sessionLabel) == "" {
+		sessionLabel = s.id
+	}
+	lines := []string{
+		fmt.Sprintf(`Auto-generated from terminal session "%s" at %s.`, sessionLabel, ts.Format(time.RFC3339)),
+	}
+
+	var meta []string
+	if dir := strings.TrimSpace(s.workingDir); dir != "" {
+		meta = append(meta, fmt.Sprintf("Working directory: %s", dir))
+	}
+	if wt := strings.TrimSpace(s.worktreeID); wt != "" {
+		meta = append(meta, fmt.Sprintf("Worktree: %s", wt))
+	}
+	if len(meta) > 0 {
+		lines = append(lines, strings.Join(meta, " | "))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (s *Session) assistantDisplayName() string {
+	s.metaMu.RLock()
+	if s.lastMetadata != nil && s.lastMetadata.AIAssistant != nil {
+		if name := strings.TrimSpace(s.lastMetadata.AIAssistant.DisplayName); name != "" {
+			s.metaMu.RUnlock()
+			return name
+		}
+		if name := strings.TrimSpace(s.lastMetadata.AIAssistant.Name); name != "" {
+			s.metaMu.RUnlock()
+			return name
+		}
+	}
+	s.metaMu.RUnlock()
+
+	if tracker := s.assistantTracker; tracker != nil {
+		if name := tracker.AssistantType().DisplayName(); strings.TrimSpace(name) != "" {
+			return name
+		}
+	}
+	return "AI Agent"
+}
+
+func (s *Session) appendInputToTask(taskID, input string, ts time.Time, assistantName string) {
+	taskSvc := &model.TaskService{}
+	commentSvc := model.NewTaskCommentService()
+	ctx := context.Background()
+
+	task, err := taskSvc.GetTask(ctx, taskID)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to fetch task for recent input", zap.String("taskId", taskID), zap.Error(err))
+		}
+		return
+	}
+
+	entry := fmt.Sprintf("%s\n%s - %s", input, ts.Format("2006-01-02 15:04:05"), assistantName)
+
+	existing := strings.TrimRight(task.Description, "\n")
+	var builder strings.Builder
+	builder.WriteString(existing)
+	if strings.TrimSpace(existing) != "" {
+		builder.WriteString("\n\n")
+	}
+	builder.WriteString(entry)
+	if assistantName != "" {
+		// entry already includes assistant name
+	}
+
+	updates := map[string]interface{}{
+		"description": builder.String(),
+	}
+	if task.Status == "todo" {
+		updates["status"] = "in_progress"
+	}
+
+	if _, err := taskSvc.UpdateTask(ctx, taskID, updates); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to append recent input to task", zap.String("taskId", taskID), zap.Error(err))
+		}
+		return
+	}
+
+	if _, err := commentSvc.CreateComment(ctx, taskID, entry); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to append task comment from recent input", zap.String("taskId", taskID), zap.Error(err))
+		}
+	}
+}
+
+func sanitizeCapturedInput(value string) string {
+	fields := strings.Fields(value)
+	return strings.Join(fields, " ")
+}
+
+func truncateString(value string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	if max == 1 {
+		return string(runes[:1])
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 func (s *Session) enrichAssistantInfo(info *types.AssistantInfo) *ai_assistant2.AIAssistantInfo {
@@ -1092,6 +1356,17 @@ func cloneSessionMetadata(meta *SessionMetadata) *SessionMetadata {
 		copyMeta.AIAssistant = &infoCopy
 	}
 	return &copyMeta
+}
+
+func (s *Session) broadcastMetadataSnapshot() {
+	s.metaMu.RLock()
+	meta := cloneSessionMetadata(s.lastMetadata)
+	s.metaMu.RUnlock()
+	if meta == nil {
+		return
+	}
+	meta.TaskID = s.TaskID()
+	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: meta})
 }
 
 func cloneBytes(src []byte) []byte {
