@@ -73,14 +73,11 @@ watch(
 );
 
 // 监听终端主题变化，动态更新终端主题
-watch(
-  activeTerminalTheme,
-  (newTheme) => {
-    if (terminal) {
-      terminal.options.theme = newTheme.theme;
-    }
+watch(activeTerminalTheme, newTheme => {
+  if (terminal) {
+    terminal.options.theme = newTheme.theme;
   }
-);
+});
 
 const shouldAutoFocus = computed(() => props.shouldAutoFocus !== false);
 
@@ -559,5 +556,11 @@ onBeforeUnmount(() => {
   background: var(--terminal-overlay-bg, rgba(0, 0, 0, 0.35));
   color: var(--terminal-overlay-color, var(--kanban-terminal-fg, #f6f8ff));
   font-size: 13px;
+}
+</style>
+
+<style>
+.terminal.xterm {
+  height: 100%;
 }
 </style>

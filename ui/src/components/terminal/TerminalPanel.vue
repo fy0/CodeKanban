@@ -5,6 +5,27 @@
     :style="panelStyle"
     @pointerdown.capture="handlePanelPointerDown"
   >
+    <div v-if="shouldShowBranchFilter" class="branch-filter-strip">
+      <button
+        type="button"
+        class="branch-filter-item"
+        :class="{ active: branchFilter === 'all' }"
+        @click="handleBranchFilterSelect('all')"
+      >
+        {{ t('terminal.allBranches') }}
+      </button>
+      <button
+        v-for="option in branchFilterOptions"
+        :key="option.id"
+        type="button"
+        class="branch-filter-item"
+        :class="{ active: branchFilter === option.id }"
+        @click="handleBranchFilterSelect(option.id)"
+      >
+        {{ option.label }}
+      </button>
+    </div>
+
     <!-- 拖动调整高度的手柄 -->
     <div class="resize-handle resize-handle-top" @mousedown="startResize">
       <div class="resize-indicator"></div>
@@ -27,53 +48,47 @@
           @close="handleClose"
         >
           <n-tab-pane
-            v-for="tab in tabs"
+            v-for="tab in visibleTabs"
             :key="tab.id"
             :name="tab.id"
             :tab-props="createTabProps(tab)"
           >
             <template #tab>
-                <span class="tab-label" :title="getTabTooltip(tab)">
-                  <span v-if="!hideStatusDots" class="status-dot" :class="tab.clientStatus" />
-                  <span class="tab-title" :style="tabTitleStyle">
-                    {{ tab.title }}
-                  </span>
-                  <span
-                    v-if="showAssistantStatus(tab)"
-                    class="ai-status-pill"
-                  :class="[
-                    `state-${getAssistantStateClass(tab)}`,
-                    getAssistantPillSizeClass(tab)
-                  ]"
-                    :title="getAssistantTooltip(tab)"
-                  >
-                    <span
-                      v-if="resolveTabTaskId(tab)"
-                      class="ai-status-icon task-icon"
-                      role="button"
-                      tabindex="0"
-                      :title="t('terminal.viewLinkedTask')"
-                      @click.stop="handleViewTask(tab)"
-                      @keydown.enter.prevent.stop="handleViewTask(tab)"
-                      @keydown.space.prevent.stop="handleViewTask(tab)"
-                    >
-                      <n-icon size="12">
-                        <ClipboardOutline />
-                      </n-icon>
-                    </span>
-                    <span class="ai-status-icon" v-html="getAssistantIcon(tab)"></span>
-                    <span class="ai-status-text">{{ getAssistantStatusLabel(tab) }}</span>
-                    <span class="ai-status-emoji">{{ getAssistantStatusEmoji(tab) }}</span>
-                  </span>
+              <span class="tab-label" :title="getTabTooltip(tab)">
+                <span v-if="!hideStatusDots" class="status-dot" :class="tab.clientStatus" />
+                <span class="tab-title" :style="tabTitleStyle">
+                  {{ tab.title }}
                 </span>
+                <span
+                  v-if="showAssistantStatus(tab)"
+                  class="ai-status-pill"
+                  :class="[`state-${getAssistantStateClass(tab)}`, getAssistantPillSizeClass(tab)]"
+                  :title="getAssistantTooltip(tab)"
+                >
+                  <span
+                    v-if="resolveTabTaskId(tab)"
+                    class="ai-status-icon task-icon"
+                    role="button"
+                    tabindex="0"
+                    :title="t('terminal.viewLinkedTask')"
+                    @click.stop="handleViewTask(tab)"
+                    @keydown.enter.prevent.stop="handleViewTask(tab)"
+                    @keydown.space.prevent.stop="handleViewTask(tab)"
+                  >
+                    <n-icon size="12">
+                      <ClipboardOutline />
+                    </n-icon>
+                  </span>
+                  <span class="ai-status-icon" v-html="getAssistantIcon(tab)"></span>
+                  <span class="ai-status-text">{{ getAssistantStatusLabel(tab) }}</span>
+                  <span class="ai-status-emoji">{{ getAssistantStatusEmoji(tab) }}</span>
+                </span>
+              </span>
             </template>
           </n-tab-pane>
         </n-tabs>
         <!-- 激活标签指示器 -->
-        <div
-          class="active-tab-indicator"
-          :style="activeTabIndicatorStyle"
-        ></div>
+        <div class="active-tab-indicator" :style="activeTabIndicatorStyle"></div>
       </div>
       <div v-else class="empty-tabs-placeholder">
         <span class="empty-tabs-text">{{ t('terminal.emptyGuideTitle') }}</span>
@@ -104,12 +119,7 @@
             </template>
           </n-button>
         </n-dropdown>
-        <n-button
-          v-else
-          text
-          size="small"
-          @click="handleCreateTerminalClick"
-        >
+        <n-button v-else text size="small" @click="handleCreateTerminalClick">
           <template #icon>
             <n-icon>
               <Add />
@@ -164,17 +174,13 @@
               </template>
             </n-button>
           </n-dropdown>
-          <n-button
-            v-else
-            type="primary"
-            @click="handleCreateTerminalClick"
-          >
+          <n-button v-else type="primary" @click="handleCreateTerminalClick">
             {{ t('terminal.createNewTerminal') }}
           </n-button>
         </div>
       </div>
       <TerminalViewport
-        v-for="tab in tabs"
+        v-for="tab in visibleTabs"
         v-show="tab.id === activeId"
         :key="tab.id"
         :tab="tab"
@@ -184,6 +190,7 @@
       />
     </div>
   </div>
+
   <button
     v-if="!expanded"
     type="button"
@@ -202,14 +209,41 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, toRef, watch } from 'vue';
+import {
+  computed,
+  h,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  shallowRef,
+  toRef,
+  watch,
+} from 'vue';
 import type { HTMLAttributes } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useDialog, useMessage, NIcon, NInput } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
-import { ChevronDownOutline, ChevronUpOutline, TerminalOutline, CopyOutline, CreateOutline, SettingsOutline, CheckmarkOutline, InformationCircleOutline, Add, TrashOutline, ClipboardOutline } from '@vicons/ionicons5';
+import {
+  ChevronDownOutline,
+  ChevronUpOutline,
+  TerminalOutline,
+  CopyOutline,
+  CreateOutline,
+  SettingsOutline,
+  CheckmarkOutline,
+  InformationCircleOutline,
+  Add,
+  TrashOutline,
+  ClipboardOutline,
+} from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
-import { useTerminalClient, type TerminalCreateOptions, type TerminalTabState } from '@/composables/useTerminalClient';
+import {
+  useTerminalClient,
+  type TerminalCreateOptions,
+  type TerminalTabState,
+} from '@/composables/useTerminalClient';
 import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
@@ -240,6 +274,7 @@ const panelHeight = useStorage('terminal-panel-height', 470);
 const panelLeft = useStorage('terminal-panel-left', 220);
 const panelRight = useStorage('terminal-panel-right', 170);
 const autoResize = useStorage('terminal-auto-resize', true);
+const showBranchFilter = useStorage('terminal-show-branch-filter', true);
 const isResizing = ref(false);
 const shouldAutoFocusTerminal = ref(true);
 const developerConfigState = reactive<DeveloperConfig>({
@@ -313,12 +348,23 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
   {
     label: t('terminal.autoResize'),
     key: 'auto-resize',
-    icon: autoResize.value ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) }) : undefined,
+    icon: autoResize.value
+      ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+      : undefined,
   },
   {
     label: t('terminal.confirmClose'),
     key: 'confirm-close',
-    icon: confirmBeforeTerminalClose.value ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) }) : undefined,
+    icon: confirmBeforeTerminalClose.value
+      ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+      : undefined,
+  },
+  {
+    label: t('terminal.showBranchFilter'),
+    key: 'branch-filter-toggle',
+    icon: showBranchFilter.value
+      ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+      : undefined,
   },
   {
     label: t('terminal.codeAgents'),
@@ -414,23 +460,28 @@ const createTerminalOptionsWithHeader = computed<DropdownOption[]>(() => {
       key: 'header',
       disabled: true,
       type: 'render',
-      render: () => h('div', {
-        style: {
-          color: 'var(--n-text-color-3, #999)',
-          fontSize: '12px',
-          fontWeight: '500',
-          padding: '8px 12px 4px 12px',
-          borderBottom: '1px solid var(--n-divider-color, #eee)',
-          marginBottom: '4px',
-          cursor: 'default',
-          userSelect: 'none'
-        }
-      }, t('terminal.createNewTerminal'))
+      render: () =>
+        h(
+          'div',
+          {
+            style: {
+              color: 'var(--n-text-color-3, #999)',
+              fontSize: '12px',
+              fontWeight: '500',
+              padding: '8px 12px 4px 12px',
+              borderBottom: '1px solid var(--n-divider-color, #eee)',
+              marginBottom: '4px',
+              cursor: 'default',
+              userSelect: 'none',
+            },
+          },
+          t('terminal.createNewTerminal')
+        ),
     },
     ...worktrees.value.map(worktree => ({
       label: worktree.branchName,
       key: worktree.id,
-    }))
+    })),
   ];
 });
 
@@ -447,7 +498,8 @@ const TABS_CONTAINER_MIN_OFFSET = 200;
 const SHARED_WIDTH_HIDE_THRESHOLD = 1000;
 const FLOATING_BUTTON_Z_OFFSET = 10;
 
-const { zIndex: terminalPanelZIndex, bringToFront: bringTerminalPanelToFront } = usePanelStack('terminal-panel');
+const { zIndex: terminalPanelZIndex, bringToFront: bringTerminalPanelToFront } =
+  usePanelStack('terminal-panel');
 const floatingButtonZIndex = computed(() => terminalPanelZIndex.value + FLOATING_BUTTON_Z_OFFSET);
 
 const {
@@ -464,11 +516,16 @@ const {
   unlinkTask,
   focusSession: focusSessionInStore,
   getLinkedTaskId,
-} =
-  useTerminalClient(projectIdRef);
+} = useTerminalClient(projectIdRef);
 
 const settingsStore = useSettingsStore();
-const { maxTerminalsPerProject, terminalShortcut, confirmBeforeTerminalClose, activeTheme, currentPresetId } = storeToRefs(settingsStore);
+const {
+  maxTerminalsPerProject,
+  terminalShortcut,
+  confirmBeforeTerminalClose,
+  activeTheme,
+  currentPresetId,
+} = storeToRefs(settingsStore);
 
 // Tabs 主题覆盖 - 用于控制标签背景色
 const tabsThemeOverrides = computed(() => {
@@ -477,7 +534,8 @@ const tabsThemeOverrides = computed(() => {
 
   // 获取标签背景色，优先使用主题设置，然后是预设，最后是默认值
   const tabBg = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
-  const tabActiveBg = theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+  const tabActiveBg =
+    theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
 
   return {
     tabColor: tabBg,
@@ -488,7 +546,9 @@ const tabsThemeOverrides = computed(() => {
 const terminalLimit = computed(() => Math.max(maxTerminalsPerProject.value || 1, 1));
 const isTerminalLimitReached = computed(() => tabs.value.length >= terminalLimit.value);
 const toggleShortcutCode = computed(() => terminalShortcut.value.code);
-const toggleShortcutText = computed(() => terminalShortcut.value.display || terminalShortcut.value.code);
+const toggleShortcutText = computed(
+  () => terminalShortcut.value.display || terminalShortcut.value.code
+);
 const toggleShortcutLabel = computed(() => `快捷键：${toggleShortcutText.value}`);
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
@@ -499,14 +559,63 @@ const tabTitleStyle = computed(() => ({
   maxWidth: `${tabTitleMaxWidth.value}px`,
 }));
 const tabDragSortable = shallowRef<Sortable | null>(null);
-const refreshTabSortable = useDebounceFn(
-  () => {
-    nextTick(() => {
-      setupTabSorting();
+const refreshTabSortable = useDebounceFn(() => {
+  nextTick(() => {
+    setupTabSorting();
+  });
+}, 100);
+
+const worktreeBranchMap = computed(() => {
+  const map = new Map<string, string>();
+  worktrees.value.forEach(worktree => {
+    map.set(worktree.id, worktree.branchName || '');
+  });
+  return map;
+});
+
+const branchFilter = ref<string>('all');
+const lastActiveBeforeFilter = ref<string>('');
+
+const branchFilterOptions = computed(() => {
+  const seen = new Map<string, { id: string; label: string }>();
+  tabs.value.forEach(tab => {
+    const key = tab.worktreeId;
+    if (!key || seen.has(key)) {
+      return;
+    }
+    seen.set(key, {
+      id: key,
+      label: resolveWorktreeBranchName(key),
     });
-  },
-  100,
+  });
+  return Array.from(seen.values());
+});
+
+const shouldShowBranchFilter = computed(
+  () => showBranchFilter.value && tabs.value.length > 1 && branchFilterOptions.value.length > 0
 );
+
+const visibleTabs = computed(() => {
+  if (branchFilter.value === 'all') {
+    return tabs.value;
+  }
+  return tabs.value.filter(tab => tab.worktreeId === branchFilter.value);
+});
+
+function resolveWorktreeBranchName(worktreeId: string) {
+  const label = worktreeBranchMap.value.get(worktreeId)?.trim();
+  if (label) {
+    return label;
+  }
+  return t('terminal.unknownBranch');
+}
+
+function handleBranchFilterSelect(value: string) {
+  if (branchFilter.value === value) {
+    return;
+  }
+  branchFilter.value = value;
+}
 
 // 激活标签指示器的位置和宽度
 const activeTabIndicatorStyle = ref({
@@ -544,7 +653,7 @@ function updateActiveTabIndicator() {
     let activeTabElement: Element | null = null;
 
     // 找到激活的标签
-    tabElements.forEach((el) => {
+    tabElements.forEach(el => {
       if (el.classList.contains('n-tabs-tab--active')) {
         activeTabElement = el;
       }
@@ -609,16 +718,47 @@ const panelStyle = computed(() => ({
   zIndex: terminalPanelZIndex.value,
 }));
 
+function ensureActiveTabMatchesFilter() {
+  const allTabs = tabs.value;
+  if (!allTabs.length) {
+    lastActiveBeforeFilter.value = '';
+    return;
+  }
+  if (branchFilter.value === 'all') {
+    if (lastActiveBeforeFilter.value) {
+      const stored = allTabs.find(tab => tab.id === lastActiveBeforeFilter.value);
+      if (stored) {
+        activeId.value = stored.id;
+      } else if (!allTabs.some(tab => tab.id === activeId.value)) {
+        activeId.value = allTabs[0].id;
+      }
+    } else if (!allTabs.some(tab => tab.id === activeId.value)) {
+      activeId.value = allTabs[0].id;
+    }
+    lastActiveBeforeFilter.value = '';
+    return;
+  }
+  const visible = visibleTabs.value;
+  if (!visible.length) {
+    branchFilter.value = 'all';
+    return;
+  }
+  if (!visible.some(tab => tab.id === activeId.value)) {
+    activeId.value = visible[0].id;
+  }
+}
+
 function recalcTabTitleWidth(explicitWidth?: number) {
   if (typeof explicitWidth === 'number') {
     tabsContainerWidth.value = explicitWidth;
   }
-  const containerWidth = typeof explicitWidth === 'number' ? explicitWidth : tabsContainerWidth.value;
+  const containerWidth =
+    typeof explicitWidth === 'number' ? explicitWidth : tabsContainerWidth.value;
   if (!containerWidth) {
     tabTitleMaxWidth.value = MAX_TAB_TITLE_WIDTH;
     return;
   }
-  const tabCount = Math.max(tabs.value.length, 1);
+  const tabCount = Math.max(visibleTabs.value.length, 1);
   let activeOffset = TABS_CONTAINER_STATIC_OFFSET;
   if (containerWidth - activeOffset < SHARED_WIDTH_HIDE_THRESHOLD) {
     activeOffset = TABS_CONTAINER_MIN_OFFSET;
@@ -643,24 +783,32 @@ useResizeObserver(tabsContainerRef, entries => {
 });
 
 watch(
-  () => tabs.value.length,
+  () => visibleTabs.value.length,
   () => {
     nextTick(() => {
       recalcTabTitleWidth();
       updateActiveTabIndicator();
     });
     refreshTabSortable();
-  },
+  }
 );
 
 watch(
   tabs,
   () => {
+    if (!tabs.value.length) {
+      lastActiveBeforeFilter.value = '';
+      if (branchFilter.value !== 'all') {
+        branchFilter.value = 'all';
+      }
+    } else {
+      ensureActiveTabMatchesFilter();
+    }
     nextTick(() => {
       updateActiveTabIndicator();
     });
   },
-  { deep: true },
+  { deep: true }
 );
 
 watch(
@@ -676,7 +824,7 @@ watch(
     } else {
       destroyTabSorting();
     }
-  },
+  }
 );
 
 watch(
@@ -687,7 +835,28 @@ watch(
     } else {
       destroyTabSorting();
     }
-  },
+  }
+);
+
+watch(branchFilter, (next, prev) => {
+  if (next !== 'all' && prev === 'all') {
+    lastActiveBeforeFilter.value = activeId.value;
+  }
+  ensureActiveTabMatchesFilter();
+  nextTick(() => {
+    recalcTabTitleWidth();
+    updateActiveTabIndicator();
+  });
+  refreshTabSortable();
+});
+
+watch(
+  () => tabs.value.length,
+  length => {
+    if (length <= 1 && branchFilter.value !== 'all') {
+      branchFilter.value = 'all';
+    }
+  }
 );
 
 nextTick(() => {
@@ -793,7 +962,7 @@ if (typeof window !== 'undefined') {
 
 function setupTabSorting() {
   const container = tabsContainerRef.value;
-  if (!container || tabs.value.length <= 1) {
+  if (!container || visibleTabs.value.length <= 1) {
     destroyTabSorting();
     return;
   }
@@ -804,7 +973,7 @@ function setupTabSorting() {
   }
   if (tabDragSortable.value) {
     if (tabDragSortable.value.el === wrapper) {
-      tabDragSortable.value.option('disabled', tabs.value.length <= 1);
+      tabDragSortable.value.option('disabled', visibleTabs.value.length <= 1);
       return;
     }
     destroyTabSorting();
@@ -821,7 +990,7 @@ function setupTabSorting() {
     dragClass: 'terminal-tab-dragging',
     onEnd: handleTabDragEnd,
   });
-  tabDragSortable.value.option('disabled', tabs.value.length <= 1);
+  tabDragSortable.value.option('disabled', visibleTabs.value.length <= 1);
 }
 
 function destroyTabSorting() {
@@ -834,16 +1003,21 @@ function destroyTabSorting() {
 function handleTabDragEnd(event: SortableEvent) {
   const fromIndex = event.oldDraggableIndex ?? event.oldIndex ?? -1;
   const toIndex = event.newDraggableIndex ?? event.newIndex ?? -1;
-  if (
-    fromIndex === -1 ||
-    toIndex === -1 ||
-    fromIndex === toIndex ||
-    fromIndex >= tabs.value.length ||
-    toIndex >= tabs.value.length
-  ) {
+  if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
     return;
   }
-  reorderTabsInStore(fromIndex, toIndex);
+  const visible = visibleTabs.value;
+  const fromTab = visible[fromIndex];
+  const toTab = visible[toIndex];
+  if (!fromTab || !toTab) {
+    return;
+  }
+  const absoluteFromIndex = tabs.value.findIndex(tab => tab.id === fromTab.id);
+  const absoluteToIndex = tabs.value.findIndex(tab => tab.id === toTab.id);
+  if (absoluteFromIndex === -1 || absoluteToIndex === -1) {
+    return;
+  }
+  reorderTabsInStore(absoluteFromIndex, absoluteToIndex);
   nextTick(() => {
     scheduleResizeAll();
     updateActiveTabIndicator();
@@ -851,23 +1025,17 @@ function handleTabDragEnd(event: SortableEvent) {
 }
 
 // 节流的终端 resize 函数
-const scheduleResizeAll = useDebounceFn(
-  () => {
-    if (autoResize.value && expanded.value && tabs.value.length > 0) {
-      emitter.emit('terminal-resize-all');
-    }
-  },
-  150,
-);
+const scheduleResizeAll = useDebounceFn(() => {
+  if (autoResize.value && expanded.value && tabs.value.length > 0) {
+    emitter.emit('terminal-resize-all');
+  }
+}, 150);
 
-const scheduleActiveTabResize = useDebounceFn(
-  (tabId: string) => {
-    if (autoResize.value && expanded.value && tabId) {
-      emitter.emit(`terminal-resize-${tabId}`);
-    }
-  },
-  150,
-);
+const scheduleActiveTabResize = useDebounceFn((tabId: string) => {
+  if (autoResize.value && expanded.value && tabId) {
+    emitter.emit(`terminal-resize-${tabId}`);
+  }
+}, 150);
 
 // 移除自动收缩逻辑，让用户手动控制展开/收缩状态
 // 这样切换项目时不会自动收缩面板
@@ -880,7 +1048,7 @@ watch(
       scheduleResizeAll();
     });
   },
-  { flush: 'post' },
+  { flush: 'post' }
 );
 
 // 监听标签页切换，立即刷新终端尺寸
@@ -928,7 +1096,7 @@ watch(
       scheduleActiveTabResize(newId);
     });
   },
-  { flush: 'post' },
+  { flush: 'post' }
 );
 
 type ToggleOptions = {
@@ -989,7 +1157,9 @@ function handleTerminalToggleShortcut(event: KeyboardEvent) {
   if (event.repeat || !isToggleShortcut(event)) {
     return;
   }
-  const activeElement = (typeof document !== 'undefined' ? document.activeElement : null) as HTMLElement | null;
+  const activeElement = (
+    typeof document !== 'undefined' ? document.activeElement : null
+  ) as HTMLElement | null;
   if (isTerminalElement(activeElement) || isEditableElement(activeElement)) {
     return;
   }
@@ -1255,8 +1425,14 @@ const completionColors = computed(() => {
   const theme = activeTheme.value;
   const preset = getPresetById(currentPresetId.value);
   return {
-    bg: theme.terminalTabCompletionBg || preset?.colors.terminalTabCompletionBg || 'rgba(16, 185, 129, 0.25)',
-    border: theme.terminalTabCompletionBorder || preset?.colors.terminalTabCompletionBorder || 'rgba(16, 185, 129, 0.5)',
+    bg:
+      theme.terminalTabCompletionBg ||
+      preset?.colors.terminalTabCompletionBg ||
+      'rgba(16, 185, 129, 0.25)',
+    border:
+      theme.terminalTabCompletionBorder ||
+      preset?.colors.terminalTabCompletionBorder ||
+      'rgba(16, 185, 129, 0.5)',
   };
 });
 
@@ -1264,8 +1440,14 @@ const approvalColors = computed(() => {
   const theme = activeTheme.value;
   const preset = getPresetById(currentPresetId.value);
   return {
-    bg: theme.terminalTabApprovalBg || preset?.colors.terminalTabApprovalBg || 'rgba(247, 144, 9, 0.25)',
-    border: theme.terminalTabApprovalBorder || preset?.colors.terminalTabApprovalBorder || 'rgba(247, 144, 9, 0.5)',
+    bg:
+      theme.terminalTabApprovalBg ||
+      preset?.colors.terminalTabApprovalBg ||
+      'rgba(247, 144, 9, 0.25)',
+    border:
+      theme.terminalTabApprovalBorder ||
+      preset?.colors.terminalTabApprovalBorder ||
+      'rgba(247, 144, 9, 0.5)',
   };
 });
 
@@ -1302,7 +1484,8 @@ function createTabProps(tab: TerminalTabState): HTMLAttributes {
   } else {
     // 设置普通标签的背景色（根据激活状态）
     if (isActive) {
-      const bgColor = theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+      const bgColor =
+        theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
       props.style = {
         backgroundColor: bgColor,
         ...(hideHeaderBorder ? { borderBottom: 'none' } : {}),
@@ -1696,6 +1879,12 @@ function handleSettingsMenuSelect(key: string) {
     autoResize.value = !autoResize.value;
   } else if (key === 'confirm-close') {
     settingsStore.updateConfirmBeforeTerminalClose(!confirmBeforeTerminalClose.value);
+  } else if (key === 'branch-filter-toggle') {
+    const nextValue = !showBranchFilter.value;
+    showBranchFilter.value = nextValue;
+    if (!nextValue && branchFilter.value !== 'all') {
+      branchFilter.value = 'all';
+    }
   } else if (key === 'rename-title-each-command') {
     void toggleRenameTitleEachCommandSetting();
   } else if (key === 'reset-position') {
@@ -1736,16 +1925,18 @@ defineExpose({
   position: fixed;
   bottom: 12px;
   min-width: 375px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background-color: var(--n-card-color, #fff);
   border: 1px solid var(--n-border-color);
   border-radius: 8px;
   box-shadow: 0 -4px 16px var(--n-box-shadow-color, rgba(0, 0, 0, 0.15));
-  display: flex;
-  flex-direction: column;
-  transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.3s ease,
-              transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  overflow: hidden;
+
+  transition:
+    height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.3s ease,
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .terminal-panel.is-collapsed {
@@ -1831,6 +2022,66 @@ defineExpose({
   position: relative;
 }
 
+.branch-filter-strip {
+  position: absolute;
+  bottom: 2px;
+  right: 12px;
+  min-height: 24px;
+  border-radius: 4px;
+  background-color: var(--kanban-terminal-filter-bg, var(--n-card-color, #fff));
+  border: 1px solid var(--n-border-color);
+  box-shadow: 0 6px 16px rgba(15, 17, 26, 0.16);
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0 8px;
+  gap: 0px;
+  font-size: 12px;
+  color: var(--app-text-color, var(--n-text-color-2, #666));
+  z-index: 11;
+}
+
+.branch-filter-item {
+  background: transparent;
+  border: none;
+  color: var(--n-text-color-4, rgba(0, 0, 0, 0.4));
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0px;
+  line-height: 1;
+  transition: color 0.2s ease;
+}
+
+.branch-filter-item:focus-visible {
+  outline: none;
+  color: var(--n-color-primary);
+  text-decoration: underline;
+}
+
+.branch-filter-item:hover {
+  color: var(--n-text-color-2, #4c4f55);
+}
+
+.branch-filter-item.active {
+  color: var(--n-color-primary, #3b82f6);
+  font-weight: 600;
+}
+
+.branch-filter-item::after {
+  content: '|';
+  margin: 0 8px;
+  color: var(--n-text-color-4, rgba(0, 0, 0, 0.35));
+}
+
+.branch-filter-item:last-of-type::after {
+  content: '';
+  margin: 0;
+}
+
 .tabs-container {
   flex: 1 1 auto;
   min-width: 0;
@@ -1851,9 +2102,10 @@ defineExpose({
   height: 2px;
   background-color: var(--n-primary-color);
   border-radius: 1px;
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.3s ease;
+  transition:
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.3s ease;
   z-index: 2;
 }
 
@@ -1879,15 +2131,17 @@ defineExpose({
 
 /* 非选中标签 */
 .panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab) {
-  background-color: var(--kanban-terminal-tab-bg, #FFFFFF) !important;
+  background-color: var(--kanban-terminal-tab-bg, #ffffff) !important;
   color: var(--n-tab-text-color);
   border-color: var(--n-tab-border-color);
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 /* 选中标签 - 覆盖 Naive UI 硬编码的 #0000 */
 .panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.n-tabs-tab--active) {
-  background-color: var(--kanban-terminal-tab-active-bg, #E8E8E8) !important;
+  background-color: var(--kanban-terminal-tab-active-bg, #e8e8e8) !important;
   color: var(--n-tab-text-color-active);
 }
 
@@ -2020,8 +2274,14 @@ defineExpose({
 }
 
 :deep(.n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
-  background-color: var(--kanban-terminal-tab-completion-active-bg, rgba(16, 185, 129, 0.25)) !important;
-  border-color: var(--kanban-terminal-tab-completion-active-border, rgba(16, 185, 129, 0.6)) !important;
+  background-color: var(
+    --kanban-terminal-tab-completion-active-bg,
+    rgba(16, 185, 129, 0.25)
+  ) !important;
+  border-color: var(
+    --kanban-terminal-tab-completion-active-border,
+    rgba(16, 185, 129, 0.6)
+  ) !important;
 }
 
 /* Tab with unviewed approval - orange background (higher priority than completion) */
@@ -2031,8 +2291,14 @@ defineExpose({
 }
 
 :deep(.n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
-  background-color: var(--kanban-terminal-tab-approval-active-bg, rgba(247, 144, 9, 0.25)) !important;
-  border-color: var(--kanban-terminal-tab-approval-active-border, rgba(247, 144, 9, 0.6)) !important;
+  background-color: var(
+    --kanban-terminal-tab-approval-active-bg,
+    rgba(247, 144, 9, 0.25)
+  ) !important;
+  border-color: var(
+    --kanban-terminal-tab-approval-active-border,
+    rgba(247, 144, 9, 0.6)
+  ) !important;
 }
 
 .status-dot {
@@ -2119,7 +2385,6 @@ defineExpose({
   animation: bounceIn 0.5s ease-out;
 }
 
-
 .floating-button-label {
   line-height: 1;
 }
@@ -2139,7 +2404,8 @@ defineExpose({
 }
 
 @keyframes pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
     transform: scale(1);
   }
@@ -2161,11 +2427,14 @@ defineExpose({
 }
 
 @keyframes flashGlow {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
   }
   50% {
-    box-shadow: 0 4px 20px rgba(18, 183, 106, 0.6), 0 0 30px rgba(18, 183, 106, 0.4);
+    box-shadow:
+      0 4px 20px rgba(18, 183, 106, 0.6),
+      0 0 30px rgba(18, 183, 106, 0.4);
   }
 }
 
@@ -2247,7 +2516,7 @@ defineExpose({
 
 <style scoped>
 /* 隐藏终端tab上下 */
-.n-tabs.n-tabs--top .n-tab-pane  {
+.n-tabs.n-tabs--top .n-tab-pane {
   padding: 0 !important;
 }
 </style>

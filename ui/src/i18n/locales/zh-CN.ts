@@ -339,6 +339,8 @@ export default {
     emptyGuideTitle: '暂无终端',
     emptyGuideDescription: '点击下方按钮创建一个新终端',
     createNewTerminal: '创建终端',
+    allBranches: '全部分支',
+    unknownBranch: '未知分支',
     shortcutLabel: '快捷键：{shortcut}',
     pleaseSelectProject: '请先选择项目',
     createFailed: '终端创建失败',
@@ -357,6 +359,7 @@ export default {
     emptyName: '标签名称不能为空',
     renameSuccess: '标签已更新',
     renameFailed: '重命名失败',
+    showBranchFilter: '显示按分支过滤终端条',
     // Process status
     processStatusIdle: '空闲',
     processStatusBusy: '执行中',

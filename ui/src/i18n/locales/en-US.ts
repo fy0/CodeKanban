@@ -339,6 +339,8 @@ export default {
     emptyGuideTitle: 'No Terminal',
     emptyGuideDescription: 'Click the button below to create a new terminal',
     createNewTerminal: 'Create Terminal',
+    allBranches: 'All Branches',
+    unknownBranch: 'Unknown branch',
     shortcutLabel: 'Shortcut: {shortcut}',
     pleaseSelectProject: 'Please select a project first',
     createFailed: 'Failed to create terminal',
@@ -357,6 +359,7 @@ export default {
     emptyName: 'Tab name cannot be empty',
     renameSuccess: 'Tab renamed',
     renameFailed: 'Failed to rename',
+    showBranchFilter: 'Show branch filter bar',
     // Process status
     processStatusIdle: 'Idle',
     processStatusBusy: 'Busy',
