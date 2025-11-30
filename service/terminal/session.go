@@ -708,6 +708,13 @@ func (s *Session) SetAutoCreateTaskOnStartWork(enabled bool) {
 	s.autoCreateTaskOnStartWork.Store(enabled)
 }
 
+// LastRecentInput returns the last user input captured by the AI assistant.
+func (s *Session) LastRecentInput() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastRecentInput
+}
+
 // CreatedAt returns the spawn timestamp.
 func (s *Session) CreatedAt() time.Time {
 	return s.createdAt
@@ -1013,11 +1020,6 @@ func (s *Session) handleRecentInput(event ai_assistant2.StateChangeEvent) {
 
 	if taskID == "" {
 		if !s.autoCreateTaskOnStartWork.Load() {
-			s.mu.Lock()
-			if s.lastRecentInput == input {
-				s.lastRecentInput = ""
-			}
-			s.mu.Unlock()
 			return
 		}
 		var err error
@@ -1028,11 +1030,6 @@ func (s *Session) handleRecentInput(event ai_assistant2.StateChangeEvent) {
 					zap.String("sessionId", s.id),
 					zap.Error(err))
 			}
-			s.mu.Lock()
-			if s.lastRecentInput == input {
-				s.lastRecentInput = ""
-			}
-			s.mu.Unlock()
 			return
 		}
 	}

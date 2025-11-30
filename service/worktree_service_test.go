@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"code-kanban/model"
+	"code-kanban/utils/git"
 )
 
 func TestWorktreeServiceCreateAndRefresh(t *testing.T) {
@@ -208,7 +209,12 @@ func initTestDB(t *testing.T) func() {
 	if err := model.InitWithDSN(dsn, 0, true); err != nil {
 		t.Fatalf("InitWithDSN: %v", err)
 	}
+
+	// Set up git test environment to avoid GPG signing prompts
+	git.SetTestEnvOverride(testGitEnv())
+
 	return func() {
+		git.SetTestEnvOverride(nil)
 		model.DBClose()
 	}
 }
@@ -218,8 +224,6 @@ func createProjectTestRepo(t *testing.T) string {
 
 	dir := t.TempDir()
 	runGitCommand(t, dir, "init", "-b", "main")
-	runGitCommand(t, dir, "config", "user.email", "test@example.com")
-	runGitCommand(t, dir, "config", "user.name", "Test User")
 
 	readme := filepath.Join(dir, "README.md")
 	if err := os.WriteFile(readme, []byte("demo"), 0o644); err != nil {
@@ -231,11 +235,25 @@ func createProjectTestRepo(t *testing.T) string {
 	return dir
 }
 
+// testGitEnv 返回用于测试的 git 环境变量，包含独立的用户信息和禁用 GPG 签名
+func testGitEnv() []string {
+	return []string{
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_AUTHOR_NAME=Test User",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test User",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+		"GIT_CONFIG_NOSYSTEM=1",       // 忽略系统级配置
+		"GIT_CONFIG_GLOBAL=/dev/null", // 忽略全局配置
+		"HOME=" + os.TempDir(),        // 防止读取用户目录下的配置
+	}
+}
+
 func runGitCommand(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), testGitEnv()...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
 	}

@@ -149,9 +149,9 @@ export interface DeveloperConfig {
    * A URL to the JSON Schema for this object.
    */
   $schema?: string;
+  autoCreateTaskOnStartWork: boolean;
   enableTerminalScrollback: boolean;
   renameSessionTitleEachCommand: boolean;
-  autoCreateTaskOnStartWork: boolean;
 }
 export interface OpenEditorInputBody {
   /**
@@ -328,6 +328,7 @@ export interface CompletionRecord {
   completedAt: string;
   dismissed: boolean;
   id: string;
+  lastUserInput?: string;
   projectId: string;
   projectName?: string;
   sessionId: string;
@@ -2135,6 +2136,67 @@ declare global {
       /**
        * ---
        *
+       * [POST] 刷新 Worktree 的提交信息
+       *
+       * **path:** /api/v1/projects/{projectId}/worktrees/refresh-commits
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   projectId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 响应列表
+       *   // [params1] start
+       *   // [items] start
+       *   // [items] end
+       *   // [params1] end
+       *   items: Array<{
+       *     branchName: string
+       *     createdAt: string
+       *     deletedAt: string | null
+       *     headCommit: string | null
+       *     headCommitDate: string | null
+       *     headCommitMessage: string | null
+       *     id: string
+       *     isBare: boolean
+       *     isMain: boolean
+       *     path: string
+       *     projectId: string
+       *     statusAhead: number | null
+       *     statusBehind: number | null
+       *     statusConflicts: number | null
+       *     statusModified: number | null
+       *     statusStaged: number | null
+       *     statusUntracked: number | null
+       *     statusUpdatedAt: string | null
+       *     updatedAt: string
+       *   }> | null
+       * }
+       * ```
+       */
+      refreshCommitInfo<
+        Config extends Alova2MethodConfig<ItemsResponseWorktreeBody> & {
+          pathParams: {
+            projectId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<ItemsResponseWorktreeBody, 'worktree.refreshCommitInfo', Config>;
+      /**
+       * ---
+       *
        * [POST] 删除 Worktree
        *
        * **path:** /api/v1/worktrees/{id}
@@ -3722,6 +3784,7 @@ declare global {
        *     completedAt: string
        *     dismissed: boolean
        *     id: string
+       *     lastUserInput?: string
        *     projectId: string
        *     projectName?: string
        *     sessionId: string
@@ -4039,6 +4102,7 @@ declare global {
        *   item: {
        *     // A URL to the JSON Schema for this object.
        *     $schema?: string
+       *     autoCreateTaskOnStartWork: boolean
        *     enableTerminalScrollback: boolean
        *     renameSessionTitleEachCommand: boolean
        *   }
@@ -4062,6 +4126,7 @@ declare global {
        * type RequestBody = {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
+       *   autoCreateTaskOnStartWork: boolean
        *   enableTerminalScrollback: boolean
        *   renameSessionTitleEachCommand: boolean
        * }

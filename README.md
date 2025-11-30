@@ -4,7 +4,7 @@
 
 [中文](README.zh-CN.md) | [English](README.md)
 
-One panel, 10× faster coding.
+Manage all your terminals and AI coding tools (Claude Code / Codex) from one unified page.
 
 [Core Features](#core-features) • [Quick Start](#quick-start) • [Development Guide](#development-guide) • [About](#about)
 
@@ -30,12 +30,26 @@ codekanban
 
 ## Core Features
 
-- **Ready to Use**: Single file, local database, double-click to use
-- **Terminal Hub**: All your projects, terminals and coding agents in one place (Hotkey: `)
-- **Coding Agent Monitor**: Auto-detect Claude Code/Codex running status in terminals, notify when tasks complete
-- **Task Kanban**: Visualize development task management
-- **Worktree Management**: Create worktree branches, support rebase and merge back to main branch
-- **Notes**: Simple multi-tab notes for quick problem tracking (Hotkey: 1)
+- **🚀 Ready to Use**
+  Single-file deployment, local database, double-click to run.
+
+- **📊 Multi-Project & Multi-Terminal Management**
+  Manage all your projects and terminals from one unified page (Hotkey: `` ` ``).
+
+- **🔍 AI Coding Tool Status Detection**
+  Auto-detect running status of Claude Code / Codex and other tools (idle/working/needs approval), notify when tasks complete.
+
+- **📜 History**
+  Record your conversations with AI, one-click to trace prompt history, automatically add as tasks.
+
+- **📋 Task Kanban**
+  Visualize development task management, clear and intuitive.
+
+- **🌿 Worktree Management**
+  Basic support for worktree branch creation and management, enabling parallel development.
+
+- **📝 Notes**
+  Multi-tab notes for quick recording of ideas and issues (Hotkey: `1`).
 
 ## Development Guide
 

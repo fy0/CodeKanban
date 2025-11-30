@@ -18,6 +18,8 @@ type CompletionRecord struct {
 	CompletedAt time.Time                      `json:"completedAt"`
 	// State 表示当前卡片状态，working 时仍保留卡片
 	State string `json:"state,omitempty"`
+	// LastUserInput 存储用户上次输入的信息
+	LastUserInput string `json:"lastUserInput,omitempty"`
 	// Dismissed 标记用户是否已主动关闭此通知
 	Dismissed bool `json:"dismissed"`
 }
@@ -164,6 +166,28 @@ func (rm *RecordManager) UpdateCompletionStateBySession(sessionID string, state 
 		for _, recordID := range recordIDs {
 			if record, ok := rm.completions[recordID]; ok {
 				record.State = state
+				updated = true
+			}
+		}
+	}
+	return updated
+}
+
+// UpdateCompletionBySession 更新 session 对应的完成记录状态和用户输入
+// 如果 userInput 非空，则同时更新 LastUserInput 字段
+func (rm *RecordManager) UpdateCompletionBySession(sessionID string, state string, userInput string) bool {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	updated := false
+	if recordIDs, exists := rm.sessionCompletions[sessionID]; exists {
+		for _, recordID := range recordIDs {
+			if record, ok := rm.completions[recordID]; ok {
+				record.State = state
+				// 只有当有新的用户输入时才更新
+				if userInput != "" {
+					record.LastUserInput = userInput
+				}
 				updated = true
 			}
 		}

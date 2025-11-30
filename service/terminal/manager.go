@@ -444,12 +444,15 @@ func (m *Manager) monitorAssistantRecords(session *Session) {
 				continue
 			}
 
+			// 从元数据中获取最近的用户输入（仅在 waiting_input -> working 时有值）
+			recentInput := strings.TrimSpace(metadata.AIAssistantRecentInput)
+
 			switch state {
 			case string(types.StateWaitingInput):
 				// 只有从 working 状态变为 waiting_input 才算完成任务
 				// 避免在初始化时（unknown -> waiting_input）错误地创建完成记录
 				if lastState == string(types.StateWorking) {
-					m.handleSessionCompletionRecord(session, metadata.AIAssistant)
+					m.handleSessionCompletionRecord(session, metadata.AIAssistant, "")
 				}
 			case string(types.StateWaitingApproval):
 				if lastState != string(types.StateWaitingApproval) {
@@ -457,8 +460,13 @@ func (m *Manager) monitorAssistantRecords(session *Session) {
 				}
 			case string(types.StateWorking):
 				// 确保有对应的通知，并标记为 working
-				if !m.recordManager.UpdateCompletionStateBySession(session.ID(), "working") {
-					m.handleSessionWorkingRecord(session, metadata.AIAssistant)
+				// 同时更新 lastUserInput（如果有新输入）
+				m.logger.Debug("monitorAssistantRecords: StateWorking",
+					zap.String("sessionId", session.ID()),
+					zap.String("recentInput", recentInput),
+					zap.String("lastState", lastState))
+				if !m.recordManager.UpdateCompletionBySession(session.ID(), "working", recentInput) {
+					m.handleSessionWorkingRecord(session, metadata.AIAssistant, recentInput)
 				}
 				if lastState == string(types.StateWaitingApproval) {
 					// 从审批状态恢复工作时也需要清理审批记录
@@ -477,39 +485,57 @@ func (m *Manager) monitorAssistantRecords(session *Session) {
 	}
 }
 
-func (m *Manager) handleSessionCompletionRecord(session *Session, info *ai_assistant2.AIAssistantInfo) {
+func (m *Manager) handleSessionCompletionRecord(session *Session, info *ai_assistant2.AIAssistantInfo, userInput string) {
 	if session == nil || info == nil {
 		return
 	}
 
+	// 优先使用传入的 userInput，其次使用 session 中保存的 lastRecentInput
+	lastInput := strings.TrimSpace(userInput)
+	if lastInput == "" {
+		lastInput = session.LastRecentInput()
+	}
+
 	record := &CompletionRecord{
-		ID:          utils.NewID(),
-		SessionID:   session.ID(),
-		ProjectID:   session.ProjectID(),
-		Title:       session.Title(),
-		Assistant:   cloneAssistantInfo(info),
-		CompletedAt: time.Now(),
-		State:       "completed",
+		ID:            utils.NewID(),
+		SessionID:     session.ID(),
+		ProjectID:     session.ProjectID(),
+		Title:         session.Title(),
+		Assistant:     cloneAssistantInfo(info),
+		CompletedAt:   time.Now(),
+		State:         "completed",
+		LastUserInput: lastInput,
 	}
 
 	m.recordManager.ClearCompletionsBySession(session.ID())
 	m.recordManager.AddCompletion(record)
 }
 
-func (m *Manager) handleSessionWorkingRecord(session *Session, info *ai_assistant2.AIAssistantInfo) {
+func (m *Manager) handleSessionWorkingRecord(session *Session, info *ai_assistant2.AIAssistantInfo, userInput string) {
 	if session == nil {
 		return
 	}
 
-	// 如果已经有记录则由调用方负责更新状态，这里仅在不存在时创建
+	// 优先使用传入的 userInput，其次使用 session 中保存的 lastRecentInput
+	lastInput := strings.TrimSpace(userInput)
+	if lastInput == "" {
+		lastInput = session.LastRecentInput()
+	}
+	m.logger.Debug("handleSessionWorkingRecord",
+		zap.String("sessionId", session.ID()),
+		zap.String("userInput", userInput),
+		zap.String("lastInput", lastInput),
+		zap.String("sessionLastRecentInput", session.LastRecentInput()))
+
 	record := &CompletionRecord{
-		ID:          utils.NewID(),
-		SessionID:   session.ID(),
-		ProjectID:   session.ProjectID(),
-		Title:       session.Title(),
-		Assistant:   cloneAssistantInfo(info),
-		CompletedAt: time.Now(),
-		State:       "working",
+		ID:            utils.NewID(),
+		SessionID:     session.ID(),
+		ProjectID:     session.ProjectID(),
+		Title:         session.Title(),
+		Assistant:     cloneAssistantInfo(info),
+		CompletedAt:   time.Now(),
+		State:         "working",
+		LastUserInput: lastInput,
 	}
 
 	m.recordManager.ClearCompletionsBySession(session.ID())

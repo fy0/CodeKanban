@@ -202,6 +202,7 @@ interface NotificationItem {
   timestamp: Date;
   state?: 'completed' | 'working';
   lastAgentCommand?: string;
+  lastUserInput?: string;
   assistantState?: string;
   processStatus?: 'idle' | 'busy' | 'unknown';
 }
@@ -224,6 +225,7 @@ interface CompletionRecordResponse {
   completedAt?: string;
   dismissed?: boolean;
   state?: 'completed' | 'working';
+  lastUserInput?: string;
 }
 
 interface ApprovalRecordResponse {
@@ -412,6 +414,30 @@ function getLatestAgentCommand(notification: NotificationItem) {
   return notification.lastAgentCommand?.trim() || '';
 }
 
+function getLastUserInput(notification: NotificationItem) {
+  return notification.lastUserInput?.trim() || '';
+}
+
+// 紧凑模式下的完整显示内容: {项目名}[{终端标题}] {用户上次输入的信息}
+function getCompactDisplayText(notification: NotificationItem) {
+  const projectName = (notification.projectName || '').trim();
+  const title = (notification.title || '').trim();
+  const userInput = getLastUserInput(notification);
+
+  const parts: string[] = [];
+  if (projectName) {
+    parts.push(projectName);
+  }
+  if (title) {
+    parts.push(`[${title}]`);
+  }
+  if (userInput) {
+    parts.push(userInput);
+  }
+
+  return parts.join(' ');
+}
+
 function getAssistantName(info?: AssistantInfo) {
   return info?.displayName || info?.name || 'AI';
 }
@@ -431,7 +457,8 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
   const assistantType = record.assistant?.type;
   const processStatus = session?.processStatus as 'idle' | 'busy' | 'unknown' | undefined;
   const assistantState = session?.aiAssistant?.state;
-  const lastAgentCommand = session?.lastAgentCommand?.trim();
+  // 直接使用后端返回的 lastUserInput，不回退到前端数据
+  const lastUserInput = record.lastUserInput?.trim() || '';
 
   return {
     id: record.id,
@@ -451,7 +478,7 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
     state: record.state === 'working' ? 'working' : 'completed',
     assistantState,
     processStatus,
-    lastAgentCommand: lastAgentCommand || undefined,
+    lastUserInput: lastUserInput || undefined,
   };
 }
 
@@ -703,6 +730,16 @@ function handleAIApproval() {
   }, 150);
 }
 
+// 处理 AI 关闭事件
+function handleAIClosed(data: { sessionId: string }) {
+  console.log('[AI Notification] AI closed, refreshing records', data);
+  // 刷新通知列表以移除该 session 的通知
+  window.setTimeout(() => {
+    void fetchCompletionRecords();
+    void fetchApprovalRecords();
+  }, 150);
+}
+
 // 点击通知，切换到对应的终端
 async function handleNotificationClick(notification: NotificationItem) {
   // 记录该通知已被点击
@@ -859,6 +896,7 @@ onMounted(() => {
   terminalStore.emitter.on('ai:completed', handleAICompletion);
   terminalStore.emitter.on('ai:approval-needed', handleAIApproval);
   terminalStore.emitter.on('ai:working', handleAIWorking);
+  terminalStore.emitter.on('ai:closed', handleAIClosed);
   terminalStore.emitter.on('terminal:viewed', handleTerminalViewedEvent);
 
   void fetchCompletionRecords();
@@ -872,6 +910,7 @@ onUnmounted(() => {
   terminalStore.emitter.off('ai:completed', handleAICompletion);
   terminalStore.emitter.off('ai:approval-needed', handleAIApproval);
   terminalStore.emitter.off('ai:working', handleAIWorking);
+  terminalStore.emitter.off('ai:closed', handleAIClosed);
   terminalStore.emitter.off('terminal:viewed', handleTerminalViewedEvent);
 
   // 取消订阅所有终端
@@ -1067,27 +1106,29 @@ watch(
             >
               <template #trigger>
                 <div class="notification-description" :class="{ compact: compactModeEnabled }">
+                  <!-- 紧凑模式：显示 {项目名}[{终端标题}] {用户上次输入的信息} -->
                   <template v-if="compactModeEnabled">
-                    <span v-if="notification.type !== 'completion' && getLocationLabel(notification)" class="project-badge compact">
-                      {{ getLocationLabel(notification) }}
+                    <span class="notification-text compact-text">
+                      {{ getCompactDisplayText(notification) }}
                     </span>
                   </template>
+                  <!-- 普通模式：保持原有显示逻辑 -->
                   <template v-else>
                     <span v-if="notification.type !== 'completion' && getLocationLabel(notification)" class="project-badge">
                       [{{ getLocationLabel(notification) }}]
                     </span>
-                  </template>
-                  <span class="notification-text">
-                    <span class="notification-tab-label">
-                      {{ getTabLabel(notification) }}
-                    </span>
-                    <template v-if="getLatestAgentCommand(notification)">
-                      <span class="notification-text-separator">·</span>
-                      <span class="notification-command-text">
-                        {{ getLatestAgentCommand(notification) }}
+                    <span class="notification-text">
+                      <span class="notification-tab-label">
+                        {{ getTabLabel(notification) }}
                       </span>
-                    </template>
-                  </span>
+                      <template v-if="getLatestAgentCommand(notification)">
+                        <span class="notification-text-separator">·</span>
+                        <span class="notification-command-text">
+                          {{ getLatestAgentCommand(notification) }}
+                        </span>
+                      </template>
+                    </span>
+                  </template>
                 </div>
               </template>
               <div class="notification-detail-text">
@@ -1447,6 +1488,11 @@ watch(
 .notification-description.compact {
   gap: 10px;
   align-items: center;
+}
+
+.notification-text.compact-text {
+  color: var(--text-color, #111);
+  font-weight: 500;
 }
 
 .project-badge.compact {

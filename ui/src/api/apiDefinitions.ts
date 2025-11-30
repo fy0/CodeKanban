@@ -43,6 +43,7 @@ export default {
   'terminalSession.unlinkTask': ['POST', '/api/v1/projects/{projectId}/terminals/{sessionId}/tasks/unlink'],
   'worktree.listByProject': ['GET', '/api/v1/projects/{projectId}/worktrees'],
   'worktree.create': ['POST', '/api/v1/projects/{projectId}/worktrees/create'],
+  'worktree.refreshCommitInfo': ['POST', '/api/v1/projects/{projectId}/worktrees/refresh-commits'],
   'terminalSession.create': ['POST', '/api/v1/projects/{projectId}/worktrees/{worktreeId}/terminals'],
   'system.aiAssistantStatusGet': ['GET', '/api/v1/system/ai-assistant-status'],
   'system.aiAssistantStatusUpdate': ['POST', '/api/v1/system/ai-assistant-status/update'],

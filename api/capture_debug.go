@@ -421,25 +421,26 @@ func colorComponent(component int) int {
 }
 
 func colorRawLabel(color vt10x.Color) string {
+	value := int(color)
+	hex := fmt.Sprintf("0x%X", value)
 	switch color {
 	case vt10x.DefaultFG:
-		return "DefaultFG"
+		return fmt.Sprintf("DefaultFG (%s)", hex)
 	case vt10x.DefaultBG:
-		return "DefaultBG"
+		return fmt.Sprintf("DefaultBG (%s)", hex)
 	case vt10x.DefaultCursor:
-		return "DefaultCursor"
+		return fmt.Sprintf("DefaultCursor (%s)", hex)
 	}
-	value := int(color)
 	if value >= 0 && value < 16 {
-		return fmt.Sprintf("ANSI-%d", value)
+		return fmt.Sprintf("ANSI-%d (%s)", value, hex)
 	}
 	if value >= 16 && value <= 255 {
-		return fmt.Sprintf("XTERM-%d", value)
+		return fmt.Sprintf("XTERM-%d (%s)", value, hex)
 	}
 	if value >= 0 && value <= colorMaxRGB {
-		return fmt.Sprintf("RGB-#%06X", value)
+		return fmt.Sprintf("RGB-#%06X (%s)", value, hex)
 	}
-	return fmt.Sprintf("%d", value)
+	return fmt.Sprintf("%d (%s)", value, hex)
 }
 
 func shrinkGlyphGrid(grid [][]vt10x.Glyph) ([][]vt10x.Glyph, int, int) {

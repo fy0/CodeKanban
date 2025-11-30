@@ -113,9 +113,6 @@ func initTestRepo(t *testing.T) string {
 
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-b", "main")
-	runGit(t, dir, "config", "user.email", "test@example.com")
-	runGit(t, dir, "config", "user.name", "Test User")
-	runGit(t, dir, "config", "core.autocrlf", "true")
 
 	readme := filepath.Join(dir, "README.md")
 	if err := os.WriteFile(readme, []byte("# Test Repo\n"), 0o644); err != nil {
@@ -124,8 +121,23 @@ func initTestRepo(t *testing.T) string {
 
 	runGit(t, dir, "add", "README.md")
 	runGit(t, dir, "commit", "-m", "initial commit")
+	runGit(t, dir, "config", "core.autocrlf", "true")
 	runGit(t, dir, "remote", "add", "origin", "git@example.com:repo.git")
 	return dir
+}
+
+// testGitEnv 返回用于测试的 git 环境变量，包含独立的用户信息和禁用 GPG 签名
+func testGitEnv() []string {
+	return []string{
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_AUTHOR_NAME=Test User",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test User",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+		"GIT_CONFIG_NOSYSTEM=1",              // 忽略系统级配置
+		"GIT_CONFIG_GLOBAL=/dev/null",        // 忽略全局配置
+		"HOME=" + os.TempDir(),               // 防止读取用户目录下的配置
+	}
 }
 
 func runGit(t *testing.T, dir string, args ...string) {
@@ -133,7 +145,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), testGitEnv()...)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
