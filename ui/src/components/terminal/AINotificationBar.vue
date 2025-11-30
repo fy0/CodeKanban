@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import type { DropdownOption } from 'naive-ui';
 import Apis from '@/api';
 import { useTerminalStore } from '@/stores/terminal';
 import { useProjectStore } from '@/stores/project';
@@ -14,8 +15,15 @@ const projectStore = useProjectStore();
 // 通知开关状态
 const NOTIFICATIONS_STORAGE_KEY = 'kanban-ai-notifications-enabled';
 const CLICKED_NOTIFICATIONS_STORAGE_KEY = 'kanban-ai-notifications-clicked';
+const COMPACT_MODE_STORAGE_KEY = 'kanban-ai-notifications-compact';
+const DISPLAY_MODE_STORAGE_KEY = 'kanban-ai-notifications-mode';
 const notificationsEnabled = ref(true);
 const clickedNotifications = ref<Set<string>>(new Set());
+const compactModeEnabled = ref(false);
+
+type NotificationDisplayMode = 'standard' | 'idle-only' | 'exclude-idle';
+const DISPLAY_MODE_SEQUENCE: NotificationDisplayMode[] = ['standard', 'idle-only', 'exclude-idle'];
+const notificationDisplayMode = ref<NotificationDisplayMode>('standard');
 
 // 从 localStorage 加载设置
 function loadNotificationSettings() {
@@ -42,6 +50,28 @@ function loadClickedNotifications() {
   }
 }
 
+function loadCompactModeSetting() {
+  try {
+    const stored = localStorage.getItem(COMPACT_MODE_STORAGE_KEY);
+    if (stored !== null) {
+      compactModeEnabled.value = stored === 'true';
+    }
+  } catch (error) {
+    console.warn('[AI Notification] Failed to load compact mode setting', error);
+  }
+}
+
+function loadDisplayModeSetting() {
+  try {
+    const stored = localStorage.getItem(DISPLAY_MODE_STORAGE_KEY) as NotificationDisplayMode | null;
+    if (stored && DISPLAY_MODE_SEQUENCE.includes(stored)) {
+      notificationDisplayMode.value = stored;
+    }
+  } catch (error) {
+    console.warn('[AI Notification] Failed to load display mode setting', error);
+  }
+}
+
 // 保存设置到 localStorage
 function saveNotificationSettings() {
   try {
@@ -63,9 +93,25 @@ function saveClickedNotifications() {
   }
 }
 
+function saveCompactModeSetting() {
+  try {
+    localStorage.setItem(COMPACT_MODE_STORAGE_KEY, String(compactModeEnabled.value));
+  } catch (error) {
+    console.warn('[AI Notification] Failed to save compact mode setting', error);
+  }
+}
+
+function saveDisplayModeSetting() {
+  try {
+    localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, notificationDisplayMode.value);
+  } catch (error) {
+    console.warn('[AI Notification] Failed to save display mode setting', error);
+  }
+}
+
 function markNotificationsAsRead(notificationIds: string[]) {
   let changed = false;
-  notificationIds.forEach((id) => {
+  notificationIds.forEach(id => {
     if (id && !clickedNotifications.value.has(id)) {
       clickedNotifications.value.add(id);
       changed = true;
@@ -78,7 +124,7 @@ function markNotificationsAsRead(notificationIds: string[]) {
 
 function clearReadStateForNotifications(notificationIds: string[]) {
   let changed = false;
-  notificationIds.forEach((id) => {
+  notificationIds.forEach(id => {
     if (id && clickedNotifications.value.delete(id)) {
       changed = true;
     }
@@ -93,8 +139,10 @@ function markSessionCompletionNotificationsAsRead(sessionId: string) {
     return;
   }
   const ids = notifications.value
-    .filter((notification) => notification.type === 'completion' && notification.sessionId === sessionId)
-    .map((notification) => notification.id);
+    .filter(
+      notification => notification.type === 'completion' && notification.sessionId === sessionId
+    )
+    .map(notification => notification.id);
   if (ids.length) {
     markNotificationsAsRead(ids);
   }
@@ -104,6 +152,32 @@ function markSessionCompletionNotificationsAsRead(sessionId: string) {
 function toggleNotifications() {
   notificationsEnabled.value = !notificationsEnabled.value;
   saveNotificationSettings();
+}
+
+function toggleCompactMode() {
+  compactModeEnabled.value = !compactModeEnabled.value;
+  saveCompactModeSetting();
+}
+
+function setDisplayMode(mode: NotificationDisplayMode) {
+  if (!DISPLAY_MODE_SEQUENCE.includes(mode)) {
+    return;
+  }
+  notificationDisplayMode.value = mode;
+  saveDisplayModeSetting();
+}
+
+function cycleDisplayMode() {
+  const currentIndex = DISPLAY_MODE_SEQUENCE.indexOf(notificationDisplayMode.value);
+  const next = DISPLAY_MODE_SEQUENCE[(currentIndex + 1) % DISPLAY_MODE_SEQUENCE.length];
+  setDisplayMode(next);
+}
+
+function handleNotificationModeSelect(key: string | number) {
+  if (typeof key !== 'string') {
+    return;
+  }
+  setDisplayMode(key as NotificationDisplayMode);
 }
 
 // 检查通知是否被点击过
@@ -128,6 +202,8 @@ interface NotificationItem {
   timestamp: Date;
   state?: 'completed' | 'working';
   lastAgentCommand?: string;
+  assistantState?: string;
+  processStatus?: 'idle' | 'busy' | 'unknown';
 }
 
 type NotificationType = 'completion' | 'approval';
@@ -170,26 +246,87 @@ const notifications = ref<NotificationItem[]>([]);
 const isFetchingCompletions = ref(false);
 const isFetchingApprovals = ref(false);
 
-// 根据开关状态过滤通知
-const visibleNotifications = computed(() => {
-  return notificationsEnabled.value ? notifications.value : [];
+function getDisplayModeLabel(mode: NotificationDisplayMode) {
+  if (mode === 'idle-only') {
+    return t('terminal.notificationModeIdleOnly');
+  }
+  if (mode === 'exclude-idle') {
+    return t('terminal.notificationModeExcludeIdle');
+  }
+  return t('terminal.notificationModeAll');
+}
+
+const notificationModeOptions = computed<DropdownOption[]>(() =>
+  DISPLAY_MODE_SEQUENCE.map(mode => ({
+    label: getDisplayModeLabel(mode),
+    key: mode,
+  }))
+);
+
+const currentDisplayModeLabel = computed(() => getDisplayModeLabel(notificationDisplayMode.value));
+
+const filteredNotifications = computed(() => {
+  if (!notificationsEnabled.value) {
+    return [];
+  }
+  return notifications.value.filter(notification => matchesDisplayMode(notification));
 });
+
+function matchesDisplayMode(notification: NotificationItem) {
+  if (notificationDisplayMode.value === 'idle-only') {
+    return isIdleNotification(notification);
+  }
+  if (notificationDisplayMode.value === 'exclude-idle') {
+    return !isIdleNotification(notification);
+  }
+  return true;
+}
+
+function isIdleNotification(notification: NotificationItem) {
+  if (notification.type === 'approval') {
+    return true;
+  }
+
+  const assistantState = notification.assistantState;
+  if (
+    assistantState &&
+    ['waiting_input', 'waiting_approval', 'idle', 'completed'].includes(assistantState)
+  ) {
+    return true;
+  }
+
+  if (notification.type === 'completion') {
+    if (!notification.state || notification.state === 'completed') {
+      return true;
+    }
+  }
+
+  if (notification.processStatus === 'idle') {
+    return true;
+  }
+
+  if (!notification.processStatus && notification.state && notification.state !== 'working') {
+    return true;
+  }
+
+  return false;
+}
 
 watch(
   () =>
-    projectStore.worktrees.map((worktree) => ({
+    projectStore.worktrees.map(worktree => ({
       id: worktree.id,
       branchName: worktree.branchName,
       projectId: worktree.projectId,
     })),
-  (entries) => {
+  entries => {
     entries.forEach(({ id, branchName, projectId }) => {
       if (id && branchName) {
         worktreeBranchCache.set(id, { branchName, projectId });
       }
     });
   },
-  { deep: true, immediate: true },
+  { deep: true, immediate: true }
 );
 
 function resolveBranchName(projectId?: string, worktreeId?: string) {
@@ -200,9 +337,12 @@ function resolveBranchName(projectId?: string, worktreeId?: string) {
   if (cached && (!projectId || !cached.projectId || cached.projectId === projectId)) {
     return cached.branchName;
   }
-  const match = projectStore.worktrees.find((worktree) => worktree.id === worktreeId);
+  const match = projectStore.worktrees.find(worktree => worktree.id === worktreeId);
   if (match?.branchName) {
-    worktreeBranchCache.set(worktreeId, { branchName: match.branchName, projectId: match.projectId });
+    worktreeBranchCache.set(worktreeId, {
+      branchName: match.branchName,
+      projectId: match.projectId,
+    });
     return match.branchName;
   }
   return undefined;
@@ -236,7 +376,9 @@ function getCompletionHeader(notification: NotificationItem) {
 
 function getApprovalHeader(notification: NotificationItem) {
   const projectLabel = getProjectBranchLabel(notification);
-  return projectLabel ? `${t('terminal.aiNeedsApproval')} - ${projectLabel}` : t('terminal.aiNeedsApproval');
+  return projectLabel
+    ? `${t('terminal.aiNeedsApproval')} - ${projectLabel}`
+    : t('terminal.aiNeedsApproval');
 }
 
 function getNotificationHeader(notification: NotificationItem) {
@@ -274,7 +416,7 @@ function getProjectNameById(projectId?: string, fallback?: string) {
   if (!projectId) {
     return fallback;
   }
-  const project = projectStore.projects.find((p) => p.id === projectId);
+  const project = projectStore.projects.find(p => p.id === projectId);
   return project?.name || fallback;
 }
 
@@ -283,6 +425,8 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
   const worktreeId = session?.worktreeId;
   const branchName = resolveBranchName(record.projectId, worktreeId);
   const assistantType = record.assistant?.type;
+  const processStatus = session?.processStatus as 'idle' | 'busy' | 'unknown' | undefined;
+  const assistantState = session?.aiAssistant?.state;
   const lastAgentCommand = session?.lastAgentCommand?.trim();
 
   return {
@@ -301,6 +445,8 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
     assistantColor: getAssistantColorByType(assistantType),
     timestamp: record.completedAt ? new Date(record.completedAt) : new Date(),
     state: record.state === 'working' ? 'working' : 'completed',
+    assistantState,
+    processStatus,
     lastAgentCommand: lastAgentCommand || undefined,
   };
 }
@@ -310,6 +456,8 @@ function mapApprovalRecord(record: ApprovalRecordResponse): NotificationItem {
   const worktreeId = session?.worktreeId;
   const branchName = resolveBranchName(record.projectId, worktreeId);
   const assistantType = record.assistant?.type;
+  const processStatus = session?.processStatus as 'idle' | 'busy' | 'unknown' | undefined;
+  const assistantState = session?.aiAssistant?.state;
   const lastAgentCommand = session?.lastAgentCommand?.trim();
 
   return {
@@ -327,6 +475,8 @@ function mapApprovalRecord(record: ApprovalRecordResponse): NotificationItem {
     assistantIcon: getAssistantIconByType(assistantType),
     assistantColor: getAssistantColorByType(assistantType),
     timestamp: record.requestedAt ? new Date(record.requestedAt) : new Date(),
+    assistantState,
+    processStatus,
     lastAgentCommand: lastAgentCommand || undefined,
   };
 }
@@ -336,7 +486,7 @@ function sortNotifications(list: NotificationItem[]) {
 }
 
 function setNotificationsForType(type: NotificationType, items: NotificationItem[]) {
-  const others = notifications.value.filter((item) => item.type !== type);
+  const others = notifications.value.filter(item => item.type !== type);
   notifications.value = sortNotifications([...others, ...items]);
   if (type === 'completion') {
     autoMarkActiveCompletionNotifications();
@@ -345,7 +495,7 @@ function setNotificationsForType(type: NotificationType, items: NotificationItem
 
 function getActiveSessionIds() {
   const activeSessions = new Set<string>();
-  projectStore.projects.forEach((project) => {
+  projectStore.projects.forEach(project => {
     const activeSessionId = terminalStore.getActiveTabId(project.id);
     if (activeSessionId) {
       activeSessions.add(activeSessionId);
@@ -360,15 +510,18 @@ function autoMarkActiveCompletionNotifications() {
     return;
   }
   const idsToMark = notifications.value
-    .filter((notification) => notification.type === 'completion' && activeSessions.has(notification.sessionId))
-    .map((notification) => notification.id);
+    .filter(
+      notification =>
+        notification.type === 'completion' && activeSessions.has(notification.sessionId)
+    )
+    .map(notification => notification.id);
   if (idsToMark.length) {
     markNotificationsAsRead(idsToMark);
   }
 }
 
 function removeNotificationLocally(recordId: string) {
-  notifications.value = notifications.value.filter((item) => item.recordId !== recordId);
+  notifications.value = notifications.value.filter(item => item.recordId !== recordId);
 }
 
 function handleTerminalViewedEvent(event: any) {
@@ -402,7 +555,7 @@ function handleAIWorking(event: any) {
   const stateUpdatedIds: string[] = [];
   let changed = false;
 
-  notifications.value = notifications.value.map((notification) => {
+  notifications.value = notifications.value.map(notification => {
     if (notification.type === 'completion' && notification.sessionId === sessionId) {
       const shouldUpdateState = notification.state !== 'working';
       const shouldUpdateCommand =
@@ -441,14 +594,16 @@ async function fetchCompletionRecords(options?: { playSound?: boolean }) {
   }
   isFetchingCompletions.value = true;
   const existingIds = new Set(
-    notifications.value.filter((item) => item.type === 'completion').map((item) => item.recordId),
+    notifications.value.filter(item => item.type === 'completion').map(item => item.recordId)
   );
   try {
-    const response = await Apis.terminalSession.terminalCompletionRecordsList({ cacheFor: 0 }).send();
+    const response = await Apis.terminalSession
+      .terminalCompletionRecordsList({ cacheFor: 0 })
+      .send();
     const records = (response?.items ?? []) as CompletionRecordResponse[];
-    const items = records.filter((record) => !record.dismissed).map(mapCompletionRecord);
+    const items = records.filter(record => !record.dismissed).map(mapCompletionRecord);
     setNotificationsForType('completion', items);
-    if (options?.playSound && items.some((item) => !existingIds.has(item.recordId))) {
+    if (options?.playSound && items.some(item => !existingIds.has(item.recordId))) {
       playCompletionSound();
     }
   } catch (error) {
@@ -466,7 +621,7 @@ async function fetchApprovalRecords() {
   try {
     const response = await Apis.terminalSession.terminalApprovalRecordsList({ cacheFor: 0 }).send();
     const records = (response?.items ?? []) as ApprovalRecordResponse[];
-    const items = records.filter((record) => !record.dismissed).map(mapApprovalRecord);
+    const items = records.filter(record => !record.dismissed).map(mapApprovalRecord);
 
     // 获取所有审批通知的 sessionId 集合
     const approvalSessionIds = new Set(items.map(item => item.sessionId));
@@ -486,7 +641,11 @@ async function fetchApprovalRecords() {
           })
           .send();
       } catch (error) {
-        console.error('[AI Notification] Failed to dismiss completion record', completion.recordId, error);
+        console.error(
+          '[AI Notification] Failed to dismiss completion record',
+          completion.recordId,
+          error
+        );
       }
     }
 
@@ -550,8 +709,7 @@ async function handleNotificationClick(notification: NotificationItem) {
     return;
   }
 
-  const currentProjectId =
-    typeof currentRoute.params.id === 'string' ? currentRoute.params.id : '';
+  const currentProjectId = typeof currentRoute.params.id === 'string' ? currentRoute.params.id : '';
 
   if (currentProjectId !== targetProjectId) {
     try {
@@ -671,16 +829,16 @@ function subscribeToAllSessions() {
   const currentSessionIds = new Set<string>();
 
   // 收集当前所有的 session IDs
-  allProjects.forEach((project) => {
+  allProjects.forEach(project => {
     const tabs = terminalStore.getTabs(project.id);
-    tabs.forEach((tab) => {
+    tabs.forEach(tab => {
       currentSessionIds.add(tab.id);
       subscribeToSession(tab.id);
     });
   });
 
   // 取消订阅已不存在的 sessions
-  subscribedSessions.forEach((sessionId) => {
+  subscribedSessions.forEach(sessionId => {
     if (!currentSessionIds.has(sessionId)) {
       unsubscribeFromSession(sessionId);
     }
@@ -691,6 +849,8 @@ onMounted(() => {
   // 加载通知设置
   loadNotificationSettings();
   loadClickedNotifications();
+  loadCompactModeSetting();
+  loadDisplayModeSetting();
 
   terminalStore.emitter.on('ai:completed', handleAICompletion);
   terminalStore.emitter.on('ai:approval-needed', handleAIApproval);
@@ -711,7 +871,7 @@ onUnmounted(() => {
   terminalStore.emitter.off('terminal:viewed', handleTerminalViewedEvent);
 
   // 取消订阅所有终端
-  subscribedSessions.forEach((sessionId) => {
+  subscribedSessions.forEach(sessionId => {
     terminalStore.emitter.off(sessionId);
   });
   subscribedSessions.clear();
@@ -722,9 +882,9 @@ onUnmounted(() => {
 watch(
   () => {
     const allSessions: string[] = [];
-    projectStore.projects.forEach((project) => {
+    projectStore.projects.forEach(project => {
       const tabs = terminalStore.getTabs(project.id);
-      allSessions.push(...tabs.map((t) => t.id));
+      allSessions.push(...tabs.map(t => t.id));
     });
     return allSessions.join(',');
   },
@@ -736,72 +896,164 @@ watch(
 </script>
 
 <template>
-  <div class="notification-bar-container">
-    <!-- 通知开关按钮 -->
-    <button
-      class="notification-toggle-btn"
-      @click="toggleNotifications"
-      :title="notificationsEnabled ? t('terminal.disableNotifications') : t('terminal.enableNotifications')"
-    >
-      <svg
-        v-if="notificationsEnabled"
-        xmlns="http://www.w3.org/2000/svg"
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
+  <div class="notification-bar-container" :class="{ 'compact-mode': compactModeEnabled }">
+    <div class="notification-toolbar">
+      <button
+        type="button"
+        class="notification-action-btn"
+        :class="{ 'is-active': compactModeEnabled }"
+        @click="toggleCompactMode"
+        :title="
+          compactModeEnabled ? t('terminal.disableCompactMode') : t('terminal.enableCompactMode')
+        "
       >
-        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-      </svg>
-      <svg
-        v-else
-        xmlns="http://www.w3.org/2000/svg"
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <path d="M6.3 5.3a1 1 0 0 0-1.4 1.4l1.5 1.5A6 6 0 0 0 6 10c0 7-3 9-3 9h14"></path>
-        <path d="m21.7 18.7-1.6-1.6"></path>
-        <path d="M2 2l20 20"></path>
-        <path d="M8.7 3a6 6 0 0 1 10.3 5c0 1-.1 1.9-.4 2.7"></path>
-      </svg>
-    </button>
+        <span class="action-btn-icon" aria-hidden="true">
+          <svg v-if="!compactModeEnabled" width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M4 7h16M4 12h16M4 17h16"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M4 8h16M7 12h10M9 16h6"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </svg>
+        </span>
+        <span class="action-btn-label">
+          {{
+            compactModeEnabled
+              ? t('terminal.compactModeCompact')
+              : t('terminal.compactModeComfortable')
+          }}
+        </span>
+      </button>
 
-    <transition-group name="notification-slide" tag="div" class="notification-list">
       <div
-        v-for="notification in visibleNotifications"
+        class="notification-mode-control notification-action-btn"
+        :class="{ 'is-active': notificationDisplayMode !== 'standard' }"
+      >
+        <button
+          type="button"
+          class="mode-control-btn"
+          @click="cycleDisplayMode"
+          :title="t('terminal.notificationModeCycleTooltip')"
+        >
+          <span class="action-btn-icon" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M4 7h16M4 12h10M4 17h8"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+          <span class="action-btn-label">{{ currentDisplayModeLabel }}</span>
+        </button>
+        <n-dropdown
+          trigger="click"
+          placement="bottom-end"
+          :options="notificationModeOptions"
+          @select="handleNotificationModeSelect"
+        >
+          <button
+            type="button"
+            class="mode-dropdown-btn"
+            :title="t('terminal.notificationModeMenuTooltip')"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M6 9l6 6 6-6"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </n-dropdown>
+      </div>
+
+      <!-- 通知开关按钮 -->
+      <button
+        class="notification-toggle-btn"
+        @click="toggleNotifications"
+        :title="
+          notificationsEnabled
+            ? t('terminal.disableNotifications')
+            : t('terminal.enableNotifications')
+        "
+      >
+        <svg
+          v-if="notificationsEnabled"
+          xmlns="http://www.w3.org/2000/svg"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        <svg
+          v-else
+          xmlns="http://www.w3.org/2000/svg"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M6.3 5.3a1 1 0 0 0-1.4 1.4l1.5 1.5A6 6 0 0 0 6 10c0 7-3 9-3 9h14"></path>
+          <path d="m21.7 18.7-1.6-1.6"></path>
+          <path d="M2 2l20 20"></path>
+          <path d="M8.7 3a6 6 0 0 1 10.3 5c0 1-.1 1.9-.4 2.7"></path>
+        </svg>
+      </button>
+    </div>
+
+    <transition-group
+      name="notification-slide"
+      tag="div"
+      class="notification-list"
+      :class="{ 'is-compact': compactModeEnabled }"
+    >
+      <div
+        v-for="notification in filteredNotifications"
         :key="notification.id"
         :class="[
           'notification-item',
           getNotificationClass(notification),
-          { 'notification-clicked': isNotificationClicked(notification.id) }
+          { 'notification-clicked': isNotificationClicked(notification.id) },
         ]"
         @click="handleNotificationClick(notification)"
       >
         <div class="notification-content">
-          <div class="notification-header">
+          <div v-if="!compactModeEnabled" class="notification-header">
             <span
               class="notification-icon"
               :style="{ color: notification.assistantColor || defaultAssistantColor }"
               v-html="notification.assistantIcon || defaultAssistantIcon"
             ></span>
             <span class="notification-title">
-              {{
-                getNotificationHeader(notification)
-              }}
+              {{ getNotificationHeader(notification) }}
             </span>
           </div>
-          <div class="notification-body">
+          <div class="notification-body" :class="{ 'compact-body': compactModeEnabled }">
             <n-popover
               trigger="hover"
               :delay="1500"
@@ -809,24 +1061,34 @@ watch(
               :show-arrow="false"
               class="notification-popover"
             >
-          <template #trigger>
-            <div class="notification-description">
-              <span class="notification-text">
-                <span class="notification-tab-label">
-                  {{ getTabLabel(notification) }}
-                </span>
-                <template v-if="getLatestAgentCommand(notification)">
-                  <span class="notification-text-separator">: </span>
-                  <span class="notification-command-text">
-                    {{ getLatestAgentCommand(notification) }}
+              <template #trigger>
+                <div class="notification-description" :class="{ compact: compactModeEnabled }">
+                  <template v-if="compactModeEnabled">
+                    <span v-if="getLocationLabel(notification)" class="project-badge compact">
+                      {{ getLocationLabel(notification) }}
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span v-if="getLocationLabel(notification)" class="project-badge">
+                      [{{ getLocationLabel(notification) }}]
+                    </span>
+                  </template>
+                  <span class="notification-text">
+                    <span class="notification-tab-label">
+                      {{ getTabLabel(notification) }}
+                    </span>
+                    <template v-if="getLatestAgentCommand(notification)">
+                      <span class="notification-text-separator">·</span>
+                      <span class="notification-command-text">
+                        {{ getLatestAgentCommand(notification) }}
+                      </span>
+                    </template>
                   </span>
-                </template>
-              </span>
-            </div>
-          </template>
-          <div class="notification-detail-text">
-            {{ getNotificationDescription(notification) }}
-          </div>
+                </div>
+              </template>
+              <div class="notification-detail-text">
+                {{ getNotificationDescription(notification) }}
+              </div>
             </n-popover>
             <div class="notification-action-hint">
               {{ t('terminal.clickToJumpTerminal') }}
@@ -858,13 +1120,107 @@ watch(
   gap: 8px;
 }
 
+.notification-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.notification-toolbar > * {
+  pointer-events: auto;
+}
+
+.notification-action-btn,
+.notification-mode-btn,
+.notification-mode-dropdown-btn {
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--kanban-notification-button-border, rgba(0, 0, 0, 0.2));
+  background: var(--app-surface-color, var(--body-color, #ffffff));
+  box-shadow: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--kanban-notification-button-fg, var(--text-color, #000000));
+  transition: all 0.2s ease;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  gap: 6px;
+  opacity: 0.9;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.notification-action-btn:hover,
+.notification-mode-btn:hover,
+.notification-mode-dropdown-btn:hover {
+  opacity: 1;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+}
+
+.notification-action-btn.is-active,
+.notification-mode-btn.is-active,
+.notification-mode-dropdown-btn.is-active {
+  box-shadow: none;
+}
+
+.notification-action-btn.is-active:hover,
+.notification-mode-btn.is-active:hover,
+.notification-mode-dropdown-btn.is-active:hover {
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+}
+
+.notification-mode-control {
+  display: inline-flex;
+  border-radius: 6px;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--kanban-notification-button-border, rgba(0, 0, 0, 0.2));
+  background: var(--app-surface-color, var(--body-color, #ffffff));
+}
+
+.mode-control-btn,
+.mode-dropdown-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  color: inherit;
+  padding: 0 10px;
+  height: 100%;
+}
+
+.mode-control-btn {
+  flex: 1;
+  justify-content: flex-start;
+  background: transparent;
+}
+
+.mode-dropdown-btn {
+  padding: 0 8px;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  justify-content: center;
+  background: transparent;
+}
+.action-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .notification-toggle-btn {
   width: 36px;
   height: 32px;
   border-radius: 6px;
   border: 1px solid var(--kanban-notification-button-border, rgba(0, 0, 0, 0.2));
   background: var(--app-surface-color, var(--body-color, #ffffff));
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
   cursor: pointer;
   pointer-events: auto;
   display: flex;
@@ -880,8 +1236,6 @@ watch(
 .notification-toggle-btn:hover {
   opacity: 1;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  transform: scale(1.05);
-  border-color: var(--n-color-primary, #3b82f6);
 }
 
 .notification-toggle-btn svg {
@@ -896,6 +1250,10 @@ watch(
   max-width: 360px;
 }
 
+.notification-list.is-compact {
+  gap: 4px;
+}
+
 .notification-item {
   display: flex;
   align-items: flex-start;
@@ -906,13 +1264,23 @@ watch(
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
   cursor: pointer;
   pointer-events: auto;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-left: 4px solid transparent;
   min-width: 320px;
   width: 100%;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+}
+
+.notification-list.is-compact .notification-item {
+  padding: 6px 10px;
+  border-radius: 6px;
+  min-width: 280px;
+  gap: 6px;
+  align-items: center;
 }
 
 .notification-item:hover {
@@ -922,7 +1290,10 @@ watch(
 
 .notification-completion {
   --notification-completion-fill: var(--kanban-terminal-tab-completion-bg, rgba(16, 185, 129, 0.3));
-  --notification-completion-accent: var(--kanban-terminal-tab-completion-border, rgba(16, 185, 129, 0.6));
+  --notification-completion-accent: var(
+    --kanban-terminal-tab-completion-border,
+    rgba(16, 185, 129, 0.6)
+  );
   background: #d1fae5;
   border-color: rgba(16, 185, 129, 0.3);
   border-left-color: #10b981;
@@ -939,7 +1310,10 @@ watch(
 /* 工作中 / 审批通知在已读后保持原样 */
 .notification-approval {
   --notification-approval-fill: var(--kanban-terminal-tab-approval-bg, rgba(247, 144, 9, 0.25));
-  --notification-approval-accent: var(--kanban-terminal-tab-approval-border, rgba(247, 144, 9, 0.55));
+  --notification-approval-accent: var(
+    --kanban-terminal-tab-approval-border,
+    rgba(247, 144, 9, 0.55)
+  );
   background: #fed7aa;
   border-color: rgba(247, 144, 9, 0.3);
   border-left-color: #f79009;
@@ -1007,6 +1381,16 @@ watch(
   gap: 2px;
 }
 
+.notification-list.is-compact .notification-body {
+  font-size: 12px;
+  gap: 0;
+}
+
+.notification-body.compact-body {
+  flex-direction: row;
+  align-items: center;
+}
+
 .notification-description {
   display: flex;
   align-items: baseline;
@@ -1022,6 +1406,15 @@ watch(
   font-weight: 500;
 }
 
+.notification-list.is-compact .notification-action-hint {
+  display: none;
+}
+
+.project-badge {
+  font-weight: 500;
+  color: var(--text-color, #000000);
+  flex-shrink: 0;
+}
 .notification-text {
   display: inline-block;
   flex: 1;
@@ -1041,6 +1434,28 @@ watch(
 
 .notification-text-separator {
   color: var(--text-color-secondary, #6b7280);
+}
+
+.notification-list.is-compact .notification-description {
+  white-space: nowrap;
+}
+
+.notification-description.compact {
+  gap: 10px;
+  align-items: center;
+}
+
+.project-badge.compact {
+  font-weight: 600;
+  color: var(--n-color-primary, #3b82f6);
+  padding: 2px 8px;
+  border-right: 1px solid rgba(15, 23, 42, 0.12);
+  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.08);
+  line-height: 1.2;
 }
 
 .notification-close {
