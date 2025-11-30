@@ -151,6 +151,7 @@ export interface DeveloperConfig {
   $schema?: string;
   enableTerminalScrollback: boolean;
   renameSessionTitleEachCommand: boolean;
+  autoCreateTaskOnStartWork: boolean;
 }
 export interface OpenEditorInputBody {
   /**

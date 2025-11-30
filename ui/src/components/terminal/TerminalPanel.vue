@@ -280,10 +280,12 @@ const shouldAutoFocusTerminal = ref(true);
 const developerConfigState = reactive<DeveloperConfig>({
   enableTerminalScrollback: false,
   renameSessionTitleEachCommand: false,
+  autoCreateTaskOnStartWork: true,
 });
 const developerConfigLoaded = ref(false);
 const developerConfigLoading = ref(false);
 const renameTitleToggleLoading = ref(false);
+const autoCreateTaskToggleLoading = ref(false);
 let developerConfigLoadPromise: Promise<boolean> | null = null;
 
 // 右键菜单相关状态
@@ -378,6 +380,14 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
           : undefined,
         disabled: developerConfigLoading.value || renameTitleToggleLoading.value,
       },
+      {
+        label: t('terminal.autoCreateTaskOnStartWork'),
+        key: 'auto-create-task-on-start-work',
+        icon: developerConfigState.autoCreateTaskOnStartWork
+          ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+          : undefined,
+        disabled: developerConfigLoading.value || autoCreateTaskToggleLoading.value,
+      },
     ],
   },
   {
@@ -403,6 +413,7 @@ async function ensureDeveloperConfigLoaded() {
       developerConfigState.enableTerminalScrollback = config?.enableTerminalScrollback ?? false;
       developerConfigState.renameSessionTitleEachCommand =
         config?.renameSessionTitleEachCommand ?? false;
+      developerConfigState.autoCreateTaskOnStartWork = config?.autoCreateTaskOnStartWork ?? true;
       developerConfigLoaded.value = true;
       return true;
     } catch (error) {
@@ -432,6 +443,7 @@ async function toggleRenameTitleEachCommandSetting() {
       .Post('/system/developer-config/update', {
         enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
         renameSessionTitleEachCommand: nextValue,
+        autoCreateTaskOnStartWork: developerConfigState.autoCreateTaskOnStartWork,
       })
       .send();
     developerConfigState.renameSessionTitleEachCommand = nextValue;
@@ -441,6 +453,34 @@ async function toggleRenameTitleEachCommandSetting() {
     message.error(t('common.saveFailed'));
   } finally {
     renameTitleToggleLoading.value = false;
+  }
+}
+
+async function toggleAutoCreateTaskOnStartWorkSetting() {
+  if (autoCreateTaskToggleLoading.value) {
+    return;
+  }
+  const ready = await ensureDeveloperConfigLoaded();
+  if (!ready) {
+    return;
+  }
+  autoCreateTaskToggleLoading.value = true;
+  const nextValue = !developerConfigState.autoCreateTaskOnStartWork;
+  try {
+    await http
+      .Post('/system/developer-config/update', {
+        enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
+        renameSessionTitleEachCommand: developerConfigState.renameSessionTitleEachCommand,
+        autoCreateTaskOnStartWork: nextValue,
+      })
+      .send();
+    developerConfigState.autoCreateTaskOnStartWork = nextValue;
+    message.success(t('common.saveSuccess'));
+  } catch (error) {
+    console.error('Failed to update auto create task setting', error);
+    message.error(t('common.saveFailed'));
+  } finally {
+    autoCreateTaskToggleLoading.value = false;
   }
 }
 
@@ -1887,6 +1927,8 @@ function handleSettingsMenuSelect(key: string) {
     }
   } else if (key === 'rename-title-each-command') {
     void toggleRenameTitleEachCommandSetting();
+  } else if (key === 'auto-create-task-on-start-work') {
+    void toggleAutoCreateTaskOnStartWorkSetting();
   } else if (key === 'reset-position') {
     resetTerminalPosition();
   }

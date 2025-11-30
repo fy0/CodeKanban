@@ -30,6 +30,7 @@ type TerminalShellConfig struct {
 type DeveloperConfig struct {
 	EnableTerminalScrollback      bool `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
 	RenameSessionTitleEachCommand bool `json:"renameSessionTitleEachCommand" yaml:"renameSessionTitleEachCommand"`
+	AutoCreateTaskOnStartWork     bool `json:"autoCreateTaskOnStartWork" yaml:"autoCreateTaskOnStartWork"`
 }
 
 type AIAssistantStatusConfig struct {
@@ -194,6 +195,7 @@ func ReadConfig() *AppConfig {
 		Developer: DeveloperConfig{
 			EnableTerminalScrollback:      false,
 			RenameSessionTitleEachCommand: false,
+			AutoCreateTaskOnStartWork:     true,
 		},
 	}
 

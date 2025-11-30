@@ -169,14 +169,13 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt
 		d.captureRecentInput(lines[startIdx:endIdx], isEmpty)
 	}
 
+	if startIdx == -1 {
+		startIdx = len(lines)
+	}
+
 	currentLine := startIdx - 1
 	for ; currentLine >= 0; currentLine-- {
 		line := lines[currentLine]
-		if d.containsTipLine(line) {
-			if currentLine > 0 && d.isWorkingLine(lines[currentLine-1]) {
-				return types.StateWorking
-			}
-		}
 		if d.isWorkingLine(line) {
 			return types.StateWorking
 		}
@@ -185,45 +184,50 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt
 	return types.StateWaitingInput
 }
 
-func (d *StatusDetector) containsTipLine(line string) bool {
-	return strings.HasPrefix(line, "  ?  Tip: ")
-}
-
 func detectInputWindow(lines []string, raw [][]vt10x.Glyph) (start, end int, isEmpty bool) {
 	// 最后一行一般总是空行 所以跳过。接下来是 xx% context left
 	// 更新: 上面这个想法不准确，因为有多空行的情况被发现，所以要先找到正确的行
 	contextConfirmed := false
 
+	// find context left
 	for end = len(lines) - 1; end >= 0; end-- {
 		if !contextConfirmed {
 			if isContextLeftLine(lines[end]) {
 				contextConfirmed = true
+				end--
+				break
 			}
-			continue
 		}
+	}
 
-		if !isBlankLine(lines[end]) {
-			continue
-		}
+	if !contextConfirmed {
+		return -1, -1, false
+	}
 
-		for start = end - 1; start >= 0; start-- {
-			line := lines[start]
-			switch {
-			case strings.HasPrefix(line, codexInputPrompt):
-				// check raw mode
+	// find space line
+	if end < 0 || !isBlankLine(lines[end]) {
+		return -1, -1, false
+	}
+	end--
+
+	for start = end - 1; start >= 0; start-- {
+		line := lines[start]
+		switch {
+		case strings.HasPrefix(line, codexInputPrompt):
+			// check raw mode (only if raw is available)
+			if raw != nil && len(raw) > start && len(raw[start]) > 2 {
 				if raw[start][2].Mode&int16(vt10x.AttrFaint) != 0 {
 					// faint text, empty line
 					return start, end, true
 				}
-				return start, end, false
-			case strings.HasPrefix(line, codexIndentPrefix):
-				continue
-			case isBlankLine(line):
-				start = -1
 			}
-			break
+			return start, end, false
+		case strings.HasPrefix(line, codexIndentPrefix):
+			continue
 		}
+		break
 	}
+
 	return -1, -1, false
 }
 

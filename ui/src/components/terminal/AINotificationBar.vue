@@ -392,11 +392,15 @@ function formatCompletionBody(notification: NotificationItem) {
 }
 
 function getNotificationDescription(notification: NotificationItem) {
-  const location = getLocationLabel(notification);
   const body =
     notification.type === 'completion'
       ? formatCompletionBody(notification)
       : `${t('terminal.isWaitingForApproval')} - ${notification.title}`;
+  // 工作中和任务完成的卡片第二行不显示分支名
+  if (notification.type === 'completion') {
+    return body;
+  }
+  const location = getLocationLabel(notification);
   return location ? `[${location}] ${body}` : body;
 }
 
@@ -1064,12 +1068,12 @@ watch(
               <template #trigger>
                 <div class="notification-description" :class="{ compact: compactModeEnabled }">
                   <template v-if="compactModeEnabled">
-                    <span v-if="getLocationLabel(notification)" class="project-badge compact">
+                    <span v-if="notification.type !== 'completion' && getLocationLabel(notification)" class="project-badge compact">
                       {{ getLocationLabel(notification) }}
                     </span>
                   </template>
                   <template v-else>
-                    <span v-if="getLocationLabel(notification)" class="project-badge">
+                    <span v-if="notification.type !== 'completion' && getLocationLabel(notification)" class="project-badge">
                       [{{ getLocationLabel(notification) }}]
                     </span>
                   </template>

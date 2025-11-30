@@ -197,6 +197,15 @@
                 <span class="form-tip">{{ t('settings.renameSessionTitleEachCommandTip') }}</span>
               </n-space>
             </n-form-item>
+            <n-form-item :label="t('settings.autoCreateTaskOnStartWork')">
+              <n-space vertical size="small">
+                <n-switch
+                  v-model:value="developerForm.autoCreateTaskOnStartWork"
+                  :disabled="developerLoading"
+                />
+                <span class="form-tip">{{ t('settings.autoCreateTaskOnStartWorkTip') }}</span>
+              </n-space>
+            </n-form-item>
           </n-form>
         </n-spin>
       </n-card>
@@ -424,6 +433,7 @@ const { send: updateAIStatus, loading: saveLoading } = useReq(
 const developerForm = reactive<DeveloperConfig>({
   enableTerminalScrollback: false,
   renameSessionTitleEachCommand: false,
+  autoCreateTaskOnStartWork: true,
 });
 const developerOriginal = ref<DeveloperConfig | null>(null);
 const developerDirty = computed(() => {
@@ -433,6 +443,7 @@ const developerDirty = computed(() => {
   return (
     developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback
     || developerForm.renameSessionTitleEachCommand !== developerOriginal.value.renameSessionTitleEachCommand
+    || developerForm.autoCreateTaskOnStartWork !== developerOriginal.value.autoCreateTaskOnStartWork
   );
 });
 
@@ -475,6 +486,7 @@ async function loadDeveloperConfig() {
     if (config !== undefined && config !== null) {
       developerForm.enableTerminalScrollback = config.enableTerminalScrollback ?? false;
       developerForm.renameSessionTitleEachCommand = config.renameSessionTitleEachCommand ?? false;
+      developerForm.autoCreateTaskOnStartWork = config.autoCreateTaskOnStartWork ?? true;
       developerOriginal.value = { ...developerForm };
     } else {
       // 如果后端没有返回配置，使用默认值并标记为已加载

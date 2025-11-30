@@ -152,11 +152,12 @@ type Session struct {
 	getAIConfig       func() *utils.AIAssistantStatusConfig
 	assistantOutputCh chan []byte
 
-	associatedTaskID       string
-	lockedTitle            string
-	lastRecentInput        string
-	renameTitleEachCommand atomic.Bool
-	autoTitleAssigned      atomic.Bool
+	associatedTaskID          string
+	lockedTitle               string
+	lastRecentInput           string
+	renameTitleEachCommand    atomic.Bool
+	autoCreateTaskOnStartWork atomic.Bool
+	autoTitleAssigned         atomic.Bool
 
 	mu sync.RWMutex
 
@@ -176,21 +177,22 @@ type Session struct {
 
 // SessionParams collects the data required to bootstrap a session.
 type SessionParams struct {
-	ID                     string
-	ProjectID              string
-	WorktreeID             string
-	WorkingDir             string
-	Title                  string
-	Command                []string
-	Env                    []string
-	Rows                   int
-	Cols                   int
-	Logger                 *zap.Logger
-	Encoding               string
-	ScrollbackLimit        int
-	GetAIConfig            func() *utils.AIAssistantStatusConfig
-	TaskID                 string
-	RenameTitleEachCommand bool
+	ID                        string
+	ProjectID                 string
+	WorktreeID                string
+	WorkingDir                string
+	Title                     string
+	Command                   []string
+	Env                       []string
+	Rows                      int
+	Cols                      int
+	Logger                    *zap.Logger
+	Encoding                  string
+	ScrollbackLimit           int
+	GetAIConfig               func() *utils.AIAssistantStatusConfig
+	TaskID                    string
+	RenameTitleEachCommand    bool
+	AutoCreateTaskOnStartWork bool
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -250,6 +252,7 @@ func NewSession(params SessionParams) (*Session, error) {
 		associatedTaskID: params.TaskID,
 	}
 	session.renameTitleEachCommand.Store(params.RenameTitleEachCommand)
+	session.autoCreateTaskOnStartWork.Store(params.AutoCreateTaskOnStartWork)
 
 	session.assistantTracker.SetCaptureFunc(session.captureTerminalLines)
 	// Set state change callback for periodic checking
@@ -700,6 +703,11 @@ func (s *Session) SetRenameTitleEachCommand(enabled bool) {
 	s.renameTitleEachCommand.Store(enabled)
 }
 
+// SetAutoCreateTaskOnStartWork toggles automatic task creation when work starts.
+func (s *Session) SetAutoCreateTaskOnStartWork(enabled bool) {
+	s.autoCreateTaskOnStartWork.Store(enabled)
+}
+
 // CreatedAt returns the spawn timestamp.
 func (s *Session) CreatedAt() time.Time {
 	return s.createdAt
@@ -1004,6 +1012,14 @@ func (s *Session) handleRecentInput(event ai_assistant2.StateChangeEvent) {
 	s.mu.Unlock()
 
 	if taskID == "" {
+		if !s.autoCreateTaskOnStartWork.Load() {
+			s.mu.Lock()
+			if s.lastRecentInput == input {
+				s.lastRecentInput = ""
+			}
+			s.mu.Unlock()
+			return
+		}
 		var err error
 		taskID, err = s.autoCreateTaskFromInput(input, event.Timestamp)
 		if err != nil {

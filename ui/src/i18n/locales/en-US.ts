@@ -334,6 +334,7 @@ export default {
     confirmClose: 'Confirm before closing terminal',
     codeAgents: 'Code Agents',
     renameTitleEachCommand: 'Auto-update tab title after every instruction',
+    autoCreateTaskOnStartWork: 'Auto-create task when work starts',
     resetPosition: 'Reset Terminal Position',
     duplicateSuffix: ' Copy',
     emptyGuideTitle: 'No Terminal',
@@ -511,6 +512,8 @@ export default {
     developerScrollbackTip: 'When disabled, the server stops caching PTY output to help debug stalls and reduce memory usage (default off, applies to all terminals immediately after saving).',
     renameSessionTitleEachCommand: 'Auto-update tab title on every instruction',
     renameSessionTitleEachCommandTip: 'When enabled, each captured AI command refreshes the terminal title; when disabled, only the first captured command updates the title.',
+    autoCreateTaskOnStartWork: 'Auto-create task when work starts',
+    autoCreateTaskOnStartWorkTip: 'Code Agents automatically create and link a task the first time work starts so their output is tracked even without a pre-selected task.',
   },
   theme: {
     light: 'Light',

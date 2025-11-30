@@ -18,6 +18,7 @@ type systemTerminalManager interface {
 	UpdateAIAssistantStatusConfig(utils.AIAssistantStatusConfig)
 	UpdateScrollbackEnabled(bool)
 	UpdateRenameTitleEachCommand(bool)
+	UpdateAutoCreateTaskOnStartWork(bool)
 }
 
 type versionResponse struct {
@@ -198,6 +199,7 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 		if terminalManager != nil {
 			terminalManager.UpdateScrollbackEnabled(input.Body.EnableTerminalScrollback)
 			terminalManager.UpdateRenameTitleEachCommand(input.Body.RenameSessionTitleEachCommand)
+			terminalManager.UpdateAutoCreateTaskOnStartWork(input.Body.AutoCreateTaskOnStartWork)
 		}
 
 		resp := h.NewMessageResponse("Developer config updated.")
