@@ -732,6 +732,7 @@ export interface Worktree {
   deletedAt: string | null;
   headCommit: string | null;
   headCommitDate: string | null;
+  headCommitMessage: string | null;
   id: string;
   isBare: boolean;
   isMain: boolean;
@@ -777,6 +778,7 @@ export interface WorktreeTable {
   deletedAt: DeletedAt;
   headCommit: string;
   headCommitDate: string | null;
+  headCommitMessage: string;
   id: string;
   isBare: boolean;
   isMain: boolean;
@@ -901,6 +903,7 @@ export interface ItemResponseWorktreeBody {
 export interface BranchInfo {
   hasWorktree: boolean;
   headCommit: string;
+  headCommitMessage: string;
   isCurrent: boolean;
   isRemote: boolean;
   name: string;
@@ -1701,6 +1704,7 @@ declare global {
        *     local: Array<{
        *       hasWorktree: boolean
        *       headCommit: string
+       *       headCommitMessage: string
        *       isCurrent: boolean
        *       isRemote: boolean
        *       name: string
@@ -1712,6 +1716,7 @@ declare global {
        *     remote: Array<{
        *       hasWorktree: boolean
        *       headCommit: string
+       *       headCommitMessage: string
        *       isCurrent: boolean
        *       isRemote: boolean
        *       name: string
@@ -2025,6 +2030,7 @@ declare global {
        *     deletedAt: string | null
        *     headCommit: string | null
        *     headCommitDate: string | null
+       *     headCommitMessage: string | null
        *     id: string
        *     isBare: boolean
        *     isMain: boolean
@@ -2097,6 +2103,7 @@ declare global {
        *     deletedAt: string | null
        *     headCommit: string | null
        *     headCommitDate: string | null
+       *     headCommitMessage: string | null
        *     id: string
        *     isBare: boolean
        *     isMain: boolean
@@ -2217,6 +2224,7 @@ declare global {
        *     deletedAt: string | null
        *     headCommit: string | null
        *     headCommitDate: string | null
+       *     headCommitMessage: string | null
        *     id: string
        *     isBare: boolean
        *     isMain: boolean
@@ -2274,6 +2282,7 @@ declare global {
        *     deletedAt: string | null
        *     headCommit: string | null
        *     headCommitDate: string | null
+       *     headCommitMessage: string | null
        *     id: string
        *     isBare: boolean
        *     isMain: boolean
@@ -2395,6 +2404,7 @@ declare global {
        *       }
        *       headCommit: string
        *       headCommitDate: string | null
+       *       headCommitMessage: string
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -2556,6 +2566,7 @@ declare global {
        *       }
        *       headCommit: string
        *       headCommitDate: string | null
+       *       headCommitMessage: string
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -2676,6 +2687,7 @@ declare global {
        *       }
        *       headCommit: string
        *       headCommitDate: string | null
+       *       headCommitMessage: string
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -2807,6 +2819,7 @@ declare global {
        *       }
        *       headCommit: string
        *       headCommitDate: string | null
+       *       headCommitMessage: string
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -2980,6 +2993,7 @@ declare global {
        *       }
        *       headCommit: string
        *       headCommitDate: string | null
+       *       headCommitMessage: string
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -3122,6 +3136,7 @@ declare global {
        *       }
        *       headCommit: string
        *       headCommitDate: string | null
+       *       headCommitMessage: string
        *       id: string
        *       isBare: boolean
        *       isMain: boolean
@@ -4024,6 +4039,7 @@ declare global {
        *     // A URL to the JSON Schema for this object.
        *     $schema?: string
        *     enableTerminalScrollback: boolean
+       *     renameSessionTitleEachCommand: boolean
        *   }
        * }
        * ```
@@ -4046,6 +4062,7 @@ declare global {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
        *   enableTerminalScrollback: boolean
+       *   renameSessionTitleEachCommand: boolean
        * }
        * ```
        *
@@ -4336,6 +4353,7 @@ declare global {
        *         }
        *         headCommit: string
        *         headCommitDate: string | null
+       *         headCommitMessage: string
        *         id: string
        *         isBare: boolean
        *         isMain: boolean
@@ -4478,6 +4496,7 @@ declare global {
        *         }
        *         headCommit: string
        *         headCommitDate: string | null
+       *         headCommitMessage: string
        *         id: string
        *         isBare: boolean
        *         isMain: boolean

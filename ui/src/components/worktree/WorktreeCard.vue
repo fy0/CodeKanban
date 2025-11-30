@@ -62,8 +62,23 @@
     <n-space vertical size="small">
       <GitStatusBadge :worktree="worktree" />
 
-      <n-text depth="3" class="meta-text">
-        {{ worktree.headCommit || t('worktree.noCommitInfo') }}
+      <template v-if="hasCommitDetails">
+        <n-popover trigger="hover" placement="bottom-start" :delay="1000" :show-arrow="false">
+          <template #trigger>
+            <n-text depth="3" class="meta-text worktree-card__commit" tag="span">
+              <n-ellipsis :line-clamp="1" class="worktree-card__commit-text">
+                {{ commitInlineText }}
+              </n-ellipsis>
+            </n-text>
+          </template>
+          <div class="worktree-card__commit-popover">
+            <span class="worktree-card__commit-hash">{{ popoverCommitHash || t('worktree.noCommit') }}</span>
+            <span v-if="popoverCommitMessage" class="worktree-card__commit-message">{{ popoverCommitMessage }}</span>
+          </div>
+        </n-popover>
+      </template>
+      <n-text v-else depth="3" class="meta-text">
+        {{ t('worktree.noCommitInfo') }}
       </n-text>
 
       <n-text depth="3" class="meta-text">
@@ -236,6 +251,21 @@ const editorDropdownOptions = computed<DropdownOption[]>(() =>
 
 const defaultEditorLabel = computed(() => EDITOR_LABEL_MAP[resolvedDefaultEditor.value] ?? '编辑器');
 
+const commitHash = computed(() => (props.worktree.headCommit || '').trim());
+const commitMessage = computed(() => (props.worktree.headCommitMessage || '').trim());
+const hasCommitDetails = computed(() => Boolean(commitHash.value || commitMessage.value));
+const commitInlineText = computed(() => {
+  if (!hasCommitDetails.value) {
+    return '';
+  }
+  if (commitHash.value && commitMessage.value) {
+    return `${commitHash.value} ${commitMessage.value}`;
+  }
+  return commitHash.value || commitMessage.value;
+});
+const popoverCommitHash = computed(() => commitHash.value);
+const popoverCommitMessage = computed(() => commitMessage.value);
+
 function handleAction(key: string | number) {
   switch (key) {
     case 'explorer':
@@ -315,6 +345,38 @@ function handleSelect() {
 
 .meta-text {
   font-size: 12px;
+}
+
+.worktree-card__commit {
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--n-text-color-2);
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.worktree-card__commit-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+  color: var(--n-text-color-2);
+}
+
+.worktree-card__commit-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 360px;
+}
+
+.worktree-card__commit-hash {
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-weight: 600;
+}
+
+.worktree-card__commit-message {
+  white-space: pre-wrap;
 }
 
 .worktree-card__actions {

@@ -285,10 +285,15 @@ func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) 
 
 	now := time.Now()
 	var headPtr *string
+	var headMessagePtr *string
 	var headDatePtr *time.Time
 	if status.LastCommit != nil {
 		head := status.LastCommit.SHA
 		headPtr = &head
+		message := strings.TrimSpace(status.LastCommit.Message)
+		if message != "" {
+			headMessagePtr = &message
+		}
 		if !status.LastCommit.Date.IsZero() {
 			headDate := status.LastCommit.Date.UTC()
 			headDatePtr = &headDate
@@ -303,17 +308,18 @@ func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) 
 	conflictsVal := int64(status.Conflicted)
 
 	updated, err := q.WorktreeUpdateStatus(ctx, &model.WorktreeUpdateStatusParams{
-		UpdatedAt:       now,
-		StatusAhead:     &aheadVal,
-		StatusBehind:    &behindVal,
-		StatusModified:  &modifiedVal,
-		StatusStaged:    &stagedVal,
-		StatusUntracked: &untrackedVal,
-		StatusConflicts: &conflictsVal,
-		StatusUpdatedAt: &now,
-		HeadCommit:      headPtr,
-		HeadCommitDate:  headDatePtr,
-		Id:              worktree.Id,
+		UpdatedAt:         now,
+		StatusAhead:       &aheadVal,
+		StatusBehind:      &behindVal,
+		StatusModified:    &modifiedVal,
+		StatusStaged:      &stagedVal,
+		StatusUntracked:   &untrackedVal,
+		StatusConflicts:   &conflictsVal,
+		StatusUpdatedAt:   &now,
+		HeadCommit:        headPtr,
+		HeadCommitMessage: headMessagePtr,
+		HeadCommitDate:    headDatePtr,
+		Id:                worktree.Id,
 	})
 	if err != nil {
 		return nil, err
@@ -346,6 +352,17 @@ func (s *WorktreeService) RefreshAllWorktrees(ctx context.Context, projectID str
 		}
 	}
 	return updated, failed, nil
+}
+
+// RefreshWorktreeCommitInfo refreshes commit/status metadata for all worktrees and returns the updated list.
+func (s *WorktreeService) RefreshWorktreeCommitInfo(ctx context.Context, projectID string) ([]*model.Worktree, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, _, err := s.RefreshAllWorktrees(ctx, projectID); err != nil {
+		return nil, err
+	}
+	return s.ListWorktrees(ctx, projectID)
 }
 
 // SyncWorktrees ensures git worktrees and the database remain aligned.
@@ -406,9 +423,15 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 				commit := gitWT.HeadCommit
 				headPtr = &commit
 			}
+
+			branchName := strings.TrimSpace(gitWT.Branch)
+			if branchName == "" {
+				branchName = existing.BranchName
+			}
+
 			if err := q.WorktreeUpdateMetadata(ctx, &model.WorktreeUpdateMetadataParams{
 				UpdatedAt:  now,
-				BranchName: gitWT.Branch,
+				BranchName: branchName,
 				HeadCommit: headPtr,
 				IsMain:     gitWT.IsMain,
 				IsBare:     gitWT.IsBare,

@@ -198,6 +198,25 @@ func registerWorktreeRoutes(group *huma.Group) {
 		op.Summary = "同步 Worktree"
 		op.Tags = []string{worktreeTag}
 	})
+
+	huma.Post(group, "/projects/{projectId}/worktrees/refresh-commits", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+		},
+	) (*h.ItemsResponse[*model.Worktree], error) {
+		worktrees, err := worktreeSvc.RefreshWorktreeCommitInfo(ctx, input.ProjectID)
+		if err != nil {
+			return nil, mapWorktreeError(err)
+		}
+		resp := h.NewItemsResponse(worktrees)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "worktree-refresh-commit-info"
+		op.Summary = "刷新 Worktree 的提交信息"
+		op.Tags = []string{worktreeTag}
+	})
 }
 
 func mapWorktreeError(err error) error {

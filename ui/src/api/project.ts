@@ -70,6 +70,14 @@ export const worktreeApi = {
     return body.items ?? [];
   },
 
+  async refreshCommitInfo(projectId: string): Promise<Worktree[]> {
+    const body =
+      (await http
+        .Post<{ items?: Worktree[] }>(`/projects/${projectId}/worktrees/refresh-commits`, {})
+        .send()) ?? {};
+    return body.items ?? [];
+  },
+
   async create(
     projectId: string,
     data: { branchName: string; baseBranch?: string; createBranch?: boolean },

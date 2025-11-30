@@ -134,6 +134,18 @@ export const useProjectStore = defineStore('project', () => {
 
   async function fetchWorktrees(projectId: string) {
     worktrees.value = await worktreeApi.list(projectId);
+    refreshWorktreeCommitInfo(projectId);
+  }
+
+  async function refreshWorktreeCommitInfo(projectId: string) {
+    try {
+      const refreshed = await worktreeApi.refreshCommitInfo(projectId);
+      if (currentProject.value?.id === projectId) {
+        worktrees.value = refreshed;
+      }
+    } catch (error) {
+      console.warn('Failed to refresh worktree commit info', error);
+    }
   }
 
   async function createWorktree(
@@ -238,6 +250,7 @@ export const useProjectStore = defineStore('project', () => {
     updateProject,
     deleteProject,
     fetchWorktrees,
+    refreshWorktreeCommitInfo,
     createWorktree,
     deleteWorktree,
     updateWorktreeInList,

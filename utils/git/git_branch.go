@@ -5,16 +5,18 @@ import (
 	"fmt"
 	"strings"
 
+	goGit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
 // BranchInfo describes local or remote branch metadata.
 type BranchInfo struct {
-	Name        string `json:"name"`
-	IsCurrent   bool   `json:"isCurrent"`
-	IsRemote    bool   `json:"isRemote"`
-	HeadCommit  string `json:"headCommit"`
-	HasWorktree bool   `json:"hasWorktree"`
+	Name              string `json:"name"`
+	IsCurrent         bool   `json:"isCurrent"`
+	IsRemote          bool   `json:"isRemote"`
+	HeadCommit        string `json:"headCommit"`
+	HeadCommitMessage string `json:"headCommitMessage"`
+	HasWorktree       bool   `json:"hasWorktree"`
 }
 
 // ListBranches returns local and remote branches present in the repository.
@@ -35,10 +37,11 @@ func (r *GitRepo) ListBranches() (local []BranchInfo, remote []BranchInfo, err e
 	err = localIter.ForEach(func(ref *plumbing.Reference) error {
 		name := ref.Name().Short()
 		local = append(local, BranchInfo{
-			Name:       name,
-			IsCurrent:  name == currentBranch,
-			IsRemote:   false,
-			HeadCommit: shortHash(ref.Hash()),
+			Name:              name,
+			IsCurrent:         name == currentBranch,
+			IsRemote:          false,
+			HeadCommit:        shortHash(ref.Hash()),
+			HeadCommitMessage: resolveCommitMessage(r.Repository, ref.Hash()),
 		})
 		return nil
 	})
@@ -58,9 +61,10 @@ func (r *GitRepo) ListBranches() (local []BranchInfo, remote []BranchInfo, err e
 			return nil
 		}
 		remote = append(remote, BranchInfo{
-			Name:       ref.Name().Short(),
-			IsRemote:   true,
-			HeadCommit: shortHash(ref.Hash()),
+			Name:              ref.Name().Short(),
+			IsRemote:          true,
+			HeadCommit:        shortHash(ref.Hash()),
+			HeadCommitMessage: resolveCommitMessage(r.Repository, ref.Hash()),
 		})
 		return nil
 	})
@@ -137,6 +141,17 @@ func shortHash(hash plumbing.Hash) string {
 		return value[:7]
 	}
 	return value
+}
+
+func resolveCommitMessage(repo *goGit.Repository, hash plumbing.Hash) string {
+	if repo == nil {
+		return ""
+	}
+	commit, err := repo.CommitObject(hash)
+	if err != nil {
+		return ""
+	}
+	return firstLine(commit.Message)
 }
 
 // ValidateBranchName verifies the provided branch name matches git's ref rules.

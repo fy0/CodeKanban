@@ -10,13 +10,14 @@ import (
 type WorktreeTable struct {
 	model_base.StringPKBaseModel
 
-	ProjectID  string `gorm:"type:text;not null;index" json:"projectId"`
-	BranchName string `gorm:"type:text;not null;index" json:"branchName"`
-	Path       string `gorm:"type:text;not null;uniqueIndex:idx_worktrees_path,where:deleted_at IS NULL" json:"path"`
-	IsMain        bool       `gorm:"type:boolean;default:false" json:"isMain"`
-	IsBare        bool       `gorm:"type:boolean;default:false" json:"isBare"`
-	HeadCommit    string     `gorm:"type:text" json:"headCommit"`
-	HeadCommitDate *time.Time `gorm:"type:datetime" json:"headCommitDate"`
+	ProjectID         string     `gorm:"type:text;not null;index" json:"projectId"`
+	BranchName        string     `gorm:"type:text;not null;index" json:"branchName"`
+	Path              string     `gorm:"type:text;not null;uniqueIndex:idx_worktrees_path,where:deleted_at IS NULL" json:"path"`
+	IsMain            bool       `gorm:"type:boolean;default:false" json:"isMain"`
+	IsBare            bool       `gorm:"type:boolean;default:false" json:"isBare"`
+	HeadCommit        string     `gorm:"type:text" json:"headCommit"`
+	HeadCommitMessage string     `gorm:"type:text" json:"headCommitMessage"`
+	HeadCommitDate    *time.Time `gorm:"type:datetime" json:"headCommitDate"`
 
 	StatusAhead     int        `gorm:"type:integer;default:0" json:"statusAhead"`
 	StatusBehind    int        `gorm:"type:integer;default:0" json:"statusBehind"`

@@ -9,6 +9,7 @@ INSERT INTO worktrees (
   is_main,
   is_bare,
   head_commit,
+  head_commit_message,
   head_commit_date,
   status_ahead,
   status_behind,
@@ -27,6 +28,7 @@ INSERT INTO worktrees (
   @is_main,
   @is_bare,
   @head_commit,
+  @head_commit_message,
   @head_commit_date,
   @status_ahead,
   @status_behind,
@@ -49,6 +51,7 @@ SELECT
   is_main,
   is_bare,
   head_commit,
+  head_commit_message,
   head_commit_date,
   status_ahead,
   status_behind,
@@ -88,6 +91,7 @@ SET
   status_conflicts = @status_conflicts,
   status_updated_at = @status_updated_at,
   head_commit = COALESCE(@head_commit, head_commit),
+  head_commit_message = COALESCE(@head_commit_message, head_commit_message),
   head_commit_date = COALESCE(@head_commit_date, head_commit_date)
 WHERE id = @id
   AND deleted_at IS NULL
@@ -102,6 +106,7 @@ RETURNING
   is_main,
   is_bare,
   head_commit,
+  head_commit_message,
   head_commit_date,
   status_ahead,
   status_behind,
@@ -117,6 +122,7 @@ SET
   updated_at = @updated_at,
   branch_name = @branch_name,
   head_commit = @head_commit,
+  head_commit_message = NULL,
   is_main = @is_main,
   is_bare = @is_bare
 WHERE id = @id

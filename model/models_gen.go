@@ -39,22 +39,23 @@ type User struct {
 }
 
 type Worktree struct {
-	Id              string     `db:"id" json:"id"`
-	CreatedAt       time.Time  `db:"created_at" json:"createdAt"`
-	UpdatedAt       time.Time  `db:"updated_at" json:"updatedAt"`
-	DeletedAt       *time.Time `db:"deleted_at" json:"deletedAt"`
-	ProjectId       string     `db:"project_id" json:"projectId"`
-	BranchName      string     `db:"branch_name" json:"branchName"`
-	Path            string     `db:"path" json:"path"`
-	IsMain          bool       `db:"is_main" json:"isMain"`
-	IsBare          bool       `db:"is_bare" json:"isBare"`
-	HeadCommit      *string    `db:"head_commit" json:"headCommit"`
-	HeadCommitDate  *time.Time `db:"head_commit_date" json:"headCommitDate"`
-	StatusAhead     *int64     `db:"status_ahead" json:"statusAhead"`
-	StatusBehind    *int64     `db:"status_behind" json:"statusBehind"`
-	StatusModified  *int64     `db:"status_modified" json:"statusModified"`
-	StatusStaged    *int64     `db:"status_staged" json:"statusStaged"`
-	StatusUntracked *int64     `db:"status_untracked" json:"statusUntracked"`
-	StatusConflicts *int64     `db:"status_conflicts" json:"statusConflicts"`
-	StatusUpdatedAt *time.Time `db:"status_updated_at" json:"statusUpdatedAt"`
+	Id                string     `db:"id" json:"id"`
+	CreatedAt         time.Time  `db:"created_at" json:"createdAt"`
+	UpdatedAt         time.Time  `db:"updated_at" json:"updatedAt"`
+	DeletedAt         *time.Time `db:"deleted_at" json:"deletedAt"`
+	ProjectId         string     `db:"project_id" json:"projectId"`
+	BranchName        string     `db:"branch_name" json:"branchName"`
+	Path              string     `db:"path" json:"path"`
+	IsMain            bool       `db:"is_main" json:"isMain"`
+	IsBare            bool       `db:"is_bare" json:"isBare"`
+	HeadCommit        *string    `db:"head_commit" json:"headCommit"`
+	HeadCommitMessage *string    `db:"head_commit_message" json:"headCommitMessage"`
+	HeadCommitDate    *time.Time `db:"head_commit_date" json:"headCommitDate"`
+	StatusAhead       *int64     `db:"status_ahead" json:"statusAhead"`
+	StatusBehind      *int64     `db:"status_behind" json:"statusBehind"`
+	StatusModified    *int64     `db:"status_modified" json:"statusModified"`
+	StatusStaged      *int64     `db:"status_staged" json:"statusStaged"`
+	StatusUntracked   *int64     `db:"status_untracked" json:"statusUntracked"`
+	StatusConflicts   *int64     `db:"status_conflicts" json:"statusConflicts"`
+	StatusUpdatedAt   *time.Time `db:"status_updated_at" json:"statusUpdatedAt"`
 }

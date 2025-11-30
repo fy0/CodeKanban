@@ -27,7 +27,25 @@
       </n-dropdown>
     </div>
     <div class="branch-card__meta">
-      <n-text depth="3">{{ t('branch.latestCommit') }}: {{ branch.headCommit || '—' }}</n-text>
+      <n-popover
+        v-if="hasCommitDetails"
+        trigger="hover"
+        placement="bottom-start"
+        :delay="1000"
+        :show-arrow="false"
+      >
+        <template #trigger>
+          <n-ellipsis class="branch-card__commit" :line-clamp="1">
+            <span class="branch-card__commit-label">{{ t('branch.latestCommit') }}: </span>
+            <span class="branch-card__commit-text">{{ commitInlineText }}</span>
+          </n-ellipsis>
+        </template>
+        <div class="branch-card__commit-popover">
+          <span class="branch-card__commit-hash">{{ popoverHash || t('worktree.noCommit') }}</span>
+          <span v-if="popoverMessage" class="branch-card__commit-message">{{ popoverMessage }}</span>
+        </div>
+      </n-popover>
+      <n-text v-else depth="3">{{ t('branch.latestCommit') }}: {{ t('worktree.noCommitInfo') }}</n-text>
     </div>
   </div>
 </template>
@@ -57,6 +75,19 @@ const emit = defineEmits<{
 const isDefault = computed(() => {
   return props.defaultBranch ? props.branch.name === props.defaultBranch : false;
 });
+
+const commitInlineText = computed(() => {
+  const hash = (props.branch.headCommit || '').trim();
+  const message = (props.branch.headCommitMessage || '').trim();
+  if (hash && message) {
+    return `${hash} ${message}`;
+  }
+  return hash || message;
+});
+
+const popoverHash = computed(() => (props.branch.headCommit || '').trim());
+const popoverMessage = computed(() => (props.branch.headCommitMessage || '').trim());
+const hasCommitDetails = computed(() => Boolean(commitInlineText.value));
 
 const actionOptions = computed<DropdownOption[]>(() => {
   if (props.mode === 'local') {
@@ -116,6 +147,34 @@ function handleSelect(key: string | number) {
 .branch-card__meta {
   font-size: 12px;
   color: var(--n-text-color-2);
+}
+
+.branch-card__commit {
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--n-text-color-2);
+  display: block;
+  white-space: nowrap;
+}
+
+.branch-card__commit-text {
+  white-space: nowrap;
+}
+
+.branch-card__commit-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 360px;
+}
+
+.branch-card__commit-hash {
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-weight: 600;
+}
+
+.branch-card__commit-message {
+  white-space: pre-wrap;
 }
 
 .branch-name {

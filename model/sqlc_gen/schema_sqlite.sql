@@ -1,5 +1,5 @@
 -- 数据库建表语句
--- 生成时间: 2025-11-16 02:49:18
+-- 生成时间: 2025-11-30 04:41:04
 -- 数据库方言: sqlite
 -- 总共 36 条语句
 
@@ -20,7 +20,7 @@ CREATE INDEX "idx_projects_name" ON "projects"("name");
 CREATE INDEX "idx_projects_deleted_at" ON "projects"("deleted_at");
 
 
-CREATE TABLE "worktrees" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"project_id" text NOT NULL,"branch_name" text NOT NULL,"path" text NOT NULL,"is_main" boolean DEFAULT false,"is_bare" boolean DEFAULT false,"head_commit" text,"head_commit_date" datetime,"status_ahead" integer DEFAULT 0,"status_behind" integer DEFAULT 0,"status_modified" integer DEFAULT 0,"status_staged" integer DEFAULT 0,"status_untracked" integer DEFAULT 0,"status_conflicts" integer DEFAULT 0,"status_updated_at" datetime,PRIMARY KEY ("id"));
+CREATE TABLE "worktrees" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"project_id" text NOT NULL,"branch_name" text NOT NULL,"path" text NOT NULL,"is_main" boolean DEFAULT false,"is_bare" boolean DEFAULT false,"head_commit" text,"head_commit_message" text,"head_commit_date" datetime,"status_ahead" integer DEFAULT 0,"status_behind" integer DEFAULT 0,"status_modified" integer DEFAULT 0,"status_staged" integer DEFAULT 0,"status_untracked" integer DEFAULT 0,"status_conflicts" integer DEFAULT 0,"status_updated_at" datetime,PRIMARY KEY ("id"));
 CREATE UNIQUE INDEX "idx_worktrees_path" ON "worktrees"("path") WHERE deleted_at IS NULL;
 CREATE INDEX "idx_worktrees_branch_name" ON "worktrees"("branch_name");
 CREATE INDEX "idx_worktrees_project_id" ON "worktrees"("project_id");

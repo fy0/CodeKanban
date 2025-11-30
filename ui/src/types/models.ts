@@ -19,6 +19,7 @@ export interface Worktree {
   path: string;
   isMain: boolean;
   headCommit: string | null;
+  headCommitMessage?: string | null;
   headCommitDate: string | null;
   statusAhead: number | null;
   statusBehind: number | null;
@@ -99,6 +100,7 @@ export interface BranchInfo {
   isCurrent: boolean;
   isRemote: boolean;
   headCommit: string;
+  headCommitMessage?: string | null;
   hasWorktree?: boolean;
 }
 
