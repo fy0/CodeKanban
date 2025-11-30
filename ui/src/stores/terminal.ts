@@ -51,6 +51,8 @@ export type TerminalCreateOptions = {
   rows?: number;
   cols?: number;
   taskId?: string;
+  /** 插入到指定 sessionId 之后，用于复制标签时保持位置 */
+  insertAfterSessionId?: string;
 };
 
 type SessionRecord = {
@@ -449,6 +451,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     attachOrUpdateSession(response.item as unknown as TerminalSession, {
       activate: true,
       projectIdOverride: resolved,
+      insertAfterSessionId: options.insertAfterSessionId,
     });
     // 更新终端计数缓存
     const currentCount = cachedCounts.get(resolved) ?? 0;
@@ -495,10 +498,11 @@ export const useTerminalStore = defineStore('terminal', () => {
   async function linkSessionTask(projectId: string | undefined, sessionId: string, taskId: string) {
     const resolved = ensureProjectSelected(projectId);
     const response = await alovaInstance
-      .Post(`/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/link`, {
-        data: { taskId },
-        cacheFor: 0,
-      })
+      .Post(
+        `/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/link`,
+        { taskId },
+        { cacheFor: 0 },
+      )
       .send();
     const session = extractItem(response) as unknown as TerminalSession | undefined;
     if (session) {
@@ -511,10 +515,11 @@ export const useTerminalStore = defineStore('terminal', () => {
   async function unlinkSessionTask(projectId: string | undefined, sessionId: string) {
     const resolved = ensureProjectSelected(projectId);
     const response = await alovaInstance
-      .Post(`/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/unlink`, {
-        data: {},
-        cacheFor: 0,
-      })
+      .Post(
+        `/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/unlink`,
+        {},
+        { cacheFor: 0 },
+      )
       .send();
     const session = extractItem(response) as unknown as TerminalSession | undefined;
     if (session) {
@@ -645,7 +650,7 @@ export const useTerminalStore = defineStore('terminal', () => {
 
   function attachOrUpdateSession(
     session: TerminalSession,
-    options?: { activate?: boolean; projectIdOverride?: string }
+    options?: { activate?: boolean; projectIdOverride?: string; insertAfterSessionId?: string }
   ) {
     const existing = sessionIndex.get(session.id);
     if (existing) {
@@ -661,15 +666,28 @@ export const useTerminalStore = defineStore('terminal', () => {
           immutableProjectId
         );
       }
-      Object.assign(existing.tab, {
+      // 直接使用 session.taskId，如果是 null/undefined 则清除关联
+      const updatedTaskId = session.taskId;
+      const updatedTab: TerminalTabState = {
+        ...existing.tab,
         ...session,
         projectId: immutableProjectId,
-      });
-      updateSessionTaskMapping(session.id, existing.tab.taskId ?? undefined);
+        taskId: updatedTaskId ?? undefined,
+      };
+      // 用 splice 替换以触发 Vue 响应式更新
+      const bucket = tabStore.get(immutableProjectId);
+      if (bucket) {
+        const index = bucket.findIndex(t => t.id === session.id);
+        if (index !== -1) {
+          bucket.splice(index, 1, updatedTab);
+        }
+      }
+      existing.tab = updatedTab;
+      updateSessionTaskMapping(session.id, updatedTaskId ?? undefined);
       if (options?.activate) {
         setActiveTab(immutableProjectId, session.id);
       }
-      return existing.tab;
+      return updatedTab;
     }
 
     const resolvedProjectId = resolveSessionProjectId(session, options?.projectIdOverride);
@@ -684,7 +702,17 @@ export const useTerminalStore = defineStore('terminal', () => {
       projectId: resolvedProjectId,
       clientStatus: 'connecting',
     };
-    bucket.push(tab);
+    // 如果指定了 insertAfterSessionId，在其后插入；否则添加到末尾
+    if (options?.insertAfterSessionId) {
+      const insertIndex = bucket.findIndex(t => t.id === options.insertAfterSessionId);
+      if (insertIndex !== -1) {
+        bucket.splice(insertIndex + 1, 0, tab);
+      } else {
+        bucket.push(tab);
+      }
+    } else {
+      bucket.push(tab);
+    }
     sessionIndex.set(tab.id, { projectId: resolvedProjectId, tab });
     updateSessionTaskMapping(tab.id, tab.taskId ?? undefined);
     captureProjectOrder(resolvedProjectId, bucket);

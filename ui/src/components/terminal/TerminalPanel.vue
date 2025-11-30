@@ -59,6 +59,21 @@
                 <span class="tab-title" :style="tabTitleStyle">
                   {{ tab.title }}
                 </span>
+                <!-- 任务图标：独立显示，不依赖 AI 助手状态 -->
+                <span
+                  v-if="resolveTabTaskId(tab) && !showAssistantStatus(tab)"
+                  class="standalone-task-icon"
+                  role="button"
+                  tabindex="0"
+                  :title="t('terminal.viewLinkedTask')"
+                  @click.stop="handleViewTask(tab)"
+                  @keydown.enter.prevent.stop="handleViewTask(tab)"
+                  @keydown.space.prevent.stop="handleViewTask(tab)"
+                >
+                  <n-icon size="12">
+                    <ClipboardOutline />
+                  </n-icon>
+                </span>
                 <span
                   v-if="showAssistantStatus(tab)"
                   class="ai-status-pill"
@@ -206,6 +221,70 @@
     </n-icon>
     <span v-if="totalUnviewedCount > 0" class="notification-badge">{{ totalUnviewedCount }}</span>
   </button>
+
+  <!-- 关联任务对话框 -->
+  <n-modal
+    v-model:show="showLinkTaskModal"
+    preset="card"
+    :title="t('terminal.linkTaskTitle')"
+    style="width: 480px; max-width: 90vw"
+    :mask-closable="!linkTaskLoading"
+    :closable="!linkTaskLoading"
+    @close="closeLinkTaskModal"
+  >
+    <n-spin :show="linkTaskLoading">
+      <n-list v-if="availableTasks.length > 0" hoverable class="link-task-list">
+        <n-list-item
+          v-for="task in availableTasks"
+          :key="task.id"
+          :class="{
+            'task-item-selected': selectedTaskId === task.id,
+            'task-item-disabled': isTaskLinkedToActiveSession(task.id)
+          }"
+          @click="selectTask(task.id)"
+        >
+          <div class="link-task-item">
+            <div class="task-title">{{ task.title }}</div>
+            <div class="task-meta">
+              <n-tag :type="task.status === 'todo' ? 'default' : 'info'" size="small">
+                {{ t(`task.status.${task.status === 'in_progress' ? 'inProgress' : task.status}`) }}
+              </n-tag>
+              <n-tag
+                v-if="task.priority > 0"
+                :type="task.priority === 3 ? 'error' : task.priority === 2 ? 'warning' : 'info'"
+                size="small"
+              >
+                {{ getPriorityLabel(task.priority) }}
+              </n-tag>
+              <n-tag
+                v-if="isTaskLinkedToActiveSession(task.id)"
+                type="warning"
+                size="small"
+              >
+                {{ t('terminal.taskAlreadyLinked') }}
+              </n-tag>
+            </div>
+          </div>
+        </n-list-item>
+      </n-list>
+      <n-empty v-else :description="t('terminal.noAvailableTasks')" />
+    </n-spin>
+    <template #footer>
+      <n-space justify="end">
+        <n-button :disabled="linkTaskLoading" @click="closeLinkTaskModal">
+          {{ t('common.cancel') }}
+        </n-button>
+        <n-button
+          type="primary"
+          :disabled="!selectedTaskId || linkTaskLoading"
+          :loading="linkTaskLoading"
+          @click="confirmLinkTask"
+        >
+          {{ t('common.confirm') }}
+        </n-button>
+      </n-space>
+    </template>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -223,7 +302,7 @@ import {
 } from 'vue';
 import type { HTMLAttributes } from 'vue';
 import { storeToRefs } from 'pinia';
-import { useDialog, useMessage, NIcon, NInput } from 'naive-ui';
+import { useDialog, useMessage, NIcon, NInput, NModal, NList, NListItem, NSpin, NEmpty, NTag, NButton, NSpace } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
 import {
   ChevronDownOutline,
@@ -237,6 +316,8 @@ import {
   Add,
   TrashOutline,
   ClipboardOutline,
+  LinkOutline,
+  FolderOpenOutline,
 } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
 import {
@@ -247,6 +328,7 @@ import {
 import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
+import { useTaskStore } from '@/stores/task';
 import { getPresetById } from '@/constants/themes';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import Sortable, { type SortableEvent } from 'sortablejs';
@@ -269,6 +351,8 @@ const dialog = useDialog();
 const { t } = useLocale();
 const projectStore = useProjectStore();
 const { worktrees } = storeToRefs(projectStore);
+const taskStore = useTaskStore();
+const { tasksByStatus } = storeToRefs(taskStore);
 const expanded = useStorage('terminal-panel-expanded', true);
 const panelHeight = useStorage('terminal-panel-height', 470);
 const panelLeft = useStorage('terminal-panel-left', 220);
@@ -292,6 +376,45 @@ let developerConfigLoadPromise: Promise<boolean> | null = null;
 const contextMenuTab = ref<string | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
+
+// 关联任务对话框相关状态
+const showLinkTaskModal = ref(false);
+const linkTaskTargetTab = ref<TerminalTabState | null>(null);
+const linkTaskLoading = ref(false);
+const selectedTaskId = ref<string | null>(null);
+
+// 可关联的任务列表（待办和进行中的任务）
+const availableTasks = computed(() => {
+  const todoTasks = tasksByStatus.value['todo'] || [];
+  const inProgressTasks = tasksByStatus.value['in_progress'] || [];
+  return [...todoTasks, ...inProgressTasks];
+});
+
+// 检查任务是否已被其他终端关联（且终端状态活跃）
+function isTaskLinkedToActiveSession(taskId: string): boolean {
+  const session = getSessionByTask(taskId);
+  // 如果没有关联的会话，则允许关联
+  if (!session) {
+    return false;
+  }
+  // 如果终端已关闭或出错，允许重新关联
+  if (session.clientStatus === 'closed' || session.clientStatus === 'error') {
+    return false;
+  }
+  // 其他状态（connecting, ready）视为活跃，不允许重复关联
+  return true;
+}
+
+// 优先级标签映射
+function getPriorityLabel(priority: number): string {
+  const map: Record<number, string> = {
+    1: t('task.priority.low'),
+    2: t('task.priority.medium'),
+    3: t('task.priority.high'),
+  };
+  return map[priority] || '';
+}
+
 function resolveTabTaskId(tab: TerminalTabState | null | undefined) {
   if (!tab) {
     return undefined;
@@ -324,8 +447,24 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       disabled: !hasProcessInfo,
     },
     {
+      label: t('terminal.copyPath'),
+      key: 'copy-path',
+      icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
+    },
+    {
+      label: t('terminal.browseDirectory'),
+      key: 'browse-directory',
+      icon: () => h(NIcon, null, { default: () => h(FolderOpenOutline) }),
+    },
+    {
       type: 'divider',
       key: 'task-actions-divider',
+    },
+    {
+      label: t('terminal.linkTask'),
+      key: 'link-task',
+      icon: () => h(NIcon, null, { default: () => h(LinkOutline) }),
+      disabled: hasLinkedTask,
     },
     {
       label: t('terminal.viewLinkedTask'),
@@ -553,9 +692,11 @@ const {
   send,
   disconnectTab,
   reorderTabs: reorderTabsInStore,
+  linkTask,
   unlinkTask,
   focusSession: focusSessionInStore,
   getLinkedTaskId,
+  getSessionByTask,
 } = useTerminalClient(projectIdRef);
 
 const settingsStore = useSettingsStore();
@@ -613,7 +754,68 @@ const worktreeBranchMap = computed(() => {
   return map;
 });
 
-const branchFilter = ref<string>('all');
+// 分支过滤器按项目持久化存储
+const BRANCH_FILTER_STORAGE_KEY = 'terminal-branch-filter-by-project';
+
+function loadBranchFilterMap(): Map<string, string> {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return new Map();
+  }
+  try {
+    const raw = window.localStorage.getItem(BRANCH_FILTER_STORAGE_KEY);
+    if (!raw) {
+      return new Map();
+    }
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    const result = new Map<string, string>();
+    Object.entries(parsed).forEach(([projectId, value]) => {
+      if (projectId && typeof value === 'string') {
+        result.set(projectId, value);
+      }
+    });
+    return result;
+  } catch {
+    return new Map();
+  }
+}
+
+function saveBranchFilterMap(map: Map<string, string>) {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  if (!map.size) {
+    window.localStorage.removeItem(BRANCH_FILTER_STORAGE_KEY);
+    return;
+  }
+  const payload: Record<string, string> = {};
+  map.forEach((value, projectId) => {
+    if (value && value !== 'all') {
+      payload[projectId] = value;
+    }
+  });
+  if (Object.keys(payload).length === 0) {
+    window.localStorage.removeItem(BRANCH_FILTER_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(BRANCH_FILTER_STORAGE_KEY, JSON.stringify(payload));
+}
+
+const branchFilterMap = loadBranchFilterMap();
+
+function getStoredBranchFilter(projectId: string): string {
+  return branchFilterMap.get(projectId) || 'all';
+}
+
+function saveCurrentBranchFilter(projectId: string, value: string) {
+  if (value === 'all') {
+    branchFilterMap.delete(projectId);
+  } else {
+    branchFilterMap.set(projectId, value);
+  }
+  saveBranchFilterMap(branchFilterMap);
+}
+
+const branchFilter = ref<string>(getStoredBranchFilter(props.projectId));
 const lastActiveBeforeFilter = ref<string>('');
 
 const branchFilterOptions = computed(() => {
@@ -632,7 +834,7 @@ const branchFilterOptions = computed(() => {
 });
 
 const shouldShowBranchFilter = computed(
-  () => showBranchFilter.value && tabs.value.length > 1 && branchFilterOptions.value.length > 0
+  () => showBranchFilter.value && branchFilterOptions.value.length > 1
 );
 
 const visibleTabs = computed(() => {
@@ -655,6 +857,8 @@ function handleBranchFilterSelect(value: string) {
     return;
   }
   branchFilter.value = value;
+  // 保存当前项目的分支过滤器设置
+  saveCurrentBranchFilter(props.projectId, value);
 }
 
 // 激活标签指示器的位置和宽度
@@ -733,8 +937,12 @@ function updateActiveTabIndicator() {
     // 限制指示器的最小和最大宽度
     indicatorWidth = Math.max(20, Math.min(80, indicatorWidth));
 
-    // 计算居中偏移量
-    const offsetLeft = activeRect.left - wrapperRect.left + (tabWidth - indicatorWidth) / 2;
+    // 从 .v-x-scroll 元素获取滚动偏移（NaiveUI 使用该元素作为滚动容器）
+    // 滚动向右时 scrollLeft 为正，指示器需要减去滚动偏移来保持相对位置
+    const scrollContainer = container.querySelector('.v-x-scroll') as HTMLElement | null;
+    const scrollLeft = scrollContainer?.scrollLeft ?? 0;
+    const offsetLeft =
+      activeRect.left - wrapperRect.left - scrollLeft + (tabWidth - indicatorWidth) / 2;
 
     activeTabIndicatorStyle.value = {
       transform: `translateX(${offsetLeft}px)`,
@@ -781,6 +989,7 @@ function ensureActiveTabMatchesFilter() {
   const visible = visibleTabs.value;
   if (!visible.length) {
     branchFilter.value = 'all';
+    saveCurrentBranchFilter(props.projectId, 'all');
     return;
   }
   if (!visible.some(tab => tab.id === activeId.value)) {
@@ -840,6 +1049,7 @@ watch(
       lastActiveBeforeFilter.value = '';
       if (branchFilter.value !== 'all') {
         branchFilter.value = 'all';
+        saveCurrentBranchFilter(props.projectId, 'all');
       }
     } else {
       ensureActiveTabMatchesFilter();
@@ -872,8 +1082,10 @@ watch(
   element => {
     if (element) {
       refreshTabSortable();
+      setupTabScrollListener();
     } else {
       destroyTabSorting();
+      cleanupTabScrollListener();
     }
   }
 );
@@ -890,11 +1102,33 @@ watch(branchFilter, (next, prev) => {
   refreshTabSortable();
 });
 
+// 项目切换时恢复对应的分支过滤器设置
+watch(projectIdRef, (nextProjectId, prevProjectId) => {
+  if (nextProjectId && nextProjectId !== prevProjectId) {
+    const storedFilter = getStoredBranchFilter(nextProjectId);
+    // 检查存储的过滤器值是否仍然有效（对应的分支是否还存在）
+    if (storedFilter !== 'all') {
+      // 延迟检查，等待 tabs 数据加载
+      nextTick(() => {
+        const validOptions = branchFilterOptions.value.map(opt => opt.id);
+        if (validOptions.includes(storedFilter)) {
+          branchFilter.value = storedFilter;
+        } else {
+          branchFilter.value = 'all';
+        }
+      });
+    } else {
+      branchFilter.value = 'all';
+    }
+  }
+});
+
 watch(
   () => tabs.value.length,
   length => {
     if (length <= 1 && branchFilter.value !== 'all') {
       branchFilter.value = 'all';
+      saveCurrentBranchFilter(props.projectId, 'all');
     }
   }
 );
@@ -903,9 +1137,33 @@ nextTick(() => {
   recalcTabTitleWidth();
 });
 
+// 监听标签滚动以更新指示器位置
+let tabScrollContainer: HTMLElement | null = null;
+
+function setupTabScrollListener() {
+  nextTick(() => {
+    const container = tabsContainerRef.value;
+    if (!container) return;
+    // NaiveUI 使用 .v-x-scroll 作为滚动容器
+    const scrollContainer = container.querySelector('.v-x-scroll') as HTMLElement | null;
+    if (scrollContainer) {
+      tabScrollContainer = scrollContainer;
+      scrollContainer.addEventListener('scroll', updateActiveTabIndicator);
+    }
+  });
+}
+
+function cleanupTabScrollListener() {
+  if (tabScrollContainer) {
+    tabScrollContainer.removeEventListener('scroll', updateActiveTabIndicator);
+    tabScrollContainer = null;
+  }
+}
+
 onMounted(() => {
   refreshTabSortable();
   updateActiveTabIndicator();
+  setupTabScrollListener();
 
   // Listen for AI completion events
   emitter.on('ai:completed', handleAICompletion);
@@ -949,6 +1207,7 @@ function handleAIApproval(event: any) {
 
 onBeforeUnmount(() => {
   destroyTabSorting();
+  cleanupTabScrollListener();
   emitter.off('ai:completed', handleAICompletion);
   emitter.off('ai:approval-needed', handleAIApproval);
   emitter.off('terminal:ensure-expanded', handleEnsureExpandedEvent);
@@ -1757,6 +2016,32 @@ async function copyProcessInfo(tab: TerminalTabState) {
   }
 }
 
+async function copyWorkingDirectory(tab: TerminalTabState) {
+  const path = tab.workingDir;
+  if (!path) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(path);
+    message.success(t('terminal.pathCopied'));
+  } catch (error) {
+    console.error('Failed to copy path:', error);
+    message.error(t('terminal.copyFailed'));
+  }
+}
+
+async function browseDirectory(tab: TerminalTabState) {
+  const path = tab.workingDir;
+  if (!path) {
+    return;
+  }
+  try {
+    await projectStore.openInExplorer(path);
+  } catch (error: any) {
+    message.error(error?.message ?? t('worktree.openExplorerFailed'));
+  }
+}
+
 function handleTabContextMenu(event: MouseEvent, tab: TerminalTabState) {
   event.preventDefault();
   contextMenuX.value = event.clientX;
@@ -1783,6 +2068,18 @@ async function handleContextMenuSelect(key: string) {
   }
   if (key === 'copy-process-info') {
     copyProcessInfo(tab);
+    return;
+  }
+  if (key === 'copy-path') {
+    copyWorkingDirectory(tab);
+    return;
+  }
+  if (key === 'browse-directory') {
+    browseDirectory(tab);
+    return;
+  }
+  if (key === 'link-task') {
+    promptLinkTask(tab);
     return;
   }
   if (key === 'view-task') {
@@ -1832,6 +2129,44 @@ function promptUnlinkTask(tab: TerminalTabState) {
   });
 }
 
+function promptLinkTask(tab: TerminalTabState) {
+  linkTaskTargetTab.value = tab;
+  selectedTaskId.value = null;
+  showLinkTaskModal.value = true;
+}
+
+function selectTask(taskId: string) {
+  // 如果任务已被活跃终端关联，不允许选中
+  if (isTaskLinkedToActiveSession(taskId)) {
+    return;
+  }
+  selectedTaskId.value = taskId;
+}
+
+async function confirmLinkTask() {
+  const tab = linkTaskTargetTab.value;
+  const taskId = selectedTaskId.value;
+  if (!tab || !taskId) {
+    return;
+  }
+  linkTaskLoading.value = true;
+  try {
+    await linkTask(tab.id, taskId);
+    message.success(t('terminal.taskLinked'));
+    closeLinkTaskModal();
+  } catch (error: any) {
+    message.error(error?.message ?? t('terminal.taskLinkFailed'));
+  } finally {
+    linkTaskLoading.value = false;
+  }
+}
+
+function closeLinkTaskModal() {
+  showLinkTaskModal.value = false;
+  linkTaskTargetTab.value = null;
+  selectedTaskId.value = null;
+}
+
 async function duplicateTab(tab: TerminalTabState) {
   const title = buildDuplicateTitle(tab.title);
   if (!ensureTerminalCapacity()) {
@@ -1844,6 +2179,7 @@ async function duplicateTab(tab: TerminalTabState) {
       title,
       rows: tab.rows > 0 ? tab.rows : undefined,
       cols: tab.cols > 0 ? tab.cols : undefined,
+      insertAfterSessionId: tab.id,
     });
     message.success(t('terminal.duplicateSuccess'));
   } catch (error: any) {
@@ -1924,6 +2260,7 @@ function handleSettingsMenuSelect(key: string) {
     showBranchFilter.value = nextValue;
     if (!nextValue && branchFilter.value !== 'all') {
       branchFilter.value = 'all';
+      saveCurrentBranchFilter(props.projectId, 'all');
     }
   } else if (key === 'rename-title-each-command') {
     void toggleRenameTitleEachCommandSetting();
@@ -2300,6 +2637,27 @@ defineExpose({
   border-radius: 4px;
 }
 
+/* 独立任务图标（不在 AI 状态条内） */
+.standalone-task-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: -4px;
+  margin-right: -6px;
+  margin-top: -2px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.standalone-task-icon:focus-visible {
+  outline: 2px solid var(--n-color-primary);
+  border-radius: 4px;
+}
+
+.standalone-task-icon :deep(svg) {
+  display: block;
+}
+
 .ai-status-icon :deep(svg) {
   display: block;
 }
@@ -2553,6 +2911,53 @@ defineExpose({
   font-size: 14px;
   color: var(--app-text-color, var(--n-text-color-2, #666));
   opacity: 0.8;
+}
+
+/* 关联任务对话框样式 */
+.link-task-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.link-task-list :deep(.n-list-item) {
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.2s, border-color 0.2s;
+  border: 2px solid transparent;
+}
+
+.link-task-list :deep(.n-list-item:hover) {
+  background-color: var(--n-item-color-pending, rgba(0, 0, 0, 0.05));
+}
+.link-task-list :deep(.n-list-item.task-item-selected) {
+  background-color: rgba(24, 160, 88, 0.1);
+}
+
+.link-task-list :deep(.n-list-item.task-item-disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.link-task-list :deep(.n-list-item.task-item-disabled:hover) {
+  background-color: transparent;
+}
+
+.link-task-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.link-task-item .task-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--app-text-color, var(--n-text-color-1, #333));
+}
+
+.link-task-item .task-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 </style>
 
