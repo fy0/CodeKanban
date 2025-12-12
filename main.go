@@ -1,6 +1,7 @@
 package main
 
 import (
+	"code-kanban/utils/tray"
 	"context"
 	"embed"
 	"fmt"
@@ -110,7 +111,7 @@ func run(forceMigrate bool, bind string, port int) {
 			}(url)
 		}
 	}
-
+	tray.StartTray(cfg)
 	ctx := utils.ContextWithLogger(context.Background(), logger)
 	if err := api.Init(ctx, cfg, embedStatic, &api.AppInfo{
 		Name:        APPNAME,
