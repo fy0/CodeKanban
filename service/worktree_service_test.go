@@ -33,7 +33,10 @@ func TestWorktreeServiceCreateAndRefresh(t *testing.T) {
 	svc.AsyncRefresh(false)
 	ctx := context.Background()
 
-	worktree, err := svc.CreateWorktree(ctx, project.Id, "feature/testing", "main", true)
+	worktree, err := svc.CreateWorktree(ctx, project.Id, "feature/testing", CreateWorktreeOptions{
+		BaseBranch:   "main",
+		CreateBranch: true,
+	})
 	if err != nil {
 		t.Fatalf("CreateWorktree returned error: %v", err)
 	}
@@ -87,7 +90,10 @@ func TestWorktreeServiceDeleteAndSync(t *testing.T) {
 	svc.AsyncRefresh(false)
 	ctx := context.Background()
 
-	worktree, err := svc.CreateWorktree(ctx, project.Id, "feature/delete", "main", true)
+	worktree, err := svc.CreateWorktree(ctx, project.Id, "feature/delete", CreateWorktreeOptions{
+		BaseBranch:   "main",
+		CreateBranch: true,
+	})
 	if err != nil {
 		t.Fatalf("CreateWorktree returned error: %v", err)
 	}
@@ -140,7 +146,10 @@ func TestWorktreeServiceRefreshAll(t *testing.T) {
 	svc.AsyncRefresh(false)
 	ctx := context.Background()
 
-	if _, err := svc.CreateWorktree(ctx, project.Id, "feature/all", "main", true); err != nil {
+	if _, err := svc.CreateWorktree(ctx, project.Id, "feature/all", CreateWorktreeOptions{
+		BaseBranch:   "main",
+		CreateBranch: true,
+	}); err != nil {
 		t.Fatalf("CreateWorktree returned error: %v", err)
 	}
 
@@ -180,7 +189,10 @@ func TestWorktreeServiceCommit(t *testing.T) {
 	svc.AsyncRefresh(false)
 	ctx := context.Background()
 
-	worktree, err := svc.CreateWorktree(ctx, project.Id, "feature/commit", "main", true)
+	worktree, err := svc.CreateWorktree(ctx, project.Id, "feature/commit", CreateWorktreeOptions{
+		BaseBranch:   "main",
+		CreateBranch: true,
+	})
 	if err != nil {
 		t.Fatalf("CreateWorktree returned error: %v", err)
 	}
@@ -200,6 +212,65 @@ func TestWorktreeServiceCommit(t *testing.T) {
 
 	if _, err := svc.CommitWorktree(ctx, worktree.Id, "noop"); !errors.Is(err, model.ErrWorktreeClean) {
 		t.Fatalf("expected ErrWorktreeClean, got %v", err)
+	}
+}
+
+func TestWorktreeServiceCreateWorktree_PersistWorktreeBasePath(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	repoPath := createProjectTestRepo(t)
+	projectService := &model.ProjectService{}
+	project, err := projectService.CreateProject(context.Background(), model.CreateProjectParams{
+		Name: "Persist Project",
+		Path: repoPath,
+	})
+	if err != nil {
+		t.Fatalf("create project failed: %v", err)
+	}
+
+	q, err := model.ResolveQueries(nil)
+	if err != nil {
+		t.Fatalf("resolve queries failed: %v", err)
+	}
+
+	svc := NewWorktreeService()
+	svc.AsyncRefresh(false)
+	ctx := context.Background()
+
+	globalBaseDir := t.TempDir()
+	if _, err := svc.CreateWorktree(ctx, project.Id, "feature/global", CreateWorktreeOptions{
+		BaseBranch:           "main",
+		CreateBranch:         true,
+		Location:             "global",
+		GlobalBaseDir:        globalBaseDir,
+		GlobalDirNamePattern: "{projectName}-{branch}",
+	}); err != nil {
+		t.Fatalf("CreateWorktree(global) returned error: %v", err)
+	}
+
+	updated, err := q.ProjectGetByID(ctx, project.Id)
+	if err != nil {
+		t.Fatalf("reload project failed: %v", err)
+	}
+	if updated.WorktreeBasePath == nil || filepath.Clean(*updated.WorktreeBasePath) != filepath.Clean(globalBaseDir) {
+		t.Fatalf("expected worktreeBasePath to be persisted to %s, got %v", filepath.Clean(globalBaseDir), updated.WorktreeBasePath)
+	}
+
+	if _, err := svc.CreateWorktree(ctx, project.Id, "feature/project", CreateWorktreeOptions{
+		BaseBranch:   "main",
+		CreateBranch: true,
+		Location:     "project",
+	}); err != nil {
+		t.Fatalf("CreateWorktree(project) returned error: %v", err)
+	}
+
+	cleared, err := q.ProjectGetByID(ctx, project.Id)
+	if err != nil {
+		t.Fatalf("reload project failed: %v", err)
+	}
+	if cleared.WorktreeBasePath != nil && strings.TrimSpace(*cleared.WorktreeBasePath) != "" {
+		t.Fatalf("expected worktreeBasePath to be cleared, got %v", cleared.WorktreeBasePath)
 	}
 }
 
@@ -256,5 +327,70 @@ func runGitCommand(t *testing.T, dir string, args ...string) {
 	cmd.Env = append(os.Environ(), testGitEnv()...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+}
+
+// TestSanitizeBranchName_Security tests that sanitizeBranchName correctly handles
+// potentially dangerous branch names that could lead to path traversal.
+func TestSanitizeBranchName_Security(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty", "", "_invalid_branch_"},
+		{"dot", ".", "_invalid_branch_"},
+		{"dotdot", "..", "_invalid_branch_"},
+		{"normal branch", "feature/test", "feature__test"},
+		{"with backslash", "feature\\test", "feature__test"},
+		{"dotdot in name", "feature..test", "_invalid_branch_"},
+		{"trailing dots", "feature..", "_invalid_branch_"},
+		{"leading dots", "..feature", "_invalid_branch_"},
+		{"triple dot", "...", "_invalid_branch_"},
+		{"valid dotfile", ".gitignore", ".gitignore"},
+		{"spaces only", "   ", "_invalid_branch_"},
+		{"mixed special chars", "feat:test*?<>|", "feat_test_____"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeBranchName(tt.input)
+			if result != tt.expected {
+				t.Errorf("sanitizeBranchName(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestExpandWorktreeDirNamePattern_Security tests that pattern expansion
+// correctly rejects potentially dangerous patterns.
+func TestExpandWorktreeDirNamePattern_Security(t *testing.T) {
+	project := &model.Project{
+		Id:   "test-id",
+		Name: "Test Project",
+	}
+
+	tests := []struct {
+		name        string
+		pattern     string
+		branchName  string
+		shouldError bool
+	}{
+		{"normal pattern", "{projectName}-{branch}", "feature/test", false},
+		{"dotdot branch", "{projectName}-{branch}", "..", false}, // sanitizeBranchName will handle this
+		{"path separator in result", "{projectName}/{branch}", "test", true},
+		{"backslash in result", "{projectName}\\{branch}", "test", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := expandWorktreeDirNamePattern(tt.pattern, project, tt.branchName)
+			if tt.shouldError && err == nil {
+				t.Errorf("expected error for pattern %q with branch %q, got nil", tt.pattern, tt.branchName)
+			}
+			if !tt.shouldError && err != nil {
+				t.Errorf("unexpected error for pattern %q with branch %q: %v", tt.pattern, tt.branchName, err)
+			}
+		})
 	}
 }

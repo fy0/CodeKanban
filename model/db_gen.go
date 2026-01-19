@@ -54,6 +54,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.projectUpdateStmt, err = db.PrepareContext(ctx, projectUpdate); err != nil {
 		return nil, fmt.Errorf("error preparing query ProjectUpdate: %w", err)
 	}
+	if q.projectUpdateWorktreeBasePathStmt, err = db.PrepareContext(ctx, projectUpdateWorktreeBasePath); err != nil {
+		return nil, fmt.Errorf("error preparing query ProjectUpdateWorktreeBasePath: %w", err)
+	}
 	if q.projectUpdatePriorityStmt, err = db.PrepareContext(ctx, projectUpdatePriority); err != nil {
 		return nil, fmt.Errorf("error preparing query ProjectUpdatePriority: %w", err)
 	}
@@ -158,6 +161,11 @@ func (q *Queries) Close() error {
 	if q.projectUpdateStmt != nil {
 		if cerr := q.projectUpdateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing projectUpdateStmt: %w", cerr)
+		}
+	}
+	if q.projectUpdateWorktreeBasePathStmt != nil {
+		if cerr := q.projectUpdateWorktreeBasePathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing projectUpdateWorktreeBasePathStmt: %w", cerr)
 		}
 	}
 	if q.projectUpdatePriorityStmt != nil {
@@ -282,67 +290,69 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                               DBTX
-	tx                               *sql.Tx
-	accessTokenCreateStmt            *sql.Stmt
-	accessTokenDeleteAllByUserIdStmt *sql.Stmt
-	accessTokenGetByIdStmt           *sql.Stmt
-	accessTokenRefreshStmt           *sql.Stmt
-	getOneStmt                       *sql.Stmt
-	projectCreateStmt                *sql.Stmt
-	projectGetByIDStmt               *sql.Stmt
-	projectListStmt                  *sql.Stmt
-	projectSoftDeleteStmt            *sql.Stmt
-	projectUpdateStmt                *sql.Stmt
-	projectUpdatePriorityStmt        *sql.Stmt
-	taskCountByWorktreeStmt          *sql.Stmt
-	userCreateStmt                   *sql.Stmt
-	userDeleteStmt                   *sql.Stmt
-	userDisableStmt                  *sql.Stmt
-	userGetByIdStmt                  *sql.Stmt
-	userGetByUsernameStmt            *sql.Stmt
-	userListStmt                     *sql.Stmt
-	userListCountStmt                *sql.Stmt
-	userUpdateInfoStmt               *sql.Stmt
-	userUpdatePasswordStmt           *sql.Stmt
-	worktreeCreateStmt               *sql.Stmt
-	worktreeGetByIDStmt              *sql.Stmt
-	worktreeListByProjectStmt        *sql.Stmt
-	worktreeSoftDeleteStmt           *sql.Stmt
-	worktreeUpdateMetadataStmt       *sql.Stmt
-	worktreeUpdateStatusStmt         *sql.Stmt
+	db                                DBTX
+	tx                                *sql.Tx
+	accessTokenCreateStmt             *sql.Stmt
+	accessTokenDeleteAllByUserIdStmt  *sql.Stmt
+	accessTokenGetByIdStmt            *sql.Stmt
+	accessTokenRefreshStmt            *sql.Stmt
+	getOneStmt                        *sql.Stmt
+	projectCreateStmt                 *sql.Stmt
+	projectGetByIDStmt                *sql.Stmt
+	projectListStmt                   *sql.Stmt
+	projectSoftDeleteStmt             *sql.Stmt
+	projectUpdateStmt                 *sql.Stmt
+	projectUpdateWorktreeBasePathStmt *sql.Stmt
+	projectUpdatePriorityStmt         *sql.Stmt
+	taskCountByWorktreeStmt           *sql.Stmt
+	userCreateStmt                    *sql.Stmt
+	userDeleteStmt                    *sql.Stmt
+	userDisableStmt                   *sql.Stmt
+	userGetByIdStmt                   *sql.Stmt
+	userGetByUsernameStmt             *sql.Stmt
+	userListStmt                      *sql.Stmt
+	userListCountStmt                 *sql.Stmt
+	userUpdateInfoStmt                *sql.Stmt
+	userUpdatePasswordStmt            *sql.Stmt
+	worktreeCreateStmt                *sql.Stmt
+	worktreeGetByIDStmt               *sql.Stmt
+	worktreeListByProjectStmt         *sql.Stmt
+	worktreeSoftDeleteStmt            *sql.Stmt
+	worktreeUpdateMetadataStmt        *sql.Stmt
+	worktreeUpdateStatusStmt          *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                               tx,
-		tx:                               tx,
-		accessTokenCreateStmt:            q.accessTokenCreateStmt,
-		accessTokenDeleteAllByUserIdStmt: q.accessTokenDeleteAllByUserIdStmt,
-		accessTokenGetByIdStmt:           q.accessTokenGetByIdStmt,
-		accessTokenRefreshStmt:           q.accessTokenRefreshStmt,
-		getOneStmt:                       q.getOneStmt,
-		projectCreateStmt:                q.projectCreateStmt,
-		projectGetByIDStmt:               q.projectGetByIDStmt,
-		projectListStmt:                  q.projectListStmt,
-		projectSoftDeleteStmt:            q.projectSoftDeleteStmt,
-		projectUpdateStmt:                q.projectUpdateStmt,
-		projectUpdatePriorityStmt:        q.projectUpdatePriorityStmt,
-		taskCountByWorktreeStmt:          q.taskCountByWorktreeStmt,
-		userCreateStmt:                   q.userCreateStmt,
-		userDeleteStmt:                   q.userDeleteStmt,
-		userDisableStmt:                  q.userDisableStmt,
-		userGetByIdStmt:                  q.userGetByIdStmt,
-		userGetByUsernameStmt:            q.userGetByUsernameStmt,
-		userListStmt:                     q.userListStmt,
-		userListCountStmt:                q.userListCountStmt,
-		userUpdateInfoStmt:               q.userUpdateInfoStmt,
-		userUpdatePasswordStmt:           q.userUpdatePasswordStmt,
-		worktreeCreateStmt:               q.worktreeCreateStmt,
-		worktreeGetByIDStmt:              q.worktreeGetByIDStmt,
-		worktreeListByProjectStmt:        q.worktreeListByProjectStmt,
-		worktreeSoftDeleteStmt:           q.worktreeSoftDeleteStmt,
-		worktreeUpdateMetadataStmt:       q.worktreeUpdateMetadataStmt,
-		worktreeUpdateStatusStmt:         q.worktreeUpdateStatusStmt,
+		db:                                tx,
+		tx:                                tx,
+		accessTokenCreateStmt:             q.accessTokenCreateStmt,
+		accessTokenDeleteAllByUserIdStmt:  q.accessTokenDeleteAllByUserIdStmt,
+		accessTokenGetByIdStmt:            q.accessTokenGetByIdStmt,
+		accessTokenRefreshStmt:            q.accessTokenRefreshStmt,
+		getOneStmt:                        q.getOneStmt,
+		projectCreateStmt:                 q.projectCreateStmt,
+		projectGetByIDStmt:                q.projectGetByIDStmt,
+		projectListStmt:                   q.projectListStmt,
+		projectSoftDeleteStmt:             q.projectSoftDeleteStmt,
+		projectUpdateStmt:                 q.projectUpdateStmt,
+		projectUpdateWorktreeBasePathStmt: q.projectUpdateWorktreeBasePathStmt,
+		projectUpdatePriorityStmt:         q.projectUpdatePriorityStmt,
+		taskCountByWorktreeStmt:           q.taskCountByWorktreeStmt,
+		userCreateStmt:                    q.userCreateStmt,
+		userDeleteStmt:                    q.userDeleteStmt,
+		userDisableStmt:                   q.userDisableStmt,
+		userGetByIdStmt:                   q.userGetByIdStmt,
+		userGetByUsernameStmt:             q.userGetByUsernameStmt,
+		userListStmt:                      q.userListStmt,
+		userListCountStmt:                 q.userListCountStmt,
+		userUpdateInfoStmt:                q.userUpdateInfoStmt,
+		userUpdatePasswordStmt:            q.userUpdatePasswordStmt,
+		worktreeCreateStmt:                q.worktreeCreateStmt,
+		worktreeGetByIDStmt:               q.worktreeGetByIDStmt,
+		worktreeListByProjectStmt:         q.worktreeListByProjectStmt,
+		worktreeSoftDeleteStmt:            q.worktreeSoftDeleteStmt,
+		worktreeUpdateMetadataStmt:        q.worktreeUpdateMetadataStmt,
+		worktreeUpdateStatusStmt:          q.worktreeUpdateStatusStmt,
 	}
 }

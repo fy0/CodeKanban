@@ -18,9 +18,11 @@ const worktreeTag = "worktree-工作树"
 
 type createWorktreeInput struct {
 	Body struct {
-		BranchName   string `json:"branchName" doc:"分支名称" required:"true"`
-		BaseBranch   string `json:"baseBranch" doc:"基础分支" default:""`
-		CreateBranch bool   `json:"createBranch" doc:"是否创建新分支" default:"true"`
+		BranchName            string `json:"branchName" doc:"分支名称" required:"true"`
+		BaseBranch            string `json:"baseBranch" doc:"基础分支" default:""`
+		CreateBranch          bool   `json:"createBranch" doc:"是否创建新分支" default:"true"`
+		Location              string `json:"location,omitempty" doc:"创建位置(project/global)，为空表示使用项目默认"`
+		GlobalBaseDirOverride string `json:"globalBaseDirOverride,omitempty" doc:"全局 Worktree 基础目录（仅本次创建，优先级高于全局配置）"`
 	} `json:"body"`
 }
 
@@ -30,7 +32,7 @@ type commitWorktreeInput struct {
 	} `json:"body"`
 }
 
-func registerWorktreeRoutes(group *huma.Group) {
+func registerWorktreeRoutes(group *huma.Group, cfg *utils.AppConfig) {
 	worktreeSvc := service.NewWorktreeService()
 
 	huma.Post(group, "/projects/{projectId}/worktrees/create", func(
@@ -44,8 +46,14 @@ func registerWorktreeRoutes(group *huma.Group) {
 			ctx,
 			input.ProjectID,
 			input.Body.BranchName,
-			input.Body.BaseBranch,
-			input.Body.CreateBranch,
+			service.CreateWorktreeOptions{
+				BaseBranch:            input.Body.BaseBranch,
+				CreateBranch:          input.Body.CreateBranch,
+				Location:              input.Body.Location,
+				GlobalBaseDirOverride: input.Body.GlobalBaseDirOverride,
+				GlobalBaseDir:         cfg.Worktree.GlobalBaseDir,
+				GlobalDirNamePattern:  cfg.Worktree.GlobalDirNamePattern,
+			},
 		)
 		if err != nil {
 			return nil, mapWorktreeError(err)

@@ -321,6 +321,45 @@
         </n-spin>
       </n-card>
 
+      <n-card :title="t('settings.worktreeSettings')" size="huge">
+        <template #header-extra>
+          <n-button
+            size="small"
+            :loading="worktreeSettingsSaving"
+            :disabled="!worktreeSettingsDirty || worktreeSettingsLoading || !!globalBaseDirError"
+            @click="handleSaveWorktreeSettings"
+          >
+            {{ t('common.save') }}
+          </n-button>
+        </template>
+        <n-spin :show="worktreeSettingsLoading">
+          <n-form label-placement="left" label-width="160">
+            <n-form-item
+              :label="t('settings.worktreeGlobalBaseDir')"
+              :validation-status="globalBaseDirError ? 'error' : undefined"
+              :feedback="globalBaseDirError"
+            >
+              <n-space vertical size="small" style="width: 100%">
+                <n-input
+                  v-model:value="worktreeSettingsForm.globalBaseDir"
+                  :placeholder="t('settings.worktreeGlobalBaseDirPlaceholder')"
+                  :status="globalBaseDirError ? 'error' : undefined"
+                  @blur="validateGlobalBaseDir"
+                  @input="validateGlobalBaseDir"
+                />
+                <span class="form-tip">{{ t('settings.worktreeGlobalBaseDirTip') }}</span>
+              </n-space>
+            </n-form-item>
+            <n-form-item :label="t('settings.worktreeGlobalDirNamePattern')">
+              <n-space vertical size="small" style="width: 100%">
+                <n-input v-model:value="worktreeSettingsForm.globalDirNamePattern" />
+                <span class="form-tip">{{ t('settings.worktreeGlobalDirNamePatternTip') }}</span>
+              </n-space>
+            </n-form-item>
+          </n-form>
+        </n-spin>
+      </n-card>
+
       <!-- 主题设置 -->
       <n-card :title="t('settings.themeSettings')" size="huge">
         <n-form label-placement="left" label-width="140">
@@ -608,7 +647,7 @@ import { lightenColor, darkenColor, ensureHexWithHash, isDarkHex, getReadableTex
 import Apis from '@/api';
 import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
-import type { AIAssistantStatusConfig, DeveloperConfig, AvailableShellsResponse } from '@/types/models';
+import type { AIAssistantStatusConfig, DeveloperConfig, AvailableShellsResponse, WorktreeConfig } from '@/types/models';
 
 type ShortcutTarget = 'terminal' | 'notepad';
 
@@ -778,6 +817,98 @@ async function handleSaveDeveloperConfig() {
   }
 }
 
+// Worktree 全局设置
+const worktreeSettingsForm = reactive<WorktreeConfig>({
+  globalBaseDir: '',
+  globalDirNamePattern: '{projectName}-{branch}',
+});
+const worktreeSettingsOriginal = ref<WorktreeConfig | null>(null);
+const globalBaseDirError = ref('');
+
+/**
+ * 判断路径是否看起来像绝对路径（跨平台）
+ */
+function looksLikeAbsPath(path: string) {
+  const trimmed = path.trim();
+  // Unix 风格：以 / 开头
+  if (trimmed.startsWith('/')) {
+    return true;
+  }
+  // Windows 风格：盘符 + 冒号 + 斜杠
+  return /^[a-zA-Z]:[\\/]/.test(trimmed);
+}
+
+/**
+ * 验证全局基础目录路径
+ */
+function validateGlobalBaseDir() {
+  const val = worktreeSettingsForm.globalBaseDir.trim();
+  if (val === '') {
+    globalBaseDirError.value = '';
+    return true;
+  }
+  if (!looksLikeAbsPath(val)) {
+    globalBaseDirError.value = t('validation.mustBeAbsolutePath');
+    return false;
+  }
+  globalBaseDirError.value = '';
+  return true;
+}
+
+// 检测表单是否有改动
+const worktreeSettingsDirty = computed(() => {
+  if (!worktreeSettingsOriginal.value) {
+    return false;
+  }
+  return (
+    worktreeSettingsForm.globalBaseDir !== worktreeSettingsOriginal.value.globalBaseDir ||
+    worktreeSettingsForm.globalDirNamePattern !== worktreeSettingsOriginal.value.globalDirNamePattern
+  );
+});
+
+const { send: fetchWorktreeSettings, loading: worktreeSettingsLoading } = useReq(
+  () => http.Get<ItemResponse<WorktreeConfig>>('/system/worktree-settings')
+);
+
+const { send: updateWorktreeSettings, loading: worktreeSettingsSaving } = useReq(
+  (config: WorktreeConfig) => http.Post<ItemResponse<WorktreeConfig>>('/system/worktree-settings/update', config)
+);
+
+/**
+ * 加载 Worktree 全局设置
+ */
+async function loadWorktreeSettings() {
+  try {
+    const resp = await fetchWorktreeSettings();
+    const config = resp?.item;
+    if (config) {
+      worktreeSettingsForm.globalBaseDir = config.globalBaseDir ?? '';
+      worktreeSettingsForm.globalDirNamePattern =
+        config.globalDirNamePattern ?? worktreeSettingsForm.globalDirNamePattern;
+      worktreeSettingsOriginal.value = { ...worktreeSettingsForm };
+    } else {
+      worktreeSettingsOriginal.value = { ...worktreeSettingsForm };
+    }
+  } catch (error) {
+    console.error('Failed to load worktree settings:', error);
+    worktreeSettingsOriginal.value = { ...worktreeSettingsForm };
+  }
+}
+
+/**
+ * 保存 Worktree 全局设置
+ */
+async function handleSaveWorktreeSettings() {
+  try {
+    await updateWorktreeSettings({ ...worktreeSettingsForm });
+    worktreeSettingsOriginal.value = { ...worktreeSettingsForm };
+    message.success(t('common.saveSuccess'));
+  } catch (error) {
+    console.error('Failed to save worktree settings:', error);
+    message.error(t('common.saveFailed'));
+  }
+}
+
 // Terminal Shell Settings
 const shellsData = ref<AvailableShellsResponse | null>(null);
 const selectedShellId = ref<string>(SHELL_AUTO_VALUE);
@@ -823,6 +954,7 @@ async function loadShellsConfig() {
 useInit(() => {
   loadAIStatus();
   loadDeveloperConfig();
+  loadWorktreeSettings();
   loadShellsConfig();
 });
 

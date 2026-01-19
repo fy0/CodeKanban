@@ -156,11 +156,18 @@ export const useProjectStore = defineStore('project', () => {
 
   async function createWorktree(
     projectId: string,
-    payload: { branchName: string; baseBranch?: string; createBranch?: boolean },
+    payload: {
+      branchName: string;
+      baseBranch?: string;
+      createBranch?: boolean;
+      location?: 'project' | 'global';
+      globalBaseDirOverride?: string;
+    },
   ) {
     const worktree = await worktreeApi.create(projectId, payload);
     // 创建成功后立即刷新列表，确保 UI 能及时更新
     await fetchWorktrees(projectId);
+    await fetchProject(projectId);
     return worktree;
   }
 

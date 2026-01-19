@@ -230,6 +230,43 @@ func (q *Queries) ProjectUpdate(ctx context.Context, arg *ProjectUpdateParams) (
 	return &i, err
 }
 
+const projectUpdateWorktreeBasePath = `-- name: ProjectUpdateWorktreeBasePath :one
+UPDATE projects
+SET
+  updated_at = ?1,
+  worktree_base_path = CAST(?2 AS TEXT)
+WHERE id = ?3
+  AND deleted_at IS NULL
+RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path, priority
+`
+
+type ProjectUpdateWorktreeBasePathParams struct {
+	UpdatedAt        time.Time `db:"updated_at" json:"updatedAt"`
+	WorktreeBasePath *string   `db:"worktree_base_path" json:"worktreeBasePath"`
+	Id               string    `db:"id" json:"id"`
+}
+
+func (q *Queries) ProjectUpdateWorktreeBasePath(ctx context.Context, arg *ProjectUpdateWorktreeBasePathParams) (*Project, error) {
+	row := q.queryRow(ctx, q.projectUpdateWorktreeBasePathStmt, projectUpdateWorktreeBasePath, arg.UpdatedAt, arg.WorktreeBasePath, arg.Id)
+	var i Project
+	err := row.Scan(
+		&i.Id,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Name,
+		&i.Path,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.WorktreeBasePath,
+		&i.RemoteUrl,
+		&i.LastSyncAt,
+		&i.HidePath,
+		&i.Priority,
+	)
+	return &i, err
+}
+
 const projectUpdatePriority = `-- name: ProjectUpdatePriority :one
 UPDATE projects
 SET

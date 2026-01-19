@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/knadh/koanf/parsers/yaml"
@@ -31,6 +32,12 @@ type DeveloperConfig struct {
 	EnableTerminalScrollback      bool `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
 	RenameSessionTitleEachCommand bool `json:"renameSessionTitleEachCommand" yaml:"renameSessionTitleEachCommand"`
 	AutoCreateTaskOnStartWork     bool `json:"autoCreateTaskOnStartWork" yaml:"autoCreateTaskOnStartWork"`
+}
+
+// WorktreeConfig Worktree 全局配置。
+type WorktreeConfig struct {
+	GlobalBaseDir        string `json:"globalBaseDir" yaml:"globalBaseDir"`               // 全局 Worktree 基础目录
+	GlobalDirNamePattern string `json:"globalDirNamePattern" yaml:"globalDirNamePattern"` // 全局目录命名模式（支持 {projectName}、{branch}）
 }
 
 type AIAssistantStatusConfig struct {
@@ -118,11 +125,15 @@ type AppConfig struct {
 	DisableAutoOpenBrowser bool             `json:"disableAutoOpenBrowser" yaml:"disableAutoOpenBrowser"`
 	Terminal               TerminalConfig   `json:"terminal" yaml:"terminal"`
 	Developer              DeveloperConfig  `json:"developer" yaml:"developer"`
+	Worktree               WorktreeConfig   `json:"worktree" yaml:"worktree"`
 }
 
 var configStore = koanf.New(".")
 
-// activeConfigPath stores the path of the config file that was actually loaded
+// configMu 保护对 configStore 和 activeConfigPath 的并发访问
+var configMu sync.RWMutex
+
+// activeConfigPath 存储实际加载的配置文件路径
 var activeConfigPath string
 
 // ReadConfig 会加载 config.yaml，若不存在则写入默认配置。
@@ -197,18 +208,24 @@ func ReadConfig() *AppConfig {
 			RenameSessionTitleEachCommand: false,
 			AutoCreateTaskOnStartWork:     true,
 		},
+		Worktree: WorktreeConfig{
+			GlobalBaseDir:        "",
+			GlobalDirNamePattern: "{projectName}-{branch}",
+		},
 	}
 
 	lo.Must0(configStore.Load(structs.Provider(&defaults, "yaml"), nil))
 
-	// Store the active config path for later use by WriteConfig
+	// 存储活动配置路径以供后续 WriteConfig 使用
 	activeConfigPath = configPath
 
 	provider := file.Provider(configPath)
 	if err := configStore.Load(provider, yaml.Parser()); err != nil {
 		fmt.Printf("Failed to read config: %v\n", err)
 		if os.IsNotExist(err) {
-			WriteConfigToPath(&defaults, configPath)
+			if writeErr := WriteConfigToPath(&defaults, configPath); writeErr != nil {
+				fmt.Printf("Failed to write default config: %v\n", writeErr)
+			}
 		} else {
 			os.Exit(1)
 		}
@@ -220,7 +237,7 @@ func ReadConfig() *AppConfig {
 		os.Exit(1)
 	}
 
-	// Normalize derived values to avoid redundant calculations.
+	// 规范化派生值，避免重复计算
 	_ = config.Terminal.IdleDuration()
 
 	if config.PrintConfig {
@@ -231,30 +248,59 @@ func ReadConfig() *AppConfig {
 }
 
 // WriteConfig 会将当前配置写回磁盘，写入的是启动时实际加载的配置文件路径。
-func WriteConfig(config *AppConfig) {
-	// Use the config path that was actually loaded during ReadConfig
-	// This ensures we write back to the same file we read from
+// Deprecated: 推荐使用 UpdateConfig 进行原子更新，避免并发修改问题。
+func WriteConfig(config *AppConfig) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+
+	// 使用 ReadConfig 时实际加载的配置路径
+	// 确保写入与读取的是同一个文件
 	if activeConfigPath == "" {
-		// Fallback to data directory if ReadConfig hasn't been called yet
+		// 如果 ReadConfig 尚未调用，回退到数据目录
 		dataDir := GetDataDir()
 		activeConfigPath = fmt.Sprintf("%s/config.yaml", dataDir)
 	}
-	WriteConfigToPath(config, activeConfigPath)
+	return writeConfigToPathLocked(config, activeConfigPath)
 }
 
-// WriteConfigToPath writes configuration to specified path
-func WriteConfigToPath(config *AppConfig, path string) {
+// UpdateConfig 提供原子更新配置的能力，在锁内完成"修改+写盘"操作。
+// modifier 函数接收当前配置指针，可直接修改其字段。
+// 修改完成后自动持久化到磁盘。
+func UpdateConfig(config *AppConfig, modifier func(*AppConfig)) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+
+	// 在锁内应用修改
+	modifier(config)
+
+	// 持久化到磁盘
+	if activeConfigPath == "" {
+		dataDir := GetDataDir()
+		activeConfigPath = fmt.Sprintf("%s/config.yaml", dataDir)
+	}
+	return writeConfigToPathLocked(config, activeConfigPath)
+}
+
+// WriteConfigToPath 将配置写入指定路径
+func WriteConfigToPath(config *AppConfig, path string) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+	return writeConfigToPathLocked(config, path)
+}
+
+// writeConfigToPathLocked 不获取锁直接写入配置（调用者必须持有锁）
+func writeConfigToPathLocked(config *AppConfig, path string) error {
 	if config != nil {
 		lo.Must0(configStore.Load(structs.Provider(config, "yaml"), nil))
 	}
 
 	content, err := yaml.Parser().Marshal(configStore.Raw())
 	if err != nil {
-		fmt.Println("Failed to write config: serialization error")
-		return
+		return fmt.Errorf("failed to serialize config: %w", err)
 	}
 
 	if err := os.WriteFile(path, content, 0o644); err != nil {
-		fmt.Printf("Failed to write config: cannot write file %s\n", path)
+		return fmt.Errorf("failed to write config file %s: %w", path, err)
 	}
+	return nil
 }

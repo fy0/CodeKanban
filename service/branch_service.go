@@ -129,7 +129,10 @@ func (s *BranchService) CreateBranch(ctx context.Context, projectID, name, base 
 
 	if createWorktree {
 		worktreeService := NewWorktreeService()
-		if _, err := worktreeService.CreateWorktree(ctx, projectID, branchName, baseBranch, false); err != nil {
+		if _, err := worktreeService.CreateWorktree(ctx, projectID, branchName, CreateWorktreeOptions{
+			BaseBranch:   baseBranch,
+			CreateBranch: false,
+		}); err != nil {
 			logger.Error("create worktree for branch failed",
 				zap.Error(err),
 				zap.String("projectId", projectID),

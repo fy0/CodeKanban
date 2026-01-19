@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -159,11 +161,12 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 	huma.Post(group, "/system/ai-assistant-status/update", func(ctx context.Context, input *struct {
 		Body utils.AIAssistantStatusConfig `json:"body"`
 	}) (*h.MessageResponse, error) {
-		// 更新内存中的配置
-		cfg.Terminal.AIAssistantStatus = input.Body
-
-		// 写回配置文件
-		utils.WriteConfig(cfg)
+		// 原子更新：在锁内完成修改+写盘
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			c.Terminal.AIAssistantStatus = input.Body
+		}); err != nil {
+			return nil, huma.Error500InternalServerError("failed to save configuration")
+		}
 
 		// 热重载：更新所有现有终端的配置
 		if terminalManager != nil {
@@ -194,8 +197,12 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 	huma.Post(group, "/system/developer-config/update", func(ctx context.Context, input *struct {
 		Body utils.DeveloperConfig `json:"body"`
 	}) (*h.MessageResponse, error) {
-		cfg.Developer = input.Body
-		utils.WriteConfig(cfg)
+		// 原子更新：在锁内完成修改+写盘
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			c.Developer = input.Body
+		}); err != nil {
+			return nil, huma.Error500InternalServerError("failed to save configuration")
+		}
 
 		if terminalManager != nil {
 			terminalManager.UpdateScrollbackEnabled(input.Body.EnableTerminalScrollback)
@@ -231,25 +238,29 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 			Shell string `json:"shell" doc:"Shell命令，空值表示使用自动选择"`
 		} `json:"body"`
 	}) (*h.MessageResponse, error) {
-		// Validate the shell command if provided
+		// 验证 Shell 命令有效性
 		if err := utils.ValidateShellCommand(input.Body.Shell); err != nil {
 			return nil, huma.Error400BadRequest("Invalid shell command: " + err.Error())
 		}
 
-		// Update config based on current platform
-		switch utils.GetAvailableShells(cfg.Terminal.Shell).Platform {
-		case "windows":
-			cfg.Terminal.Shell.Windows = input.Body.Shell
-		case "darwin":
-			cfg.Terminal.Shell.Darwin = input.Body.Shell
-		default:
-			cfg.Terminal.Shell.Linux = input.Body.Shell
+		// 获取当前平台以便更新对应配置
+		platform := utils.GetAvailableShells(cfg.Terminal.Shell).Platform
+
+		// 原子更新：在锁内完成修改+写盘
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			switch platform {
+			case "windows":
+				c.Terminal.Shell.Windows = input.Body.Shell
+			case "darwin":
+				c.Terminal.Shell.Darwin = input.Body.Shell
+			default:
+				c.Terminal.Shell.Linux = input.Body.Shell
+			}
+		}); err != nil {
+			return nil, huma.Error500InternalServerError("failed to save configuration")
 		}
 
-		// Persist to config file
-		utils.WriteConfig(cfg)
-
-		// Hot-reload: update terminal manager's shell config for new sessions
+		// 热重载：更新终端管理器的 Shell 配置，新会话生效
 		if terminalManager != nil {
 			terminalManager.UpdateShellConfig(cfg.Terminal.Shell)
 		}
@@ -293,6 +304,50 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 		op.OperationID = "system-terminal-shells-validate"
 		op.Summary = "验证Shell命令"
 		op.Description = "检查指定的Shell命令是否有效可用"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Get(group, "/system/worktree-settings", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.WorktreeConfig], error) {
+		resp := h.NewItemResponse(cfg.Worktree)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-worktree-settings-get"
+		op.Summary = "获取 Worktree 全局设置"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/worktree-settings/update", func(ctx context.Context, input *struct {
+		Body utils.WorktreeConfig `json:"body"`
+	}) (*h.ItemResponse[utils.WorktreeConfig], error) {
+		globalBaseDir := strings.TrimSpace(input.Body.GlobalBaseDir)
+		pattern := strings.TrimSpace(input.Body.GlobalDirNamePattern)
+		if globalBaseDir != "" && !filepath.IsAbs(globalBaseDir) {
+			return nil, huma.Error400BadRequest("globalBaseDir must be an absolute path")
+		}
+		if pattern == "" {
+			return nil, huma.Error400BadRequest("globalDirNamePattern is required")
+		}
+
+		// 安全检查：全局基础目录不能是敏感系统目录
+		if globalBaseDir != "" && utils.IsSensitiveSystemDir(globalBaseDir) {
+			return nil, huma.Error400BadRequest("globalBaseDir cannot be a system directory")
+		}
+
+		// 原子更新：在锁内完成修改+写盘
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			c.Worktree.GlobalBaseDir = globalBaseDir
+			c.Worktree.GlobalDirNamePattern = pattern
+		}); err != nil {
+			return nil, huma.Error500InternalServerError("failed to save configuration")
+		}
+
+		resp := h.NewItemResponse(cfg.Worktree)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-worktree-settings-update"
+		op.Summary = "更新 Worktree 全局设置"
 		op.Tags = []string{systemTag}
 	})
 }

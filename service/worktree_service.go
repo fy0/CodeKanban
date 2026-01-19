@@ -17,19 +17,29 @@ import (
 	"go.uber.org/zap"
 )
 
-// WorktreeService coordinates CRUD operations between git worktrees and the database.
+// WorktreeService 协调 git worktree 与数据库之间的 CRUD 操作。
 type WorktreeService struct {
 	asyncStatusRefresh bool
 }
 
-// NewWorktreeService builds a WorktreeService with async status refresh enabled.
+// CreateWorktreeOptions 创建 Worktree 时的选项参数。
+type CreateWorktreeOptions struct {
+	BaseBranch            string // 基础分支（新建分支时的起始点）
+	CreateBranch          bool   // 是否创建新分支
+	Location              string // 创建位置："project"（项目目录）或 "global"（全局目录）
+	GlobalBaseDirOverride string // 全局目录覆盖（仅本次生效，不持久化）
+	GlobalBaseDir         string // 全局 Worktree 基础目录（来自配置）
+	GlobalDirNamePattern  string // 全局目录命名模式（如 {projectName}-{branch}）
+}
+
+// NewWorktreeService 创建一个启用异步状态刷新的 WorktreeService 实例。
 func NewWorktreeService() *WorktreeService {
 	return &WorktreeService{
 		asyncStatusRefresh: true,
 	}
 }
 
-// AsyncRefresh toggles async status refresh behaviour (useful for tests).
+// AsyncRefresh 切换异步状态刷新行为（用于测试）。
 func (s *WorktreeService) AsyncRefresh(enabled bool) {
 	if s == nil {
 		return
@@ -37,13 +47,12 @@ func (s *WorktreeService) AsyncRefresh(enabled bool) {
 	s.asyncStatusRefresh = enabled
 }
 
-// CreateWorktree provisions a new git worktree and persists its metadata.
+// CreateWorktree 创建一个新的 git worktree 并持久化其元数据。
 func (s *WorktreeService) CreateWorktree(
 	ctx context.Context,
 	projectID string,
 	branchName string,
-	baseBranch string,
-	createBranch bool,
+	opts CreateWorktreeOptions,
 ) (*model.Worktree, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -74,8 +83,8 @@ func (s *WorktreeService) CreateWorktree(
 	}
 
 	targetBranch := strings.TrimSpace(branchName)
-	if createBranch {
-		refBranch := strings.TrimSpace(baseBranch)
+	if opts.CreateBranch {
+		refBranch := strings.TrimSpace(opts.BaseBranch)
 		if refBranch == "" {
 			if project.DefaultBranch != nil && *project.DefaultBranch != "" {
 				refBranch = *project.DefaultBranch
@@ -88,7 +97,7 @@ func (s *WorktreeService) CreateWorktree(
 		}
 	}
 
-	worktreePath, err := s.resolveWorktreePath(project, targetBranch)
+	worktreePath, baseDirToPersist, persistRequested, err := s.resolveWorktreePath(project, targetBranch, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +132,29 @@ func (s *WorktreeService) CreateWorktree(
 		return nil, err
 	}
 
+	if persistRequested {
+		updatedAt := time.Now()
+		var basePathParam *string
+		if strings.TrimSpace(baseDirToPersist) != "" {
+			cleaned := filepath.Clean(baseDirToPersist)
+			basePathParam = &cleaned
+		}
+
+		if _, err := q.ProjectUpdateWorktreeBasePath(ctx, &model.ProjectUpdateWorktreeBasePathParams{
+			UpdatedAt:        updatedAt,
+			WorktreeBasePath: basePathParam,
+			Id:               projectID,
+		}); err != nil {
+			_ = gitRepo.RemoveWorktree(worktreePath, true)
+			_, _ = q.WorktreeSoftDelete(ctx, &model.WorktreeSoftDeleteParams{
+				DeletedAt: &updatedAt,
+				UpdatedAt: updatedAt,
+				Id:        worktree.Id,
+			})
+			return nil, err
+		}
+	}
+
 	// 同步刷新状态，确保返回的 worktree 包含最新的 git 状态信息
 	refreshed, err := s.RefreshWorktreeStatus(ctx, worktree.Id)
 	if err != nil {
@@ -137,7 +169,7 @@ func (s *WorktreeService) CreateWorktree(
 	return refreshed, nil
 }
 
-// ListWorktrees returns worktrees for a project ordered by main flag then creation.
+// ListWorktrees 返回项目的所有 worktree，按主 worktree 标志和创建时间排序。
 func (s *WorktreeService) ListWorktrees(ctx context.Context, projectID string) ([]*model.Worktree, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -151,7 +183,7 @@ func (s *WorktreeService) ListWorktrees(ctx context.Context, projectID string) (
 	return q.WorktreeListByProject(ctx, projectID)
 }
 
-// GetWorktree fetches a worktree by identifier.
+// GetWorktree 根据 ID 获取 worktree 记录。
 func (s *WorktreeService) GetWorktree(ctx context.Context, id string) (*model.Worktree, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -172,7 +204,7 @@ func (s *WorktreeService) GetWorktree(ctx context.Context, id string) (*model.Wo
 	return wt, nil
 }
 
-// DeleteWorktree removes a worktree from git and the database.
+// DeleteWorktree 从 git 和数据库中删除 worktree。
 func (s *WorktreeService) DeleteWorktree(ctx context.Context, id string, force, deleteBranch bool) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -208,16 +240,16 @@ func (s *WorktreeService) DeleteWorktree(ctx context.Context, id string, force, 
 		return err
 	}
 
-	// Check if project path exists
+	// 检查项目路径是否存在
 	var gitRepo *git.GitRepo
 	if _, err := os.Stat(project.Path); os.IsNotExist(err) {
 		utils.Logger().Warn("project path does not exist, skipping git operations",
 			zap.String("projectPath", project.Path),
 			zap.String("worktreeId", id),
 		)
-		// Skip git operations and proceed to database cleanup
+		// 跳过 git 操作，继续进行数据库清理
 	} else {
-		// Project exists, try git operations
+		// 项目存在，尝试 git 操作
 		gitRepo, err = git.DetectRepository(project.Path)
 		if err != nil {
 			utils.Logger().Warn("failed to detect git repository, skipping git removal",
@@ -226,17 +258,17 @@ func (s *WorktreeService) DeleteWorktree(ctx context.Context, id string, force, 
 				zap.String("worktreeId", id),
 			)
 		} else {
-			// Try to remove the worktree from git
+			// 尝试从 git 中移除 worktree
 			if err := gitRepo.RemoveWorktree(worktree.Path, force); err != nil {
-				// If the worktree path doesn't exist anymore, we can still proceed
-				// Check if the error is because the worktree doesn't exist
+				// 如果 worktree 路径已不存在，可以继续处理
+				// 检查错误是否因为 worktree 不存在
 				if _, statErr := os.Stat(worktree.Path); os.IsNotExist(statErr) {
 					utils.Logger().Warn("worktree path does not exist, skipping git removal",
 						zap.String("path", worktree.Path),
 						zap.String("worktreeId", id),
 					)
 				} else {
-					// For other errors, return them
+					// 其他错误则返回
 					return err
 				}
 			}
@@ -262,7 +294,7 @@ func (s *WorktreeService) DeleteWorktree(ctx context.Context, id string, force, 
 	return err
 }
 
-// RefreshWorktreeStatus updates cached status fields for a worktree and returns the refreshed record.
+// RefreshWorktreeStatus 更新 worktree 的缓存状态字段并返回刷新后的记录。
 func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) (*model.Worktree, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -328,7 +360,7 @@ func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) 
 	return updated, nil
 }
 
-// RefreshAllWorktrees refreshes status for every worktree belonging to a project.
+// RefreshAllWorktrees 刷新项目下所有 worktree 的状态。
 func (s *WorktreeService) RefreshAllWorktrees(ctx context.Context, projectID string) (updated, failed int, err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -354,7 +386,7 @@ func (s *WorktreeService) RefreshAllWorktrees(ctx context.Context, projectID str
 	return updated, failed, nil
 }
 
-// RefreshWorktreeCommitInfo refreshes commit/status metadata for all worktrees and returns the updated list.
+// RefreshWorktreeCommitInfo 刷新所有 worktree 的提交/状态元数据并返回更新后的列表。
 func (s *WorktreeService) RefreshWorktreeCommitInfo(ctx context.Context, projectID string) ([]*model.Worktree, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -365,7 +397,7 @@ func (s *WorktreeService) RefreshWorktreeCommitInfo(ctx context.Context, project
 	return s.ListWorktrees(ctx, projectID)
 }
 
-// SyncWorktrees ensures git worktrees and the database remain aligned.
+// SyncWorktrees 确保 git worktree 与数据库保持同步。
 func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -486,7 +518,7 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 	return nil
 }
 
-// CommitWorktree stages all changes within the worktree and creates a commit with the provided message.
+// CommitWorktree 暂存 worktree 中的所有更改并使用指定消息创建提交。
 func (s *WorktreeService) CommitWorktree(ctx context.Context, id, message string) (*model.Worktree, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -545,25 +577,123 @@ func (s *WorktreeService) CommitWorktree(ctx context.Context, id, message string
 	return updated, nil
 }
 
-func (s *WorktreeService) resolveWorktreePath(project *model.Project, branchName string) (string, error) {
-	basePath := ""
-	if project.WorktreeBasePath != nil && strings.TrimSpace(*project.WorktreeBasePath) != "" {
-		basePath = *project.WorktreeBasePath
-	} else {
-		basePath = filepath.Join(project.Path, ".worktrees")
-	}
-	if !filepath.IsAbs(basePath) {
-		basePath = filepath.Join(project.Path, basePath)
-	}
-	if err := os.MkdirAll(basePath, 0o755); err != nil {
-		return "", err
+// resolveWorktreePath 根据选项解析 worktree 的完整路径。
+// 返回值：
+//   - worktreePath: 最终的 worktree 目录路径
+//   - baseDirToPersist: 需要持久化到项目的基础目录（仅当使用全局配置时）
+//   - persistRequested: 是否需要持久化基础目录到项目
+//   - err: 错误信息
+func (s *WorktreeService) resolveWorktreePath(project *model.Project, branchName string, opts CreateWorktreeOptions) (worktreePath string, baseDirToPersist string, persistRequested bool, err error) {
+	if project == nil {
+		return "", "", false, fmt.Errorf("project is required")
 	}
 
-	dirName := sanitizeBranchName(branchName)
-	return filepath.Join(basePath, dirName), nil
+	location := strings.TrimSpace(opts.Location)
+	if location != "" && location != "project" && location != "global" {
+		return "", "", false, fmt.Errorf("invalid location: %s", location)
+	}
+
+	pattern := strings.TrimSpace(opts.GlobalDirNamePattern)
+	if pattern == "" {
+		pattern = "{projectName}-{branch}"
+	}
+
+	baseDir := ""
+	globalMode := false
+	persistRequested = location != ""
+
+	switch location {
+	case "project":
+		baseDir = filepath.Join(project.Path, ".worktrees")
+		globalMode = false
+		baseDirToPersist = ""
+	case "global":
+		// 优先检查覆盖参数（仅本次生效，不持久化）
+		overrideDir := strings.TrimSpace(opts.GlobalBaseDirOverride)
+		configDir := strings.TrimSpace(opts.GlobalBaseDir)
+
+		if overrideDir != "" {
+			baseDir = overrideDir
+			// 覆盖参数仅本次生效，不持久化到项目
+			baseDirToPersist = ""
+			persistRequested = false
+		} else if configDir != "" {
+			baseDir = configDir
+			// 使用全局配置，持久化到项目以便后续使用
+			baseDirToPersist = filepath.Clean(configDir)
+		} else {
+			return "", "", false, fmt.Errorf("global base dir is not configured")
+		}
+
+		if !filepath.IsAbs(baseDir) {
+			return "", "", false, fmt.Errorf("global base dir must be an absolute path")
+		}
+		// 安全检查：全局基础目录不能是敏感系统目录
+		if utils.IsSensitiveSystemDir(baseDir) {
+			return "", "", false, fmt.Errorf("global base dir cannot be a system directory")
+		}
+		globalMode = true
+	default:
+		if project.WorktreeBasePath != nil && strings.TrimSpace(*project.WorktreeBasePath) != "" {
+			baseDir = strings.TrimSpace(*project.WorktreeBasePath)
+		} else {
+			baseDir = filepath.Join(project.Path, ".worktrees")
+		}
+
+		if !filepath.IsAbs(baseDir) {
+			baseDir = filepath.Join(project.Path, baseDir)
+		}
+
+		// 安全检查：确保 baseDir 不会通过 ".." 逃逸出项目目录
+		absBase := filepath.Clean(baseDir)
+		absProject := filepath.Clean(project.Path)
+		rel, relErr := filepath.Rel(absProject, absBase)
+		if relErr == nil && strings.HasPrefix(rel, "..") {
+			// baseDir 逃逸出项目目录 - 仅当是绝对路径时允许
+			// 对于包含 ".." 的相对路径，拒绝作为安全风险
+			if project.WorktreeBasePath != nil && !filepath.IsAbs(*project.WorktreeBasePath) {
+				return "", "", false, fmt.Errorf("worktree base path escapes project directory")
+			}
+		}
+
+		globalMode = isGlobalWorktreeBaseDir(project.Path, baseDir)
+		baseDirToPersist = ""
+	}
+
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return "", "", false, err
+	}
+
+	dirName := ""
+	if globalMode {
+		dirName, err = expandWorktreeDirNamePattern(pattern, project, branchName)
+		if err != nil {
+			return "", "", false, err
+		}
+	} else {
+		dirName = sanitizeBranchName(branchName)
+	}
+
+	// 最终安全校验：确保解析后的路径在 baseDir 内
+	finalPath := filepath.Join(baseDir, dirName)
+	cleanFinal := filepath.Clean(finalPath)
+	cleanBase := filepath.Clean(baseDir)
+	if !strings.HasPrefix(cleanFinal, cleanBase+string(filepath.Separator)) && cleanFinal != cleanBase {
+		return "", "", false, fmt.Errorf("worktree path escapes base directory")
+	}
+
+	return finalPath, baseDirToPersist, persistRequested, nil
 }
 
+// sanitizeBranchName 将分支名称转换为安全的目录名称。
+// 替换路径分隔符和特殊字符，防止路径遍历攻击。
 func sanitizeBranchName(branch string) string {
+	clean := strings.TrimSpace(branch)
+	// 拒绝可能导致路径遍历的危险目录名
+	if clean == "" || clean == "." || clean == ".." {
+		return "_invalid_branch_"
+	}
+
 	replacer := strings.NewReplacer(
 		"/", "__",
 		"\\", "__",
@@ -574,5 +704,75 @@ func sanitizeBranchName(branch string) string {
 		">", "_",
 		"|", "_",
 	)
-	return replacer.Replace(strings.TrimSpace(branch))
+	result := replacer.Replace(clean)
+
+	// 二次校验：如果结果仍包含 ".." 则拒绝
+	if strings.Contains(result, "..") {
+		return "_invalid_branch_"
+	}
+	return result
+}
+
+// isGlobalWorktreeBaseDir 判断 worktree 基础目录是否在项目目录外（即全局模式）。
+func isGlobalWorktreeBaseDir(projectPath, baseDir string) bool {
+	projectAbs, err := filepath.Abs(projectPath)
+	if err != nil {
+		return false
+	}
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(projectAbs, baseAbs)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return false
+	}
+	return strings.HasPrefix(rel, "..")
+}
+
+// sanitizePathSegment 清理路径片段中的特殊字符。
+func sanitizePathSegment(input string) string {
+	trimmed := strings.TrimSpace(input)
+	replacer := strings.NewReplacer(
+		"/", "_",
+		"\\", "_",
+		":", "_",
+		"*", "_",
+		"?", "_",
+		"<", "_",
+		">", "_",
+		"|", "_",
+	)
+	return replacer.Replace(trimmed)
+}
+
+// expandWorktreeDirNamePattern 展开 worktree 目录名模式。
+// 支持的变量：{projectName}、{projectId}、{branch}
+func expandWorktreeDirNamePattern(pattern string, project *model.Project, branchName string) (string, error) {
+	rawProjectName := ""
+	if project != nil {
+		rawProjectName = project.Name
+	}
+
+	// 使用固定顺序替换以避免非确定性行为
+	expanded := pattern
+	expanded = strings.ReplaceAll(expanded, "{projectName}", sanitizePathSegment(rawProjectName))
+	expanded = strings.ReplaceAll(expanded, "{projectId}", sanitizePathSegment(project.Id))
+	expanded = strings.ReplaceAll(expanded, "{branch}", sanitizeBranchName(branchName))
+
+	expanded = strings.TrimSpace(expanded)
+	if expanded == "" {
+		return "", fmt.Errorf("worktree dir name is empty after pattern expansion")
+	}
+	if strings.Contains(expanded, "..") {
+		return "", fmt.Errorf("invalid worktree dir name: %s", expanded)
+	}
+	if strings.ContainsAny(expanded, "/\\") {
+		return "", fmt.Errorf("invalid worktree dir name: %s", expanded)
+	}
+
+	return expanded, nil
 }

@@ -50,6 +50,15 @@ WHERE id = @id
   AND deleted_at IS NULL
 RETURNING *;
 
+-- name: ProjectUpdateWorktreeBasePath :one
+UPDATE projects
+SET
+  updated_at = @updated_at,
+  worktree_base_path = CAST(@worktree_base_path AS TEXT)
+WHERE id = @id
+  AND deleted_at IS NULL
+RETURNING *;
+
 -- name: ProjectSoftDelete :execrows
 UPDATE projects
 SET

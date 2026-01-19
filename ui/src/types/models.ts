@@ -210,6 +210,11 @@ export interface DeveloperConfig {
   autoCreateTaskOnStartWork: boolean;
 }
 
+export interface WorktreeConfig {
+  globalBaseDir: string;
+  globalDirNamePattern: string;
+}
+
 export interface ShellOption {
   id: string;
   name: string;

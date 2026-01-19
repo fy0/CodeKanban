@@ -80,12 +80,20 @@ export const worktreeApi = {
 
   async create(
     projectId: string,
-    data: { branchName: string; baseBranch?: string; createBranch?: boolean },
+    data: {
+      branchName: string;
+      baseBranch?: string;
+      createBranch?: boolean;
+      location?: 'project' | 'global';
+      globalBaseDirOverride?: string;
+    },
   ): Promise<Worktree> {
     const payload = {
       branchName: data.branchName,
       baseBranch: data.baseBranch ?? '',
       createBranch: data.createBranch ?? true,
+      location: data.location,
+      globalBaseDirOverride: data.globalBaseDirOverride,
     };
     const body =
       (await http.Post<ItemResponse<Worktree>>(

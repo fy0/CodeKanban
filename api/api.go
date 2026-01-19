@@ -80,7 +80,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 
 	registerHealthRoutes(app, humaAPI)
 	registerProjectRoutes(v1)
-	registerWorktreeRoutes(v1)
+	registerWorktreeRoutes(v1, cfg)
 	registerBranchRoutes(v1)
 	registerTaskRoutes(v1)
 	registerNotePadRoutes(v1)
