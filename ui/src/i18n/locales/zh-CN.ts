@@ -24,6 +24,7 @@ export default {
     openInNewTab: '在新标签页打开',
     openLinkTitle: '确认打开链接',
     openLinkMessage: '该链接将会在新标签页打开，确认继续？',
+    openLinkSuccess: '已尝试在新标签页打开链接',
     openLinkFailed: '打开链接失败，请检查浏览器是否拦截了弹窗',
     invalidLink: '链接地址无效或不受支持',
     copyLink: '复制链接',

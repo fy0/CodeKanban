@@ -24,6 +24,7 @@ export default {
     openInNewTab: 'Open in New Tab',
     openLinkTitle: 'Open Link',
     openLinkMessage: 'This link will open in a new tab. Continue?',
+    openLinkSuccess: 'Tried to open the link in a new tab',
     openLinkFailed: 'Failed to open the link. Check whether the browser blocked the popup.',
     invalidLink: 'This link is invalid or uses an unsupported protocol.',
     copyLink: 'Copy link',

@@ -851,10 +851,8 @@ function handleMarkdownLinkClick(event: MouseEvent) {
     positiveText: t('common.openInNewTab'),
     negativeText: t('common.cancel'),
     onPositiveClick: () => {
-      const opened = window.open(href, '_blank', 'noopener,noreferrer');
-      if (!opened) {
-        message.error(t('common.openLinkFailed'));
-      }
+      window.open(href, '_blank', 'noopener,noreferrer');
+      message.success(t('common.openLinkSuccess'));
     },
   });
 }
