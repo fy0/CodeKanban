@@ -5,10 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"mime"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -508,12 +506,9 @@ func buildFileContentURL(projectID, scopeID, path, disposition string) string {
 }
 
 func mimeTypeForDownload(name string) string {
-	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+	contentType := filemanager.MimeTypeForName(name)
 	if contentType == "" {
 		return "application/octet-stream"
-	}
-	if parsed, _, err := mime.ParseMediaType(contentType); err == nil {
-		return parsed
 	}
 	return contentType
 }

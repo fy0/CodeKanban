@@ -15,6 +15,20 @@ import (
 	"code-kanban/utils"
 )
 
+func TestDetectModExtensionAsText(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"go.mod", "module.MOD"} {
+		mimeType := detectMimeFromName(name)
+		if mimeType != "text/plain" {
+			t.Fatalf("detectMimeFromName(%q) = %q, want text/plain", name, mimeType)
+		}
+		if got := detectPreviewKind(name, mimeType); got != PreviewKindText {
+			t.Fatalf("detectPreviewKind(%q, %q) = %q, want %q", name, mimeType, got, PreviewKindText)
+		}
+	}
+}
+
 func TestEnsureProtectedPathRejectsGitSegments(t *testing.T) {
 	t.Parallel()
 

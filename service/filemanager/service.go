@@ -1946,8 +1946,17 @@ func sanitizeEntryName(name string) (string, error) {
 	return baseName, nil
 }
 
+// MimeTypeForName returns the normalized MIME type used by file manager entries.
+func MimeTypeForName(name string) string {
+	return detectMimeFromName(name)
+}
+
 func detectMimeFromName(name string) string {
-	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+	extension := strings.ToLower(filepath.Ext(name))
+	if isPlainTextMimeOverrideExtension(extension) {
+		return "text/plain"
+	}
+	contentType := mime.TypeByExtension(extension)
 	if contentType == "" {
 		return ""
 	}
@@ -1962,6 +1971,10 @@ func detectPreviewKind(name, mimeType string) PreviewKind {
 	extension := strings.ToLower(filepath.Ext(name))
 
 	switch {
+	case normalizedMime == "text/markdown" || isMarkdownExtension(extension):
+		return PreviewKindMarkdown
+	case strings.HasPrefix(normalizedMime, "text/") || isTextExtension(extension):
+		return PreviewKindText
 	case strings.HasPrefix(normalizedMime, "image/"):
 		return PreviewKindImage
 	case normalizedMime == "application/pdf":
@@ -1970,12 +1983,17 @@ func detectPreviewKind(name, mimeType string) PreviewKind {
 		return PreviewKindAudio
 	case strings.HasPrefix(normalizedMime, "video/"):
 		return PreviewKindVideo
-	case normalizedMime == "text/markdown" || isMarkdownExtension(extension):
-		return PreviewKindMarkdown
-	case strings.HasPrefix(normalizedMime, "text/") || isTextExtension(extension):
-		return PreviewKindText
 	default:
 		return PreviewKindBinary
+	}
+}
+
+func isPlainTextMimeOverrideExtension(extension string) bool {
+	switch extension {
+	case ".mod":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1990,7 +2008,7 @@ func isMarkdownExtension(extension string) bool {
 
 func isTextExtension(extension string) bool {
 	switch extension {
-	case ".txt", ".log", ".json", ".yaml", ".yml", ".toml", ".ini", ".env", ".go", ".js", ".ts", ".tsx", ".jsx", ".vue", ".css", ".scss", ".html", ".xml", ".sql", ".sh", ".bash", ".zsh", ".py", ".java", ".c", ".cc", ".cpp", ".h", ".hpp", ".rs", ".dockerfile", ".makefile":
+	case ".txt", ".log", ".json", ".yaml", ".yml", ".toml", ".ini", ".env", ".mod", ".go", ".js", ".ts", ".tsx", ".jsx", ".vue", ".css", ".scss", ".html", ".xml", ".sql", ".sh", ".bash", ".zsh", ".py", ".java", ".c", ".cc", ".cpp", ".h", ".hpp", ".rs", ".dockerfile", ".makefile":
 		return true
 	default:
 		return false
