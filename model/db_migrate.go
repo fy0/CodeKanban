@@ -18,6 +18,7 @@ func GetAllModels() []any {
 		&tables.TaskCommentTable{},
 		&tables.NotePadTable{},
 		&tables.AISessionTable{},
+		&tables.TerminalRestoreSessionTable{},
 		&tables.WebSessionTable{},
 		&tables.WebSessionScheduledInputTable{},
 		&tables.WebSessionTurnTable{},

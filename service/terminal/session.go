@@ -171,16 +171,17 @@ const (
 
 // Session encapsulates a PTY-backed terminal command.
 type Session struct {
-	id         string
-	projectID  string
-	worktreeID string
-	workingDir string
-	title      string
-	command    []string
-	env        []string
-	rows       int
-	cols       int
-	orderIndex float64
+	id                string
+	projectID         string
+	worktreeID        string
+	workingDir        string
+	initialWorkingDir string
+	title             string
+	command           []string
+	env               []string
+	rows              int
+	cols              int
+	orderIndex        float64
 
 	createdAt  time.Time
 	lastActive atomic.Int64
@@ -251,6 +252,9 @@ type Session struct {
 	metaMu       sync.RWMutex
 	lastMetadata *SessionMetadata
 
+	shellEventCallback func(shellIntegrationEvent)
+	shellIntegration   shellIntegrationState
+
 	// Metadata polling interval tracking
 	metaIntervalMu       sync.RWMutex
 	metaIntervalLevel    int           // 0=short, 1=medium, 2=long
@@ -277,6 +281,9 @@ type SessionParams struct {
 	TaskID                      string
 	RenameTitleEachCommand      bool
 	OrderIndex                  float64
+	ShellIntegration            shellIntegrationConfig
+	StartupReplayCommand        string
+	OnShellEvent                func(shellIntegrationEvent)
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -315,29 +322,36 @@ func NewSession(params SessionParams) (*Session, error) {
 	}
 
 	session := &Session{
-		id:               params.ID,
-		projectID:        params.ProjectID,
-		worktreeID:       params.WorktreeID,
-		workingDir:       params.WorkingDir,
-		title:            params.Title,
-		command:          append([]string{}, params.Command...),
-		env:              append([]string{}, params.Env...),
-		rows:             rows,
-		cols:             cols,
-		orderIndex:       params.OrderIndex,
-		createdAt:        time.Now(),
-		closed:           make(chan struct{}),
-		logger:           params.Logger,
-		encoding:         enc,
-		encName:          encName,
-		scrollbackLimit:  scrollbackLimit,
-		subscribers:      make(map[string]*sessionSubscriber),
-		assistantTracker: ai_assistant2.NewStatusTracker(),
-		getAIConfig:      params.GetAIConfig,
-		associatedTaskID: params.TaskID,
+		id:                 params.ID,
+		projectID:          params.ProjectID,
+		worktreeID:         params.WorktreeID,
+		workingDir:         params.WorkingDir,
+		initialWorkingDir:  params.WorkingDir,
+		title:              params.Title,
+		command:            append([]string{}, params.Command...),
+		env:                append([]string{}, params.Env...),
+		rows:               rows,
+		cols:               cols,
+		orderIndex:         params.OrderIndex,
+		createdAt:          time.Now(),
+		closed:             make(chan struct{}),
+		logger:             params.Logger,
+		encoding:           enc,
+		encName:            encName,
+		scrollbackLimit:    scrollbackLimit,
+		subscribers:        make(map[string]*sessionSubscriber),
+		assistantTracker:   ai_assistant2.NewStatusTracker(),
+		getAIConfig:        params.GetAIConfig,
+		associatedTaskID:   params.TaskID,
+		shellEventCallback: params.OnShellEvent,
 	}
 	session.renameTitleEachCommand.Store(params.RenameTitleEachCommand)
 	session.terminalStateEnabled.Store(params.EnableTerminalStateSnapshot && runtime.GOOS != "windows")
+	session.shellIntegration.family = params.ShellIntegration.Family
+	session.shellIntegration.supported = params.ShellIntegration.Supported
+	session.shellIntegration.cleanup = params.ShellIntegration.Cleanup
+	session.shellIntegration.shellState = terminalRestoreShellStateIdle
+	session.shellIntegration.startupReplayCommand = strings.TrimSpace(params.StartupReplayCommand)
 
 	session.assistantTracker.SetCaptureFunc(session.captureTerminalLines)
 	// Set state change callback for periodic checking
@@ -451,6 +465,9 @@ func (s *Session) consumePTY(ctx context.Context) {
 		if n > 0 {
 			s.Touch()
 			normalized := s.NormalizeOutput(buffer[:n])
+			if len(normalized) > 0 {
+				normalized = s.stripShellIntegrationSequences(normalized)
+			}
 			if len(normalized) > 0 {
 				modeSnapshot, modeChanged := s.updateTerminalModes(normalized)
 				s.appendScrollback(normalized)
@@ -914,6 +931,7 @@ func (s *Session) Close() error {
 
 		// Stop LogWatcher first
 		s.stopLogWatcher()
+		s.cleanupShellIntegration()
 
 		if s.cancel != nil {
 			s.cancel()
@@ -1005,7 +1023,26 @@ func (s *Session) WorktreeID() string {
 
 // WorkingDir exposes the shell working directory.
 func (s *Session) WorkingDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.workingDir
+}
+
+// InitialWorkingDir returns the shell cwd used when the terminal was first created.
+func (s *Session) InitialWorkingDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.initialWorkingDir
+}
+
+func (s *Session) setWorkingDir(workingDir string) {
+	normalized := strings.TrimSpace(workingDir)
+	if normalized == "" {
+		return
+	}
+	s.mu.Lock()
+	s.workingDir = normalized
+	s.mu.Unlock()
 }
 
 // Title returns the display name.
@@ -1041,6 +1078,60 @@ func (s *Session) UpdateTitle(title string) error {
 		s.lockedTitle = title
 	}
 	return nil
+}
+
+func (s *Session) restoreStateSnapshot() terminalRestoreStateSnapshot {
+	s.mu.RLock()
+	taskID := s.associatedTaskID
+	title := s.title
+	projectID := s.projectID
+	worktreeID := s.worktreeID
+	workingDir := s.workingDir
+	initialWorkingDir := s.initialWorkingDir
+	orderIndex := s.orderIndex
+	s.mu.RUnlock()
+
+	s.shellIntegration.mu.Lock()
+	pendingCommand := s.shellIntegration.pendingCommand
+	replayEligible := s.shellIntegration.replayEligible
+	commandStartedAt := s.shellIntegration.commandStartedAt
+	shellFamily := s.shellIntegration.family
+	shellSupported := s.shellIntegration.supported
+	shellState := s.shellIntegration.shellState
+	s.shellIntegration.mu.Unlock()
+
+	var taskIDPtr *string
+	if strings.TrimSpace(taskID) != "" {
+		value := taskID
+		taskIDPtr = &value
+	}
+	var pendingCommandPtr *string
+	if strings.TrimSpace(pendingCommand) != "" {
+		value := pendingCommand
+		pendingCommandPtr = &value
+	}
+	var startedAtPtr *time.Time
+	if !commandStartedAt.IsZero() {
+		value := commandStartedAt
+		startedAtPtr = &value
+	}
+
+	return terminalRestoreStateSnapshot{
+		SessionID:         s.id,
+		ProjectID:         projectID,
+		WorktreeID:        worktreeID,
+		Title:             title,
+		TaskID:            taskIDPtr,
+		OrderIndex:        orderIndex,
+		InitialWorkingDir: initialWorkingDir,
+		LastCwd:           workingDir,
+		ShellFamily:       shellFamily,
+		ShellSupported:    shellSupported,
+		ShellState:        shellState,
+		PendingCommand:    pendingCommandPtr,
+		ReplayEligible:    replayEligible,
+		CommandStartedAt:  startedAtPtr,
+	}
 }
 
 // SetRenameTitleEachCommand toggles whether AI input renames should run on each instruction.

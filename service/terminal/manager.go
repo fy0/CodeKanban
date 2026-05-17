@@ -45,7 +45,9 @@ type CreateSessionParams struct {
 	Cols                 int
 	Encoding             string
 	TaskID               string
+	OrderIndex           float64
 	InsertAfterSessionID string
+	StartupReplayCommand string
 }
 
 // SessionListEvent broadcasts the current project terminal session list.
@@ -115,19 +117,27 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 	if err != nil {
 		return nil, err
 	}
+	command, integrationEnv, shellIntegration, err := prepareShellIntegration(command)
+	if err != nil {
+		return nil, err
+	}
 
 	if params.ID == "" {
 		params.ID = utils.NewID()
 	}
 
-	session, err := NewSession(SessionParams{
+	env := append([]string{}, params.Env...)
+	env = append(env, integrationEnv...)
+
+	var session *Session
+	session, err = NewSession(SessionParams{
 		ID:              params.ID,
 		ProjectID:       params.ProjectID,
 		WorktreeID:      params.WorktreeID,
 		WorkingDir:      params.WorkingDir,
 		Title:           params.Title,
 		Command:         command,
-		Env:             params.Env,
+		Env:             env,
 		Rows:            params.Rows,
 		Cols:            params.Cols,
 		Logger:          m.logger,
@@ -142,12 +152,31 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 		EnableTerminalStateSnapshot: m.cfg.TerminalStateSnapshot,
 		TaskID:                      params.TaskID,
 		RenameTitleEachCommand:      m.cfg.RenameTitleEachCommand,
+		OrderIndex:                  params.OrderIndex,
+		ShellIntegration:            shellIntegration,
+		StartupReplayCommand:        params.StartupReplayCommand,
+		OnShellEvent: func(event shellIntegrationEvent) {
+			if session == nil {
+				return
+			}
+			m.handleShellIntegrationEvent(session, event)
+		},
 	})
 	if err != nil {
+		if shellIntegration.Cleanup != nil {
+			shellIntegration.Cleanup()
+		}
 		return nil, err
 	}
 
 	if err := m.addSession(session, params.InsertAfterSessionID); err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	if err := m.persistProjectRestoreSessions(context.Background(), params.ProjectID); err != nil {
+		m.sessions.Delete(session.ID())
+		_ = session.Close()
+		_ = m.deleteRestoreSession(context.Background(), session.ID())
 		return nil, err
 	}
 
@@ -155,6 +184,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 	if err := startCtx.Err(); err != nil {
 		m.sessions.Delete(session.ID())
 		_ = session.Close()
+		_ = m.deleteRestoreSession(context.Background(), session.ID())
 		return nil, err
 	}
 
@@ -164,6 +194,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 	if err != nil {
 		m.sessions.Delete(session.ID())
 		_ = session.Close()
+		_ = m.deleteRestoreSession(context.Background(), session.ID())
 		return nil, err
 	}
 
@@ -171,6 +202,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 		stream.Close()
 		m.sessions.Delete(session.ID())
 		_ = session.Close()
+		_ = m.deleteRestoreSession(context.Background(), session.ID())
 		return nil, err
 	}
 
@@ -210,6 +242,9 @@ func (m *Manager) RenameSession(projectID, sessionID, title string) (*Session, e
 	if err := session.UpdateTitle(normalized); err != nil {
 		return nil, err
 	}
+	if err := m.persistRestoreSession(context.Background(), session); err != nil {
+		return nil, err
+	}
 	m.broadcastProjectSessions(session.ProjectID())
 	return session, nil
 }
@@ -237,6 +272,9 @@ func (m *Manager) MoveSession(projectID, sessionID, prevSessionID, nextSessionID
 		return nil, err
 	}
 	m.sessionMu.Unlock()
+	if err := m.persistProjectRestoreSessions(context.Background(), resolvedProjectID); err != nil {
+		return nil, err
+	}
 
 	m.broadcastProjectSessions(resolvedProjectID)
 	return session, nil
@@ -263,6 +301,9 @@ func (m *Manager) LinkTask(sessionID, taskID string) (*Session, error) {
 		return nil, err
 	}
 	session.AssociateTask(taskID)
+	if err := m.persistRestoreSession(context.Background(), session); err != nil {
+		return nil, err
+	}
 	m.broadcastProjectSessions(session.ProjectID())
 	return session, nil
 }
@@ -274,6 +315,9 @@ func (m *Manager) UnlinkTask(sessionID string) (*Session, error) {
 		return nil, err
 	}
 	session.ClearTaskAssociation()
+	if err := m.persistRestoreSession(context.Background(), session); err != nil {
+		return nil, err
+	}
 	m.broadcastProjectSessions(session.ProjectID())
 	return session, nil
 }
@@ -386,6 +430,16 @@ func (m *Manager) watchSession(session *Session) {
 	m.sessions.Delete(session.ID())
 	m.normalizeProjectOrderLocked(projectID)
 	m.sessionMu.Unlock()
+	if err := m.deleteRestoreSession(context.Background(), session.ID()); err != nil && m.logger != nil {
+		m.logger.Warn("failed to delete terminal restore session",
+			zap.String("sessionId", session.ID()),
+			zap.Error(err))
+	}
+	if err := m.persistProjectRestoreSessions(context.Background(), projectID); err != nil && m.logger != nil {
+		m.logger.Warn("failed to normalize terminal restore ordering after close",
+			zap.String("projectId", projectID),
+			zap.Error(err))
+	}
 	m.broadcastProjectSessions(projectID)
 }
 
@@ -398,6 +452,16 @@ func (m *Manager) watchSessionWithStream(session *Session, stream *SessionStream
 	m.sessions.Delete(session.ID())
 	m.normalizeProjectOrderLocked(projectID)
 	m.sessionMu.Unlock()
+	if err := m.deleteRestoreSession(context.Background(), session.ID()); err != nil && m.logger != nil {
+		m.logger.Warn("failed to delete terminal restore session",
+			zap.String("sessionId", session.ID()),
+			zap.Error(err))
+	}
+	if err := m.persistProjectRestoreSessions(context.Background(), projectID); err != nil && m.logger != nil {
+		m.logger.Warn("failed to normalize terminal restore ordering after close",
+			zap.String("projectId", projectID),
+			zap.Error(err))
+	}
 	m.broadcastProjectSessions(projectID)
 }
 

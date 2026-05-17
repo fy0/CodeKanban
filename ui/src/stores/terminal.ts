@@ -1042,6 +1042,16 @@ export const useTerminalStore = defineStore('terminal', () => {
     ensureActiveTab(projectId);
   }
 
+  async function restoreSessions(projectId: string) {
+    const response = (await alovaInstance
+      .Post(`/api/v1/projects/${projectId}/terminals/restore`, {}, { cacheFor: 0 })
+      .send()) as { items?: TerminalSession[] } | undefined;
+    return (response?.items ?? []).map(session => ({
+      ...session,
+      projectId,
+    }));
+  }
+
   async function loadSessions(projectId?: string) {
     const resolved = ensureProjectSelected(projectId);
     const token = ++globalLoadToken;
@@ -1056,7 +1066,17 @@ export const useTerminalStore = defineStore('terminal', () => {
       if (projectLoadTokens.get(resolved) !== token) {
         return;
       }
-      const items = response?.items ?? [];
+      let items = (response?.items ?? []) as unknown as TerminalSession[];
+      if (items.length === 0) {
+        try {
+          items = await restoreSessions(resolved);
+        } catch (restoreError) {
+          console.error('Failed to restore terminal sessions', restoreError);
+        }
+        if (projectLoadTokens.get(resolved) !== token) {
+          return;
+        }
+      }
       reconcileSessions(resolved, items as unknown as TerminalSession[]);
       // 更新终端计数缓存
       cachedCounts.set(resolved, items.length);
@@ -1898,12 +1918,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       const record = sessionIndex.get(tab.id);
       if (record && resolveConnectionRole(record.projectId, tab.id) !== 'detached') {
         updateTabStatus(tab.id, 'connecting');
-        setTimeout(() => {
-          const nextRecord = sessionIndex.get(tab.id);
-          if (nextRecord && resolveConnectionRole(nextRecord.projectId, tab.id) !== 'detached') {
-            connect(nextRecord.tab);
-          }
-        }, 1000);
+        void handleUnexpectedSocketClose(record.projectId, tab.id);
       } else {
         if (record && !isProjectConnectionActive(record.projectId)) {
           return;
@@ -1915,6 +1930,33 @@ export const useTerminalStore = defineStore('terminal', () => {
     socket.addEventListener('error', () => {
       updateTabStatus(tab.id, 'error');
     });
+  }
+
+  async function handleUnexpectedSocketClose(projectId: string, sessionId: string) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    const initialRecord = sessionIndex.get(sessionId);
+    if (initialRecord && resolveConnectionRole(projectId, sessionId) === 'detached') {
+      return;
+    }
+
+    try {
+      await loadSessions(projectId);
+    } catch (error) {
+      console.error('[Terminal Store] Failed to reload sessions after websocket close', error);
+    }
+
+    const nextRecord = sessionIndex.get(sessionId);
+    if (nextRecord && resolveConnectionRole(projectId, sessionId) !== 'detached') {
+      connect(nextRecord.tab);
+      return;
+    }
+
+    const nextActiveId = activeTabByProject.get(projectId) ?? '';
+    const activeRecord = nextActiveId ? sessionIndex.get(nextActiveId) : undefined;
+    if (activeRecord && resolveConnectionRole(projectId, activeRecord.tab.id) !== 'detached') {
+      connect(activeRecord.tab);
+    }
   }
 
   function reconcileSessions(projectId: string, sessions: TerminalSession[]) {

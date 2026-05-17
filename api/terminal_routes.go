@@ -105,6 +105,29 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 		op.Tags = []string{terminalTag}
 	})
 
+	huma.Post(group, "/projects/{projectId}/terminals/restore", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+		},
+	) (*h.ItemsResponse[terminalSessionView], error) {
+		sessions, err := c.manager.RestoreProjectSessions(ctx, input.ProjectID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to restore terminal sessions", err)
+		}
+		views := make([]terminalSessionView, 0, len(sessions))
+		for _, snapshot := range sessions {
+			views = append(views, c.viewFromSnapshot(snapshot))
+		}
+		resp := h.NewItemsResponse(views)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-session-restore"
+		op.Summary = "恢复项目终端工作环境"
+		op.Tags = []string{terminalTag}
+	})
+
 	huma.Get(group, "/terminals/counts", func(
 		ctx context.Context,
 		input *struct{},
