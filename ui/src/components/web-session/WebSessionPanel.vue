@@ -981,11 +981,15 @@
               <button
                 type="button"
                 class="composer-mobile-panel-toggle"
+                :class="{ 'is-collapsed': isMobileComposerCollapsed }"
                 :aria-expanded="!isMobileComposerCollapsed"
                 :title="mobileComposerPanelToggleLabel"
                 :aria-label="mobileComposerPanelToggleLabel"
                 @click="toggleMobileComposerCollapsed"
               >
+                <span v-if="isMobileComposerCollapsed" class="composer-mobile-panel-toggle-text">
+                  {{ t('webSession.composerPanel') }}
+                </span>
                 <n-icon
                   class="composer-mobile-panel-toggle-arrow"
                   :class="{ 'is-collapsed': isMobileComposerCollapsed }"
@@ -13420,8 +13424,8 @@ defineExpose({
 
 .composer-mobile-panel-toggle-shell {
   position: absolute;
-  top: -18px;
-  right: 14px;
+  top: -22px;
+  right: 12px;
   z-index: 2;
   display: flex;
   align-items: center;
@@ -13430,45 +13434,81 @@ defineExpose({
 }
 
 .composer-mobile-panel-toggle {
-  width: 30px;
-  height: 24px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 70%, transparent);
+  box-sizing: border-box;
+  min-width: 44px;
+  height: 36px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, var(--n-primary-color) 18%);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 88%, transparent);
-  color: var(--n-text-color-3);
-  padding: 0;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%);
+  color: var(--n-text-color-2);
+  padding: 0 10px;
   appearance: none;
   -webkit-appearance: none;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   cursor: pointer;
-  opacity: 0.48;
-  box-shadow: 0 2px 8px color-mix(in srgb, #000 8%, transparent);
+  opacity: 0.92;
+  box-shadow:
+    0 6px 18px color-mix(in srgb, #000 12%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--app-surface-color, #fff) 85%, transparent);
   pointer-events: auto;
   transition:
     opacity 0.18s ease,
     color 0.18s ease,
     background-color 0.18s ease,
     border-color 0.18s ease,
+    box-shadow 0.18s ease,
     transform 0.18s ease;
+}
+
+.composer-mobile-panel-toggle.is-collapsed {
+  min-width: 78px;
+  border-color: color-mix(in srgb, var(--n-primary-color) 48%, var(--n-border-color));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%),
+    color-mix(in srgb, var(--app-surface-color, #fff) 84%, var(--n-primary-color) 16%)
+  );
+  color: var(--n-primary-color);
+  box-shadow:
+    0 8px 22px color-mix(in srgb, var(--n-primary-color) 20%, transparent),
+    0 3px 10px color-mix(in srgb, #000 14%, transparent);
 }
 
 .composer-mobile-panel-toggle:hover,
 .composer-mobile-panel-toggle:focus-visible,
 .composer-mobile-panel-toggle:active {
-  opacity: 0.9;
-  color: var(--n-text-color-2);
-  border-color: color-mix(in srgb, var(--n-border-color) 92%, transparent);
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%);
+  opacity: 1;
+  color: var(--n-primary-color);
+  border-color: color-mix(in srgb, var(--n-primary-color) 58%, var(--n-border-color));
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 86%, var(--n-primary-color) 14%);
+  box-shadow:
+    0 8px 22px color-mix(in srgb, var(--n-primary-color) 18%, transparent),
+    0 3px 10px color-mix(in srgb, #000 14%, transparent);
+}
+
+.composer-mobile-panel-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--n-primary-color) 58%, transparent);
+  outline-offset: 2px;
 }
 
 .composer-mobile-panel-toggle:active {
   transform: translateY(1px);
 }
 
+.composer-mobile-panel-toggle-text {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 .composer-mobile-panel-toggle-arrow {
-  font-size: 14px;
+  flex-shrink: 0;
+  font-size: 15px;
   transition: transform 0.2s ease;
 }
 
@@ -14461,7 +14501,11 @@ defineExpose({
   }
 
   .composer-mobile-panel-toggle {
-    padding: 8px 9px;
+    padding: 0 9px;
+  }
+
+  .composer-mobile-panel-toggle.is-collapsed {
+    min-width: 72px;
   }
 
   .composer-mobile-toggle {
