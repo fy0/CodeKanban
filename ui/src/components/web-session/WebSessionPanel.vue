@@ -2800,6 +2800,7 @@ function handleWebSessionDocumentVisibilityChange() {
     beginWebSessionCatchUp('document-hidden');
     return;
   }
+  refreshTabHeaderLayout();
   void refreshWebSessionCatchUp('document-visible');
 }
 
@@ -2807,6 +2808,7 @@ function handleWebSessionWindowFocus() {
   if (!isDocumentVisible()) {
     return;
   }
+  refreshTabHeaderLayout();
   void refreshWebSessionCatchUp('window-focus');
 }
 
@@ -2814,6 +2816,7 @@ function handleWebSessionWindowPageShow() {
   if (!isDocumentVisible()) {
     return;
   }
+  refreshTabHeaderLayout();
   void refreshWebSessionCatchUp('window-pageshow');
 }
 
@@ -6601,6 +6604,22 @@ const refreshTabSortable = useDebounceFn(() => {
 
 let tabScrollContainer: HTMLElement | null = null;
 
+function refreshTabHeaderLayout() {
+  if (isMobile.value) {
+    cleanupTabScrollListener();
+    destroyTabSorting();
+    activeTabIndicatorStyle.value = hiddenCardTabIndicatorStyle();
+    return;
+  }
+
+  nextTick(() => {
+    recalcTabTitleWidth();
+    setupTabScrollListener();
+    refreshTabSortable();
+    updateActiveTabIndicator();
+  });
+}
+
 function setWorkflowMode(mode: 'default' | 'plan') {
   draftWorkflowMode.value = mode;
   const session = currentSession.value;
@@ -10163,6 +10182,7 @@ watch(
       setMobileComposerFocusState(false);
       return;
     }
+    refreshTabHeaderLayout();
     if (!isDocumentVisible() || !currentRealSession.value?.id) {
       return;
     }
