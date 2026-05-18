@@ -4053,16 +4053,11 @@ function openSendQuickActionsFromElement(anchorEl: HTMLElement) {
 }
 
 function buildScheduledSendPresetOptions(now = Date.now()): ScheduledSendPresetOption[] {
-  const options: ScheduledSendPresetOption[] = [
+  return [
     {
-      key: '10s',
-      label: t('webSession.schedulePreset10Seconds'),
-      timestamp: now + 10_000,
-    },
-    {
-      key: '1m',
-      label: t('webSession.schedulePreset1Minute'),
-      timestamp: now + 60_000,
+      key: '5m',
+      label: t('webSession.schedulePreset5Minutes'),
+      timestamp: now + 5 * 60_000,
     },
     {
       key: '10m',
@@ -4070,30 +4065,25 @@ function buildScheduledSendPresetOptions(now = Date.now()): ScheduledSendPresetO
       timestamp: now + 10 * 60_000,
     },
     {
+      key: '30m',
+      label: t('webSession.schedulePreset30Minutes'),
+      timestamp: now + 30 * 60_000,
+    },
+    {
       key: '1h',
       label: t('webSession.schedulePreset1Hour'),
       timestamp: now + 60 * 60_000,
     },
   ];
-  const todayAtTwenty = new Date(now);
-  todayAtTwenty.setHours(20, 0, 0, 0);
-  if (todayAtTwenty.getTime() > now) {
-    options.push({
-      key: 'today-20',
-      label: t('webSession.schedulePresetTodayAt20'),
-      timestamp: todayAtTwenty.getTime(),
-    });
-  }
-  return options;
 }
 
 function openScheduledSendDialog() {
   const presets = buildScheduledSendPresetOptions();
   scheduledSendPresetOptions.value = presets;
   scheduledSendAt.value =
-    presets.find(option => option.key === '1m')?.timestamp ??
+    presets.find(option => option.key === '5m')?.timestamp ??
     presets[0]?.timestamp ??
-    Date.now() + 60_000;
+    Date.now() + 5 * 60_000;
   scheduledSendMode.value = 'send';
   scheduledSendSubmitting.value = false;
   showScheduledSendDialog.value = true;
