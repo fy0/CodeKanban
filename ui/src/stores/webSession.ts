@@ -794,6 +794,34 @@ function getTransportRetryPayload(payload?: Record<string, unknown>) {
   };
 }
 
+function isRetryClearingProgressBlock(
+  block: WebSessionBlock,
+  retryPayload: ReturnType<typeof getTransportRetryPayload>
+) {
+  if (retryPayload) {
+    return false;
+  }
+  if (block.kind === 'assistant' || block.kind === 'user' || block.kind === 'tool') {
+    return true;
+  }
+  if (block.detail?.type) {
+    return true;
+  }
+  switch (block.itemType) {
+    case 'note':
+    case 'approval_req':
+    case 'approval_res':
+    case 'user_input_request':
+    case 'user_input_response':
+    case 'run_done':
+    case 'run_abort':
+    case 'run_fail':
+      return true;
+    default:
+      return false;
+  }
+}
+
 function parseUserInputQuestions(value: unknown): WebSessionUserInputQuestion[] {
   if (!Array.isArray(value)) {
     return [];
@@ -2436,6 +2464,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
           ...retryPayload,
           updatedAt: block.observedAt || block.timestamp || updatedAt,
         };
+      } else if (retryState && isRetryClearingProgressBlock(block, retryPayload)) {
+        retryState = undefined;
       }
       if (block.kind === 'tool' && block.tool) {
         if (block.tool.kind === 'reasoning') {
@@ -2500,7 +2530,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (session?.status === 'running') {
-      if (retryState) {
+      const hasNewerWorkingSummary =
+        retryState != null &&
+        assistantState === 'working' &&
+        assistantStateUpdatedAt != null &&
+        assistantStateUpdatedAt > retryState.updatedAt;
+      if (retryState && !hasNewerWorkingSummary) {
         return {
           phase: 'retrying',
           running: true,
