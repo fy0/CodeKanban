@@ -2077,6 +2077,7 @@ import type {
 } from '@/types/models';
 import {
   calculateCardTabIndicatorStyle,
+  ensureActiveCardTabVisible,
   hiddenCardTabIndicatorStyle,
 } from '@/utils/cardTabIndicator';
 import { getDefaultTerminalTheme, getTerminalThemeById } from '@/constants/terminalThemes';
@@ -6790,6 +6791,7 @@ function refreshTabHeaderLayout() {
     setupTabScrollListener();
     refreshTabSortable();
     updateActiveTabIndicator();
+    syncActiveTabIntoView();
   });
 }
 
@@ -8119,6 +8121,7 @@ async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
     autoFollowBottom.value = true;
     scrollToBottom(true);
     updateActiveTabIndicator();
+    syncActiveTabIntoView();
     focusComposer();
     if (decision.shouldNotifyExistingDraft) {
       message.info(t('webSession.existingDraftSessionNotice'));
@@ -8138,6 +8141,7 @@ async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
   autoFollowBottom.value = true;
   scrollToBottom(true);
   updateActiveTabIndicator();
+  syncActiveTabIntoView();
   focusComposer();
 }
 
@@ -9439,6 +9443,21 @@ function updateActiveTabIndicator() {
   });
 }
 
+function syncActiveTabIntoView() {
+  if (isMobile.value || !activeTabSessionId.value) {
+    return;
+  }
+
+  nextTick(() => {
+    if (isMobile.value || !activeTabSessionId.value) {
+      return;
+    }
+    if (ensureActiveCardTabVisible(tabsContainerRef.value)) {
+      updateActiveTabIndicator();
+    }
+  });
+}
+
 function setupTabScrollListener() {
   cleanupTabScrollListener();
   nextTick(() => {
@@ -9899,12 +9918,14 @@ function handleTabDragEnd(event: SortableEvent) {
     replaceTabNavigationState(previousOrderIds, previousMruIds);
     nextTick(() => {
       updateActiveTabIndicator();
+      syncActiveTabIntoView();
     });
     return;
   }
   if (isDraftSession(movingSession)) {
     nextTick(() => {
       updateActiveTabIndicator();
+      syncActiveTabIntoView();
     });
     return;
   }
@@ -9922,6 +9943,7 @@ function handleTabDragEnd(event: SortableEvent) {
     });
   nextTick(() => {
     updateActiveTabIndicator();
+    syncActiveTabIntoView();
   });
 }
 
@@ -10108,6 +10130,7 @@ watch(
     autoFollowBottom.value = true;
     scrollToBottom(true);
     updateActiveTabIndicator();
+    syncActiveTabIntoView();
     if (!isDraftSession(session)) {
       markSessionViewed(session.id);
     }
@@ -10269,6 +10292,7 @@ watch(
       recalcTabTitleWidth();
       updateActiveTabIndicator();
       setupTabScrollListener();
+      syncActiveTabIntoView();
       if (isMobile.value) {
         destroyTabSorting();
       } else {
@@ -10293,6 +10317,7 @@ watch(
       setupTabScrollListener();
       refreshTabSortable();
       updateActiveTabIndicator();
+      syncActiveTabIntoView();
     });
   },
   { immediate: true }
@@ -10414,6 +10439,7 @@ useResizeObserver(tabsContainerRef, entries => {
   if (width !== tabsContainerWidth.value) {
     recalcTabTitleWidth(width);
     updateActiveTabIndicator();
+    syncActiveTabIntoView();
   }
 });
 
@@ -10440,6 +10466,7 @@ onMounted(() => {
     recalcTabTitleWidth();
     setupTabScrollListener();
     updateActiveTabIndicator();
+    syncActiveTabIntoView();
     if (currentSession.value) {
       syncScrollToBottom();
     }
