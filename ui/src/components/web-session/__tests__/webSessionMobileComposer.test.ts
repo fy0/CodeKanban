@@ -43,4 +43,11 @@ describe('webSession mobile composer', () => {
       /\.composer\.is-mobile \.composer-icon-btn-mobile\s*\{[^}]*width:\s*36px;[^}]*height:\s*36px;/s
     );
   });
+
+  it('moves session toggles behind a settings gear', () => {
+    expect(webSessionPanelSource).toContain('<SettingsOutline />');
+    expect(webSessionPanelSource).toContain('composer-settings-popover-card');
+    expect(webSessionPanelSource).toContain('webSessionActiveCallTimeoutEnabledValue');
+    expect(webSessionPanelSource).not.toContain('composer-auto-continue');
+  });
 });

@@ -53,6 +53,7 @@ type CodexSkillSummary struct {
 
 func (m *Manager) mapSessionSummary(record tables.WebSessionTable) SessionSummary {
 	summary := mapSessionRecord(record)
+	summary.ActiveCallTimeoutEnabled = m.effectiveActiveCallTimeoutEnabled(record)
 	m.decorateSessionSummary(&summary)
 	return summary
 }

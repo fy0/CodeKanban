@@ -2214,6 +2214,129 @@ func TestActiveCallTimeoutDefaultKindsSkipCommandExecution(t *testing.T) {
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
+func TestActiveCallTimeoutSessionOverrideDisabledSkipsGlobalOn(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
+		EnabledMode:          utils.SettingModeOn,
+		TimeoutMode:          utils.WebSessionActiveCallTimeoutModeCustom,
+		CustomTimeoutSeconds: 10,
+		PromptTemplate:       "The ${call} call timed out after ${duration}. Continue.",
+		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
+			UseDefault: false,
+			Command:    true,
+		},
+	})
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "active_call_timeout_command_then_success"),
+		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
+			return timeoutConfig
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:                project.ID,
+		Agent:                    AgentCodex,
+		ActiveCallTimeoutEnabled: ptr(false),
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if created.ActiveCallTimeoutEnabled {
+		t.Fatalf("expected session active call timeout override to be disabled")
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	call := waitForTrackedActiveCall(t, manager, created.ID, activeCallTimeoutKindCommand)
+	setTrackedActiveCallStartedAt(t, manager, created.ID, call.ToolID, time.Now().Add(-12*time.Second))
+	manager.RefreshDeveloperConfig()
+	time.Sleep(150 * time.Millisecond)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	for _, event := range rawEvents {
+		if event.Type == "run_abort" && stringValue(event.Payload["reason"]) == activeCallTimeoutReason {
+			t.Fatalf("expected session override to skip active call timeout, got %#v", rawEvents)
+		}
+	}
+
+	if err := manager.AbortSession(created.ID); err != nil {
+		t.Fatalf("AbortSession returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
+func TestActiveCallTimeoutSessionOverrideEnabledOverridesGlobalOff(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
+		EnabledMode:          utils.SettingModeOff,
+		TimeoutMode:          utils.WebSessionActiveCallTimeoutModeCustom,
+		CustomTimeoutSeconds: 10,
+		PromptTemplate:       "The ${call} call timed out after ${duration}. Continue.",
+		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
+			UseDefault: false,
+			Command:    true,
+		},
+	})
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "active_call_timeout_command_then_success"),
+		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
+			return timeoutConfig
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:                project.ID,
+		Agent:                    AgentCodex,
+		ActiveCallTimeoutEnabled: ptr(true),
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if !created.ActiveCallTimeoutEnabled {
+		t.Fatalf("expected session active call timeout override to be enabled")
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	call := waitForTrackedActiveCall(t, manager, created.ID, activeCallTimeoutKindCommand)
+	setTrackedActiveCallStartedAt(t, manager, created.ID, call.ToolID, time.Now().Add(-12*time.Second))
+	manager.RefreshDeveloperConfig()
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	for _, event := range rawEvents {
+		if event.Type == "run_abort" && stringValue(event.Payload["reason"]) == activeCallTimeoutReason {
+			return
+		}
+	}
+	t.Fatalf("expected session override to trigger active call timeout, got %#v", rawEvents)
+}
+
 func TestActiveCallTimeoutUsesLatestTrackedCall(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

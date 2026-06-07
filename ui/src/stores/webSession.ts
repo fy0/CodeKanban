@@ -44,6 +44,7 @@ type WireSession = {
   re?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
   wm: 'default' | 'plan';
   pl: 'default' | 'elevated' | 'yolo';
+  acte?: boolean;
   ae?: boolean;
   ars?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
   arp?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
@@ -439,6 +440,12 @@ type PendingAutoRetryOverride = {
   enabled: boolean;
   scope: WebSessionSummary['autoRetryScope'];
   preset: WebSessionSummary['autoRetryPreset'];
+  appliedAt: number;
+  expiresAt: number;
+};
+
+type PendingActiveCallTimeoutOverride = {
+  enabled: boolean;
   appliedAt: number;
   expiresAt: number;
 };
@@ -980,6 +987,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
   >();
   const draftAttachmentUploadQueues = new Map<string, Promise<unknown>>();
   const pendingAutoRetryOverrides = reactive(new Map<string, PendingAutoRetryOverride>());
+  const pendingActiveCallTimeoutOverrides = reactive(
+    new Map<string, PendingActiveCallTimeoutOverride>()
+  );
   const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
   const completedTransitionVersionBySession = new Map<string, number>();
   let draftAttachmentUploadSeed = 0;
@@ -1269,6 +1279,46 @@ export const useWebSessionStore = defineStore('web-session', () => {
       autoRetryEnabled: pendingOverride.enabled,
       autoRetryScope: pendingOverride.scope,
       autoRetryPreset: pendingOverride.preset,
+      updatedAt: new Date(mergedUpdatedAt).toISOString(),
+    };
+  }
+
+  function setPendingActiveCallTimeoutOverride(
+    sessionId: string,
+    enabled: boolean,
+    appliedAt = Date.now()
+  ) {
+    pendingActiveCallTimeoutOverrides.set(sessionId, {
+      enabled: enabled === true,
+      appliedAt,
+      expiresAt: appliedAt + WEB_SESSION_AUTO_RETRY_OPTIMISTIC_TTL_MS,
+    });
+  }
+
+  function clearPendingActiveCallTimeoutOverride(sessionId: string) {
+    pendingActiveCallTimeoutOverrides.delete(sessionId);
+  }
+
+  function applyPendingActiveCallTimeoutOverride(summary: WebSessionSummary): WebSessionSummary {
+    const pendingOverride = pendingActiveCallTimeoutOverrides.get(summary.id);
+    if (!pendingOverride) {
+      return summary;
+    }
+    if (Date.now() > pendingOverride.expiresAt) {
+      pendingActiveCallTimeoutOverrides.delete(summary.id);
+      return summary;
+    }
+    if (summary.activeCallTimeoutEnabled === pendingOverride.enabled) {
+      pendingActiveCallTimeoutOverrides.delete(summary.id);
+      return summary;
+    }
+    const updatedAt = Date.parse(summary.updatedAt || '');
+    const mergedUpdatedAt = Number.isFinite(updatedAt)
+      ? Math.max(updatedAt, pendingOverride.appliedAt)
+      : pendingOverride.appliedAt;
+    return {
+      ...summary,
+      activeCallTimeoutEnabled: pendingOverride.enabled,
       updatedAt: new Date(mergedUpdatedAt).toISOString(),
     };
   }
@@ -1620,6 +1670,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reasoningEffort: session.re ?? 'default',
       workflowMode: session.wm ?? 'default',
       permissionLevel: session.pl ?? 'elevated',
+      activeCallTimeoutEnabled: session.acte === true,
       autoRetryEnabled: session.ae === true,
       autoRetryScope:
         session.ars === 'network_and_rate_limit' || session.ars === 'all_failures'
@@ -2204,6 +2255,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     historyBySession.value = nextHistory;
     appliedSnapshotVersionBySession.delete(sessionId);
     pendingAutoRetryOverrides.delete(sessionId);
+    pendingActiveCallTimeoutOverrides.delete(sessionId);
     const nextPendingInputs = { ...pendingInputsBySession.value };
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
@@ -2217,7 +2269,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function upsertCurrentSession(summary: WebSessionSummary) {
-    const nextSummary = applyPendingAutoRetryOverride(summary);
+    const nextSummary = applyPendingActiveCallTimeoutOverride(
+      applyPendingAutoRetryOverride(summary)
+    );
     const current = sessionsByProject.value[nextSummary.projectId] ?? [];
     const next = [...current];
     const index = next.findIndex(item => item.id === nextSummary.id);
@@ -3940,6 +3994,44 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await sendCommand('set_ag', sessionId, { ag: agent });
   }
 
+  async function updateActiveCallTimeout(sessionId: string, enabled: boolean) {
+    const session = findSessionById(sessionId);
+    const optimisticUpdatedAt = new Date().toISOString();
+    const previous =
+      session && !session.archivedAt
+        ? {
+            enabled: session.activeCallTimeoutEnabled === true,
+          }
+        : null;
+    if (previous) {
+      setPendingActiveCallTimeoutOverride(
+        sessionId,
+        enabled === true,
+        Date.parse(optimisticUpdatedAt)
+      );
+      updateSessionStatus(sessionId, current => ({
+        ...current,
+        activeCallTimeoutEnabled: enabled === true,
+        updatedAt: optimisticUpdatedAt,
+      }));
+    }
+    try {
+      await sendCommand('set_act', sessionId, {
+        acte: enabled === true,
+      });
+    } catch (error) {
+      clearPendingActiveCallTimeoutOverride(sessionId);
+      if (previous) {
+        updateSessionStatus(sessionId, current => ({
+          ...current,
+          activeCallTimeoutEnabled: previous.enabled,
+          updatedAt: optimisticUpdatedAt,
+        }));
+      }
+      throw error;
+    }
+  }
+
   async function updateAutoRetry(
     sessionId: string,
     config: {
@@ -4076,6 +4168,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
+      activeCallTimeoutEnabled?: boolean;
       autoRetryEnabled?: boolean;
       autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
       autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
@@ -4144,6 +4237,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updateWorkflowMode,
     updatePermissionLevel,
     updateAgent,
+    updateActiveCallTimeout,
     updateAutoRetry,
     moveSession,
     getPendingApproval,

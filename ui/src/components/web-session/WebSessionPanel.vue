@@ -1109,10 +1109,46 @@
                   <div v-if="currentSession" class="composer-path" :title="currentSession.cwd">
                     {{ currentSession.cwd }}
                   </div>
-                  <div class="composer-auto-continue">
-                    <n-checkbox v-model:checked="webSessionAutoContinueEnabledValue" size="small">
-                      {{ t('webSession.infiniteRetry') }}
-                    </n-checkbox>
+                  <div class="composer-settings">
+                    <n-popover
+                      trigger="click"
+                      placement="top-end"
+                      :show-arrow="true"
+                      @update:show="handleComposerSettingsPopoverShow"
+                    >
+                      <template #trigger>
+                        <button
+                          type="button"
+                          class="composer-settings-trigger"
+                          :class="{ 'has-active-settings': composerSettingsHasActiveItems }"
+                          :title="t('webSession.composerSettings')"
+                          :aria-label="t('webSession.composerSettings')"
+                        >
+                          <n-icon size="16"><SettingsOutline /></n-icon>
+                        </button>
+                      </template>
+                      <div class="composer-settings-popover-card">
+                        <div class="composer-settings-popover-title">
+                          {{ t('webSession.composerSettings') }}
+                        </div>
+                        <n-checkbox
+                          v-model:checked="webSessionAutoContinueEnabledValue"
+                          size="small"
+                        >
+                          {{ t('webSession.infiniteRetry') }}
+                        </n-checkbox>
+                        <n-checkbox
+                          v-model:checked="webSessionActiveCallTimeoutEnabledValue"
+                          size="small"
+                          :disabled="!canConfigureActiveCallTimeout"
+                        >
+                          {{ activeCallTimeoutCheckboxLabel }}
+                        </n-checkbox>
+                        <div class="composer-settings-popover-tip">
+                          {{ activeCallTimeoutPopoverTip }}
+                        </div>
+                      </div>
+                    </n-popover>
                   </div>
                 </div>
               </div>
@@ -2008,6 +2044,7 @@ import {
   ImageOutline,
   RefreshCircleOutline,
   RefreshOutline,
+  SettingsOutline,
   SparklesOutline,
   TimeOutline,
   TrashOutline,
@@ -2033,6 +2070,7 @@ import {
 } from '@/stores/webSession';
 import type {
   CodexSkillSummary,
+  DeveloperConfig,
   WebSessionCodexRuntimeConfig,
   WebSessionContextWindowSource,
   WebSessionSummary,
@@ -2213,6 +2251,7 @@ const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
+const DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS = 120;
 const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
 const MOBILE_COMPOSER_OVERLAY_OPEN_GUARD_MS = 180;
 const MOBILE_TAB_SELECTOR_CLICKOUTSIDE_GUARD_MS = 220;
@@ -2252,6 +2291,10 @@ type SessionTab =
   | (WebSessionSummary & { isDraft?: false; isArchivedPreview?: false })
   | DraftSessionTab
   | ArchivedPreviewSessionTab;
+
+type ItemResponse<T> = {
+  item?: T;
+};
 
 type MobileTabSessionOption = DropdownOption & {
   kind: 'session';
@@ -2414,6 +2457,74 @@ const {
   webSessionQuickInput,
   webSessionQuickInputDirectSend,
 } = storeToRefs(settingsStore);
+
+const globalActiveCallTimeoutEnabled = ref(true);
+const globalActiveCallTimeoutSeconds = ref(DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS);
+let composerDeveloperConfigLoadPromise: Promise<boolean> | null = null;
+
+function resolveGlobalActiveCallTimeoutEnabled(config?: DeveloperConfig | null) {
+  const mode = config?.webSessionActiveCallTimeout?.enabledMode;
+  if (mode === 'off') {
+    return false;
+  }
+  return true;
+}
+
+function resolveGlobalActiveCallTimeoutSeconds(config?: DeveloperConfig | null) {
+  const timeoutConfig = config?.webSessionActiveCallTimeout;
+  if (timeoutConfig?.timeoutMode !== 'custom') {
+    return DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS;
+  }
+  const seconds = Number(timeoutConfig.customTimeoutSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS;
+  }
+  return Math.max(10, Math.trunc(seconds));
+}
+
+function formatActiveCallTimeoutDuration(seconds: number) {
+  const normalizedSeconds = Math.max(1, Math.trunc(seconds));
+  return t('webSession.activeCallTimeoutDurationSeconds', { seconds: normalizedSeconds });
+}
+
+async function loadComposerDeveloperConfig() {
+  if (composerDeveloperConfigLoadPromise) {
+    return composerDeveloperConfigLoadPromise;
+  }
+  composerDeveloperConfigLoadPromise = (async () => {
+    try {
+      const response = await http
+        .Get<ItemResponse<DeveloperConfig>>('/system/developer-config', { cacheFor: 0 })
+        .send();
+      const config = response?.item;
+      globalActiveCallTimeoutEnabled.value = resolveGlobalActiveCallTimeoutEnabled(config);
+      globalActiveCallTimeoutSeconds.value = resolveGlobalActiveCallTimeoutSeconds(config);
+      return true;
+    } catch (error) {
+      console.error('[Web Session] Failed to load developer config for composer settings', error);
+      return false;
+    } finally {
+      composerDeveloperConfigLoadPromise = null;
+    }
+  })();
+  return composerDeveloperConfigLoadPromise;
+}
+
+function resolveInheritedActiveCallTimeoutEnabled(
+  source:
+    | { agent?: 'claude' | 'codex'; activeCallTimeoutEnabled?: boolean | null }
+    | null
+    | undefined,
+  agent: 'claude' | 'codex'
+) {
+  if (agent !== 'codex') {
+    return false;
+  }
+  if (typeof source?.activeCallTimeoutEnabled === 'boolean') {
+    return source.activeCallTimeoutEnabled;
+  }
+  return globalActiveCallTimeoutEnabled.value;
+}
 const persistedDraftSessionsByProject = useStorage<Record<string, DraftSessionTab[]>>(
   DRAFT_SESSION_STORAGE_KEY,
   {}
@@ -2621,6 +2732,32 @@ const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
 const currentSessionAutoRetryEnabled = computed(() =>
   Boolean(currentSession.value?.autoRetryEnabled)
 );
+
+const canConfigureActiveCallTimeout = computed(() => currentSession.value?.agent === 'codex');
+const currentSessionActiveCallTimeoutEnabled = computed(() => {
+  const session = currentSession.value;
+  if (!session || session.agent !== 'codex') {
+    return false;
+  }
+  if (typeof session.activeCallTimeoutEnabled === 'boolean') {
+    return session.activeCallTimeoutEnabled;
+  }
+  return globalActiveCallTimeoutEnabled.value;
+});
+const activeCallTimeoutDurationLabel = computed(() =>
+  formatActiveCallTimeoutDuration(globalActiveCallTimeoutSeconds.value)
+);
+const activeCallTimeoutCheckboxLabel = computed(() =>
+  t('webSession.autoInterruptLongCall', { duration: activeCallTimeoutDurationLabel.value })
+);
+const activeCallTimeoutPopoverTip = computed(() =>
+  canConfigureActiveCallTimeout.value
+    ? t('webSession.autoInterruptLongCallTip')
+    : t('webSession.autoInterruptLongCallUnavailableTip')
+);
+const composerSettingsHasActiveItems = computed(
+  () => currentSessionAutoRetryEnabled.value || currentSessionActiveCallTimeoutEnabled.value
+);
 const webSessionAutoContinueEnabledValue = computed({
   get: () => currentSessionAutoRetryEnabled.value,
   set: value => {
@@ -2652,6 +2789,38 @@ const webSessionAutoContinueEnabledValue = computed({
     }
   },
 });
+
+const webSessionActiveCallTimeoutEnabledValue = computed({
+  get: () => currentSessionActiveCallTimeoutEnabled.value,
+  set: value => {
+    const next = value === true;
+    const session = currentSession.value;
+    if (!session || session.agent !== 'codex') {
+      return;
+    }
+    if (isDraftSession(session)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        activeCallTimeoutEnabled: next,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      void webSessionStore
+        .updateActiveCallTimeout(currentRealSession.value.id, next)
+        .catch(error => {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        });
+    }
+  },
+});
+
+function handleComposerSettingsPopoverShow(show: boolean) {
+  if (show) {
+    void loadComposerDeveloperConfig();
+  }
+}
 const composerText = computed({
   get: () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text,
   set: value => {
@@ -3647,6 +3816,14 @@ const mobileComposerSummaryTokens = computed(() => {
   );
   if (currentSessionAutoRetryEnabled.value) {
     tokens.push({ key: 'auto-continue', label: t('webSession.infiniteRetry') });
+  }
+  if (currentSessionActiveCallTimeoutEnabled.value) {
+    tokens.push({
+      key: 'active-call-timeout',
+      label: t('webSession.autoInterruptLongCallSummary', {
+        duration: activeCallTimeoutDurationLabel.value,
+      }),
+    });
   }
   return tokens;
 });
@@ -5215,6 +5392,7 @@ function normalizeDraftSession(
       session.permissionLevel === 'yolo'
         ? session.permissionLevel
         : 'elevated',
+    activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(session, agent),
     autoRetryEnabled: session.autoRetryEnabled === true,
     autoRetryScope:
       session.autoRetryScope === 'network_and_rate_limit' ||
@@ -5635,6 +5813,7 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
       (source?.permissionLevel === 'default' && nextAgent === 'claude'
         ? 'elevated'
         : source?.permissionLevel) || draftPermissionLevel.value,
+    activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, nextAgent),
     autoRetryEnabled: source?.autoRetryEnabled === true,
     autoRetryScope:
       source?.autoRetryEnabled === true ? source.autoRetryScope : webSessionAutoContinueScope.value,
@@ -7891,6 +8070,7 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
         (source?.permissionLevel === 'default' && agent === 'claude'
           ? 'elevated'
           : source?.permissionLevel) || draftPermissionLevel.value,
+      activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, agent),
       autoRetryEnabled: source?.autoRetryEnabled === true,
       autoRetryScope:
         source?.autoRetryEnabled === true
@@ -10242,6 +10422,7 @@ onMounted(() => {
     liveStateClockMs.value = Date.now();
   }, LIVE_TIME_TICK_MS);
   void settingsStore.loadWebSessionQuickInput();
+  void loadComposerDeveloperConfig();
   void loadCodexRuntimeConfig();
   void ensureCodexSkillsLoaded();
   if (projectStore.projects.length === 0) {
@@ -13756,21 +13937,84 @@ defineExpose({
   text-align: right;
 }
 
-.composer-auto-continue {
+.composer-settings {
   display: flex;
   align-items: center;
   flex-shrink: 0;
   white-space: nowrap;
 }
 
-.composer-auto-continue :deep(.n-checkbox) {
+.composer-settings-trigger {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, transparent);
+  color: var(--n-text-color-3);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
 }
 
-.composer-auto-continue :deep(.n-checkbox__label) {
+.composer-settings-trigger:hover,
+.composer-settings-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 58%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 10%, var(--app-surface-color, #fff));
+  color: var(--n-primary-color);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--n-primary-color) 13%, transparent);
+}
+
+.composer-settings-trigger.has-active-settings::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--n-primary-color);
+  box-shadow: 0 0 0 1px var(--app-surface-color, #fff);
+}
+
+.composer-settings-trigger:active {
+  transform: translateY(1px);
+}
+
+.composer-settings-popover-card {
+  width: min(300px, 74vw);
+  box-sizing: border-box;
+  display: grid;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.composer-settings-popover-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--n-text-color-1);
+}
+
+.composer-settings-popover-card :deep(.n-checkbox__label) {
   font-size: 12px;
   color: var(--n-text-color-2);
+}
+
+.composer-settings-popover-tip {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--n-text-color-3);
 }
 
 .composer-input-shell {
@@ -14532,7 +14776,7 @@ defineExpose({
     order: 10;
   }
 
-  .composer-config.is-mobile .composer-auto-continue {
+  .composer-config.is-mobile .composer-settings {
     margin-left: auto;
   }
 

@@ -807,7 +807,7 @@ export default {
     composerPanel: 'Composer',
     composerPanelExpand: 'Expand composer',
     composerPanelCollapse: 'Collapse composer',
-    composerSettings: 'Advanced Settings',
+    composerSettings: 'Session Settings',
     composerSettingsExpand: 'Expand advanced settings',
     composerSettingsCollapse: 'Collapse advanced settings',
     approvalLockedPlaceholder: 'Resolve the pending approval before sending another message',
@@ -866,6 +866,13 @@ export default {
     showReasoning: 'Show Reasoning',
     hideReasoning: 'Hide Reasoning',
     infiniteRetry: 'Auto Retry',
+    activeCallTimeoutDurationSeconds: '{seconds}s',
+    autoInterruptLongCall: 'Interrupt long calls automatically ({duration})',
+    autoInterruptLongCallSummary: 'Long-call interrupt {duration}',
+    autoInterruptLongCallTip:
+      'Backend Codex sessions only. Timeout, call categories, and the follow-up prompt use the global developer config.',
+    autoInterruptLongCallUnavailableTip:
+      'Only backend Codex sessions support automatic long-call interruption.',
     workflowDefault: 'Execute',
     workflowPlan: 'Plan',
     planCardBadge: 'Plan Ready',

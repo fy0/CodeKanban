@@ -670,44 +670,45 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 
 	now := time.Now()
 	record := tables.WebSessionTable{
-		ProjectID:               project.Id,
-		WorktreeID:              nilIfEmpty(worktreeID),
-		OrderIndex:              orderIndex,
-		Agent:                   string(normalizeAgent(params.Agent)),
-		ClaudeRuntime:           string(normalizeClaudeRuntime(params.ClaudeRuntime)),
-		Backend:                 string(normalizeSessionBackend(params.Backend, normalizeAgent(params.Agent))),
-		Title:                   title,
-		TitleAuto:               strings.TrimSpace(params.Title) == "",
-		Model:                   defaultModel(normalizeAgent(params.Agent), params.Model),
-		ReasoningEffort:         string(defaultReasoningEffort(normalizeAgent(params.Agent), params.ReasoningEffort)),
-		WorkflowMode:            string(normalizeWorkflowMode(params.WorkflowMode)),
-		PermissionLevel:         string(normalizePermissionLevel(params.PermissionLevel)),
-		AutoRetryEnabled:        params.AutoRetryEnabled,
-		AutoRetryScope:          string(normalizeAutoRetryScope(params.AutoRetryScope)),
-		AutoRetryPreset:         string(normalizeAutoRetryPreset(params.AutoRetryPreset)),
-		Cwd:                     cwd,
-		Status:                  string(StatusIdle),
-		AssistantState:          "",
-		HasUnread:               false,
-		ArchivedAt:              nil,
-		ActivityAt:              now,
-		StatusUpdatedAt:         &now,
-		AssistantStateUpdatedAt: nil,
-		SourceKind:              defaultSourceKind(normalizeAgent(params.Agent)),
-		SyncState:               string(SyncStateMissing),
-		LastSyncMode:            "",
-		SourceCreatedAt:         nil,
-		SourceUpdatedAt:         nil,
-		LastSyncedAt:            nil,
-		ThreadPath:              nil,
-		ThreadPreview:           nil,
-		TurnCount:               0,
-		ItemCount:               0,
-		LastEventSeq:            0,
-		TotalInputTokens:        0,
-		TotalCachedInputTokens:  0,
-		TotalOutputTokens:       0,
-		TotalCost:               0,
+		ProjectID:                project.Id,
+		WorktreeID:               nilIfEmpty(worktreeID),
+		OrderIndex:               orderIndex,
+		Agent:                    string(normalizeAgent(params.Agent)),
+		ClaudeRuntime:            string(normalizeClaudeRuntime(params.ClaudeRuntime)),
+		Backend:                  string(normalizeSessionBackend(params.Backend, normalizeAgent(params.Agent))),
+		Title:                    title,
+		TitleAuto:                strings.TrimSpace(params.Title) == "",
+		Model:                    defaultModel(normalizeAgent(params.Agent), params.Model),
+		ReasoningEffort:          string(defaultReasoningEffort(normalizeAgent(params.Agent), params.ReasoningEffort)),
+		WorkflowMode:             string(normalizeWorkflowMode(params.WorkflowMode)),
+		PermissionLevel:          string(normalizePermissionLevel(params.PermissionLevel)),
+		ActiveCallTimeoutEnabled: params.ActiveCallTimeoutEnabled,
+		AutoRetryEnabled:         params.AutoRetryEnabled,
+		AutoRetryScope:           string(normalizeAutoRetryScope(params.AutoRetryScope)),
+		AutoRetryPreset:          string(normalizeAutoRetryPreset(params.AutoRetryPreset)),
+		Cwd:                      cwd,
+		Status:                   string(StatusIdle),
+		AssistantState:           "",
+		HasUnread:                false,
+		ArchivedAt:               nil,
+		ActivityAt:               now,
+		StatusUpdatedAt:          &now,
+		AssistantStateUpdatedAt:  nil,
+		SourceKind:               defaultSourceKind(normalizeAgent(params.Agent)),
+		SyncState:                string(SyncStateMissing),
+		LastSyncMode:             "",
+		SourceCreatedAt:          nil,
+		SourceUpdatedAt:          nil,
+		LastSyncedAt:             nil,
+		ThreadPath:               nil,
+		ThreadPreview:            nil,
+		TurnCount:                0,
+		ItemCount:                0,
+		LastEventSeq:             0,
+		TotalInputTokens:         0,
+		TotalCachedInputTokens:   0,
+		TotalOutputTokens:        0,
+		TotalCost:                0,
 	}
 	record.Init()
 
@@ -1475,6 +1476,22 @@ func (m *Manager) UpdatePermissionLevel(
 	})
 }
 
+func (m *Manager) UpdateActiveCallTimeout(
+	ctx context.Context,
+	sessionID string,
+	enabled bool,
+) (SessionSummary, error) {
+	summary, err := m.updateFields(ctx, sessionID, map[string]any{
+		"active_call_timeout_enabled": enabled,
+		"updated_at":                  time.Now(),
+	})
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	m.reconcileActiveCallTimeoutBySessionID(sessionID)
+	return summary, nil
+}
+
 func (m *Manager) UpdateAutoRetry(
 	ctx context.Context,
 	sessionID string,
@@ -1896,6 +1913,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleSetWorkflowModeCommand(ctx, client, frame)
 	case "set_pl":
 		return m.handleSetPermissionLevelCommand(ctx, client, frame)
+	case "set_act":
+		return m.handleSetActiveCallTimeoutCommand(ctx, client, frame)
 	case "set_ar":
 		return m.handleSetAutoRetryCommand(ctx, client, frame)
 	case "set_pm":
@@ -2288,6 +2307,27 @@ func (m *Manager) handleSetPermissionLevelCommand(ctx context.Context, client *c
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid permission payload", false))
 	}
 	if _, err := m.UpdatePermissionLevel(ctx, frame.SessionID, PermissionLevel(payload.PermissionLevel)); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
+		return err
+	}
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return nil
+}
+
+func (m *Manager) handleSetActiveCallTimeoutCommand(
+	ctx context.Context,
+	client *client,
+	frame wireCommandFrame,
+) error {
+	var payload struct {
+		Enabled bool `json:"acte"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid active call timeout payload", false))
+	}
+	if _, err := m.UpdateActiveCallTimeout(ctx, frame.SessionID, payload.Enabled); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
@@ -4354,43 +4394,44 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 	latestTurnUsage, _ := buildLatestTurnUsage(record)
 	contextEstimate, contextEstimateMode := buildContextEstimate(record)
 	return SessionSummary{
-		ID:                      record.ID,
-		ProjectID:               record.ProjectID,
-		WorktreeID:              record.WorktreeID,
-		OrderIndex:              record.OrderIndex,
-		Agent:                   Agent(record.Agent),
-		ClaudeRuntime:           effectiveClaudeRuntime(record),
-		Title:                   record.Title,
-		Model:                   record.Model,
-		ReasoningEffort:         ReasoningEffort(record.ReasoningEffort),
-		WorkflowMode:            effectiveWorkflowMode(record),
-		PermissionLevel:         effectivePermissionLevel(record),
-		AutoRetryEnabled:        record.AutoRetryEnabled,
-		AutoRetryScope:          normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),
-		AutoRetryPreset:         normalizeAutoRetryPreset(AutoRetryPreset(record.AutoRetryPreset)),
-		Cwd:                     record.Cwd,
-		NativeSessionID:         record.NativeSessionID,
-		Status:                  effectiveStatus(record, assistantState),
-		AssistantState:          assistantState,
-		HasUnread:               record.HasUnread,
-		ArchivedAt:              record.ArchivedAt,
-		ActivityAt:              activityAt,
-		StatusUpdatedAt:         statusUpdatedAt,
-		LastMessageAt:           record.LastMessageAt,
-		AssistantStateUpdatedAt: assistantStateUpdatedAt,
-		SourceKind:              record.SourceKind,
-		SyncState:               normalizeSyncState(record.SyncState),
-		LastSyncMode:            recordedSyncMode(record.LastSyncMode),
-		SourceCreatedAt:         record.SourceCreatedAt,
-		SourceUpdatedAt:         record.SourceUpdatedAt,
-		LastSyncedAt:            record.LastSyncedAt,
-		ThreadPath:              record.ThreadPath,
-		ThreadPreview:           record.ThreadPreview,
-		TurnCount:               record.TurnCount,
-		ItemCount:               record.ItemCount,
-		SyncError:               record.SyncError,
-		CreatedAt:               record.CreatedAt,
-		UpdatedAt:               record.UpdatedAt,
+		ID:                       record.ID,
+		ProjectID:                record.ProjectID,
+		WorktreeID:               record.WorktreeID,
+		OrderIndex:               record.OrderIndex,
+		Agent:                    Agent(record.Agent),
+		ClaudeRuntime:            effectiveClaudeRuntime(record),
+		Title:                    record.Title,
+		Model:                    record.Model,
+		ReasoningEffort:          ReasoningEffort(record.ReasoningEffort),
+		WorkflowMode:             effectiveWorkflowMode(record),
+		PermissionLevel:          effectivePermissionLevel(record),
+		ActiveCallTimeoutEnabled: activeCallTimeoutOverrideOrDefault(record.ActiveCallTimeoutEnabled),
+		AutoRetryEnabled:         record.AutoRetryEnabled,
+		AutoRetryScope:           normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),
+		AutoRetryPreset:          normalizeAutoRetryPreset(AutoRetryPreset(record.AutoRetryPreset)),
+		Cwd:                      record.Cwd,
+		NativeSessionID:          record.NativeSessionID,
+		Status:                   effectiveStatus(record, assistantState),
+		AssistantState:           assistantState,
+		HasUnread:                record.HasUnread,
+		ArchivedAt:               record.ArchivedAt,
+		ActivityAt:               activityAt,
+		StatusUpdatedAt:          statusUpdatedAt,
+		LastMessageAt:            record.LastMessageAt,
+		AssistantStateUpdatedAt:  assistantStateUpdatedAt,
+		SourceKind:               record.SourceKind,
+		SyncState:                normalizeSyncState(record.SyncState),
+		LastSyncMode:             recordedSyncMode(record.LastSyncMode),
+		SourceCreatedAt:          record.SourceCreatedAt,
+		SourceUpdatedAt:          record.SourceUpdatedAt,
+		LastSyncedAt:             record.LastSyncedAt,
+		ThreadPath:               record.ThreadPath,
+		ThreadPreview:            record.ThreadPreview,
+		TurnCount:                record.TurnCount,
+		ItemCount:                record.ItemCount,
+		SyncError:                record.SyncError,
+		CreatedAt:                record.CreatedAt,
+		UpdatedAt:                record.UpdatedAt,
 		Usage: Usage{
 			InputTokens:       record.TotalInputTokens,
 			CachedInputTokens: record.TotalCachedInputTokens,

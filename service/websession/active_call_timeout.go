@@ -93,6 +93,43 @@ func (m *Manager) activeCallTimeoutSettings() activeCallTimeoutSettings {
 	return settings
 }
 
+func (m *Manager) activeCallTimeoutSettingsForSessionID(sessionID string) activeCallTimeoutSettings {
+	settings := m.activeCallTimeoutSettings()
+	if strings.TrimSpace(sessionID) == "" {
+		return settings
+	}
+	record, err := m.GetSession(context.Background(), sessionID)
+	if err != nil || record.ActiveCallTimeoutEnabled == nil {
+		return settings
+	}
+	settings.Enabled = *record.ActiveCallTimeoutEnabled
+	return settings
+}
+
+func (m *Manager) effectiveActiveCallTimeoutEnabled(record tables.WebSessionTable) bool {
+	if record.ActiveCallTimeoutEnabled != nil {
+		return *record.ActiveCallTimeoutEnabled
+	}
+	return m.activeCallTimeoutSettings().Enabled
+}
+
+func activeCallTimeoutOverrideOrDefault(value *bool) bool {
+	if value != nil {
+		return *value
+	}
+	return activeCallTimeoutDefaultEnabled
+}
+
+func (m *Manager) reconcileActiveCallTimeoutBySessionID(sessionID string) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	m.mu.RLock()
+	run := m.runs[sessionID]
+	m.mu.RUnlock()
+	m.reconcileActiveCallTimeout(run)
+}
+
 func (m *Manager) trackActiveCodexToolStart(
 	run *activeRun,
 	toolID string,
@@ -175,8 +212,8 @@ func (m *Manager) reconcileActiveCallTimeout(run *activeRun) {
 		return
 	}
 
-	settings := m.activeCallTimeoutSettings()
 	sessionID := run.sessionID
+	settings := m.activeCallTimeoutSettingsForSessionID(sessionID)
 	var (
 		triggerImmediately bool
 		targetToolID       string
@@ -218,7 +255,7 @@ func (m *Manager) handleActiveCallTimeout(sessionID string, toolID string) {
 		return
 	}
 
-	settings := m.activeCallTimeoutSettings()
+	settings := m.activeCallTimeoutSettingsForSessionID(sessionID)
 	if !settings.Enabled {
 		return
 	}

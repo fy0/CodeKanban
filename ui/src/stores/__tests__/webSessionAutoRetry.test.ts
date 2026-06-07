@@ -48,6 +48,7 @@ function makeSession(overrides: Partial<WebSessionSummary> = {}): WebSessionSumm
     reasoningEffort: 'medium',
     workflowMode: 'default',
     permissionLevel: 'elevated',
+    activeCallTimeoutEnabled: false,
     autoRetryEnabled: false,
     autoRetryScope: 'network_only',
     autoRetryPreset: 'gentle_stop',
@@ -110,6 +111,7 @@ function toWireSession(session: WebSessionSummary) {
     re: session.reasoningEffort,
     wm: session.workflowMode,
     pl: session.permissionLevel,
+    acte: session.activeCallTimeoutEnabled === true,
     ae: session.autoRetryEnabled,
     ars: session.autoRetryScope,
     arp: session.autoRetryPreset,
@@ -299,5 +301,72 @@ describe('webSession auto retry optimistic updates', () => {
     expect(confirmedSession?.autoRetryEnabled).toBe(true);
     expect(confirmedSession?.autoRetryScope).toBe('network_only');
     expect(confirmedSession?.autoRetryPreset).toBe('gentle_stop');
+  });
+
+  it('keeps the optimistic active call timeout toggle when an older summary arrives first', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ activeCallTimeoutEnabled: false });
+    listMock.mockResolvedValue([session]);
+
+    await store.loadSessions(session.projectId, true);
+    await store.openEventStream();
+    await flushMicrotasks();
+
+    const updatePromise = store.updateActiveCallTimeout(session.id, true);
+    await flushMicrotasks();
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    const commandSocket = findSocket('/api/v1/web-sessions/ws');
+    if (!eventSocket || !commandSocket) {
+      throw new Error('expected both event and command sockets to be connected');
+    }
+
+    const optimisticSession = store.getSessions(session.projectId)[0];
+    expect(optimisticSession?.activeCallTimeoutEnabled).toBe(true);
+
+    eventSocket.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'status',
+      s: toWireSession(
+        makeSession({
+          activeCallTimeoutEnabled: false,
+          updatedAt: '2026-04-10T09:59:59.000Z',
+        })
+      ),
+    });
+
+    const afterStaleFrame = store.getSessions(session.projectId)[0];
+    expect(afterStaleFrame?.activeCallTimeoutEnabled).toBe(true);
+
+    const requestId = String(commandSocket.sent[0]?.rid ?? '');
+    commandSocket.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'set_act',
+    });
+    await updatePromise;
+
+    eventSocket.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'status',
+      s: toWireSession(
+        makeSession({
+          activeCallTimeoutEnabled: true,
+          updatedAt: '2026-04-10T10:00:02.000Z',
+        })
+      ),
+    });
+
+    const confirmedSession = store.getSessions(session.projectId)[0];
+    expect(confirmedSession?.activeCallTimeoutEnabled).toBe(true);
   });
 });
