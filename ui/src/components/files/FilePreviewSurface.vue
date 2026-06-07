@@ -273,6 +273,7 @@ const headerMeta = computed(() =>
 .file-preview-content {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
   padding: 16px;
@@ -336,13 +337,19 @@ const headerMeta = computed(() =>
 
 .file-preview-diff {
   width: 100%;
+  min-width: 0;
 }
 
 .file-preview-diff :deep(pre.markdown-code-block) {
   margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .file-preview-diff :deep(pre.markdown-code-block code.hljs) {
+  width: max-content;
+  min-width: 100%;
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
@@ -445,9 +452,13 @@ const headerMeta = computed(() =>
     box-shadow: none;
     width: 100%;
     min-width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .file-preview-shell.is-mobile .file-preview-diff :deep(pre.markdown-code-block code.hljs) {
+    width: max-content;
+    min-width: 100%;
     padding: 6px 8px 8px;
     font-size: 12px;
   }

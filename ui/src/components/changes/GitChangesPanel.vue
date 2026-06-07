@@ -33,6 +33,19 @@
       </n-button>
     </div>
 
+    <n-alert
+      v-if="pendingChangesUpdate"
+      type="info"
+      class="git-changes-warning git-changes-update-alert"
+      :show-icon="false"
+    >
+      <div class="git-changes-update-alert__content">
+        <span>{{ t('gitChanges.updateAvailable') }}</span>
+        <n-button size="tiny" tertiary :loading="panelLoading" @click="reloadChanges">
+          {{ t('gitChanges.refresh') }}
+        </n-button>
+      </div>
+    </n-alert>
     <n-alert v-if="showGitWarning" type="warning" class="git-changes-warning" :show-icon="false">
       <n-space align="center" size="small">
         <span>{{ t('gitChanges.notGitRepoShort') }}</span>
@@ -197,6 +210,7 @@ import { storeToRefs } from 'pinia';
 
 import FilePreviewSurface from '@/components/files/FilePreviewSurface.vue';
 import {
+  hasPendingGitChangesUpdate,
   resolveGitChangeSelectionAfterLoad,
   resolveRetainedGitChangeEntry,
 } from '@/components/changes/gitChangesBehavior';
@@ -280,8 +294,10 @@ const mobilePreviewClosingFromHistory = ref(false);
 const diffLoading = ref(false);
 const diffError = ref('');
 const diffResult = ref<FileManagerDiffResult | null>(null);
+const pendingChangesUpdate = ref(false);
 let previewRequestToken = 0;
 const changesLoadController = createGitChangesLoadController();
+const changesUpdateCheckController = createGitChangesLoadController();
 
 const gitFeaturesAvailable = computed(() =>
   projectSupportsGit(projectStore.currentProject, projectStore.worktrees)
@@ -353,6 +369,7 @@ function chooseScope(
 }
 
 async function ensureLoaded(options?: { scopeId?: string }) {
+  changesUpdateCheckController.cancel();
   if (!props.projectId || !props.isActive) {
     changesLoadController.cancel();
     panelLoading.value = false;
@@ -395,6 +412,7 @@ async function ensureLoaded(options?: { scopeId?: string }) {
     }
     activeScopeId.value = result.scope.id;
     changesResult.value = result;
+    pendingChangesUpdate.value = false;
     emitSummaryChange();
     await syncSelectionAfterLoad();
   } catch (error) {
@@ -507,20 +525,59 @@ function startRefreshTimer() {
     return;
   }
   refreshTimer = window.setInterval(() => {
-    void reloadChanges();
+    void checkForChangesUpdate();
   }, 10_000);
 }
 
 async function reloadChanges() {
+  changesUpdateCheckController.cancel();
   await ensureLoaded({
     scopeId: activeScopeId.value,
   });
+}
+
+async function checkForChangesUpdate() {
+  if (
+    !props.projectId ||
+    !props.isActive ||
+    !activeScopeId.value ||
+    !changesResult.value ||
+    pendingChangesUpdate.value ||
+    panelLoading.value
+  ) {
+    return;
+  }
+
+  const loadHandle = changesUpdateCheckController.begin();
+  try {
+    const result = await fileManagerApi.listChanges(props.projectId, activeScopeId.value, {
+      ...buildGitChangesRequestOptions(ignoreUntracked.value),
+      signal: loadHandle.signal,
+    });
+    if (!changesUpdateCheckController.isCurrent(loadHandle)) {
+      return;
+    }
+    pendingChangesUpdate.value = hasPendingGitChangesUpdate(
+      changesResult.value.entries,
+      result.entries,
+      ignoreUntracked.value
+    );
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return;
+    }
+  } finally {
+    if (changesUpdateCheckController.isCurrent(loadHandle)) {
+      changesUpdateCheckController.release(loadHandle);
+    }
+  }
 }
 
 async function handleScopeChange(scopeId: string | null) {
   if (!scopeId) {
     return;
   }
+  pendingChangesUpdate.value = false;
   selectedChangePath.value = '';
   clearPreviewState();
   await ensureLoaded({ scopeId });
@@ -696,7 +753,9 @@ watch(
     if (current[0] === previous[0] && current[1] === previous[1]) {
       return;
     }
+    changesResult.value = null;
     selectedChangePath.value = '';
+    pendingChangesUpdate.value = false;
     clearPreviewState();
   }
 );
@@ -707,6 +766,7 @@ watch(
     if (!projectId || !isActive) {
       stopRefreshTimer();
       changesLoadController.cancel();
+      changesUpdateCheckController.cancel();
       panelLoading.value = false;
       return;
     }
@@ -726,6 +786,7 @@ watch(
 watch(
   () => ignoreUntracked.value,
   () => {
+    pendingChangesUpdate.value = false;
     syncSelectionWithFilter();
     emitSummaryChange();
     void ensureLoaded({
@@ -785,6 +846,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopRefreshTimer();
   changesLoadController.cancel();
+  changesUpdateCheckController.cancel();
   if (typeof window !== 'undefined') {
     window.removeEventListener('popstate', handleMobilePreviewPopState);
   }
@@ -838,6 +900,18 @@ onBeforeUnmount(() => {
 
 .git-changes-warning + .git-changes-warning {
   margin-top: 8px;
+}
+
+.git-changes-update-alert__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.git-changes-update-alert__content span {
+  min-width: 0;
 }
 
 .git-changes-body {

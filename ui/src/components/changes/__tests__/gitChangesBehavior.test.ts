@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildGitChangesFingerprint,
   canShowWorkspaceChangesSummary,
+  hasPendingGitChangesUpdate,
   resolveGitChangeSelectionAfterLoad,
   resolveRetainedGitChangeEntry,
   shouldLoadWorkspaceChangesSummary,
 } from '@/components/changes/gitChangesBehavior';
 import type { FileManagerChangeEntry } from '@/types/fileManager';
 
-function createEntry(path: string): FileManagerChangeEntry {
+function createEntry(
+  path: string,
+  overrides: Partial<FileManagerChangeEntry> = {}
+): FileManagerChangeEntry {
   return {
     name: path.split('/').at(-1) ?? path,
     path,
@@ -21,6 +26,7 @@ function createEntry(path: string): FileManagerChangeEntry {
     additions: 1,
     deletions: 0,
     statsAvailable: true,
+    ...overrides,
   };
 }
 
@@ -74,5 +80,65 @@ describe('gitChangesBehavior', () => {
     expect(canShowWorkspaceChangesSummary('project-1', false)).toBe(true);
     expect(canShowWorkspaceChangesSummary('', false)).toBe(false);
     expect(canShowWorkspaceChangesSummary('project-1', true)).toBe(false);
+  });
+
+  it('builds a stable fingerprint independent from entry order', () => {
+    const left = [createEntry('b.ts'), createEntry('a.ts')];
+    const right = [createEntry('a.ts'), createEntry('b.ts')];
+
+    expect(buildGitChangesFingerprint(left)).toBe(buildGitChangesFingerprint(right));
+    expect(hasPendingGitChangesUpdate(left, right)).toBe(false);
+  });
+
+  it('detects pending updates when visible git changes differ', () => {
+    expect(
+      hasPendingGitChangesUpdate([createEntry('a.ts')], [createEntry('a.ts'), createEntry('b.ts')])
+    ).toBe(true);
+
+    expect(
+      hasPendingGitChangesUpdate(
+        [createEntry('a.ts')],
+        [
+          createEntry('a.ts', {
+            additions: 2,
+          }),
+        ]
+      )
+    ).toBe(true);
+
+    expect(
+      hasPendingGitChangesUpdate(
+        [
+          createEntry('a.ts', {
+            status: {
+              kind: 'modified',
+            },
+          }),
+        ],
+        [
+          createEntry('a.ts', {
+            status: {
+              kind: 'renamed',
+              previousPath: 'old-a.ts',
+            },
+          }),
+        ]
+      )
+    ).toBe(true);
+  });
+
+  it('ignores untracked-only updates when untracked files are hidden', () => {
+    const current = [createEntry('a.ts')];
+    const next = [
+      createEntry('a.ts'),
+      createEntry('scratch.log', {
+        status: {
+          kind: 'untracked',
+        },
+      }),
+    ];
+
+    expect(hasPendingGitChangesUpdate(current, next, true)).toBe(false);
+    expect(hasPendingGitChangesUpdate(current, next, false)).toBe(true);
   });
 });

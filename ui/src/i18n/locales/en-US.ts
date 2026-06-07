@@ -169,6 +169,7 @@ export default {
     searchPlaceholder: 'Search changed files',
     ignoreUntracked: 'Ignore untracked',
     summaryFiles: '{count} changed',
+    updateAvailable: 'New Git changes are available. Refresh to view the latest content.',
     empty: 'No Git changes',
     emptySearch: 'No changed files match the search',
     previewTitle: 'Change Preview',

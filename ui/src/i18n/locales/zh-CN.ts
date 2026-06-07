@@ -169,6 +169,7 @@ export default {
     searchPlaceholder: '搜索变更文件',
     ignoreUntracked: '忽略未跟踪',
     summaryFiles: '变更 {count} 项',
+    updateAvailable: '检测到新的 Git 变更，刷新后查看最新内容。',
     empty: '当前没有 Git 变更',
     emptySearch: '没有匹配的变更文件',
     previewTitle: '变更预览',
