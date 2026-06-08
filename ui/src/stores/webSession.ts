@@ -206,6 +206,13 @@ export interface WebSessionToolBlock {
   };
 }
 
+export interface WebSessionLiveSubAgent {
+  id: string;
+  title: string;
+  summary: string;
+  startedAt?: number;
+}
+
 export interface WebSessionHistoryAnswerEntry {
   id: string;
   label: string;
@@ -305,6 +312,8 @@ export interface WebSessionLiveState {
     groupId?: string;
     startedAt?: number;
   };
+  activeSubAgents?: WebSessionLiveSubAgent[];
+  activeSubAgentCount?: number;
   approval?: WebSessionApprovalState | null;
   userInput?: WebSessionUserInputState | null;
   errorMessage?: string;
@@ -465,6 +474,8 @@ const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_POLL_MS = 16;
 const WEB_SESSION_RUNTIME_MUTATION_SNAPSHOT_POLL_MS = 180;
 const WEB_SESSION_RUNTIME_MUTATION_TIMEOUT_MS = 2500;
 const WEB_SESSION_RUNTIME_ABORT_TIMEOUT_MS = 5000;
+const WEB_SESSION_MAX_RETAINED_BLOCKS = 400;
+const WEB_SESSION_MIN_RETAINED_BLOCKS = 160;
 const PROCESS_RESTART_REASON = 'process_restart';
 const DEFAULT_RECOVERY_MESSAGE =
   'The previous run was interrupted because the app restarted. Send a new message to continue.';
@@ -666,6 +677,24 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function parseJsonRecord(value: unknown): Record<string, unknown> | undefined {
+  if (isRecord(value)) {
+    return value;
+  }
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+    return undefined;
+  }
+  try {
+    return asRecord(JSON.parse(trimmed));
+  } catch {
+    return undefined;
+  }
+}
+
 function parseHistoryTimeValue(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -706,6 +735,14 @@ function normalizeToolKindValue(value: unknown) {
   const normalized = String(value ?? '').trim();
   if (normalized === 'commandExecution') {
     return 'command_execution';
+  }
+  if (
+    normalized === 'collabAgentToolCall' ||
+    normalized === 'collab_agent_tool_call' ||
+    normalized === 'subAgentToolCall' ||
+    normalized === 'sub_agent_tool_call'
+  ) {
+    return 'sub_agent_tool_call';
   }
   if (normalized === 'mcpToolCall') {
     return 'mcp_tool_call';
@@ -762,6 +799,28 @@ function extractToolSummary(payload: Record<string, unknown>) {
     return toolName || target;
   }
 
+  if (kind === 'sub_agent_tool_call') {
+    const args = asRecord(input?.arguments);
+    const summary =
+      String(
+        input?.task ??
+          input?.prompt ??
+          input?.description ??
+          input?.instruction ??
+          input?.instructions ??
+          input?.objective ??
+          input?.title ??
+          args?.task ??
+          args?.prompt ??
+          args?.description ??
+          args?.instruction ??
+          args?.objective ??
+          args?.title ??
+          ''
+      ).trim() || subtitle;
+    return summary;
+  }
+
   if (kind === 'web_search') {
     const query = String(input?.query ?? '').trim();
     if (query) {
@@ -777,6 +836,359 @@ function extractToolSummary(payload: Record<string, unknown>) {
   }
 
   return subtitle;
+}
+
+function isSubAgentToolKind(kind?: string) {
+  return normalizeToolKindValue(kind) === 'sub_agent_tool_call';
+}
+
+function normalizeActiveTool(block: WebSessionBlock) {
+  if (!block.tool) {
+    return undefined;
+  }
+  const rawKind = block.tool.kind || String(block.tool.meta?.kind ?? '');
+  return {
+    id: block.tool.id,
+    name: block.tool.name,
+    kind: normalizeToolKindValue(rawKind),
+    summary: extractToolSummary({
+      kind: rawKind,
+      in: asRecord(block.tool.input) ?? block.tool.input,
+      meta: block.tool.meta,
+      out: block.tool.output,
+    } as Record<string, unknown>),
+    count: block.tool.commandGroup?.count,
+    groupId: block.tool.commandGroup?.id,
+    startedAt: block.tool.startedAt ?? block.timestamp,
+  };
+}
+
+function normalizeSubAgentTitle(tool: WebSessionToolBlock) {
+  const meta = asRecord(tool.meta);
+  return (
+    String(meta?.title ?? '').trim() ||
+    String(meta?.name ?? '').trim() ||
+    String(tool.name ?? '').trim() ||
+    'Sub Agent'
+  );
+}
+
+function isGenericSubAgentTitle(value: string) {
+  const normalized = String(value ?? '').trim();
+  return normalized === '' || normalized === 'Sub Agent';
+}
+
+function deriveSubAgentTitle(summary: string, fallback: string) {
+  const normalizedFallback = String(fallback ?? '').trim() || 'Sub Agent';
+  if (!isGenericSubAgentTitle(normalizedFallback)) {
+    return normalizedFallback;
+  }
+  const firstLine = String(summary ?? '')
+    .split('\n')
+    .map(line => line.trim())
+    .find(Boolean);
+  if (!firstLine) {
+    return normalizedFallback;
+  }
+  const prefix = firstLine.split(/[：:]/)[0]?.trim() ?? '';
+  if (prefix && prefix.length <= 24) {
+    return prefix;
+  }
+  const compact = firstLine.slice(0, 24).trim();
+  return compact || normalizedFallback;
+}
+
+function normalizeSubAgentReceiverIds(
+  input?: Record<string, unknown>,
+  output?: Record<string, unknown>
+) {
+  const fromValue = (value: unknown) =>
+    Array.isArray(value)
+      ? value.map(item => String(item ?? '').trim()).filter((item): item is string => Boolean(item))
+      : [];
+
+  const direct = fromValue(input?.receiverThreadIds);
+  if (direct.length > 0) {
+    return direct;
+  }
+  const outputIds = fromValue(output?.receiverThreadIds);
+  if (outputIds.length > 0) {
+    return outputIds;
+  }
+
+  const states = asRecord(input?.agentsStates) ?? asRecord(output?.agentsStates);
+  if (!states) {
+    return [];
+  }
+  return Object.keys(states)
+    .map(key => key.trim())
+    .filter(Boolean);
+}
+
+function normalizeSubAgentStateMap(
+  input?: Record<string, unknown>,
+  output?: Record<string, unknown>
+) {
+  const source = asRecord(input?.agentsStates) ?? asRecord(output?.agentsStates);
+  const stateMap = new Map<
+    string,
+    {
+      status: string;
+      message: string;
+    }
+  >();
+  if (!source) {
+    return stateMap;
+  }
+  Object.entries(source).forEach(([id, value]) => {
+    const normalizedID = String(id ?? '').trim();
+    if (!normalizedID) {
+      return;
+    }
+    const record = asRecord(value);
+    stateMap.set(normalizedID, {
+      status: String(record?.status ?? '').trim(),
+      message: String(record?.message ?? '').trim(),
+    });
+  });
+  return stateMap;
+}
+
+function resolveSubAgentSummary(
+  input?: Record<string, unknown>,
+  meta?: Record<string, unknown>,
+  output?: Record<string, unknown>
+) {
+  return extractToolSummary({
+    kind: 'sub_agent_tool_call',
+    in: {
+      ...(output ?? {}),
+      ...(input ?? {}),
+    },
+    meta,
+    out: typeof output === 'string' ? output : undefined,
+  } as Record<string, unknown>);
+}
+
+function normalizeSubAgentOperation(
+  input?: Record<string, unknown>,
+  output?: Record<string, unknown>
+) {
+  return String(input?.tool ?? output?.tool ?? '').trim();
+}
+
+function rememberKnownSubAgents(
+  block: WebSessionBlock,
+  registry: Map<string, WebSessionLiveSubAgent>
+) {
+  if (!block.tool) {
+    return;
+  }
+  const rawKind = block.tool.kind || String(block.tool.meta?.kind ?? '');
+  if (!isSubAgentToolKind(rawKind)) {
+    return;
+  }
+  const input = asRecord(block.tool.input);
+  const output = parseJsonRecord(block.tool.output);
+  const ids = normalizeSubAgentReceiverIds(input, output);
+  if (ids.length === 0) {
+    return;
+  }
+  const meta = asRecord(block.tool.meta);
+  const stateMap = normalizeSubAgentStateMap(input, output);
+  const summary = resolveSubAgentSummary(input, meta, output);
+  const title = deriveSubAgentTitle(summary, normalizeSubAgentTitle(block.tool));
+  const startedAt = block.tool.startedAt ?? block.timestamp;
+
+  ids.forEach(id => {
+    const existing = registry.get(id);
+    const state = stateMap.get(id);
+    const nextSummary = state?.message || summary || existing?.summary || '';
+    registry.set(id, {
+      id,
+      title: existing?.title || title,
+      summary: nextSummary,
+      startedAt: existing?.startedAt ?? startedAt,
+    });
+  });
+}
+
+function normalizeLiveSubAgents(
+  block: WebSessionBlock,
+  registry: Map<string, WebSessionLiveSubAgent>
+): WebSessionLiveSubAgent[] {
+  const rawKind = block.tool?.kind || String(block.tool?.meta?.kind ?? '');
+  if (!block.tool || !isSubAgentToolKind(rawKind)) {
+    return [];
+  }
+  const input = asRecord(block.tool.input);
+  const output = parseJsonRecord(block.tool.output);
+  const meta = asRecord(block.tool.meta);
+  const ids = normalizeSubAgentReceiverIds(input, output);
+  const stateMap = normalizeSubAgentStateMap(input, output);
+  const summary = resolveSubAgentSummary(input, meta, output);
+  const title = deriveSubAgentTitle(summary, normalizeSubAgentTitle(block.tool));
+  const startedAt = block.tool.startedAt ?? block.timestamp;
+
+  if (ids.length === 0) {
+    return [
+      {
+        id: block.tool.id,
+        title,
+        summary,
+        startedAt,
+      },
+    ];
+  }
+
+  return ids.map(id => {
+    const known = registry.get(id);
+    const state = stateMap.get(id);
+    return {
+      id,
+      title: known?.title || title,
+      summary: known?.summary || state?.message || summary,
+      startedAt: known?.startedAt ?? startedAt,
+    };
+  });
+}
+
+function activeSubAgentIDsForBlock(
+  block: WebSessionBlock,
+  registry: Map<string, WebSessionLiveSubAgent>
+) {
+  return normalizeLiveSubAgents(block, registry)
+    .map(agent => String(agent.id ?? '').trim())
+    .filter(Boolean);
+}
+
+function applyAssistantNamedSubAgents(
+  text: string,
+  registry: Map<string, WebSessionLiveSubAgent>,
+  active?: Map<string, WebSessionLiveSubAgent>
+) {
+  const normalizedText = String(text ?? '').trim();
+  if (!normalizedText.includes('已启动')) {
+    return;
+  }
+  const match = normalizedText.match(/已启动\s+(.+?)[。.!?]/);
+  if (!match) {
+    return;
+  }
+  const names = match[1]
+    .split(/[、，,]/)
+    .map(name => name.trim())
+    .filter(Boolean);
+  if (names.length < 2) {
+    return;
+  }
+  const candidates = [...registry.values()]
+    .sort((left, right) => {
+      const leftTime = left.startedAt ?? 0;
+      const rightTime = right.startedAt ?? 0;
+      if (leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+      return left.id.localeCompare(right.id);
+    })
+    .filter(
+      item =>
+        isGenericSubAgentTitle(item.title) ||
+        item.title.startsWith('测试任务') ||
+        item.title.startsWith('Task ') ||
+        item.title === item.summary
+    );
+  if (candidates.length < names.length) {
+    return;
+  }
+  names.forEach((name, index) => {
+    const candidate = candidates[index];
+    if (!candidate) {
+      return;
+    }
+    const next = {
+      ...candidate,
+      title: name,
+    };
+    registry.set(candidate.id, next);
+    if (active?.has(candidate.id)) {
+      active.set(candidate.id, next);
+    }
+  });
+}
+
+function syncActiveSubAgentLifecycle(
+  block: WebSessionBlock,
+  registry: Map<string, WebSessionLiveSubAgent>,
+  active: Map<string, WebSessionLiveSubAgent>
+) {
+  if (!block.tool) {
+    return;
+  }
+  const rawKind = block.tool.kind || String(block.tool.meta?.kind ?? '');
+  if (!isSubAgentToolKind(rawKind)) {
+    return;
+  }
+  const input = asRecord(block.tool.input);
+  const output = parseJsonRecord(block.tool.output);
+  const operation = normalizeSubAgentOperation(input, output);
+  const agents = normalizeLiveSubAgents(block, registry);
+
+  if (operation === 'spawnAgent') {
+    agents.forEach(agent => {
+      active.set(agent.id, registry.get(agent.id) ?? agent);
+    });
+    return;
+  }
+
+  if (block.tool.status === 'running') {
+    agents.forEach(agent => {
+      active.set(agent.id, registry.get(agent.id) ?? agent);
+    });
+    return;
+  }
+
+  const ids = activeSubAgentIDsForBlock(block, registry);
+  ids.forEach(id => {
+    active.delete(id);
+  });
+}
+
+function uniqueActiveSubAgents(items: WebSessionLiveSubAgent[]) {
+  const byId = new Map<string, WebSessionLiveSubAgent>();
+  for (const item of items) {
+    const id = String(item.id ?? '').trim();
+    if (!id) {
+      continue;
+    }
+    byId.set(id, item);
+  }
+  return [...byId.values()].sort((left, right) => {
+    const leftTime = left.startedAt ?? 0;
+    const rightTime = right.startedAt ?? 0;
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    return left.id.localeCompare(right.id);
+  });
+}
+
+function withActiveSubAgents<T extends WebSessionLiveState>(
+  state: T,
+  activeSubAgents: WebSessionLiveSubAgent[]
+): T {
+  if (!state.running) {
+    return state;
+  }
+  const uniqueItems = uniqueActiveSubAgents(activeSubAgents);
+  if (uniqueItems.length === 0) {
+    return state;
+  }
+  return {
+    ...state,
+    activeSubAgents: uniqueItems,
+    activeSubAgentCount: uniqueItems.length,
+  };
 }
 
 function getTransportRetryPayload(payload?: Record<string, unknown>) {
@@ -2371,6 +2783,33 @@ export const useWebSessionStore = defineStore('web-session', () => {
     };
   }
 
+  function trimInactiveSessionEvents(activeSessionId = '') {
+    const nextEvents = { ...eventsBySession.value };
+    let changed = false;
+    Object.entries(eventsBySession.value).forEach(([sessionId, items]) => {
+      if (sessionId === activeSessionId || items.length <= WEB_SESSION_MAX_RETAINED_BLOCKS) {
+        return;
+      }
+      nextEvents[sessionId] = items.slice(-WEB_SESSION_MIN_RETAINED_BLOCKS);
+      const nextMeta = getHistoryMeta(sessionId);
+      historyBySession.value = {
+        ...historyBySession.value,
+        [sessionId]: {
+          ...nextMeta,
+          hasMore: true,
+          beforeCursor:
+            nextEvents[sessionId].length > 0
+              ? String(nextEvents[sessionId][0]?.orderIndex ?? nextMeta.beforeCursor)
+              : nextMeta.beforeCursor,
+        },
+      };
+      changed = true;
+    });
+    if (changed) {
+      eventsBySession.value = nextEvents;
+    }
+  }
+
   function resetSessionEvents(sessionId: string, events: WebSessionBlock[]) {
     eventsBySession.value = {
       ...eventsBySession.value,
@@ -2476,6 +2915,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
           startedAt?: number;
         }
       | undefined;
+    let activeSubAgents = new Map<string, WebSessionLiveSubAgent>();
+    let knownSubAgents = new Map<string, WebSessionLiveSubAgent>();
     let sawAssistantOutput = false;
     let assistantDone = false;
     let firstAssistantOutputAt: number | undefined;
@@ -2502,6 +2943,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         if (!firstAssistantOutputAt && block.timestamp > 0) {
           firstAssistantOutputAt = block.timestamp;
         }
+        applyAssistantNamedSubAgents(block.text, knownSubAgents, activeSubAgents);
       }
       if (block.kind === 'user' && block.timestamp > 0) {
         runStartedAt = block.timestamp;
@@ -2509,6 +2951,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
         assistantDone = false;
         firstAssistantOutputAt = undefined;
         activeTool = undefined;
+        activeSubAgents = new Map();
+        knownSubAgents = new Map();
         errorMessage = '';
         retryState = undefined;
       }
@@ -2522,24 +2966,20 @@ export const useWebSessionStore = defineStore('web-session', () => {
         retryState = undefined;
       }
       if (block.kind === 'tool' && block.tool) {
-        if (block.tool.kind === 'reasoning') {
+        const normalizedToolKind = normalizeToolKindValue(
+          block.tool.kind || String(block.tool.meta?.kind ?? '')
+        );
+        if (normalizedToolKind === 'reasoning') {
+          continue;
+        }
+        if (normalizedToolKind === 'sub_agent_tool_call') {
+          rememberKnownSubAgents(block, knownSubAgents);
+          syncActiveSubAgentLifecycle(block, knownSubAgents, activeSubAgents);
+          retryState = undefined;
           continue;
         }
         if (block.tool.status === 'running') {
-          activeTool = {
-            id: block.tool.id,
-            name: block.tool.name,
-            kind: block.tool.kind,
-            summary: extractToolSummary({
-              kind: block.tool.kind,
-              in: asRecord(block.tool.input) ?? block.tool.input,
-              meta: block.tool.meta,
-              out: block.tool.output,
-            } as Record<string, unknown>),
-            count: block.tool.commandGroup?.count,
-            groupId: block.tool.commandGroup?.id,
-            startedAt: block.tool.startedAt ?? block.timestamp,
-          };
+          activeTool = normalizeActiveTool(block);
           retryState = undefined;
         } else if (activeTool?.id === block.tool.id) {
           activeTool = undefined;
@@ -2548,39 +2988,54 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
       if (block.itemType === 'run_fail') {
         errorMessage = block.text || 'Run failed';
+        activeTool = undefined;
+        activeSubAgents = new Map();
         retryState = undefined;
+      }
+      if (block.itemType === 'run_abort') {
+        activeTool = undefined;
+        activeSubAgents = new Map();
       }
     }
 
     if (assistantState === 'waiting_approval') {
-      return {
-        phase: 'waiting_approval',
-        running: session?.status === 'running',
-        updatedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
-        startedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? runStartedAt,
-        approval,
-        tool: activeTool,
-      };
+      return withActiveSubAgents(
+        {
+          phase: 'waiting_approval',
+          running: session?.status === 'running',
+          updatedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
+          startedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? runStartedAt,
+          approval,
+          tool: activeTool,
+        },
+        [...activeSubAgents.values()]
+      );
     }
 
     if (assistantState === 'waiting_plan_approval') {
-      return {
-        phase: 'waiting_plan_approval',
-        running: false,
-        updatedAt: assistantStateUpdatedAt || updatedAt,
-        startedAt: assistantStateUpdatedAt ?? runStartedAt,
-      };
+      return withActiveSubAgents(
+        {
+          phase: 'waiting_plan_approval',
+          running: false,
+          updatedAt: assistantStateUpdatedAt || updatedAt,
+          startedAt: assistantStateUpdatedAt ?? runStartedAt,
+        },
+        [...activeSubAgents.values()]
+      );
     }
 
     if (assistantState === 'waiting_input') {
-      return {
-        phase: 'waiting_input',
-        running: session?.status === 'running',
-        updatedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
-        startedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? runStartedAt,
-        tool: activeTool,
-        userInput,
-      };
+      return withActiveSubAgents(
+        {
+          phase: 'waiting_input',
+          running: session?.status === 'running',
+          updatedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
+          startedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? runStartedAt,
+          tool: activeTool,
+          userInput,
+        },
+        [...activeSubAgents.values()]
+      );
     }
 
     if (session?.status === 'running') {
@@ -2590,42 +3045,54 @@ export const useWebSessionStore = defineStore('web-session', () => {
         assistantStateUpdatedAt != null &&
         assistantStateUpdatedAt > retryState.updatedAt;
       if (retryState && !hasNewerWorkingSummary) {
-        return {
-          phase: 'retrying',
-          running: true,
-          updatedAt: retryState.updatedAt,
-          startedAt: runStartedAt,
-          retry: {
-            code: retryState.code,
-            message: retryState.message,
-            attempt: retryState.attempt,
-            maxAttempts: retryState.maxAttempts,
+        return withActiveSubAgents(
+          {
+            phase: 'retrying',
+            running: true,
+            updatedAt: retryState.updatedAt,
+            startedAt: runStartedAt,
+            retry: {
+              code: retryState.code,
+              message: retryState.message,
+              attempt: retryState.attempt,
+              maxAttempts: retryState.maxAttempts,
+            },
           },
-        };
+          [...activeSubAgents.values()]
+        );
       }
       if (activeTool) {
-        return {
-          phase: 'tool',
-          running: true,
-          updatedAt,
-          startedAt: activeTool.startedAt ?? assistantStateUpdatedAt ?? runStartedAt,
-          tool: activeTool,
-        };
+        return withActiveSubAgents(
+          {
+            phase: 'tool',
+            running: true,
+            updatedAt,
+            startedAt: activeTool.startedAt ?? assistantStateUpdatedAt ?? runStartedAt,
+            tool: activeTool,
+          },
+          [...activeSubAgents.values()]
+        );
       }
       if (sawAssistantOutput && !assistantDone) {
-        return {
-          phase: 'thinking',
+        return withActiveSubAgents(
+          {
+            phase: 'thinking',
+            running: true,
+            updatedAt,
+            startedAt: firstAssistantOutputAt ?? assistantStateUpdatedAt ?? runStartedAt,
+          },
+          [...activeSubAgents.values()]
+        );
+      }
+      return withActiveSubAgents(
+        {
+          phase: 'starting',
           running: true,
           updatedAt,
-          startedAt: firstAssistantOutputAt ?? assistantStateUpdatedAt ?? runStartedAt,
-        };
-      }
-      return {
-        phase: 'starting',
-        running: true,
-        updatedAt,
-        startedAt: assistantStateUpdatedAt ?? runStartedAt,
-      };
+          startedAt: assistantStateUpdatedAt ?? runStartedAt,
+        },
+        [...activeSubAgents.values()]
+      );
     }
 
     if (session?.status === 'done') {
@@ -4231,6 +4698,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     rejectSession,
     answerUserInput,
     loadMoreHistory,
+    trimInactiveSessionEvents,
     updateModel,
     updateClaudeRuntime,
     updateReasoningEffort,

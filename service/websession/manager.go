@@ -5245,6 +5245,8 @@ func codexToolName(item map[string]any) string {
 		return "Context Compaction"
 	case "mcp_tool_call":
 		return "McpToolCall"
+	case "sub_agent_tool_call":
+		return "Sub Agent"
 	case "file_change":
 		return "FileChange"
 	case "reasoning":
@@ -5287,6 +5289,9 @@ func codexToolMeta(item map[string]any) map[string]any {
 	}
 	if kind == "context_compaction" {
 		subtitle = contextCompactionSubtitle(item)
+	}
+	if kind == "sub_agent_tool_call" {
+		subtitle = firstNonEmpty(subAgentToolCallSummary(item), subtitle)
 	}
 	return map[string]any{
 		"kind":     kind,
@@ -5372,6 +5377,8 @@ func normalizeCodexItemType(value string) string {
 		return "context_compaction"
 	case "mcpToolCall":
 		return "mcp_tool_call"
+	case "collabAgentToolCall", "collab_agent_tool_call", "subAgentToolCall", "sub_agent_tool_call":
+		return "sub_agent_tool_call"
 	case "fileChange":
 		return "file_change"
 	case "webSearch":

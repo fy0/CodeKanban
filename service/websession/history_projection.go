@@ -674,6 +674,11 @@ func compactToolSummary(kind string, input any, meta map[string]any, output stri
 			return summary
 		}
 		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
+	case "sub_agent_tool_call":
+		if summary := subAgentToolCallSummary(input); summary != "" {
+			return summary
+		}
+		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
 	case "web_search":
 		if summary := webSearchSummary(input); summary != "" {
 			return summary
@@ -783,6 +788,35 @@ func extractMcpArgumentHint(value any) string {
 		stringValue(record["name"]),
 		stringValue(record["id"]),
 	))
+}
+
+func subAgentToolCallSummary(input any) string {
+	record := decodeRawObject(input)
+	if len(record) == 0 {
+		return ""
+	}
+	for _, key := range []string{
+		"task",
+		"prompt",
+		"description",
+		"instruction",
+		"instructions",
+		"objective",
+		"title",
+		"name",
+	} {
+		if value := strings.TrimSpace(stringValue(record[key])); value != "" {
+			return value
+		}
+	}
+	if args := decodeRawObject(record["arguments"]); len(args) > 0 {
+		for _, key := range []string{"task", "prompt", "description", "instruction", "objective", "title"} {
+			if value := strings.TrimSpace(stringValue(args[key])); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func decodeRawArray(raw any) []map[string]any {

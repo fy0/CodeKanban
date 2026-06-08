@@ -1111,6 +1111,55 @@
                   </div>
                   <div class="composer-settings">
                     <n-popover
+                      v-if="hasActiveSubAgents"
+                      trigger="hover"
+                      placement="top-end"
+                      :show-arrow="true"
+                    >
+                      <template #trigger>
+                        <button
+                          type="button"
+                          class="composer-sub-agent-trigger"
+                          :title="t('webSession.liveSubAgentCount', { count: activeSubAgentCount })"
+                          :aria-label="
+                            t('webSession.liveSubAgentCount', { count: activeSubAgentCount })
+                          "
+                        >
+                          <span class="composer-sub-agent-trigger-pulse"></span>
+                          <span class="composer-sub-agent-trigger-count">{{
+                            activeSubAgentCount
+                          }}</span>
+                        </button>
+                      </template>
+                      <div class="live-sub-agent-popover">
+                        <div class="live-sub-agent-popover-title">
+                          {{
+                            t('webSession.liveSubAgentPopoverTitle', { count: activeSubAgentCount })
+                          }}
+                        </div>
+                        <div class="live-sub-agent-list">
+                          <div
+                            v-for="agent in activeSubAgents"
+                            :key="agent.id"
+                            class="live-sub-agent-item"
+                          >
+                            <span class="live-sub-agent-dot"></span>
+                            <div class="live-sub-agent-copy">
+                              <div class="live-sub-agent-title" :title="agent.title">
+                                {{ agent.title }}
+                              </div>
+                              <div
+                                class="live-sub-agent-summary"
+                                :title="agent.summary || t('webSession.liveSubAgentNoSummary')"
+                              >
+                                {{ agent.summary || t('webSession.liveSubAgentNoSummary') }}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </n-popover>
+                    <n-popover
                       trigger="click"
                       placement="top-end"
                       :show-arrow="true"
@@ -3503,6 +3552,11 @@ const isOptimisticExecuteFeedbackActive = computed(
 const displayLiveState = computed(() =>
   resolveOptimisticWebSessionLiveState(liveState.value, currentSubmitEntry.value)
 );
+const activeSubAgents = computed(() => displayLiveState.value.activeSubAgents ?? []);
+const activeSubAgentCount = computed(
+  () => displayLiveState.value.activeSubAgentCount ?? activeSubAgents.value.length
+);
+const hasActiveSubAgents = computed(() => activeSubAgentCount.value > 0);
 const isSubmittingPlanExecution = computed(() => currentSubmitEntry.value?.kind === 'execute_plan');
 const showRuntimeStrip = computed(() => {
   if (pendingApproval.value || pendingUserInput.value) {
@@ -7155,6 +7209,9 @@ function compactToolLabel(tool?: { kind?: string; meta?: Record<string, unknown>
   if (kind === 'mcp_tool_call') {
     return t('webSession.toolMcpToolCall');
   }
+  if (kind === 'sub_agent_tool_call') {
+    return t('webSession.toolSubAgentCall');
+  }
   if (kind === 'web_search') {
     return t('webSession.toolWebSearch');
   }
@@ -10351,11 +10408,14 @@ watch(currentDraftSessionId, () => {
 
 watch(
   () => currentSession.value?.id,
-  () => {
+  (sessionId, previousSessionId) => {
     showQuickInputPopover.value = false;
     resetMobileComposerScrollState();
     if (isMobile.value) {
       isMobileComposerSettingsExpanded.value = false;
+    }
+    if (previousSessionId && previousSessionId !== sessionId) {
+      webSessionStore.trimInactiveSessionEvents(sessionId || '');
     }
   }
 );
@@ -10377,6 +10437,7 @@ watch(
   () => props.isActive,
   active => {
     if (!active) {
+      webSessionStore.trimInactiveSessionEvents(currentRealSession.value?.id || '');
       mobileKeyboard.reset();
       setMobileComposerFocusState(false);
       return;
@@ -13967,8 +14028,129 @@ defineExpose({
 .composer-settings {
   display: flex;
   align-items: center;
+  gap: 8px;
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+.composer-sub-agent-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 9px 0 8px;
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 24%, var(--n-border-color));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 90%, var(--n-primary-color) 10%);
+  color: var(--n-primary-color, #7c3aed);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.composer-sub-agent-trigger:hover,
+.composer-sub-agent-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 42%, var(--n-border-color));
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 84%, var(--n-primary-color) 16%);
+  box-shadow: 0 10px 18px rgba(124, 58, 237, 0.12);
+}
+
+.composer-sub-agent-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--n-primary-color) 65%, white);
+  outline-offset: 2px;
+}
+
+.composer-sub-agent-trigger:active {
+  transform: translateY(1px);
+}
+
+.composer-sub-agent-trigger-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 34%, transparent);
+  animation: livePulse 1.6s ease-in-out infinite;
+}
+
+.composer-sub-agent-trigger-count {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.live-sub-agent-popover {
+  width: min(420px, 72vw);
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.live-sub-agent-popover-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.live-sub-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.live-sub-agent-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.live-sub-agent-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--n-primary-color) 85%, white);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
+}
+
+.live-sub-agent-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.live-sub-agent-title {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-sub-agent-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--n-text-color-2, #4b5563);
+  word-break: break-word;
+  white-space: normal;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .composer-settings-trigger {
@@ -14805,6 +14987,12 @@ defineExpose({
 
   .composer-config.is-mobile .composer-settings {
     margin-left: auto;
+  }
+
+  .composer-config.is-mobile .composer-sub-agent-trigger {
+    min-width: 26px;
+    height: 26px;
+    padding: 0 8px 0 7px;
   }
 
   .runtime-strip {

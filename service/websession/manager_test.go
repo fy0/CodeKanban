@@ -2337,6 +2337,91 @@ func TestActiveCallTimeoutSessionOverrideEnabledOverridesGlobalOff(t *testing.T)
 	t.Fatalf("expected session override to trigger active call timeout, got %#v", rawEvents)
 }
 
+func TestActiveCallTimeoutSkipsSubAgentToolCalls(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
+		EnabledMode:          utils.SettingModeOn,
+		TimeoutMode:          utils.WebSessionActiveCallTimeoutModeCustom,
+		CustomTimeoutSeconds: 10,
+		PromptTemplate:       "Continue after ${call}.",
+		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
+			UseDefault: false,
+			Tool:       true,
+		},
+	})
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "active_call_timeout_sub_agent"),
+		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
+			return timeoutConfig
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "delegate research", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	call := waitForTrackedActiveCall(t, manager, created.ID, activeCallTimeoutKindSubAgent)
+	setTrackedActiveCallStartedAt(t, manager, created.ID, call.ToolID, time.Now().Add(-12*time.Second))
+	manager.RefreshDeveloperConfig()
+	time.Sleep(150 * time.Millisecond)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	for _, event := range rawEvents {
+		if event.Type == "run_abort" && stringValue(event.Payload["reason"]) == activeCallTimeoutReason {
+			t.Fatalf("expected sub agent call to skip active call timeout, got %#v", rawEvents)
+		}
+	}
+	messages := userMessageTexts(rawEvents)
+	if len(messages) != 1 {
+		t.Fatalf("expected no automatic continue message for sub agent timeout, got %#v", messages)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if !historyItemsHaveToolKind(snapshot.History.Items, "sub_agent_tool_call") {
+		t.Fatalf("expected snapshot to include normalized sub agent tool call, got %#v", snapshot.History.Items)
+	}
+	var subAgentItem *HistoryItem
+	for idx := range snapshot.History.Items {
+		item := &snapshot.History.Items[idx]
+		if item.Tool != nil && item.Tool.Kind == "sub_agent_tool_call" {
+			subAgentItem = item
+			break
+		}
+	}
+	if subAgentItem == nil {
+		t.Fatalf("expected snapshot to include one sub agent tool item, got %#v", snapshot.History.Items)
+	}
+	if got := stringValue(subAgentItem.Tool.Meta["subtitle"]); got != "Inspect current sub-agent support" {
+		t.Fatalf("expected sub agent subtitle to preserve prompt summary, got %q", got)
+	}
+
+	if err := manager.AbortSession(created.ID); err != nil {
+		t.Fatalf("AbortSession returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
 func TestActiveCallTimeoutUsesLatestTrackedCall(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -4662,6 +4747,22 @@ function emitMcpToolCallStart() {
   });
 }
 
+function emitSubAgentToolCallStart() {
+  send({
+    method: 'item/started',
+    params: {
+      item: {
+        type: 'collabAgentToolCall',
+        id: 'sub_agent_timeout',
+        title: 'Research agent',
+        prompt: 'Inspect current sub-agent support',
+      },
+      threadId,
+      turnId,
+    },
+  });
+}
+
 function emitFileChangeStart() {
   send({
     method: 'item/started',
@@ -5013,6 +5114,11 @@ rl.on('line', line => {
         return;
       }
       finishTurn('continued');
+      return;
+    }
+
+    if (mode === 'active_call_timeout_sub_agent') {
+      emitSubAgentToolCallStart();
       return;
     }
 

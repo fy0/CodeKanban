@@ -878,6 +878,48 @@ describe('webSession loading behavior', () => {
     });
   });
 
+  it('trims inactive session history to a recent retained window', async () => {
+    const store = useWebSessionStore();
+    const active = makeSession({ id: 'session-active' });
+    const inactive = makeSession({ id: 'session-inactive', orderIndex: 900, title: 'Inactive' });
+
+    listMock.mockResolvedValue([active, inactive]);
+    snapshotMock.mockImplementation(async (_projectId: string, sessionId: string) => ({
+      session: sessionId === active.id ? active : inactive,
+      history: {
+        items: Array.from({ length: 420 }, (_, index) => ({
+          id: `${sessionId}-${index + 1}`,
+          oi: index + 1,
+          kd: 'assistant',
+          tp: 'message',
+          txt: `message ${index + 1}`,
+          ts2: Date.parse('2026-04-09T10:00:00.000Z') + index,
+        })),
+        hasMore: false,
+        beforeCursor: '',
+        total: 420,
+      },
+      pendingInputs: [],
+      scheduledInputs: [],
+    }));
+
+    await store.loadSessions(active.projectId);
+    await store.loadSessionSnapshot(active.projectId, active.id);
+    await store.loadSessionSnapshot(inactive.projectId, inactive.id);
+
+    expect(store.getBlocks(inactive.id)).toHaveLength(420);
+
+    store.trimInactiveSessionEvents(active.id);
+
+    const trimmed = store.getBlocks(inactive.id);
+    expect(trimmed).toHaveLength(160);
+    expect(trimmed[0]?.orderIndex).toBe(261);
+    expect(store.getHistoryMeta(inactive.id)).toMatchObject({
+      hasMore: true,
+      beforeCursor: '261',
+    });
+  });
+
   it('falls back to HTTP snapshots when a send only receives an ack', async () => {
     vi.useFakeTimers();
     window.setTimeout = setTimeout;
@@ -1096,6 +1138,272 @@ describe('webSession loading behavior', () => {
 
     expect(handleCompleted).toHaveBeenCalledTimes(1);
     store.emitter.off('ai:completed', handleCompleted);
+  });
+
+  it('derives active sub-agent count and summaries from running tool blocks', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-sub-agents',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 3,
+      turnCount: 1,
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          {
+            id: 'history-user',
+            oi: 1,
+            kd: 'user',
+            tp: 'user_message',
+            txt: 'delegate work',
+            ts2: Date.parse('2026-04-09T10:00:00.000Z'),
+          },
+          {
+            id: 'history-sub-agent-1',
+            oi: 2,
+            kd: 'tool',
+            tp: 'sub_agent_tool_call',
+            ts2: Date.parse('2026-04-09T10:00:01.000Z'),
+            tl: {
+              id: 'sub-agent-1',
+              name: 'Sub Agent',
+              kind: 'collabAgentToolCall',
+              st: 'running',
+              in: {
+                title: 'Research agent',
+                prompt: 'Inspect current sub-agent support',
+              },
+              meta: {
+                kind: 'sub_agent_tool_call',
+                title: 'Research agent',
+                subtitle: 'Inspect current sub-agent support',
+              },
+            },
+          },
+          {
+            id: 'history-sub-agent-2',
+            oi: 3,
+            kd: 'tool',
+            tp: 'sub_agent_tool_call',
+            ts2: Date.parse('2026-04-09T10:00:02.000Z'),
+            tl: {
+              id: 'sub-agent-2',
+              name: 'Sub Agent',
+              kind: 'subAgentToolCall',
+              st: 'running',
+              in: {
+                title: 'Patch agent',
+                task: 'Update timeout filtering',
+              },
+              meta: {
+                kind: 'sub_agent_tool_call',
+                title: 'Patch agent',
+                subtitle: 'Update timeout filtering',
+              },
+            },
+          },
+        ],
+        hasMore: false,
+        total: 3,
+      },
+      pendingInputs: [],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getLiveState(session.id)).toMatchObject({
+      running: true,
+      activeSubAgentCount: 2,
+      activeSubAgents: [
+        {
+          id: 'sub-agent-1',
+          title: 'Research agent',
+          summary: 'Inspect current sub-agent support',
+        },
+        {
+          id: 'sub-agent-2',
+          title: 'Patch agent',
+          summary: 'Update timeout filtering',
+        },
+      ],
+    });
+  });
+
+  it('expands one running wait block into multiple active sub agents using receiverThreadIds', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-sub-agent-wait',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 7,
+      turnCount: 1,
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          {
+            id: 'history-user',
+            oi: 1,
+            kd: 'user',
+            tp: 'user_message',
+            txt: 'start three agents',
+            ts2: Date.parse('2026-04-09T10:00:00.000Z'),
+          },
+          {
+            id: 'spawn-1',
+            oi: 2,
+            kd: 'tool',
+            tp: 'sub_agent_tool_call',
+            ts2: Date.parse('2026-04-09T10:00:01.000Z'),
+            tl: {
+              id: 'call-1',
+              name: 'Sub Agent',
+              kind: 'collabAgentToolCall',
+              st: 'done',
+              in: {
+                prompt: 'Wait at least 35 seconds',
+                receiverThreadIds: ['agent-1'],
+              },
+              out: JSON.stringify({
+                receiverThreadIds: ['agent-1'],
+                agentsStates: {
+                  'agent-1': { message: null, status: 'pendingInit' },
+                },
+              }),
+              meta: {
+                kind: 'sub_agent_tool_call',
+                title: 'Sub Agent',
+                subtitle: 'Wait at least 35 seconds',
+              },
+            },
+          },
+          {
+            id: 'spawn-2',
+            oi: 3,
+            kd: 'tool',
+            tp: 'sub_agent_tool_call',
+            ts2: Date.parse('2026-04-09T10:00:02.000Z'),
+            tl: {
+              id: 'call-2',
+              name: 'Sub Agent',
+              kind: 'collabAgentToolCall',
+              st: 'done',
+              in: {
+                prompt: 'Wait at least 36 seconds',
+                receiverThreadIds: ['agent-2'],
+              },
+              out: JSON.stringify({
+                receiverThreadIds: ['agent-2'],
+                agentsStates: {
+                  'agent-2': { message: null, status: 'pendingInit' },
+                },
+              }),
+              meta: {
+                kind: 'sub_agent_tool_call',
+                title: 'Sub Agent',
+                subtitle: 'Wait at least 36 seconds',
+              },
+            },
+          },
+          {
+            id: 'spawn-3',
+            oi: 4,
+            kd: 'tool',
+            tp: 'sub_agent_tool_call',
+            ts2: Date.parse('2026-04-09T10:00:03.000Z'),
+            tl: {
+              id: 'call-3',
+              name: 'Sub Agent',
+              kind: 'collabAgentToolCall',
+              st: 'done',
+              in: {
+                prompt: 'Wait at least 37 seconds',
+                receiverThreadIds: ['agent-3'],
+              },
+              out: JSON.stringify({
+                receiverThreadIds: ['agent-3'],
+                agentsStates: {
+                  'agent-3': { message: null, status: 'pendingInit' },
+                },
+              }),
+              meta: {
+                kind: 'sub_agent_tool_call',
+                title: 'Sub Agent',
+                subtitle: 'Wait at least 37 seconds',
+              },
+            },
+          },
+          {
+            id: 'assistant-names',
+            oi: 4.5,
+            kd: 'assistant',
+            tp: 'agent_message',
+            txt: '已启动 Locke、Singer、Halley。现在对 3 个 agent 分别等待，最长 90 秒。',
+            ts2: Date.parse('2026-04-09T10:00:03.500Z'),
+            dn: true,
+          },
+          {
+            id: 'wait-running',
+            oi: 5,
+            kd: 'tool',
+            tp: 'sub_agent_tool_call',
+            ts2: Date.parse('2026-04-09T10:00:04.000Z'),
+            tl: {
+              id: 'wait-call',
+              name: 'Sub Agent',
+              kind: 'collabAgentToolCall',
+              st: 'running',
+              in: {
+                receiverThreadIds: ['agent-1', 'agent-2', 'agent-3'],
+                agentsStates: {},
+              },
+              meta: {
+                kind: 'sub_agent_tool_call',
+                title: 'Sub Agent',
+                subtitle: '',
+              },
+            },
+          },
+        ],
+        hasMore: false,
+        total: 5,
+      },
+      pendingInputs: [],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getLiveState(session.id)).toMatchObject({
+      running: true,
+      activeSubAgentCount: 3,
+      activeSubAgents: [
+        {
+          id: 'agent-1',
+          title: 'Locke',
+          summary: 'Wait at least 35 seconds',
+        },
+        {
+          id: 'agent-2',
+          title: 'Singer',
+          summary: 'Wait at least 36 seconds',
+        },
+        {
+          id: 'agent-3',
+          title: 'Halley',
+          summary: 'Wait at least 37 seconds',
+        },
+      ],
+    });
   });
 
   it('suppresses completion notifications while pending inputs remain queued', async () => {

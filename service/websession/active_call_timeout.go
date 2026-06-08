@@ -20,9 +20,10 @@ const (
 type activeCallTimeoutKind string
 
 const (
-	activeCallTimeoutKindMCP     activeCallTimeoutKind = "mcp"
-	activeCallTimeoutKindCommand activeCallTimeoutKind = "command"
-	activeCallTimeoutKindTool    activeCallTimeoutKind = "tool"
+	activeCallTimeoutKindMCP      activeCallTimeoutKind = "mcp"
+	activeCallTimeoutKindCommand  activeCallTimeoutKind = "command"
+	activeCallTimeoutKindTool     activeCallTimeoutKind = "tool"
+	activeCallTimeoutKindSubAgent activeCallTimeoutKind = "sub_agent"
 )
 
 type activeCallTimeoutSettings struct {
@@ -387,6 +388,8 @@ func activeCallTimeoutKindFromTool(toolKind string) (activeCallTimeoutKind, bool
 		return activeCallTimeoutKindMCP, true
 	case "command_execution":
 		return activeCallTimeoutKindCommand, true
+	case "sub_agent_tool_call":
+		return activeCallTimeoutKindSubAgent, true
 	case "", "agent_message", "user_message", "reasoning", "plan", "context_compaction":
 		return "", false
 	default:
@@ -465,6 +468,8 @@ func (s activeCallTimeoutSettings) tracks(kind activeCallTimeoutKind) bool {
 		return s.TrackCommand
 	case activeCallTimeoutKindTool:
 		return s.TrackTool
+	case activeCallTimeoutKindSubAgent:
+		return false
 	default:
 		return false
 	}

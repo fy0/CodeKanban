@@ -8,6 +8,7 @@ const ACTIVITY_DISPLAY_TOOL_KINDS = [
   'command_execution',
   'file_change',
   'mcp_tool_call',
+  'sub_agent_tool_call',
   'web_search',
   'reasoning',
 ] as const;
@@ -27,6 +28,14 @@ export function normalizeWebSessionActivityToolKind(value: string | undefined) {
   }
   if (normalized === 'contextCompaction') {
     return 'context_compaction';
+  }
+  if (
+    normalized === 'collabAgentToolCall' ||
+    normalized === 'collab_agent_tool_call' ||
+    normalized === 'subAgentToolCall' ||
+    normalized === 'sub_agent_tool_call'
+  ) {
+    return 'sub_agent_tool_call';
   }
   if (normalized === 'mcpToolCall') {
     return 'mcp_tool_call';
