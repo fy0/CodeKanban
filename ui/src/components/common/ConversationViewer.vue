@@ -9,6 +9,22 @@
         @scroll="handleConversationScroll"
       >
         <div
+          v-if="showLoadEarlierIndicator"
+          class="conversation-history-banner"
+          :class="{ 'is-loading': loadingEarlier }"
+        >
+          <span>{{
+            loadingEarlier ? t('common.loading') : t('terminal.loadingEarlierMessages')
+          }}</span>
+        </div>
+
+        <div
+          v-if="windowBeforeHeight > 0"
+          class="conversation-spacer"
+          :style="{ height: `${windowBeforeHeight}px` }"
+        ></div>
+
+        <div
           v-if="useVirtualizedView && virtualBeforeHeight > 0"
           class="conversation-spacer"
           :style="{ height: `${virtualBeforeHeight}px` }"
@@ -313,6 +329,14 @@ export interface ConversationViewerNavState {
   hasNext: boolean;
 }
 
+export interface ConversationWindowState {
+  totalMessages: number;
+  totalUserMessages: number;
+  userMessagesBeforeWindow: number;
+  windowStart: number;
+  hasMoreBefore: boolean;
+}
+
 interface DisplayMessageItem {
   key: string;
   sourceIndex: number;
@@ -352,6 +376,9 @@ const props = withDefaults(
     emptyText?: string;
     useRelativeTime?: boolean;
     loadToolResult?: ((toolUseId: string) => Promise<string | null | undefined>) | null;
+    conversationWindow?: ConversationWindowState | null;
+    loadingEarlier?: boolean;
+    loadEarlier?: (() => Promise<unknown> | void) | null;
   }>(),
   {
     loading: false,
@@ -361,6 +388,9 @@ const props = withDefaults(
     emptyText: '',
     useRelativeTime: true,
     loadToolResult: null,
+    conversationWindow: null,
+    loadingEarlier: false,
+    loadEarlier: null,
   }
 );
 
@@ -390,6 +420,7 @@ const imagePreviewRequests = new Map<string, Promise<void>>();
 const messageRefs = new Map<string, HTMLElement>();
 const renderKeyToElement = new Map<string, HTMLElement>();
 const observedRenderKeyByElement = new WeakMap<HTMLElement, string>();
+const pendingHistoryAnchor = ref<{ previousTop: number; previousHeight: number } | null>(null);
 
 let navigationFrame = 0;
 let messageResizeObserver: ResizeObserver | null = null;
@@ -407,6 +438,17 @@ const displayMessages = computed<DisplayMessageItem[]>(() => {
 });
 
 const emptyText = computed(() => props.emptyText || t('terminal.noMessages'));
+const conversationWindow = computed<ConversationWindowState>(() => {
+  return (
+    props.conversationWindow ?? {
+      totalMessages: props.messages.length,
+      totalUserMessages: userMessageKeys.value.length,
+      userMessagesBeforeWindow: 0,
+      windowStart: 0,
+      hasMoreBefore: false,
+    }
+  );
+});
 const markdownRenderOptions = computed(() => ({
   enableCodeBlockCopy: true,
   codeBlockCopyLabel: 'copy',
@@ -420,6 +462,23 @@ const userMessageKeys = computed(() => {
 
 const userMessageIndexMap = computed(() => {
   return new Map(userMessageKeys.value.map((key, index) => [key, index]));
+});
+
+const averageMeasuredHeight = computed(() => {
+  if (renderMessages.value.length === 0) {
+    return 160;
+  }
+  const total = renderMessages.value.reduce((sum, item) => sum + item.estimatedHeight, 0);
+  return Math.max(MIN_MEASURED_MESSAGE_HEIGHT, Math.round(total / renderMessages.value.length));
+});
+
+const windowBeforeHeight = computed(() => {
+  const start = Math.max(0, conversationWindow.value.windowStart);
+  return start * averageMeasuredHeight.value;
+});
+
+const showLoadEarlierIndicator = computed(() => {
+  return conversationWindow.value.hasMoreBefore || props.loadingEarlier;
 });
 
 function isToolResult(msg: ConversationMessage) {
@@ -573,7 +632,11 @@ const visibleRenderMessages = computed(() => {
 });
 
 const navState = computed<ConversationViewerNavState>(() => {
-  const totalUserMessages = userMessageKeys.value.length;
+  const visibleUserCount = userMessageKeys.value.length;
+  const totalUserMessages = Math.max(
+    conversationWindow.value.totalUserMessages,
+    conversationWindow.value.userMessagesBeforeWindow + visibleUserCount
+  );
   if (totalUserMessages === 0) {
     return {
       currentUserPosition: 0,
@@ -586,12 +649,16 @@ const navState = computed<ConversationViewerNavState>(() => {
   const currentIndex = activeUserMessageKey.value
     ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
     : 0;
+  const currentUserPosition = Math.min(
+    totalUserMessages,
+    conversationWindow.value.userMessagesBeforeWindow + currentIndex + 1
+  );
 
   return {
-    currentUserPosition: currentIndex + 1,
+    currentUserPosition,
     totalUserMessages,
-    hasPrev: currentIndex > 0,
-    hasNext: currentIndex < totalUserMessages - 1,
+    hasPrev: currentUserPosition > 1,
+    hasNext: currentUserPosition < totalUserMessages,
   };
 });
 
@@ -621,6 +688,11 @@ watch(
       return;
     }
     await nextTick();
+    if (restoreHistoryAnchor()) {
+      virtualizer.syncScrollPosition();
+      scheduleNavigationSync();
+      return;
+    }
     virtualizer.syncScrollPosition();
     scheduleNavigationSync();
   },
@@ -630,6 +702,9 @@ watch(
 watch(
   () => props.messages,
   async () => {
+    if (pendingHistoryAnchor.value) {
+      return;
+    }
     await nextTick();
     resetScrollToPrimaryMessage();
   },
@@ -645,6 +720,7 @@ watch(
     activeUserMessageKey.value = null;
     clearMessageElements();
     cleanupPreviewCache();
+    pendingHistoryAnchor.value = null;
     imagePreviewVisible.value = false;
     imagePreviewImages.value = [];
     imagePreviewIndex.value = 0;
@@ -800,6 +876,40 @@ function syncActiveUserMessage() {
 function handleConversationScroll() {
   virtualizer.syncScrollPosition();
   scheduleNavigationSync();
+  maybeLoadEarlierHistory();
+}
+
+function restoreHistoryAnchor() {
+  const anchor = pendingHistoryAnchor.value;
+  const container = conversationContainerRef.value;
+  if (!anchor || !container) {
+    return false;
+  }
+  container.scrollTop = anchor.previousTop + (container.scrollHeight - anchor.previousHeight);
+  pendingHistoryAnchor.value = null;
+  return true;
+}
+
+function maybeLoadEarlierHistory() {
+  const container = conversationContainerRef.value;
+  if (
+    !container ||
+    !props.loadEarlier ||
+    props.loadingEarlier ||
+    !conversationWindow.value.hasMoreBefore
+  ) {
+    return;
+  }
+  if (container.scrollTop > 120) {
+    return;
+  }
+  pendingHistoryAnchor.value = {
+    previousTop: container.scrollTop,
+    previousHeight: container.scrollHeight,
+  };
+  void Promise.resolve(props.loadEarlier()).catch(() => {
+    pendingHistoryAnchor.value = null;
+  });
 }
 
 function handleMarkdownLinkClick(event: MouseEvent) {
@@ -904,11 +1014,29 @@ function scrollToUserMessageByKey(targetKey: string, behavior: ScrollBehavior = 
   });
 }
 
-function goToPrevUserMessage() {
+async function goToPrevUserMessage() {
   const currentIndex = activeUserMessageKey.value
     ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
     : 0;
   if (currentIndex <= 0) {
+    if (conversationWindow.value.hasMoreBefore && props.loadEarlier && !props.loadingEarlier) {
+      const container = conversationContainerRef.value;
+      if (container) {
+        pendingHistoryAnchor.value = {
+          previousTop: container.scrollTop,
+          previousHeight: container.scrollHeight,
+        };
+      }
+      await Promise.resolve(props.loadEarlier()).catch(() => {
+        pendingHistoryAnchor.value = null;
+      });
+      await nextTick();
+      const nextIndex = Math.max(0, userMessageKeys.value.length - 1);
+      const nextKey = userMessageKeys.value[nextIndex];
+      if (nextKey) {
+        scrollToUserMessageByKey(nextKey, 'smooth');
+      }
+    }
     return;
   }
   scrollToUserMessageByKey(userMessageKeys.value[currentIndex - 1], 'smooth');
@@ -1138,6 +1266,32 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 18px 16px 12px 8px;
+}
+
+.conversation-history-banner {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+  pointer-events: none;
+}
+
+.conversation-history-banner span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--n-color-embedded) 92%, white 8%);
+  color: var(--n-text-color-3);
+  font-size: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.conversation-history-banner.is-loading span {
+  color: var(--n-primary-color);
 }
 
 .conversation-link-confirm {

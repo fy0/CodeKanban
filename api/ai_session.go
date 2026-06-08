@@ -122,6 +122,29 @@ func registerAISessionRoutes(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{aiSessionTag}
 	})
 
+	huma.Get(group, "/ai-sessions/{id}/conversation/window", func(ctx context.Context, input *struct {
+		ID           string `path:"id" doc:"会话ID（数据库ID）"`
+		BeforeCursor string `query:"beforeCursor"`
+		Limit        int    `query:"limit" default:"80"`
+	}) (*h.ItemResponse[service.ConversationWindowResponse], error) {
+		conversation, err := svc.GetSessionConversationWindow(ctx, input.ID, input.BeforeCursor, input.Limit)
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			}
+			return nil, huma.Error404NotFound("session not found or failed to load conversation")
+		}
+
+		resp := h.NewItemResponse(*conversation)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "ai-session-get-conversation-window"
+		op.Summary = "获取 AI 会话对话窗口"
+		op.Description = "返回指定会话的分页对话窗口，使用数据库ID"
+		op.Tags = []string{aiSessionTag}
+	})
+
 	// Get a (possibly large) tool_result content on demand (by database ID).
 	huma.Get(group, "/ai-sessions/{id}/conversation/tool-results/{toolUseId}", func(ctx context.Context, input *struct {
 		ID        string `path:"id" doc:"会话ID（数据库ID）"`
@@ -164,6 +187,34 @@ func registerAISessionRoutes(app *fiber.App, group *huma.Group) {
 		op.OperationID = "ai-session-get-conversation-by-session-id"
 		op.Summary = "通过Session ID获取AI会话的对话内容"
 		op.Description = "返回指定会话的完整对话记录（用户消息和助手回复），使用AI助手生成的Session ID"
+		op.Tags = []string{aiSessionTag}
+	})
+
+	huma.Get(group, "/ai-sessions/by-session-id/{sessionId}/conversation/window", func(ctx context.Context, input *struct {
+		SessionID    string `path:"sessionId" doc:"会话ID（AI助手生成的UUID）"`
+		BeforeCursor string `query:"beforeCursor"`
+		Limit        int    `query:"limit" default:"80"`
+	}) (*h.ItemResponse[service.ConversationWindowResponse], error) {
+		conversation, err := svc.GetSessionConversationWindowBySessionID(
+			ctx,
+			input.SessionID,
+			input.BeforeCursor,
+			input.Limit,
+		)
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			}
+			return nil, huma.Error404NotFound("session not found or failed to load conversation")
+		}
+
+		resp := h.NewItemResponse(*conversation)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "ai-session-get-conversation-window-by-session-id"
+		op.Summary = "通过 Session ID 获取 AI 会话对话窗口"
+		op.Description = "返回指定会话的分页对话窗口，使用AI助手生成的Session ID"
 		op.Tags = []string{aiSessionTag}
 	})
 
@@ -235,6 +286,28 @@ func registerAISessionRoutes(app *fiber.App, group *huma.Group) {
 		op.OperationID = "ai-session-refresh"
 		op.Summary = "刷新AI会话缓存"
 		op.Description = "清除会话的数据库缓存，重新解析会话文件并返回对话内容"
+		op.Tags = []string{aiSessionTag}
+	})
+
+	huma.Post(group, "/ai-sessions/{id}/refresh-window", func(ctx context.Context, input *struct {
+		ID    string `path:"id" doc:"会话ID（数据库ID）"`
+		Limit int    `query:"limit" default:"80"`
+	}) (*h.ItemResponse[service.ConversationWindowResponse], error) {
+		conversation, err := svc.RefreshSessionAndGetConversationWindow(ctx, input.ID, input.Limit)
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			}
+			return nil, huma.Error404NotFound("session not found or failed to refresh")
+		}
+
+		resp := h.NewItemResponse(*conversation)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "ai-session-refresh-window"
+		op.Summary = "刷新 AI 会话缓存并返回对话窗口"
+		op.Description = "清除会话的数据库缓存，重新解析会话文件并返回分页对话窗口"
 		op.Tags = []string{aiSessionTag}
 	})
 

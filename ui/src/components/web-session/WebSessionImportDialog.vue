@@ -190,9 +190,12 @@
 
     <ConversationViewer
       ref="conversationViewerRef"
-      :messages="currentConversation?.messages ?? []"
+      :messages="conversationMessages"
       :loading="previewLoading"
+      :loading-earlier="previewLoadingEarlier"
+      :conversation-window="conversationWindow"
       :session-info="previewSessionInfo"
+      :load-earlier="loadEarlierConversationWindow"
       @nav-state-change="updateConversationNavState"
     />
 
@@ -232,9 +235,13 @@ import {
 } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
+import { aiSessionApi } from '@/api/aiSession';
+import {
+  AI_CONVERSATION_WINDOW_LIMIT,
+  useAiConversationWindow,
+} from '@/composables/useAiConversationWindow';
 import type { WebSessionSummary } from '@/types/models';
 import ConversationViewer, {
-  type ConversationMessage,
   type ConversationViewerNavState,
   type SessionInfo,
 } from '@/components/common/ConversationViewer.vue';
@@ -258,12 +265,6 @@ type ImportSourceSummary = {
 type ImportSourceList = {
   items?: ImportSourceSummary[];
   scanPhase?: ScanPhase;
-};
-
-type ConversationResponse = {
-  sessionId: string;
-  title: string;
-  messages: ConversationMessage[];
 };
 
 type ItemResponse<T> = {
@@ -291,10 +292,8 @@ const hideImported = ref(false);
 const importSources = ref<ImportSourceSummary[]>([]);
 const scanPhase = ref<ScanPhase>('complete');
 const showPreviewModal = ref(false);
-const previewLoading = ref(false);
 const previewingSourceId = ref('');
 const previewSource = ref<ImportSourceSummary | null>(null);
-const currentConversation = ref<ConversationResponse | null>(null);
 const conversationViewerRef = ref<{
   goToPrevUserMessage: () => void;
   goToNextUserMessage: () => void;
@@ -306,6 +305,19 @@ const conversationNavState = ref<ConversationViewerNavState>({
   hasPrev: false,
   hasNext: false,
 });
+const {
+  conversation: currentConversation,
+  messages: conversationMessages,
+  windowState: conversationWindow,
+  loading: previewLoading,
+  loadingEarlier: previewLoadingEarlier,
+  load: loadConversationWindow,
+  loadEarlier: loadEarlierConversationWindow,
+  reset: resetConversationWindow,
+} = useAiConversationWindow(
+  options => aiSessionApi.conversationWindowBySessionID(previewSource.value?.sessionId || '', options),
+  null
+);
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 const filteredSources = computed(() => {
@@ -373,10 +385,9 @@ function handleClose() {
 
 function closePreview() {
   showPreviewModal.value = false;
-  previewLoading.value = false;
   previewingSourceId.value = '';
   previewSource.value = null;
-  currentConversation.value = null;
+  resetConversationWindow();
   conversationNavState.value = {
     currentUserPosition: 0,
     totalUserMessages: 0,
@@ -419,35 +430,20 @@ function openExistingSession(source: ImportSourceSummary) {
 async function openPreview(source: ImportSourceSummary) {
   previewSource.value = source;
   previewingSourceId.value = source.sessionId;
-  previewLoading.value = true;
-  currentConversation.value = null;
   showPreviewModal.value = true;
 
   try {
-    const response = await http
-      .Get<ItemResponse<ConversationResponse>>(
-        `/ai-sessions/by-session-id/${encodeURIComponent(source.sessionId)}/conversation`,
-        {
-          cacheFor: 0,
-        }
-      )
-      .send();
-
     if (previewSource.value?.sessionId !== source.sessionId) {
       return;
     }
-
-    if (response?.item) {
-      currentConversation.value = response.item;
-      await nextTick();
-      conversationViewerRef.value?.syncNavigationState?.();
-    }
+    await loadConversationWindow(AI_CONVERSATION_WINDOW_LIMIT);
+    await nextTick();
+    conversationViewerRef.value?.syncNavigationState?.();
   } catch (error) {
     console.error('Failed to load conversation preview:', error);
     message.error(t('terminal.loadConversationFailed'));
   } finally {
     if (previewSource.value?.sessionId === source.sessionId) {
-      previewLoading.value = false;
       previewingSourceId.value = '';
     }
   }

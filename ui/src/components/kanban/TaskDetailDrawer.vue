@@ -207,10 +207,13 @@
     style="width: 800px; max-width: 90vw; max-height: 85vh"
   >
     <ConversationViewer
-      :messages="currentConversation?.messages ?? []"
+      :messages="currentConversationMessages"
       :loading="conversationLoading"
+      :loading-earlier="conversationLoadingEarlier"
+      :conversation-window="currentConversationWindow"
       :session-info="currentSessionInfo"
       :use-relative-time="false"
+      :load-earlier="loadEarlierConversationWindow"
     />
   </n-modal>
 
@@ -275,16 +278,20 @@ import { useProjectStore } from '@/stores/project';
 import { useResponsive } from '@/composables/useResponsive';
 import { taskActions } from '@/composables/useTaskActions';
 import { extractItem, extractItems } from '@/api/response';
+import { aiSessionApi } from '@/api/aiSession';
 import type {
   Task,
   TaskComment,
   TaskAISessionWithDetails,
-  ConversationResponse,
   AISessionSummary,
   ProjectAISessions,
 } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
+import {
+  AI_CONVERSATION_WINDOW_LIMIT,
+  useAiConversationWindow,
+} from '@/composables/useAiConversationWindow';
 import ConversationViewer, { type SessionInfo } from '@/components/common/ConversationViewer.vue';
 
 const { t } = useLocale();
@@ -350,10 +357,20 @@ const linkedSessionsLoading = ref(false);
 
 // 对话查看模态框状态
 const showConversationModal = ref(false);
-const conversationLoading = ref(false);
-const currentConversation = ref<ConversationResponse | null>(null);
 const currentConversationTitle = ref('');
 const currentConversationSession = ref<TaskAISessionWithDetails | null>(null);
+const {
+  messages: currentConversationMessages,
+  windowState: currentConversationWindow,
+  loading: conversationLoading,
+  loadingEarlier: conversationLoadingEarlier,
+  load: loadConversationWindow,
+  loadEarlier: loadEarlierConversationWindow,
+  reset: resetConversationWindow,
+} = useAiConversationWindow(
+  options => aiSessionApi.conversationWindowByID(currentConversationSession.value?.aiSessionDbId || '', options),
+  null
+);
 
 const currentSessionInfo = computed<SessionInfo | null>(() => {
   if (!currentConversationSession.value) return null;
@@ -415,6 +432,15 @@ watch(
   },
   { immediate: true }
 );
+
+watch(showConversationModal, visible => {
+  if (visible) {
+    return;
+  }
+  resetConversationWindow();
+  currentConversationSession.value = null;
+  currentConversationTitle.value = '';
+});
 
 const handleAfterEnter = () => {
   void loadData();
@@ -496,20 +522,11 @@ async function viewLinkedConversation(session: TaskAISessionWithDetails) {
   currentConversationTitle.value = session.title || t('terminal.untitledSession');
   currentConversationSession.value = session;
   showConversationModal.value = true;
-  conversationLoading.value = true;
-  currentConversation.value = null;
 
   try {
-    const response = await http
-      .Get<{ item: ConversationResponse }>(`/ai-sessions/${session.aiSessionDbId}/conversation`)
-      .send();
-    if (response?.item) {
-      currentConversation.value = response.item;
-    }
+    await loadConversationWindow(AI_CONVERSATION_WINDOW_LIMIT);
   } catch (error: any) {
     message.error(t('terminal.loadConversationFailed'));
-  } finally {
-    conversationLoading.value = false;
   }
 }
 

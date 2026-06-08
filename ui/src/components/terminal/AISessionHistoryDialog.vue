@@ -275,12 +275,15 @@
     </template>
     <ConversationViewer
       ref="conversationViewerRef"
-      :messages="currentConversation?.messages ?? []"
+      :messages="currentConversationMessages"
       :loading="conversationLoading"
+      :loading-earlier="conversationLoadingEarlier"
       :refreshing="conversationRefreshing"
       :refresh-enabled="true"
+      :conversation-window="currentConversationWindow"
       :session-info="currentSessionInfo"
       :load-tool-result="loadToolResult"
+      :load-earlier="loadEarlierConversationWindow"
       @nav-state-change="updateConversationNavState"
       @refresh="refreshConversation"
     />
@@ -313,9 +316,13 @@ import {
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
+import { aiSessionApi } from '@/api/aiSession';
 import { useTimeAgo } from '@vueuse/core';
+import {
+  AI_CONVERSATION_WINDOW_LIMIT,
+  useAiConversationWindow,
+} from '@/composables/useAiConversationWindow';
 import ConversationViewer, {
-  type ConversationMessage,
   type ConversationViewerNavState,
   type SessionInfo,
 } from '@/components/common/ConversationViewer.vue';
@@ -409,21 +416,7 @@ const filteredCodexSessions = computed(() => {
   );
 });
 
-interface ConversationResponse {
-  sessionId: string;
-  title: string;
-  messages: ConversationMessage[];
-}
-
-interface ToolResultResponse {
-  toolUseId: string;
-  content: string;
-}
-
 const showConversationModal = ref(false);
-const conversationLoading = ref(false);
-const conversationRefreshing = ref(false);
-const currentConversation = ref<ConversationResponse | null>(null);
 const currentSessionTitle = ref('');
 const currentSession = ref<AISessionSummary | null>(null);
 const conversationViewerRef = ref<{
@@ -437,6 +430,21 @@ const conversationNavState = ref<ConversationViewerNavState>({
   hasPrev: false,
   hasNext: false,
 });
+const {
+  conversation: currentConversation,
+  messages: currentConversationMessages,
+  windowState: currentConversationWindow,
+  loading: conversationLoading,
+  loadingEarlier: conversationLoadingEarlier,
+  refreshing: conversationRefreshing,
+  load: loadConversationWindow,
+  loadEarlier: loadEarlierConversationWindow,
+  refresh: refreshConversationWindow,
+  reset: resetConversationWindow,
+} = useAiConversationWindow(
+  options => aiSessionApi.conversationWindowByID(currentSession.value?.id || '', options),
+  limit => aiSessionApi.refreshConversationWindow(currentSession.value?.id || '', limit)
+);
 
 const currentSessionInfo = computed<SessionInfo | null>(() => {
   if (!currentSession.value) return null;
@@ -677,26 +685,14 @@ async function viewConversation(session: AISessionSummary) {
   currentSessionTitle.value = session.title || t('terminal.untitledSession');
   currentSession.value = session;
   showConversationModal.value = true;
-  conversationLoading.value = true;
-  currentConversation.value = null;
 
   try {
-    const response = await http
-      .Get<{ item?: ConversationResponse }>(`/ai-sessions/${session.id}/conversation`, {
-        cacheFor: 0,
-      })
-      .send();
-
-    if (response?.item) {
-      currentConversation.value = response.item;
-      await nextTick();
-      conversationViewerRef.value?.syncNavigationState?.();
-    }
+    await loadConversationWindow(AI_CONVERSATION_WINDOW_LIMIT);
+    await nextTick();
+    conversationViewerRef.value?.syncNavigationState?.();
   } catch (error) {
     console.error('Failed to load conversation:', error);
     message.error(t('terminal.loadConversationFailed'));
-  } finally {
-    conversationLoading.value = false;
   }
 }
 
@@ -705,15 +701,7 @@ async function loadToolResult(toolUseId: string) {
   if (!session || !toolUseId) return null;
 
   try {
-    const response = await http
-      .Get<{
-        item?: ToolResultResponse;
-      }>(`/ai-sessions/${session.id}/conversation/tool-results/${encodeURIComponent(toolUseId)}`, {
-        cacheFor: 0,
-      })
-      .send();
-
-    const content = response?.item?.content;
+    const content = await aiSessionApi.toolResultByID(session.id, toolUseId);
     if (!content || !currentConversation.value) return null;
 
     const msg = currentConversation.value.messages.find(m => m.toolUseId === toolUseId);
@@ -732,31 +720,20 @@ async function refreshConversation() {
   const session = currentSession.value;
   if (!session) return;
 
-  conversationRefreshing.value = true;
-
   try {
-    // Call API to clear cache and reload
-    const response = await http
-      .Post<{ item?: ConversationResponse }>(`/ai-sessions/${session.id}/refresh`)
-      .send();
-
-    if (response?.item) {
-      currentConversation.value = response.item;
-      await nextTick();
-      conversationViewerRef.value?.syncNavigationState?.();
-      message.success(t('terminal.conversationRefreshed'));
-    }
+    await refreshConversationWindow(AI_CONVERSATION_WINDOW_LIMIT);
+    await nextTick();
+    conversationViewerRef.value?.syncNavigationState?.();
+    message.success(t('terminal.conversationRefreshed'));
   } catch (error) {
     console.error('Failed to refresh conversation:', error);
     message.error(t('terminal.refreshConversationFailed'));
-  } finally {
-    conversationRefreshing.value = false;
   }
 }
 
 function closeConversationModal() {
   showConversationModal.value = false;
-  currentConversation.value = null;
+  resetConversationWindow();
   currentSession.value = null;
   conversationNavState.value = {
     currentUserPosition: 0,

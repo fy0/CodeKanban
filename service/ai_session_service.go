@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1786,6 +1787,11 @@ type conversationParseOptions struct {
 	onMessage           func(*ConversationMessage) bool
 }
 
+type conversationWindowOptions struct {
+	beforeCursor int
+	limit        int
+}
+
 func emitConversationMessage(dst *[]*ConversationMessage, msg *ConversationMessage, options conversationParseOptions) error {
 	if options.onMessage != nil {
 		if !options.onMessage(msg) {
@@ -1803,6 +1809,19 @@ type ConversationResponse struct {
 	SessionID string                 `json:"sessionId"`
 	Title     string                 `json:"title"`
 	Messages  []*ConversationMessage `json:"messages"`
+}
+
+type ConversationWindowResponse struct {
+	SessionID                string                 `json:"sessionId"`
+	Title                    string                 `json:"title"`
+	Messages                 []*ConversationMessage `json:"messages"`
+	Total                    int                    `json:"total"`
+	TotalUserMessages        int                    `json:"totalUserMessages"`
+	UserMessagesBeforeWindow int                    `json:"userMessagesBeforeWindow"`
+	WindowStart              int                    `json:"windowStart"`
+	WindowEnd                int                    `json:"windowEnd"`
+	HasMoreBefore            bool                   `json:"hasMoreBefore"`
+	BeforeCursor             string                 `json:"beforeCursor,omitempty"`
 }
 
 // GetSessionConversation retrieves the full conversation for a given database ID.
@@ -1845,6 +1864,56 @@ func (s *AISessionService) GetSessionConversationBySessionID(ctx context.Context
 		return nil, resolveErr
 	}
 	return s.getConversationFromSession(ctx, *resolved)
+}
+
+func (s *AISessionService) GetSessionConversationWindow(
+	ctx context.Context,
+	dbID string,
+	beforeCursor string,
+	limit int,
+) (*ConversationWindowResponse, error) {
+	return s.getConversationWindowByQuery(ctx, "id = ?", []interface{}{dbID}, beforeCursor, limit)
+}
+
+func (s *AISessionService) GetSessionConversationWindowBySessionID(
+	ctx context.Context,
+	sessionID string,
+	beforeCursor string,
+	limit int,
+) (*ConversationWindowResponse, error) {
+	ctx = ensureContext(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var session tables.AISessionTable
+	err := db.WithContext(ctx).Where("session_id = ?", sessionID).First(&session).Error
+	if err == nil {
+		if session.Type == tables.AISessionTypeCodex {
+			resolved, resolveErr := s.ResolveCodexSessionBySessionID(ctx, sessionID)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			return s.getConversationWindowFromSession(ctx, *resolved, beforeCursor, limit)
+		}
+		return s.getConversationWindowFromSession(ctx, session, beforeCursor, limit)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	resolved, resolveErr := s.ResolveCodexSessionBySessionID(ctx, sessionID)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	return s.getConversationWindowFromSession(ctx, *resolved, beforeCursor, limit)
 }
 
 // RefreshSessionAndGetConversation clears the cached session data in DB and re-parses the file.
@@ -1957,6 +2026,27 @@ func (s *AISessionService) RefreshSessionAndGetConversation(ctx context.Context,
 	}, nil
 }
 
+func (s *AISessionService) RefreshSessionAndGetConversationWindow(
+	ctx context.Context,
+	dbID string,
+	limit int,
+) (*ConversationWindowResponse, error) {
+	conversation, err := s.RefreshSessionAndGetConversation(ctx, dbID)
+	if err != nil {
+		return nil, err
+	}
+	options, err := normalizeConversationWindowOptions("", limit)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildConversationWindowFromMessages(
+		conversation.SessionID,
+		conversation.Title,
+		conversation.Messages,
+		options,
+	), nil
+}
+
 // getConversationByQuery retrieves conversation using a custom where clause.
 func (s *AISessionService) getConversationByQuery(ctx context.Context, query string, args ...interface{}) (*ConversationResponse, error) {
 	ctx = ensureContext(ctx)
@@ -1976,6 +2066,31 @@ func (s *AISessionService) getConversationByQuery(ctx context.Context, query str
 	}
 
 	return s.getConversationFromSession(ctx, session)
+}
+
+func (s *AISessionService) getConversationWindowByQuery(
+	ctx context.Context,
+	query string,
+	args []interface{},
+	beforeCursor string,
+	limit int,
+) (*ConversationWindowResponse, error) {
+	ctx = ensureContext(ctx)
+	logger := s.logger(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	var session tables.AISessionTable
+	err := db.WithContext(ctx).Where(query, args...).First(&session).Error
+	if err != nil {
+		logger.Debug("session not found", zap.String("query", query), zap.Error(err))
+		return nil, err
+	}
+
+	return s.getConversationWindowFromSession(ctx, session, beforeCursor, limit)
 }
 
 func (s *AISessionService) getConversationFromSession(ctx context.Context, session tables.AISessionTable) (*ConversationResponse, error) {
@@ -2050,6 +2165,194 @@ func (s *AISessionService) getConversationFromSession(ctx context.Context, sessi
 		Title:     session.Title,
 		Messages:  messages,
 	}, nil
+}
+
+func normalizeConversationWindowOptions(beforeCursor string, limit int) (conversationWindowOptions, error) {
+	const (
+		defaultLimit = 80
+		maxLimit     = 120
+	)
+
+	opts := conversationWindowOptions{
+		beforeCursor: -1,
+		limit:        defaultLimit,
+	}
+	if limit > 0 {
+		opts.limit = limit
+	}
+	if opts.limit > maxLimit {
+		opts.limit = maxLimit
+	}
+	if strings.TrimSpace(beforeCursor) == "" {
+		return opts, nil
+	}
+
+	value, err := strconv.Atoi(strings.TrimSpace(beforeCursor))
+	if err != nil {
+		return opts, fmt.Errorf("invalid conversation cursor")
+	}
+	if value < 0 {
+		return opts, fmt.Errorf("invalid conversation cursor")
+	}
+	opts.beforeCursor = value
+	return opts, nil
+}
+
+func clampConversationWindow(total int, options conversationWindowOptions) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	end := total
+	if options.beforeCursor >= 0 && options.beforeCursor < total {
+		end = options.beforeCursor
+	}
+	if end < 0 {
+		end = 0
+	}
+	start := end - options.limit
+	if start < 0 {
+		start = 0
+	}
+	if start > end {
+		start = end
+	}
+	return start, end
+}
+
+func conversationBeforeCursor(start int) string {
+	if start <= 0 {
+		return ""
+	}
+	return strconv.Itoa(start)
+}
+
+func countConversationUserMessages(messages []*ConversationMessage) int {
+	count := 0
+	for _, msg := range messages {
+		if msg != nil && msg.Role == "user" {
+			count++
+		}
+	}
+	return count
+}
+
+func conversationTitleFromMessages(messages []*ConversationMessage, fallback string) string {
+	if strings.TrimSpace(fallback) != "" {
+		return fallback
+	}
+	for _, msg := range messages {
+		if msg == nil || msg.Role != "user" {
+			continue
+		}
+		title := strings.TrimSpace(msg.Content)
+		if title == "" {
+			continue
+		}
+		if len(title) > 100 {
+			title = title[:100] + "..."
+		}
+		return title
+	}
+	return ""
+}
+
+func (s *AISessionService) buildConversationWindowFromMessages(
+	sessionID string,
+	title string,
+	messages []*ConversationMessage,
+	options conversationWindowOptions,
+) *ConversationWindowResponse {
+	total := len(messages)
+	start, end := clampConversationWindow(total, options)
+	windowMessages := append([]*ConversationMessage(nil), messages[start:end]...)
+	decorateConversationMessages(messages, sessionID)
+	totalUserMessages := countConversationUserMessages(messages)
+	userMessagesBeforeWindow := countConversationUserMessages(messages[:start])
+
+	return &ConversationWindowResponse{
+		SessionID:                sessionID,
+		Title:                    conversationTitleFromMessages(messages, title),
+		Messages:                 windowMessages,
+		Total:                    total,
+		TotalUserMessages:        totalUserMessages,
+		UserMessagesBeforeWindow: userMessagesBeforeWindow,
+		WindowStart:              start,
+		WindowEnd:                end,
+		HasMoreBefore:            start > 0,
+		BeforeCursor:             conversationBeforeCursor(start),
+	}
+}
+
+func (s *AISessionService) getConversationWindowFromSession(
+	ctx context.Context,
+	session tables.AISessionTable,
+	beforeCursor string,
+	limit int,
+) (*ConversationWindowResponse, error) {
+	ctx = ensureContext(ctx)
+	logger := s.logger(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	options, err := normalizeConversationWindowOptions(beforeCursor, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	const maxConversationFileSize = 50 * 1024 * 1024
+	fileInfo, err := os.Stat(session.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	if fileInfo.Size() > maxConversationFileSize {
+		return nil, fmt.Errorf("conversation file too large (%d MB), maximum is 50MB",
+			fileInfo.Size()/(1024*1024))
+	}
+
+	var messages []*ConversationMessage
+	switch session.Type {
+	case tables.AISessionTypeClaudeCode:
+		messages, err = s.parseClaudeCodeConversation(session.FilePath)
+	case tables.AISessionTypeCodex:
+		messages, err = s.parseCodexConversation(session.FilePath)
+	default:
+		return nil, errors.New("unknown session type")
+	}
+	if err != nil {
+		logger.Error("failed to parse conversation", zap.String("filePath", session.FilePath), zap.Error(err))
+		return nil, err
+	}
+
+	var userCount, assistantCount int
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			userCount++
+		} else if msg.Role == "assistant" {
+			assistantCount++
+		}
+	}
+	if userCount != session.MessageCount || assistantCount != session.AssistantMessageCount {
+		db.WithContext(ctx).Model(&session).Updates(map[string]interface{}{
+			"message_count":           userCount,
+			"assistant_message_count": assistantCount,
+		})
+		dirCacheMu.Lock()
+		for _, entry := range dirCache {
+			for _, cachedSession := range entry.sessions {
+				if cachedSession.ID == session.ID {
+					cachedSession.MessageCount = userCount
+					cachedSession.AssistantMessageCount = assistantCount
+					break
+				}
+			}
+		}
+		dirCacheMu.Unlock()
+	}
+
+	return s.buildConversationWindowFromMessages(session.SessionID, session.Title, messages, options), nil
 }
 
 // parseClaudeCodeConversation parses a Claude Code session file and extracts messages.

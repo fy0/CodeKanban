@@ -2,7 +2,7 @@
   <n-modal
     v-model:show="showModal"
     preset="card"
-    :title="title"
+    :title="modalTitle"
     style="width: 800px; max-width: 90vw; max-height: 85vh"
     :mask-closable="true"
     :closable="true"
@@ -54,32 +54,32 @@
     </template>
     <ConversationViewer
       ref="viewerRef"
-      :messages="conversation?.messages ?? []"
+      :messages="messages"
       :loading="loading"
+      :loading-earlier="loadingEarlier"
+      :conversation-window="windowState"
       :session-info="sessionInfo"
       :load-tool-result="loadToolResult"
+      :load-earlier="loadEarlier"
       @nav-state-change="updateNavState"
     />
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import { ChevronDownOutline, ChevronUpOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
-import { http } from '@/api/http';
+import { aiSessionApi } from '@/api/aiSession';
+import {
+  AI_CONVERSATION_WINDOW_LIMIT,
+  useAiConversationWindow,
+} from '@/composables/useAiConversationWindow';
 import ConversationViewer, {
-  type ConversationMessage,
   type ConversationViewerNavState,
   type SessionInfo,
 } from '@/components/common/ConversationViewer.vue';
-
-interface ConversationResponse {
-  sessionId: string;
-  title: string;
-  messages: ConversationMessage[];
-}
 
 const props = defineProps<{
   sessionId: string | null;
@@ -90,8 +90,6 @@ const showModal = defineModel<boolean>('show', { default: false });
 const { t } = useLocale();
 const message = useMessage();
 
-const loading = ref(false);
-const conversation = ref<ConversationResponse | null>(null);
 const viewerRef = ref<{
   goToPrevUserMessage: () => void;
   goToNextUserMessage: () => void;
@@ -103,13 +101,22 @@ const navState = ref<ConversationViewerNavState>({
   hasPrev: false,
   hasNext: false,
 });
+const {
+  conversation,
+  messages,
+  title,
+  windowState,
+  loading,
+  loadingEarlier,
+  load,
+  loadEarlier,
+  reset,
+} = useAiConversationWindow(
+  options => aiSessionApi.conversationWindowBySessionID(props.sessionId || '', options),
+  null
+);
 
-const title = computed(() => {
-  if (conversation.value?.title) {
-    return conversation.value.title;
-  }
-  return t('terminal.viewConversation');
-});
+const modalTitle = computed(() => title.value || t('terminal.viewConversation'));
 
 const sessionInfo = computed<SessionInfo | null>(() => {
   if (!props.sessionId) return null;
@@ -122,57 +129,18 @@ watch(
   () => [showModal.value, props.sessionId],
   async ([show, sessionId]) => {
     if (show && sessionId) {
-      await loadConversation(sessionId as string);
+      await load(AI_CONVERSATION_WINDOW_LIMIT);
     }
   },
   { immediate: true }
 );
-
-async function loadConversation(sessionId: string) {
-  loading.value = true;
-  conversation.value = null;
-
-  try {
-    const response = await http
-      .Get<{ item?: ConversationResponse }>(
-        `/ai-sessions/by-session-id/${sessionId}/conversation`,
-        {
-          cacheFor: 0,
-        }
-      )
-      .send();
-
-    if (response?.item) {
-      conversation.value = response.item;
-      await nextTick();
-      viewerRef.value?.syncNavigationState?.();
-    }
-  } catch (error) {
-    console.error('Failed to load conversation:', error);
-    message.error(t('terminal.loadConversationFailed'));
-  } finally {
-    loading.value = false;
-  }
-}
 
 async function loadToolResult(toolUseId: string) {
   const sessionId = props.sessionId;
   if (!sessionId || !toolUseId) return null;
 
   try {
-    const response = await http
-      .Get<{
-        item?: {
-          toolUseId: string;
-          content: string;
-        };
-      }>(
-        `/ai-sessions/by-session-id/${sessionId}/conversation/tool-results/${encodeURIComponent(toolUseId)}`,
-        { cacheFor: 0 }
-      )
-      .send();
-
-    const content = response?.item?.content;
+    const content = await aiSessionApi.toolResultBySessionID(sessionId, toolUseId);
     if (!content || !conversation.value) return null;
 
     const msg = conversation.value.messages.find(m => m.toolUseId === toolUseId);
@@ -193,7 +161,7 @@ function updateNavState(value: ConversationViewerNavState) {
 
 function handleClose() {
   showModal.value = false;
-  conversation.value = null;
+  reset();
   navState.value = {
     currentUserPosition: 0,
     totalUserMessages: 0,

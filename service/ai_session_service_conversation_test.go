@@ -276,6 +276,68 @@ func TestGetSessionConversationBySessionIDUsesExistingCodexCache(t *testing.T) {
 	}
 }
 
+func TestBuildConversationWindowFromMessages(t *testing.T) {
+	svc := NewAISessionService()
+	messages := []*ConversationMessage{
+		{Role: "user", Content: "u1", Timestamp: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{Role: "assistant", Content: "a1", Timestamp: time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC)},
+		{Role: "user", Content: "u2", Timestamp: time.Date(2026, 1, 1, 0, 0, 2, 0, time.UTC)},
+		{Role: "assistant", Content: "a2", Timestamp: time.Date(2026, 1, 1, 0, 0, 3, 0, time.UTC)},
+		{Role: "user", Content: "u3", Timestamp: time.Date(2026, 1, 1, 0, 0, 4, 0, time.UTC)},
+	}
+
+	window := svc.buildConversationWindowFromMessages("session-1", "", messages, conversationWindowOptions{
+		beforeCursor: -1,
+		limit:        2,
+	})
+	if window.Total != 5 {
+		t.Fatalf("expected total 5, got %d", window.Total)
+	}
+	if window.WindowStart != 3 || window.WindowEnd != 5 {
+		t.Fatalf("unexpected window bounds: %d-%d", window.WindowStart, window.WindowEnd)
+	}
+	if !window.HasMoreBefore || window.BeforeCursor != "3" {
+		t.Fatalf("unexpected cursor state: %#v", window)
+	}
+	if window.TotalUserMessages != 3 || window.UserMessagesBeforeWindow != 2 {
+		t.Fatalf("unexpected user message counts: %#v", window)
+	}
+	if len(window.Messages) != 2 || window.Messages[0].Content != "a2" || window.Messages[1].Content != "u3" {
+		t.Fatalf("unexpected messages: %#v", window.Messages)
+	}
+
+	earlier := svc.buildConversationWindowFromMessages("session-1", "", messages, conversationWindowOptions{
+		beforeCursor: 3,
+		limit:        2,
+	})
+	if earlier.WindowStart != 1 || earlier.WindowEnd != 3 {
+		t.Fatalf("unexpected earlier bounds: %d-%d", earlier.WindowStart, earlier.WindowEnd)
+	}
+	if earlier.UserMessagesBeforeWindow != 1 {
+		t.Fatalf("expected one user message before earlier window, got %d", earlier.UserMessagesBeforeWindow)
+	}
+}
+
+func TestNormalizeConversationWindowOptions(t *testing.T) {
+	options, err := normalizeConversationWindowOptions(" 3 ", 200)
+	if err != nil {
+		t.Fatalf("normalizeConversationWindowOptions returned error: %v", err)
+	}
+	if options.beforeCursor != 3 {
+		t.Fatalf("expected beforeCursor 3, got %d", options.beforeCursor)
+	}
+	if options.limit != 120 {
+		t.Fatalf("expected clamped limit 120, got %d", options.limit)
+	}
+
+	if _, err := normalizeConversationWindowOptions("-1", 10); err == nil {
+		t.Fatal("expected invalid negative cursor to fail")
+	}
+	if _, err := normalizeConversationWindowOptions("abc", 10); err == nil {
+		t.Fatal("expected invalid cursor string to fail")
+	}
+}
+
 func TestGetSessionConversationBySessionIDReturnsNotFoundWithoutRollout(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

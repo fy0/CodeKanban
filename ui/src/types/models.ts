@@ -174,12 +174,33 @@ export interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  kind?: string;
+  toolUseId?: string;
+  hasMore?: boolean;
+  full?: string;
+  images?: Array<{
+    id: string;
+    label: string;
+    previewable: boolean;
+    previewUrl?: string;
+    mimeType?: string;
+  }>;
 }
 
 export interface ConversationResponse {
   sessionId: string;
   title: string;
   messages: ConversationMessage[];
+}
+
+export interface ConversationWindowResponse extends ConversationResponse {
+  total: number;
+  totalUserMessages: number;
+  userMessagesBeforeWindow: number;
+  windowStart: number;
+  windowEnd: number;
+  hasMoreBefore: boolean;
+  beforeCursor?: string;
 }
 
 export interface BranchInfo {
