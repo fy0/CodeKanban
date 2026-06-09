@@ -542,8 +542,9 @@ async function loadSources(isRefresh = false) {
 
 .web-session-import__item {
   display: flex;
-  align-items: flex-start;
-  gap: 14px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
   border: 1px solid color-mix(in srgb, var(--n-border-color) 88%, transparent);
   background: color-mix(in srgb, var(--n-card-color) 88%, #f8fafc 12%);
   border-radius: 16px;
@@ -560,22 +561,28 @@ async function loadSources(isRefresh = false) {
 
 .web-session-import__title-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .web-session-import__title {
+  flex: 1 1 280px;
+  min-width: 0;
   font-size: 15px;
   font-weight: 600;
+  line-height: 1.4;
   color: var(--n-text-color-1);
 }
 
 .web-session-import__badges {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   flex-wrap: wrap;
+  margin-left: auto;
+  max-width: 100%;
 }
 
 .web-session-import__badges :deep(.n-tag) {
@@ -605,6 +612,7 @@ async function loadSources(isRefresh = false) {
 
 .web-session-import__actions {
   display: flex;
+  width: 100%;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
@@ -646,12 +654,11 @@ async function loadSources(isRefresh = false) {
 }
 
 @media (max-width: 720px) {
-  .web-session-import__item {
-    flex-direction: column;
+  .web-session-import__title-row {
+    justify-content: flex-start;
   }
 
   .web-session-import__actions {
-    width: 100%;
     justify-content: flex-start;
   }
 }
