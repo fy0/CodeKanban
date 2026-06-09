@@ -21,7 +21,60 @@ type codexThreadSummary struct {
 
 type codexThreadReadResult struct {
 	Summary codexThreadSummary
+	Goal    *SessionGoal
 	Turns   []map[string]any
+}
+
+func parseCodexSessionGoal(raw any, fallbackThreadID string) *SessionGoal {
+	record := decodeRawObject(raw)
+	if len(record) == 0 {
+		return nil
+	}
+	objective := strings.TrimSpace(stringValue(record["objective"]))
+	if objective == "" {
+		return nil
+	}
+	threadID := strings.TrimSpace(firstNonEmpty(stringValue(record["threadId"]), fallbackThreadID))
+	if threadID == "" {
+		return nil
+	}
+	status := normalizeGoalStatus(firstNonEmpty(stringValue(record["status"]), string(GoalStatusActive)))
+	if status == "" {
+		status = GoalStatusActive
+	}
+	createdAt := parseHistoryTimestamp(record["createdAt"])
+	updatedAt := parseHistoryTimestamp(record["updatedAt"])
+	if createdAt == nil || updatedAt == nil {
+		return nil
+	}
+	var tokenBudget *int64
+	switch value := record["tokenBudget"].(type) {
+	case float64:
+		if value >= 0 {
+			parsed := int64(value)
+			tokenBudget = &parsed
+		}
+	case int64:
+		if value >= 0 {
+			parsed := value
+			tokenBudget = &parsed
+		}
+	case int:
+		if value >= 0 {
+			parsed := int64(value)
+			tokenBudget = &parsed
+		}
+	}
+	return &SessionGoal{
+		ThreadID:        threadID,
+		Objective:       objective,
+		Status:          status,
+		TokenBudget:     tokenBudget,
+		TokensUsed:      maxInt64(0, int64(numberValue(record["tokensUsed"]))),
+		TimeUsedSeconds: maxInt64(0, int64(numberValue(record["timeUsedSeconds"]))),
+		CreatedAt:       *createdAt,
+		UpdatedAt:       *updatedAt,
+	}
 }
 
 func (m *Manager) withCodexQueryClient(
@@ -104,6 +157,13 @@ func (m *Manager) readCodexThread(
 		result.Turns = make([]map[string]any, 0, len(turns))
 		for _, turn := range turns {
 			result.Turns = append(result.Turns, decodeRawObject(turn))
+		}
+		goalResponse, err := client.request(ctx, "thread/goal/get", map[string]any{
+			"threadId": threadID,
+		})
+		if err == nil {
+			goalPayload := decodeRawObject(goalResponse.Result)
+			result.Goal = parseCodexSessionGoal(goalPayload["goal"], threadID)
 		}
 		return nil
 	})

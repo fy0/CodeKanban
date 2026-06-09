@@ -508,6 +508,7 @@ func (m *Manager) syncSessionFromThreadSource(
 		"thread_preview":    nilIfEmpty(remote.Summary.Preview),
 		"updated_at":        time.Now(),
 	}
+	applySessionGoalUpdates(metadataUpdates, remote.Goal)
 	if force && remote.Summary.UpdatedAt != nil {
 		metadataUpdates["activity_at"] = *remote.Summary.UpdatedAt
 	}

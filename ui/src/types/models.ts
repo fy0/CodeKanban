@@ -309,6 +309,25 @@ export type WebSessionContextEstimateMode =
 
 export type WebSessionContextWindowSource = 'config' | 'default' | 'session_usage' | 'unavailable';
 
+export type WebSessionGoalStatus =
+  | 'active'
+  | 'paused'
+  | 'blocked'
+  | 'usageLimited'
+  | 'budgetLimited'
+  | 'complete';
+
+export interface WebSessionGoal {
+  threadId: string;
+  objective: string;
+  status: WebSessionGoalStatus;
+  tokenBudget?: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface WebSessionCodexRuntimeConfig {
   contextWindowTokens: number;
   compactLimitTokens: number;
@@ -376,6 +395,7 @@ export interface WebSessionSummary {
   lastContextCompactionAt?: string | null;
   contextWindowTokens?: number | null;
   contextWindowSource: WebSessionContextWindowSource;
+  goal?: WebSessionGoal | null;
 }
 
 export interface WebSessionAttachment {

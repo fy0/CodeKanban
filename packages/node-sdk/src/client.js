@@ -1368,6 +1368,39 @@ export class CodeKanbanClient {
     );
   }
 
+  async getWebSessionGoal({ sessionId }) {
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.getGoal(sessionId),
+    );
+  }
+
+  async setWebSessionGoal({ sessionId, objective, status }) {
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.setGoal(sessionId, {
+        objective,
+        status: ensureOptionalString(status),
+      }),
+    );
+  }
+
+  async pauseWebSessionGoal({ sessionId }) {
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.pauseGoal(sessionId),
+    );
+  }
+
+  async resumeWebSessionGoal({ sessionId }) {
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.resumeGoal(sessionId),
+    );
+  }
+
+  async clearWebSessionGoal({ sessionId }) {
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.clearGoal(sessionId),
+    );
+  }
+
   async answerPendingUserInput({
     projectId,
     projectName,

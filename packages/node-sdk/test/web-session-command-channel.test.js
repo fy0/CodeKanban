@@ -240,3 +240,42 @@ test('WebSessionCommandChannel replies to heartbeat ping without disturbing pend
   assert.equal(snapshot.session.id, 'ws1');
   channel.close();
 });
+
+test('WebSessionCommandChannel setGoal sends the expected payload', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const channel = new WebSessionCommandChannel({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/ws',
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  await channel.waitForOpen();
+  const promise = channel.setGoal('ws1', {
+    objective: 'Finish migration and keep tests green',
+    status: 'active',
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const socket = FakeWebSocket.instances[0];
+  assert.equal(socket.sent[0].op, 'goal_set');
+  assert.deepEqual(socket.sent[0].p, {
+    obj: 'Finish migration and keep tests green',
+    st: 'active',
+  });
+
+  socket.emitJson({
+    v: 1,
+    k: 'ack',
+    rid: socket.sent[0].rid,
+    sid: 'ws1',
+    ts: 1710000000030,
+    op: 'goal_set',
+    ok: 1,
+  });
+
+  await promise;
+  channel.close();
+});

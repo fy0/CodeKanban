@@ -949,10 +949,71 @@
                 </div>
               </div>
             </div>
+
           </div>
 
           <div v-else-if="!currentSession" class="empty-state">
             <n-empty :description="emptyStateDescription" />
+          </div>
+
+          <div
+            v-if="currentRealSession?.agent === 'codex' && showGoalCard"
+            class="goal-card"
+            :class="currentRealSession.goal ? `status-${currentRealSession.goal.status}` : 'status-empty'"
+          >
+            <div class="goal-card-header">
+              <div class="goal-card-title-row">
+                <span class="goal-badge">Goal</span>
+                <span v-if="currentRealSession.goal" class="goal-status-badge">
+                  {{ currentRealSession.goal.status }}
+                </span>
+              </div>
+              <div class="goal-card-actions">
+                <n-button size="small" tertiary @click="handleGoalCompose">
+                  Edit
+                </n-button>
+                <n-button
+                  v-if="currentRealSession.goal?.status === 'active'"
+                  size="small"
+                  tertiary
+                  @click="handleGoalPause"
+                >
+                  Pause
+                </n-button>
+                <n-button
+                  v-else-if="currentRealSession.goal"
+                  size="small"
+                  tertiary
+                  @click="handleGoalResume"
+                >
+                  Resume
+                </n-button>
+                <n-button
+                  v-if="currentRealSession.goal"
+                  size="small"
+                  tertiary
+                  @click="handleGoalClear"
+                >
+                  Clear
+                </n-button>
+              </div>
+            </div>
+            <div v-if="currentRealSession.goal" class="goal-card-body">
+              <div class="goal-objective">{{ currentRealSession.goal.objective }}</div>
+              <div class="goal-meta-row">
+                <span>Used {{ currentRealSession.goal.tokensUsed }} tokens</span>
+                <span v-if="currentRealSession.goal.tokenBudget != null">
+                  Budget {{ currentRealSession.goal.tokenBudget }}
+                </span>
+                <span>{{ formatGoalDuration(currentRealSession.goal.timeUsedSeconds) }}</span>
+                <span :title="formatDateTime(currentRealSession.goal.updatedAt)">
+                  {{ formatTime(currentRealSession.goal.updatedAt) }}
+                </span>
+              </div>
+            </div>
+            <div v-else class="goal-empty">
+              Persistent Codex thread goal is not set for this session.
+            </div>
           </div>
 
           <div
@@ -1110,6 +1171,23 @@
                     {{ currentSession.cwd }}
                   </div>
                   <div class="composer-settings">
+                    <button
+                      type="button"
+                      class="composer-settings-trigger"
+                      :class="{
+                        'has-active-settings': showGoalCard,
+                        'is-active': showGoalCard,
+                        'has-goal': Boolean(currentRealSession?.goal),
+                      }"
+                      :title="selectedAgent === 'codex' ? 'Toggle goal card' : 'Goal is only available for Codex'"
+                      :aria-label="
+                        selectedAgent === 'codex' ? 'Toggle goal card' : 'Goal is only available for Codex'
+                      "
+                      :disabled="selectedAgent !== 'codex' || !currentSession"
+                      @click="toggleGoalCard"
+                    >
+                      <n-icon size="18"><IconGoal /></n-icon>
+                    </button>
                     <n-popover
                       v-if="hasActiveSubAgents"
                       trigger="hover"
@@ -2088,9 +2166,9 @@ import {
   AddOutline,
   ArchiveOutline,
   ChevronDownOutline,
-  CreateOutline,
   FlashOutline,
   ImageOutline,
+  RadioOutline,
   RefreshCircleOutline,
   RefreshOutline,
   SettingsOutline,
@@ -2160,6 +2238,7 @@ import { webSessionApi } from '@/api/webSession';
 import { createLongPressTracker } from '@/utils/longPress';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
+import IconGoal from '@/components/icons/IconGoal.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionComposerEditor from '@/components/web-session/WebSessionComposerEditor.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
@@ -2777,6 +2856,22 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
   const session = currentSession.value;
   return session && !isDraftSession(session) ? session : null;
 });
+const showGoalCard = ref(false);
+
+function formatGoalDuration(totalSeconds: number) {
+  const seconds = Math.max(0, Number(totalSeconds || 0));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) {
+    return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes > 0 ? `${hours}h ${restMinutes}m` : `${hours}h`;
+}
 const sendGuardProjectId = computed(() => currentRealSession.value?.projectId || props.projectId);
 const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
 const currentSessionAutoRetryEnabled = computed(() =>
@@ -2881,6 +2976,72 @@ const composerText = computed({
     webSessionStore.setDraftText(props.projectId, sessionId, value);
   },
 });
+
+async function handleGoalPause() {
+  if (!currentRealSession.value) {
+    return;
+  }
+  try {
+    await webSessionStore.pauseGoal(currentRealSession.value.id);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleGoalResume() {
+  if (!currentRealSession.value) {
+    return;
+  }
+  try {
+    await webSessionStore.resumeGoal(currentRealSession.value.id);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleGoalClear() {
+  if (!currentRealSession.value) {
+    return;
+  }
+  try {
+    await webSessionStore.clearGoal(currentRealSession.value.id);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+function parseComposerGoalCommand(raw: string) {
+  const text = String(raw || '').trim();
+  const match = text.match(/^\/goal(?:\s+(.+))?$/s);
+  if (!match) {
+    return null;
+  }
+  return {
+    objective: String(match[1] || '').trim(),
+  };
+}
+
+function handleGoalCompose() {
+  const existing = currentRealSession.value?.goal?.objective?.trim() ?? '';
+  const nextValue = existing ? `/goal ${existing}` : '/goal ';
+  const sessionId = currentDraftSessionId.value;
+  if (!sessionId) {
+    return;
+  }
+  setComposerTextAndSelection(nextValue, nextValue.length);
+  composerInputRef.value?.focus();
+}
+
+async function toggleGoalCard() {
+  showGoalCard.value = !showGoalCard.value;
+  if (showGoalCard.value && currentRealSession.value?.agent === 'codex') {
+    try {
+      await webSessionStore.refreshGoal(currentRealSession.value.id);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    }
+  }
+}
 const liveBlocks = computed(() =>
   currentRealSession.value ? webSessionStore.getBlocks(currentRealSession.value.id) : []
 );
@@ -8723,6 +8884,22 @@ async function handleSubmit() {
       transferSessionSubmit(submitOwnerId, session.id);
       submitOwnerId = session.id;
     }
+    const goalCommand = parseComposerGoalCommand(draftText);
+    if (goalCommand) {
+      if (!goalCommand.objective) {
+        handleGoalCompose();
+        return;
+      }
+      if (attachments.length > 0) {
+        throw new Error('/goal does not accept attachments');
+      }
+      await webSessionStore.setGoal(session.id, goalCommand.objective, 'active');
+      settingsStore.recordWebSessionRecentInput(draftText);
+      void settingsStore.syncWebSessionQuickInputToServer();
+      webSessionStore.clearDraft(props.projectId, draftSessionId);
+      message.success('Goal updated');
+      return;
+    }
     await webSessionStore.sendMessage(
       session.id,
       draftText,
@@ -13429,6 +13606,85 @@ defineExpose({
   box-shadow: 0 10px 24px color-mix(in srgb, var(--web-session-approval-glow) 42%, transparent);
 }
 
+.goal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 12px 16px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(14, 165, 233, 0.08) 0%, transparent 42%),
+    linear-gradient(145deg, color-mix(in srgb, var(--app-surface-color, #fff) 92%, #e0f2fe) 0%, var(--app-surface-color, #fff) 100%);
+}
+
+.goal-card.status-empty {
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, #f8fafc);
+}
+
+.goal-card-header,
+.goal-card-title-row,
+.goal-card-actions,
+.goal-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.goal-card-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.goal-card-actions {
+  flex-wrap: wrap;
+}
+
+.goal-badge,
+.goal-status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.goal-badge {
+  background: #0f172a;
+  color: #fff;
+}
+
+.goal-status-badge {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0369a1;
+}
+
+.goal-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.goal-objective {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: 13px;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.goal-meta-row {
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--n-text-color-3);
+}
+
+.goal-empty {
+  font-size: 12px;
+  color: var(--n-text-color-3);
+}
+
 .approval-card:not(.history-interaction-card)::before {
   content: '';
   position: absolute;
@@ -14185,6 +14441,23 @@ defineExpose({
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--n-primary-color) 13%, transparent);
 }
 
+.composer-settings-trigger.has-goal {
+  border-color: color-mix(in srgb, #f59e0b 34%, var(--n-border-color));
+  background: color-mix(in srgb, #f59e0b 7%, var(--app-surface-color, #fff));
+  color: color-mix(in srgb, #b45309 72%, #334155);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #f59e0b 10%, transparent);
+}
+
+.composer-settings-trigger.has-goal:hover,
+.composer-settings-trigger.has-goal:focus-visible {
+  border-color: color-mix(in srgb, #f59e0b 48%, var(--n-border-color));
+  background: color-mix(in srgb, #f59e0b 10%, var(--app-surface-color, #fff));
+  color: color-mix(in srgb, #92400e 80%, #111827);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, #f59e0b 12%, transparent),
+    0 4px 10px color-mix(in srgb, #f59e0b 8%, transparent);
+}
+
 .composer-settings-trigger.has-active-settings::after {
   content: '';
   position: absolute;
@@ -14197,9 +14470,14 @@ defineExpose({
   box-shadow: 0 0 0 1px var(--app-surface-color, #fff);
 }
 
+.composer-settings-trigger.has-goal::after {
+  background: #f59e0b;
+}
+
 .composer-settings-trigger:active {
   transform: translateY(1px);
 }
+
 
 .composer-settings-popover-card {
   width: min(300px, 74vw);

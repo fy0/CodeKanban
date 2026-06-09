@@ -89,6 +89,30 @@ function normalizeContextEstimate(value, usageFallback) {
   };
 }
 
+function normalizeGoal(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const objective = trimmedString(value?.obj ?? value?.objective);
+  const threadId = trimmedString(value?.tid ?? value?.threadId);
+  const status = trimmedString(value?.st ?? value?.status);
+  if (!objective || !threadId || !status) {
+    return null;
+  }
+  return {
+    threadId,
+    objective,
+    status,
+    tokenBudget: nullableNumberValue(value?.tb ?? value?.tokenBudget),
+    tokensUsed: numberValue(value?.tu ?? value?.tokensUsed, 0),
+    timeUsedSeconds: numberValue(value?.tsu ?? value?.timeUsedSeconds, 0),
+    createdAt:
+      isoFromUnixMilli(value?.ca ?? value?.createdAt) || new Date().toISOString(),
+    updatedAt:
+      isoFromUnixMilli(value?.ua ?? value?.updatedAt) || new Date().toISOString(),
+  };
+}
+
 function normalizeHistoryAttachment(value) {
   return {
     id: trimmedString(value?.id),
@@ -304,6 +328,7 @@ export function normalizeWebSessionSummaryFromWire(value) {
     lastContextCompactionAt: isoFromUnixMilli(value?.lcca),
     contextWindowTokens: nullableNumberValue(value?.cwt),
     contextWindowSource: trimmedString(value?.cws) || "unavailable",
+    goal: normalizeGoal(value?.goal),
   };
 }
 

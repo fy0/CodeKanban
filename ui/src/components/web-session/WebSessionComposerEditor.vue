@@ -92,6 +92,49 @@ async function loadCodeMirrorBundle() {
 
 function buildSkillCompletionExtension(codeMirror: CodeMirrorBundle) {
   const source = (context: any) => {
+    const slashMatch = context.matchBefore(/\/[a-z-]*$/i);
+    if (slashMatch && slashMatch.from === 0) {
+      const query = slashMatch.text.slice(1).toLowerCase();
+      const commands = [
+        {
+          label: 'goal',
+          displayLabel: '/goal',
+          detail: 'Persistent goal',
+          description: 'Set or update the persistent Codex thread goal.',
+          apply: 'goal ',
+        },
+      ].filter(command => command.label.startsWith(query));
+
+      if (commands.length > 0) {
+        return {
+          from: slashMatch.from + 1,
+          options: commands.map(command => ({
+            label: command.label,
+            displayLabel: command.displayLabel,
+            detail: command.detail,
+            type: 'keyword',
+            apply: command.apply,
+            info: () => {
+              const wrapper = document.createElement('div');
+              wrapper.className = 'cm-skill-completion-info';
+
+              const title = document.createElement('div');
+              title.className = 'cm-skill-completion-info-title';
+              title.textContent = command.displayLabel;
+              wrapper.appendChild(title);
+
+              const description = document.createElement('div');
+              description.className = 'cm-skill-completion-info-description';
+              description.textContent = command.description;
+              wrapper.appendChild(description);
+
+              return wrapper;
+            },
+          })),
+        };
+      }
+    }
+
     const match = context.matchBefore(/\$[a-z0-9._-]*$/i);
     if (!match) {
       return null;
@@ -205,6 +248,50 @@ function buildSkillCompletionExtension(codeMirror: CodeMirrorBundle) {
   ];
 }
 
+function buildSlashCommandHighlightExtension(codeMirror: CodeMirrorBundle) {
+  return codeMirror.ViewPlugin.fromClass(
+    class {
+      decorations;
+
+      constructor(view: CodeMirrorView) {
+        this.decorations = this.buildDecorations(view);
+      }
+
+      update(update: any) {
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = this.buildDecorations(update.view);
+        }
+      }
+
+      buildDecorations(view: CodeMirrorView) {
+        const builder: Array<ReturnType<typeof codeMirror.Decoration.mark>["range"]> = [];
+        const commandMark = codeMirror.Decoration.mark({
+          class: 'cm-slash-command cm-slash-command--goal',
+        });
+        const argMark = codeMirror.Decoration.mark({
+          class: 'cm-slash-command-arg cm-slash-command-arg--goal',
+        });
+
+        for (const { from, to } of view.visibleRanges) {
+          const text = view.state.doc.sliceString(from, to);
+          const regex = /^\/goal\b/gm;
+          let match: RegExpExecArray | null;
+          while ((match = regex.exec(text))) {
+            const raw = match[0] || '';
+            const start = from + match.index;
+            builder.push(commandMark.range(start, start + raw.length));
+          }
+        }
+
+        return codeMirror.Decoration.set(builder, true);
+      }
+    },
+    {
+      decorations: value => value.decorations,
+    }
+  );
+}
+
 function buildPlaceholderExtension(codeMirror: CodeMirrorBundle) {
   const placeholder = String(props.placeholder || '').trim();
   return placeholder ? codeMirror.placeholder(placeholder) : [];
@@ -248,6 +335,8 @@ function createEditorTheme(codeMirror: CodeMirrorBundle) {
       boxShadow: '0 14px 28px rgba(15, 23, 42, 0.12)',
       overflow: 'hidden',
       fontSize: '13px',
+      fontFamily:
+        '\"Segoe UI\", \"PingFang SC\", \"Hiragino Sans GB\", \"Microsoft YaHei\", sans-serif',
       padding: '6px',
     },
     '.cm-tooltip-autocomplete ul': {
@@ -282,7 +371,7 @@ function createEditorTheme(codeMirror: CodeMirrorBundle) {
       flex: '1 1 auto',
       minWidth: '0',
       fontSize: '13px',
-      fontWeight: '600',
+      fontWeight: '500',
       lineHeight: '1.35',
     },
     '.cm-tooltip-autocomplete ul li[aria-selected]': {
@@ -350,6 +439,7 @@ function createEditor() {
         }),
         placeholderScope.of(buildPlaceholderExtension(codeMirror)),
         skillScope.of(buildSkillCompletionExtension(codeMirror)),
+        buildSlashCommandHighlightExtension(codeMirror),
       ],
     }),
     parent: host,
@@ -557,5 +647,22 @@ defineExpose<WebSessionComposerEditorExposed>({
 .web-session-composer-editor :deep(.cm-skill-token--unknown) {
   background: color-mix(in srgb, var(--n-border-color) 70%, transparent);
   color: var(--n-text-color-2);
+}
+
+.web-session-composer-editor :deep(.cm-slash-command) {
+  border-radius: 7px;
+  background: color-mix(in srgb, #0f172a 10%, transparent);
+  color: #0f172a;
+  font-weight: 700;
+  padding: 0 2px;
+}
+
+.web-session-composer-editor :deep(.cm-slash-command--goal) {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, #f59e0b 28%, transparent) 0%,
+    color-mix(in srgb, #f97316 22%, transparent) 100%
+  );
+  color: color-mix(in srgb, #9a3412 82%, #111827);
 }
 </style>

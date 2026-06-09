@@ -623,6 +623,16 @@ func (m *Manager) handleCodexAppServerMessage(
 	case "thread/tokenUsage/updated":
 		m.handleCodexAppServerUsage(session, run, message.Params)
 		return codexTurnOutcomeNone, nil
+	case "thread/goal/updated":
+		if err := m.handleCodexAppServerGoalUpdated(session, message.Params); err != nil {
+			return codexTurnOutcomeFailed, err
+		}
+		return codexTurnOutcomeNone, nil
+	case "thread/goal/cleared":
+		if err := m.handleCodexAppServerGoalCleared(session); err != nil {
+			return codexTurnOutcomeFailed, err
+		}
+		return codexTurnOutcomeNone, nil
 	case "error":
 		run.lastError = parseCodexTurnError(message.Params)
 		if retryInfo, ok := classifyCodexTransportRetryMessage(run.lastError); ok {
@@ -910,6 +920,117 @@ func (m *Manager) handleCodexAppServerUsage(
 			"out": out,
 		},
 	})
+}
+
+func applySessionGoalUpdates(updates map[string]any, goal *SessionGoal) {
+	if updates == nil {
+		return
+	}
+	if goal == nil {
+		updates["goal_objective"] = nil
+		updates["goal_status"] = nil
+		updates["goal_token_budget"] = nil
+		updates["goal_tokens_used"] = int64(0)
+		updates["goal_time_used_seconds"] = int64(0)
+		updates["goal_created_at"] = nil
+		updates["goal_updated_at"] = nil
+		return
+	}
+	updates["goal_objective"] = goal.Objective
+	updates["goal_status"] = string(goal.Status)
+	updates["goal_token_budget"] = goal.TokenBudget
+	updates["goal_tokens_used"] = goal.TokensUsed
+	updates["goal_time_used_seconds"] = goal.TimeUsedSeconds
+	updates["goal_created_at"] = goal.CreatedAt
+	updates["goal_updated_at"] = goal.UpdatedAt
+}
+
+func (m *Manager) loadCodexGoal(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	client *codexAppServerClient,
+	threadID string,
+) (*SessionGoal, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, nil
+	}
+	if client != nil {
+		response, err := client.request(ctx, "thread/goal/get", map[string]any{
+			"threadId": threadID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		payload := decodeRawObject(response.Result)
+		return parseCodexSessionGoal(payload["goal"], threadID), nil
+	}
+
+	var goal *SessionGoal
+	err := m.withCodexQueryClient(ctx, session.Cwd, func(queryClient *codexAppServerClient) error {
+		response, err := queryClient.request(ctx, "thread/goal/get", map[string]any{
+			"threadId": threadID,
+		})
+		if err != nil {
+			return err
+		}
+		payload := decodeRawObject(response.Result)
+		goal = parseCodexSessionGoal(payload["goal"], threadID)
+		return nil
+	})
+	return goal, err
+}
+
+func (m *Manager) syncCodexGoalState(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	client *codexAppServerClient,
+	threadID string,
+) error {
+	goal, err := m.loadCodexGoal(ctx, session, client, threadID)
+	if err != nil {
+		return err
+	}
+	updates := map[string]any{
+		"updated_at": time.Now(),
+	}
+	applySessionGoalUpdates(updates, goal)
+	return m.updateRuntimeState(ctx, session.ID, updates)
+}
+
+func (m *Manager) handleCodexAppServerGoalUpdated(
+	session tables.WebSessionTable,
+	params json.RawMessage,
+) error {
+	payload := decodeRawObject(params)
+	threadID := strings.TrimSpace(firstNonEmpty(stringValue(payload["threadId"]), func() string {
+		if session.NativeSessionID == nil {
+			return ""
+		}
+		return *session.NativeSessionID
+	}()))
+	goal := parseCodexSessionGoal(payload["goal"], threadID)
+	updates := map[string]any{
+		"updated_at": time.Now(),
+	}
+	applySessionGoalUpdates(updates, goal)
+	if err := m.updateRuntimeState(context.Background(), session.ID, updates); err != nil {
+		return err
+	}
+	m.broadcastSessionSummary(context.Background(), session.ID)
+	return nil
+}
+
+func (m *Manager) handleCodexAppServerGoalCleared(session tables.WebSessionTable) error {
+	updates := map[string]any{
+		"updated_at": time.Now(),
+	}
+	applySessionGoalUpdates(updates, nil)
+	if err := m.updateRuntimeState(context.Background(), session.ID, updates); err != nil {
+		return err
+	}
+	m.broadcastSessionSummary(context.Background(), session.ID)
+	return nil
 }
 
 func (m *Manager) handleCodexAppServerUserInputRequest(

@@ -103,6 +103,7 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
       assert.deepEqual(body, {
         worktreeId: 'w-main',
         agent: 'codex',
+        claudeRuntime: 'claude',
         model: 'gpt-5.5',
         reasoningEffort: 'xhigh',
         workflowMode: 'plan',
@@ -295,6 +296,7 @@ test('CodeKanbanClient createWebSession auto-selects main worktree and required 
       assert.deepEqual(body, {
         worktreeId: 'w-main',
         agent: 'codex',
+        claudeRuntime: 'claude',
         model: 'gpt-5.5',
         reasoningEffort: 'xhigh',
         workflowMode: 'default',
@@ -420,6 +422,34 @@ test('CodeKanbanClient opens web session websocket helpers with the expected URL
 
   commandChannel.close();
   eventStream.close();
+});
+
+test('CodeKanbanClient exposes goal helpers through the web session command channel', async () => {
+  withAckingWebSocket((frame) => {
+    assert.equal(frame.sid, 'ws-goal');
+  });
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: async () => createJsonResponse({}),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  await client.setWebSessionGoal({
+    sessionId: 'ws-goal',
+    objective: 'Ship the feature',
+    status: 'active',
+  });
+  assert.equal(FakeWebSocket.instances[0].sent[0]?.op, 'goal_set');
+
+  await client.pauseWebSessionGoal({ sessionId: 'ws-goal' });
+  assert.equal(FakeWebSocket.instances[1].sent[0]?.op, 'goal_pause');
+
+  await client.resumeWebSessionGoal({ sessionId: 'ws-goal' });
+  assert.equal(FakeWebSocket.instances[2].sent[0]?.op, 'goal_resume');
+
+  await client.clearWebSessionGoal({ sessionId: 'ws-goal' });
+  assert.equal(FakeWebSocket.instances[3].sent[0]?.op, 'goal_clear');
 });
 
 test('CodeKanbanClient analyzeWebSession derives actionable polling state from snapshot', async () => {

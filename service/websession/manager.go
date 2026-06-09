@@ -1459,6 +1459,159 @@ func (m *Manager) UpdateWorkflowMode(
 	})
 }
 
+func (m *Manager) GetSessionGoal(ctx context.Context, sessionID string) (*SessionGoal, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if normalizeAgent(Agent(record.Agent)) != AgentCodex {
+		return nil, fmt.Errorf("goal is only supported for codex sessions")
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
+		return sessionGoalFromRecord(record), nil
+	}
+	if err := m.syncCodexGoalState(ctx, record, nil, strings.TrimSpace(*record.NativeSessionID)); err != nil {
+		return nil, err
+	}
+	refreshed, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return sessionGoalFromRecord(refreshed), nil
+}
+
+func (m *Manager) SetSessionGoal(
+	ctx context.Context,
+	sessionID string,
+	objective string,
+	status GoalStatus,
+) (SessionSummary, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if normalizeAgent(Agent(record.Agent)) != AgentCodex {
+		return SessionSummary{}, fmt.Errorf("goal is only supported for codex sessions")
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
+		return SessionSummary{}, fmt.Errorf("session has no native thread id")
+	}
+
+	trimmedObjective := strings.TrimSpace(objective)
+	normalizedStatus := status
+	if normalizedStatus == "" {
+		normalizedStatus = GoalStatusActive
+	}
+	if normalizeGoalStatus(string(normalizedStatus)) == "" {
+		return SessionSummary{}, fmt.Errorf("invalid goal status")
+	}
+	if trimmedObjective == "" {
+		return SessionSummary{}, fmt.Errorf("goal objective is required")
+	}
+	if len([]rune(trimmedObjective)) > 4000 {
+		return SessionSummary{}, fmt.Errorf("goal objective must be at most 4000 characters")
+	}
+
+	err = m.withCodexQueryClient(ctx, record.Cwd, func(client *codexAppServerClient) error {
+		_, err := client.request(ctx, "thread/goal/set", map[string]any{
+			"threadId":  strings.TrimSpace(*record.NativeSessionID),
+			"objective": trimmedObjective,
+			"status":    string(normalizedStatus),
+		})
+		if err != nil {
+			return err
+		}
+		return m.syncCodexGoalState(ctx, record, client, strings.TrimSpace(*record.NativeSessionID))
+	})
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	refreshed, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	return m.mapSessionSummary(refreshed), nil
+}
+
+func (m *Manager) UpdateSessionGoalStatus(
+	ctx context.Context,
+	sessionID string,
+	status GoalStatus,
+) (SessionSummary, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if normalizeAgent(Agent(record.Agent)) != AgentCodex {
+		return SessionSummary{}, fmt.Errorf("goal is only supported for codex sessions")
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
+		return SessionSummary{}, fmt.Errorf("session has no native thread id")
+	}
+	normalizedStatus := normalizeGoalStatus(string(status))
+	if normalizedStatus == "" {
+		return SessionSummary{}, fmt.Errorf("invalid goal status")
+	}
+	currentGoal := sessionGoalFromRecord(record)
+	if currentGoal == nil {
+		return SessionSummary{}, fmt.Errorf("session has no goal")
+	}
+
+	err = m.withCodexQueryClient(ctx, record.Cwd, func(client *codexAppServerClient) error {
+		_, err := client.request(ctx, "thread/goal/set", map[string]any{
+			"threadId": strings.TrimSpace(*record.NativeSessionID),
+			"status":   string(normalizedStatus),
+		})
+		if err != nil {
+			return err
+		}
+		return m.syncCodexGoalState(ctx, record, client, strings.TrimSpace(*record.NativeSessionID))
+	})
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	refreshed, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	return m.mapSessionSummary(refreshed), nil
+}
+
+func (m *Manager) ClearSessionGoal(ctx context.Context, sessionID string) (SessionSummary, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if normalizeAgent(Agent(record.Agent)) != AgentCodex {
+		return SessionSummary{}, fmt.Errorf("goal is only supported for codex sessions")
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
+		return SessionSummary{}, fmt.Errorf("session has no native thread id")
+	}
+
+	err = m.withCodexQueryClient(ctx, record.Cwd, func(client *codexAppServerClient) error {
+		_, err := client.request(ctx, "thread/goal/clear", map[string]any{
+			"threadId": strings.TrimSpace(*record.NativeSessionID),
+		})
+		if err != nil {
+			return err
+		}
+		updates := map[string]any{
+			"updated_at": time.Now(),
+		}
+		applySessionGoalUpdates(updates, nil)
+		return m.updateRuntimeState(ctx, record.ID, updates)
+	})
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	refreshed, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	return m.mapSessionSummary(refreshed), nil
+}
+
 func (m *Manager) UpdatePermissionLevel(
 	ctx context.Context,
 	sessionID string,
@@ -1912,6 +2065,16 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleSetReasoningEffortCommand(ctx, client, frame)
 	case "set_wm":
 		return m.handleSetWorkflowModeCommand(ctx, client, frame)
+	case "goal_get":
+		return m.handleGoalGetCommand(ctx, client, frame)
+	case "goal_set":
+		return m.handleGoalSetCommand(ctx, client, frame)
+	case "goal_pause":
+		return m.handleGoalStatusCommand(ctx, client, frame, GoalStatusPaused)
+	case "goal_resume":
+		return m.handleGoalStatusCommand(ctx, client, frame, GoalStatusActive)
+	case "goal_clear":
+		return m.handleGoalClearCommand(ctx, client, frame)
 	case "set_pl":
 		return m.handleSetPermissionLevelCommand(ctx, client, frame)
 	case "set_act":
@@ -2298,6 +2461,46 @@ func (m *Manager) handleSetWorkflowModeCommand(ctx context.Context, client *clie
 	}
 	m.broadcastSessionSummary(ctx, frame.SessionID)
 	return nil
+}
+
+func (m *Manager) handleGoalGetCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	if _, err := m.GetSessionGoal(ctx, frame.SessionID); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	return m.sendAckWithSnapshot(ctx, client, frame)
+}
+
+func (m *Manager) handleGoalSetCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	var payload struct {
+		Objective string `json:"obj"`
+		Status    string `json:"st"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid goal payload", false))
+	}
+	if _, err := m.SetSessionGoal(ctx, frame.SessionID, payload.Objective, GoalStatus(payload.Status)); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	return m.sendAckWithSnapshot(ctx, client, frame)
+}
+
+func (m *Manager) handleGoalStatusCommand(
+	ctx context.Context,
+	client *client,
+	frame wireCommandFrame,
+	status GoalStatus,
+) error {
+	if _, err := m.UpdateSessionGoalStatus(ctx, frame.SessionID, status); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	return m.sendAckWithSnapshot(ctx, client, frame)
+}
+
+func (m *Manager) handleGoalClearCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	if _, err := m.ClearSessionGoal(ctx, frame.SessionID); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	return m.sendAckWithSnapshot(ctx, client, frame)
 }
 
 func (m *Manager) handleSetPermissionLevelCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -4471,7 +4674,61 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 			}
 			return ""
 		}(),
+		Goal: sessionGoalFromRecord(record),
 	}
+}
+
+func normalizeGoalStatus(value string) GoalStatus {
+	switch strings.TrimSpace(value) {
+	case string(GoalStatusActive):
+		return GoalStatusActive
+	case string(GoalStatusPaused):
+		return GoalStatusPaused
+	case string(GoalStatusBlocked):
+		return GoalStatusBlocked
+	case string(GoalStatusUsageLimited):
+		return GoalStatusUsageLimited
+	case string(GoalStatusBudgetLimit):
+		return GoalStatusBudgetLimit
+	case string(GoalStatusComplete):
+		return GoalStatusComplete
+	default:
+		return ""
+	}
+}
+
+func sessionGoalFromRecord(record tables.WebSessionTable) *SessionGoal {
+	if record.GoalObjective == nil || strings.TrimSpace(*record.GoalObjective) == "" {
+		return nil
+	}
+	threadID := ""
+	if record.NativeSessionID != nil {
+		threadID = strings.TrimSpace(*record.NativeSessionID)
+	}
+	if threadID == "" || record.GoalCreatedAt == nil || record.GoalUpdatedAt == nil {
+		return nil
+	}
+	status := normalizeGoalStatus(firstNonEmpty(pointerString(record.GoalStatus), string(GoalStatusActive)))
+	if status == "" {
+		status = GoalStatusActive
+	}
+	return &SessionGoal{
+		ThreadID:        threadID,
+		Objective:       strings.TrimSpace(*record.GoalObjective),
+		Status:          status,
+		TokenBudget:     record.GoalTokenBudget,
+		TokensUsed:      maxInt64(0, record.GoalTokensUsed),
+		TimeUsedSeconds: maxInt64(0, record.GoalTimeUsedSeconds),
+		CreatedAt:       *record.GoalCreatedAt,
+		UpdatedAt:       *record.GoalUpdatedAt,
+	}
+}
+
+func pointerString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func contextEstimateUsedTokens(inputTokens, outputTokens int64) int64 {

@@ -118,6 +118,17 @@ const (
 	ContextWindowSourceUnavailable  ContextWindowSource = "unavailable"
 )
 
+type GoalStatus string
+
+const (
+	GoalStatusActive       GoalStatus = "active"
+	GoalStatusPaused       GoalStatus = "paused"
+	GoalStatusBlocked      GoalStatus = "blocked"
+	GoalStatusUsageLimited GoalStatus = "usageLimited"
+	GoalStatusBudgetLimit  GoalStatus = "budgetLimited"
+	GoalStatusComplete     GoalStatus = "complete"
+)
+
 type SyncState string
 
 const (
@@ -206,6 +217,18 @@ type SessionSummary struct {
 	LastContextCompactionAt  *time.Time          `json:"lastContextCompactionAt,omitempty"`
 	ContextWindowTokens      *int64              `json:"contextWindowTokens,omitempty"`
 	ContextWindowSource      ContextWindowSource `json:"contextWindowSource"`
+	Goal                     *SessionGoal        `json:"goal,omitempty"`
+}
+
+type SessionGoal struct {
+	ThreadID        string     `json:"threadId"`
+	Objective       string     `json:"objective"`
+	Status          GoalStatus `json:"status"`
+	TokenBudget     *int64     `json:"tokenBudget,omitempty"`
+	TokensUsed      int64      `json:"tokensUsed"`
+	TimeUsedSeconds int64      `json:"timeUsedSeconds"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
 type ArchivedQueryResult struct {

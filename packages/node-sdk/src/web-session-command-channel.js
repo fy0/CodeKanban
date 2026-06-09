@@ -261,6 +261,45 @@ export class WebSessionCommandChannel {
     });
   }
 
+  async getGoal(sessionId) {
+    return await this._executeCommand({
+      operation: "goal_get",
+      sessionId,
+    });
+  }
+
+  async setGoal(sessionId, input = {}) {
+    return await this._executeCommand({
+      operation: "goal_set",
+      sessionId,
+      payload: {
+        obj: ensureString(input.objective, "objective"),
+        st: ensureOptionalString(input.status),
+      },
+    });
+  }
+
+  async pauseGoal(sessionId) {
+    return await this._executeCommand({
+      operation: "goal_pause",
+      sessionId,
+    });
+  }
+
+  async resumeGoal(sessionId) {
+    return await this._executeCommand({
+      operation: "goal_resume",
+      sessionId,
+    });
+  }
+
+  async clearGoal(sessionId) {
+    return await this._executeCommand({
+      operation: "goal_clear",
+      sessionId,
+    });
+  }
+
   async updatePermissionLevel(sessionId, input = {}) {
     return await this._executeCommand({
       operation: "set_pl",

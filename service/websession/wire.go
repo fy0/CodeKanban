@@ -95,6 +95,18 @@ type wireSess struct {
 	Cost                     float64     `json:"cost"`
 	ContextWindowTokens      *int64      `json:"cwt,omitempty"`
 	ContextWindowSource      string      `json:"cws"`
+	Goal                     *wireGoal   `json:"goal,omitempty"`
+}
+
+type wireGoal struct {
+	ThreadID        string  `json:"tid"`
+	Objective       string  `json:"obj"`
+	Status          string  `json:"st"`
+	TokenBudget     *int64  `json:"tb,omitempty"`
+	TokensUsed      int64   `json:"tu"`
+	TimeUsedSeconds int64   `json:"tsu"`
+	CreatedAt       int64   `json:"ca"`
+	UpdatedAt       int64   `json:"ua"`
 }
 
 type wireUsage struct {
@@ -422,6 +434,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		Cost:                    session.Usage.Cost,
 		ContextWindowTokens:     session.ContextWindowTokens,
 		ContextWindowSource:     string(session.ContextWindowSource),
+		Goal:                    mapWireGoal(session.Goal),
 	}
 	if session.LatestTurnUsage.InputTokens > 0 ||
 		session.LatestTurnUsage.CachedInputTokens > 0 ||
@@ -435,6 +448,22 @@ func mapWireSession(session SessionSummary) *wireSess {
 		}
 	}
 	return wireSession
+}
+
+func mapWireGoal(goal *SessionGoal) *wireGoal {
+	if goal == nil {
+		return nil
+	}
+	return &wireGoal{
+		ThreadID:        goal.ThreadID,
+		Objective:       goal.Objective,
+		Status:          string(goal.Status),
+		TokenBudget:     goal.TokenBudget,
+		TokensUsed:      goal.TokensUsed,
+		TimeUsedSeconds: goal.TimeUsedSeconds,
+		CreatedAt:       goal.CreatedAt.UnixMilli(),
+		UpdatedAt:       goal.UpdatedAt.UnixMilli(),
+	}
 }
 
 func mapWirePendingInputs(items []PendingInput) []wirePendingInput {

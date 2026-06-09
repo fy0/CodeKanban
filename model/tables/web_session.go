@@ -53,6 +53,14 @@ type WebSessionTable struct {
 	LastMessageAt *time.Time `gorm:"type:datetime" json:"lastMessageAt"`
 	LastEventSeq  int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`
 
+	GoalObjective       *string    `gorm:"type:text" json:"goalObjective"`
+	GoalStatus          *string    `gorm:"type:text" json:"goalStatus"`
+	GoalTokenBudget     *int64     `gorm:"type:integer" json:"goalTokenBudget"`
+	GoalTokensUsed      int64      `gorm:"type:integer;not null;default:0" json:"goalTokensUsed"`
+	GoalTimeUsedSeconds int64      `gorm:"type:integer;not null;default:0" json:"goalTimeUsedSeconds"`
+	GoalCreatedAt       *time.Time `gorm:"type:datetime" json:"goalCreatedAt"`
+	GoalUpdatedAt       *time.Time `gorm:"type:datetime" json:"goalUpdatedAt"`
+
 	TotalInputTokens                  int64      `gorm:"type:integer;not null;default:0" json:"totalInputTokens"`
 	TotalCachedInputTokens            int64      `gorm:"type:integer;not null;default:0" json:"totalCachedInputTokens"`
 	TotalOutputTokens                 int64      `gorm:"type:integer;not null;default:0" json:"totalOutputTokens"`

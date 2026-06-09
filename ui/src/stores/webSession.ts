@@ -9,6 +9,7 @@ import {
 import type {
   WebSessionAttachment,
   WebSessionContextWindowSource,
+  WebSessionGoal,
   WebSessionSummary,
 } from '@/types/models';
 import {
@@ -94,6 +95,16 @@ type WireSession = {
   cost?: number;
   cwt?: number | null;
   cws?: WebSessionContextWindowSource;
+  goal?: {
+    tid?: string;
+    obj?: string;
+    st?: string;
+    tb?: number | null;
+    tu?: number;
+    tsu?: number;
+    ca?: number | null;
+    ua?: number | null;
+  } | null;
 };
 
 type WirePendingInput = {
@@ -286,6 +297,35 @@ export interface WebSessionUserInputState {
   stale: boolean;
   recoveryReason?: string;
   recoveryMessage?: string;
+}
+
+function normalizeGoal(goal: WireSession['goal']): WebSessionGoal | null {
+  if (!goal || typeof goal !== 'object') {
+    return null;
+  }
+  const objective = typeof goal.obj === 'string' ? goal.obj.trim() : '';
+  const threadId = typeof goal.tid === 'string' ? goal.tid.trim() : '';
+  const status = typeof goal.st === 'string' ? (goal.st.trim() as WebSessionGoal['status']) : '';
+  if (!objective || !threadId || !status) {
+    return null;
+  }
+  return {
+    threadId,
+    objective,
+    status,
+    tokenBudget:
+      typeof goal.tb === 'number' && Number.isFinite(goal.tb) ? Number(goal.tb) : null,
+    tokensUsed: Number(goal.tu ?? 0),
+    timeUsedSeconds: Number(goal.tsu ?? 0),
+    createdAt:
+      typeof goal.ca === 'number' && Number.isFinite(goal.ca)
+        ? new Date(goal.ca).toISOString()
+        : new Date().toISOString(),
+    updatedAt:
+      typeof goal.ua === 'number' && Number.isFinite(goal.ua)
+        ? new Date(goal.ua).toISOString()
+        : new Date().toISOString(),
+  };
 }
 
 export interface WebSessionLiveState {
@@ -2161,6 +2201,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         session.cws === 'unavailable'
           ? session.cws
           : 'unavailable',
+      goal: normalizeGoal(session.goal),
     };
   }
 
@@ -4450,6 +4491,60 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
+  async function refreshGoal(sessionId: string) {
+    const beforeUpdatedAt = findSessionById(sessionId)?.goal?.updatedAt ?? '';
+    await runRuntimeMutationCommand(sessionId, 'goal_get', {}, {
+      label: 'goal_get',
+      predicate: () => {
+        const session = findSessionById(sessionId);
+        if (!session) {
+          return false;
+        }
+        if (!session.goal) {
+          return true;
+        }
+        return session.goal.updatedAt !== beforeUpdatedAt;
+      },
+    });
+  }
+
+  async function setGoal(
+    sessionId: string,
+    objective: string,
+    status: WebSessionGoal['status'] = 'active'
+  ) {
+    await runRuntimeMutationCommand(
+      sessionId,
+      'goal_set',
+      { obj: objective, st: status },
+      {
+        label: 'goal_set',
+        predicate: () => findSessionById(sessionId)?.goal?.objective?.trim() === objective.trim(),
+      }
+    );
+  }
+
+  async function pauseGoal(sessionId: string) {
+    await runRuntimeMutationCommand(sessionId, 'goal_pause', {}, {
+      label: 'goal_pause',
+      predicate: () => findSessionById(sessionId)?.goal?.status === 'paused',
+    });
+  }
+
+  async function resumeGoal(sessionId: string) {
+    await runRuntimeMutationCommand(sessionId, 'goal_resume', {}, {
+      label: 'goal_resume',
+      predicate: () => findSessionById(sessionId)?.goal?.status === 'active',
+    });
+  }
+
+  async function clearGoal(sessionId: string) {
+    await runRuntimeMutationCommand(sessionId, 'goal_clear', {}, {
+      label: 'goal_clear',
+      predicate: () => !findSessionById(sessionId)?.goal,
+    });
+  }
+
   async function updatePermissionLevel(
     sessionId: string,
     permissionLevel: 'default' | 'elevated' | 'yolo'
@@ -4703,6 +4798,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updateClaudeRuntime,
     updateReasoningEffort,
     updateWorkflowMode,
+    refreshGoal,
+    setGoal,
+    pauseGoal,
+    resumeGoal,
+    clearGoal,
     updatePermissionLevel,
     updateAgent,
     updateActiveCallTimeout,
