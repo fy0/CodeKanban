@@ -2,12 +2,16 @@
   <n-modal
     v-model:show="showModal"
     preset="card"
-    :title="modalTitle"
     style="width: 800px; max-width: 90vw; max-height: 85vh"
     :mask-closable="true"
     :closable="true"
     @close="handleClose"
   >
+    <template #header>
+      <div class="conversation-modal-title" :title="modalTitle">
+        {{ modalTitle }}
+      </div>
+    </template>
     <template #header-extra>
       <n-space :size="6" align="center">
         <n-tooltip>
@@ -172,6 +176,23 @@ function handleClose() {
 </script>
 
 <style scoped>
+:deep(.n-card-header) {
+  align-items: center;
+  gap: 12px;
+}
+
+:deep(.n-card-header__main) {
+  min-width: 0;
+  flex: 1;
+}
+
+.conversation-modal-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .conversation-nav-indicator {
   min-width: 52px;
   text-align: center;

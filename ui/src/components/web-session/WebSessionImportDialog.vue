@@ -126,12 +126,16 @@
   <n-modal
     v-model:show="showPreviewModal"
     preset="card"
-    :title="previewSessionTitle"
     style="width: 920px; max-width: 96vw; max-height: 88vh"
     :mask-closable="true"
     :closable="true"
     @close="closePreview"
   >
+    <template #header>
+      <div class="web-session-import__preview-title" :title="previewSessionTitle">
+        {{ previewSessionTitle }}
+      </div>
+    </template>
     <template #header-extra>
       <n-space :size="6" align="center">
         <n-tooltip>
@@ -612,6 +616,23 @@ async function loadSources(isRefresh = false) {
   text-align: center;
   font-size: 12px;
   color: var(--n-text-color-3);
+}
+
+:deep(.n-card-header) {
+  align-items: center;
+  gap: 12px;
+}
+
+:deep(.n-card-header__main) {
+  min-width: 0;
+  flex: 1;
+}
+
+.web-session-import__preview-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .web-session-import__preview-note {

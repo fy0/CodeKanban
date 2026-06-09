@@ -223,12 +223,16 @@
   <n-modal
     v-model:show="showConversationModal"
     preset="card"
-    :title="currentSessionTitle"
     style="width: 800px; max-width: 90vw; max-height: 85vh"
     :mask-closable="true"
     :closable="true"
     @close="closeConversationModal"
   >
+    <template #header>
+      <div class="conversation-modal-title" :title="currentSessionTitle">
+        {{ currentSessionTitle }}
+      </div>
+    </template>
     <template #header-extra>
       <n-space :size="6" align="center">
         <n-tooltip>
@@ -751,6 +755,23 @@ function updateConversationNavState(state: ConversationViewerNavState) {
 <style scoped>
 .session-tabs {
   min-height: 300px;
+}
+
+:deep(.n-card-header) {
+  align-items: center;
+  gap: 12px;
+}
+
+:deep(.n-card-header__main) {
+  min-width: 0;
+  flex: 1;
+}
+
+.conversation-modal-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-nav-indicator {
