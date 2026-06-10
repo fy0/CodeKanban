@@ -22,4 +22,11 @@ describe('webSession runtime capability guards', () => {
     expect(webSessionPanelSource).toContain('goalModeUnavailableMessage');
     expect(webSessionPanelSource).toContain('isCurrentSessionGoalModeBlocked');
   });
+
+  it('renders the goal card for codex draft sessions on the initial screen', () => {
+    expect(webSessionPanelSource).toContain("v-if=\"currentSession?.agent === 'codex' && showGoalCard\"");
+    expect(webSessionPanelSource).toContain(
+      'Draft session goal will be created when you send the /goal command.'
+    );
+  });
 });

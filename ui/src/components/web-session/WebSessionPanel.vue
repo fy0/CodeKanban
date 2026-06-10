@@ -957,15 +957,15 @@
           </div>
 
           <div
-            v-if="currentRealSession?.agent === 'codex' && showGoalCard"
+            v-if="currentSession?.agent === 'codex' && showGoalCard"
             class="goal-card"
-            :class="currentRealSession.goal ? `status-${currentRealSession.goal.status}` : 'status-empty'"
+            :class="currentSessionGoal ? `status-${currentSessionGoal.status}` : 'status-empty'"
           >
             <div class="goal-card-header">
               <div class="goal-card-title-row">
                 <span class="goal-badge">Goal</span>
-                <span v-if="currentRealSession.goal" class="goal-status-badge">
-                  {{ currentRealSession.goal.status }}
+                <span v-if="currentSessionGoal" class="goal-status-badge">
+                  {{ currentSessionGoal.status }}
                 </span>
               </div>
               <div class="goal-card-actions">
@@ -973,7 +973,7 @@
                   Edit
                 </n-button>
                 <n-button
-                  v-if="currentRealSession.goal?.status === 'active'"
+                  v-if="currentSessionGoal?.status === 'active'"
                   size="small"
                   tertiary
                   :disabled="isCurrentSessionGoalModeBlocked"
@@ -982,7 +982,7 @@
                   Pause
                 </n-button>
                 <n-button
-                  v-else-if="currentRealSession.goal"
+                  v-else-if="currentSessionGoal"
                   size="small"
                   tertiary
                   :disabled="isCurrentSessionGoalModeBlocked"
@@ -991,7 +991,7 @@
                   Resume
                 </n-button>
                 <n-button
-                  v-if="currentRealSession.goal"
+                  v-if="currentSessionGoal"
                   size="small"
                   tertiary
                   :disabled="isCurrentSessionGoalModeBlocked"
@@ -1001,21 +1001,25 @@
                 </n-button>
               </div>
             </div>
-            <div v-if="currentRealSession.goal" class="goal-card-body">
-              <div class="goal-objective">{{ currentRealSession.goal.objective }}</div>
+            <div v-if="currentSessionGoal" class="goal-card-body">
+              <div class="goal-objective">{{ currentSessionGoal.objective }}</div>
               <div class="goal-meta-row">
-                <span>Used {{ currentRealSession.goal.tokensUsed }} tokens</span>
-                <span v-if="currentRealSession.goal.tokenBudget != null">
-                  Budget {{ currentRealSession.goal.tokenBudget }}
+                <span>Used {{ currentSessionGoal.tokensUsed }} tokens</span>
+                <span v-if="currentSessionGoal.tokenBudget != null">
+                  Budget {{ currentSessionGoal.tokenBudget }}
                 </span>
-                <span>{{ formatGoalDuration(currentRealSession.goal.timeUsedSeconds) }}</span>
-                <span :title="formatIsoDateTime(currentRealSession.goal.updatedAt)">
-                  {{ formatIsoTime(currentRealSession.goal.updatedAt) }}
+                <span>{{ formatGoalDuration(currentSessionGoal.timeUsedSeconds) }}</span>
+                <span :title="formatIsoDateTime(currentSessionGoal.updatedAt)">
+                  {{ formatIsoTime(currentSessionGoal.updatedAt) }}
                 </span>
               </div>
             </div>
             <div v-else class="goal-empty">
-              Persistent Codex thread goal is not set for this session.
+              {{
+                isDraftSession(currentSession)
+                  ? 'Draft session goal will be created when you send the /goal command.'
+                  : 'Persistent Codex thread goal is not set for this session.'
+              }}
             </div>
             <div v-if="isCurrentSessionGoalModeBlocked" class="goal-empty">
               {{ goalModeUnavailableMessage() }}
@@ -2882,7 +2886,7 @@ const isMessageCapabilityBlocked = computed(() => {
   return false;
 });
 const isCurrentSessionGoalModeBlocked = computed(() => {
-  const session = currentRealSession.value;
+  const session = currentSession.value;
   if (!session || session.agent !== 'codex') {
     return false;
   }
@@ -2891,6 +2895,7 @@ const isCurrentSessionGoalModeBlocked = computed(() => {
   }
   return !runtimeSupportsGoalMode.value;
 });
+const currentSessionGoal = computed(() => currentRealSession.value?.goal ?? null);
 const showGoalCard = ref(false);
 
 function formatGoalDuration(totalSeconds: number) {
