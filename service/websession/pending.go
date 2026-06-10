@@ -140,6 +140,9 @@ func (m *Manager) sendMessageWithMode(
 	if record.ArchivedAt != nil {
 		return errors.New("session is archived")
 	}
+	if err := m.ensureSessionMessagingAvailable(record); err != nil {
+		return err
+	}
 
 	normalizedMode := normalizePendingInputMode(mode)
 	if normalizedMode != "" && m.hasActiveRun(sessionID) {

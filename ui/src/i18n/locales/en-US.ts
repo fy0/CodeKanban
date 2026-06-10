@@ -936,6 +936,10 @@ export default {
       'This estimate is currently available only for Codex AI sessions. Claude sessions do not expose a comparable context-window value here yet.',
     composerHintIdle:
       'Press Enter to send. Use Shift + Enter for a new line. Paste or drag images.',
+    composerHintCodexMissing:
+      'Codex was not detected. Install Codex before sending web session messages.',
+    composerHintClaudeMissing:
+      'Claude Code was not detected. Install Claude Code before sending web session messages.',
     composerHintUploading:
       'Image upload is in progress. Sending is disabled until it finishes, but you can keep adding images.',
     composerHintRunning:
@@ -946,6 +950,13 @@ export default {
       'The agent is waiting for more information. Answer the current prompt first.',
     composerHintRecovered:
       'The previous run was interrupted by an app restart. Send a new message to continue this session.',
+    codexNotInstalled: 'Codex was not detected. Install Codex before continuing.',
+    claudeCodeNotInstalled:
+      'Claude Code was not detected. Install Claude Code before continuing.',
+    goalModeUnavailable: 'Goal mode requires Codex >= {version}.',
+    goalModeUnavailableWithCurrent:
+      'Goal mode requires Codex >= {requiredVersion}. Current version: {currentVersion}.',
+    goalModeNotReady: 'Goal mode is currently unavailable. Install or upgrade Codex first.',
     sendConflictWarningTitle: 'Other sessions are still running',
     sendConflictWarningBodySingle:
       'Another same-project non-plan session is still running: {sessions}. Click Send Again to continue anyway.',

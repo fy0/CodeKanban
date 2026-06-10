@@ -565,6 +565,146 @@ func TestHandleSendCommandRepliesWithAckAndSnapshot(t *testing.T) {
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
+func TestHandleSendCommandRejectsMissingCodexBinary(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: filepath.Join(t.TempDir(), "missing-codex"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_send","sid":%q,"op":"send","p":{"txt":"first","atts":[]}}`, created.ID)),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected a single error frame, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "err" {
+		t.Fatalf("expected error frame, got %#v", conn.frames[0])
+	}
+	if conn.frames[0].Message != errCodexNotInstalled {
+		t.Fatalf("expected message %q, got %q", errCodexNotInstalled, conn.frames[0].Message)
+	}
+}
+
+func TestHandleGoalSetCommandRejectsOldCodexVersion(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.132.9"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	threadID := "thread_test"
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", created.ID).
+		Update("native_session_id", threadID).Error; err != nil {
+		t.Fatalf("set native_session_id failed: %v", err)
+	}
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_goal","sid":%q,"op":"goal_set","p":{"obj":"Finish migration","st":"active"}}`, created.ID)),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected a single error frame, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "err" {
+		t.Fatalf("expected error frame, got %#v", conn.frames[0])
+	}
+	expected := "Goal mode requires Codex >= 0.133.0. Current version: 0.132.9."
+	if conn.frames[0].Message != expected {
+		t.Fatalf("expected message %q, got %q", expected, conn.frames[0].Message)
+	}
+}
+
+func TestHandleScheduleSendCommandRejectsMissingCodexBinary(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: filepath.Join(t.TempDir(), "missing-codex"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_schedule","sid":%q,"op":"schedule_send","p":{"txt":"later","atts":[],"mode":"send","at":%d}}`, created.ID, time.Now().Add(time.Minute).UnixMilli())),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected a single error frame, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "err" {
+		t.Fatalf("expected error frame, got %#v", conn.frames[0])
+	}
+	if conn.frames[0].Message != errCodexNotInstalled {
+		t.Fatalf("expected message %q, got %q", errCodexNotInstalled, conn.frames[0].Message)
+	}
+}
+
 func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -993,6 +1133,61 @@ func TestManagerListSessionsMarksClaudeContextWindowUnavailable(t *testing.T) {
 	}
 	if items[0].ContextWindowSource != ContextWindowSourceUnavailable {
 		t.Fatalf("expected contextWindowSource %q, got %q", ContextWindowSourceUnavailable, items[0].ContextWindowSource)
+	}
+}
+
+func TestGetCodexRuntimeConfigIncludesBinaryCapabilities(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{
+		DataDir:    t.TempDir(),
+		CodexPath:  writeFakeCodexVersionCLI(t, "0.133.0"),
+		ClaudePath: writeFakeClaudeStreamCLI(t),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	config := manager.GetCodexRuntimeConfig()
+	if !config.HasCodex {
+		t.Fatal("expected hasCodex true")
+	}
+	if !config.HasClaudeCode {
+		t.Fatal("expected hasClaudeCode true")
+	}
+	if config.CodexVersion == nil || *config.CodexVersion != "0.133.0" {
+		t.Fatalf("expected codexVersion 0.133.0, got %#v", config.CodexVersion)
+	}
+	if !config.SupportsGoalMode {
+		t.Fatal("expected supportsGoalMode true")
+	}
+	if config.GoalModeMinVersion != "0.133.0" {
+		t.Fatalf("expected goalModeMinVersion 0.133.0, got %q", config.GoalModeMinVersion)
+	}
+}
+
+func TestGetCodexRuntimeConfigGoalModeDisabledForOldVersion(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.132.9"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	config := manager.GetCodexRuntimeConfig()
+	if !config.HasCodex {
+		t.Fatal("expected hasCodex true")
+	}
+	if config.CodexVersion == nil || *config.CodexVersion != "0.132.9" {
+		t.Fatalf("expected codexVersion 0.132.9, got %#v", config.CodexVersion)
+	}
+	if config.SupportsGoalMode {
+		t.Fatal("expected supportsGoalMode false")
 	}
 }
 
@@ -4609,6 +4804,27 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex cli failed: %v", err)
+	}
+	return path
+}
+
+func writeFakeCodexVersionCLI(t *testing.T, version string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "fake-codex-version.sh")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'codex %s\n'
+  exit 0
+fi
+if [ "$1" = "app-server" ]; then
+  printf '%%s\n' '{"id":0,"result":{"userAgent":"fake-codex-app-server","codexHome":"/tmp/codex","platformFamily":"unix","platformOs":"linux"}}'
+  exit 0
+fi
+exit 1
+`, version)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex version cli failed: %v", err)
 	}
 	return path
 }

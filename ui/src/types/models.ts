@@ -332,6 +332,11 @@ export interface WebSessionCodexRuntimeConfig {
   contextWindowTokens: number;
   compactLimitTokens: number;
   source: Exclude<WebSessionContextWindowSource, 'session_usage' | 'unavailable'>;
+  hasCodex: boolean;
+  hasClaudeCode: boolean;
+  codexVersion?: string | null;
+  supportsGoalMode: boolean;
+  goalModeMinCodexVersion: string;
 }
 
 export type CodexSkillSource = 'user' | 'system' | 'bundled';

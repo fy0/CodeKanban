@@ -82,7 +82,9 @@ export const webSessionApi = {
   async runtimeConfig(): Promise<WebSessionCodexRuntimeConfig> {
     const config = extractItem<WebSessionCodexRuntimeConfig>(
       await http
-        .Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config')
+        .Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config', {
+          cacheFor: 0,
+        })
         .send(true)
     );
     if (!config) {

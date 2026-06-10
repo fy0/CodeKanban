@@ -170,7 +170,18 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
     ['GET /api/v1/projects/p1/web-sessions/ws1/command-groups/group-1', () =>
       createJsonResponse({ item: { groupId: 'group-1', count: 2 } })],
     ['GET /api/v1/web-sessions/runtime-config', () =>
-      createJsonResponse({ item: { contextWindowTokens: 200000, compactLimitTokens: 200000, source: 'default' } })],
+      createJsonResponse({
+        item: {
+          contextWindowTokens: 200000,
+          compactLimitTokens: 200000,
+          source: 'default',
+          hasCodex: true,
+          hasClaudeCode: false,
+          codexVersion: '0.133.0',
+          supportsGoalMode: true,
+          goalModeMinCodexVersion: '0.133.0',
+        },
+      })],
   ]);
 
   const client = new CodeKanbanClient({
@@ -248,6 +259,9 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
 
   const runtimeConfig = await client.getWebSessionRuntimeConfig();
   assert.equal(runtimeConfig.contextWindowTokens, 200000);
+  assert.equal(runtimeConfig.hasCodex, true);
+  assert.equal(runtimeConfig.codexVersion, '0.133.0');
+  assert.equal(runtimeConfig.supportsGoalMode, true);
 });
 
 

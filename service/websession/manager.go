@@ -38,6 +38,8 @@ const (
 	planPromptPreamble            = "You are operating in planning mode. Inspect the project first, summarize the goal, and propose a concrete plan before making changes. Do not mutate files until the user confirms execution or explicitly asks you to proceed immediately. If additional permissions are needed, call them out explicitly."
 	recoveryReasonProcessRestart  = "process_restart"
 	recoveryMessageProcessRestart = "Session runtime was interrupted because the app restarted. Send a new message to continue."
+	errCodexNotInstalled          = "Codex is not installed. Install Codex before sending messages in this session."
+	errClaudeCodeNotInstalled     = "Claude Code is not installed. Install Claude Code before sending messages in this session."
 )
 
 var (
@@ -1470,6 +1472,9 @@ func (m *Manager) GetSessionGoal(ctx context.Context, sessionID string) (*Sessio
 	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
 		return sessionGoalFromRecord(record), nil
 	}
+	if err := m.ensureSessionGoalModeSupported(record); err != nil {
+		return nil, err
+	}
 	if err := m.syncCodexGoalState(ctx, record, nil, strings.TrimSpace(*record.NativeSessionID)); err != nil {
 		return nil, err
 	}
@@ -1495,6 +1500,9 @@ func (m *Manager) SetSessionGoal(
 	}
 	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
 		return SessionSummary{}, fmt.Errorf("session has no native thread id")
+	}
+	if err := m.ensureSessionGoalModeSupported(record); err != nil {
+		return SessionSummary{}, err
 	}
 
 	trimmedObjective := strings.TrimSpace(objective)
@@ -1548,6 +1556,9 @@ func (m *Manager) UpdateSessionGoalStatus(
 	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
 		return SessionSummary{}, fmt.Errorf("session has no native thread id")
 	}
+	if err := m.ensureSessionGoalModeSupported(record); err != nil {
+		return SessionSummary{}, err
+	}
 	normalizedStatus := normalizeGoalStatus(string(status))
 	if normalizedStatus == "" {
 		return SessionSummary{}, fmt.Errorf("invalid goal status")
@@ -1587,6 +1598,9 @@ func (m *Manager) ClearSessionGoal(ctx context.Context, sessionID string) (Sessi
 	}
 	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
 		return SessionSummary{}, fmt.Errorf("session has no native thread id")
+	}
+	if err := m.ensureSessionGoalModeSupported(record); err != nil {
+		return SessionSummary{}, err
 	}
 
 	err = m.withCodexQueryClient(ctx, record.Cwd, func(client *codexAppServerClient) error {
@@ -2700,6 +2714,9 @@ func (m *Manager) sendMessageInternal(
 	if record.ArchivedAt != nil {
 		return fmt.Errorf("session is archived")
 	}
+	if err := m.ensureSessionMessagingAvailable(record); err != nil {
+		return err
+	}
 	m.cancelAutoRetryTimer(sessionID)
 	if m.hasActiveRun(sessionID) {
 		return fmt.Errorf("session is already running")
@@ -2809,6 +2826,39 @@ func (m *Manager) sendMessageInternal(
 
 	go m.runSession(runCtx, run, record, text, attachments)
 	return nil
+}
+
+func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable) error {
+	config := m.GetCodexRuntimeConfig()
+	switch normalizeAgent(Agent(record.Agent)) {
+	case AgentCodex:
+		if !config.HasCodex {
+			return fmt.Errorf(errCodexNotInstalled)
+		}
+	case AgentClaude:
+		if !config.HasClaudeCode {
+			return fmt.Errorf(errClaudeCodeNotInstalled)
+		}
+	}
+	return nil
+}
+
+func (m *Manager) ensureSessionGoalModeSupported(record tables.WebSessionTable) error {
+	config := m.GetCodexRuntimeConfig()
+	if !config.HasCodex {
+		return fmt.Errorf(errCodexNotInstalled)
+	}
+	if config.SupportsGoalMode {
+		return nil
+	}
+	if config.CodexVersion != nil && strings.TrimSpace(*config.CodexVersion) != "" {
+		return fmt.Errorf(
+			"Goal mode requires Codex >= %s. Current version: %s.",
+			config.GoalModeMinVersion,
+			strings.TrimSpace(*config.CodexVersion),
+		)
+	}
+	return fmt.Errorf("Goal mode requires Codex >= %s.", config.GoalModeMinVersion)
 }
 
 func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables.WebSessionTable, text string, attachments []Attachment) {

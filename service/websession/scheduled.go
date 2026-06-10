@@ -130,6 +130,9 @@ func (m *Manager) ScheduleInput(
 	if record.ArchivedAt != nil {
 		return ScheduledInput{}, fmt.Errorf("session is archived")
 	}
+	if err := m.ensureSessionMessagingAvailable(record); err != nil {
+		return ScheduledInput{}, err
+	}
 
 	normalizedMode := normalizeScheduledInputMode(mode)
 	if normalizedMode == "" {

@@ -969,13 +969,14 @@
                 </span>
               </div>
               <div class="goal-card-actions">
-                <n-button size="small" tertiary @click="handleGoalCompose">
+                <n-button size="small" tertiary :disabled="isCurrentSessionGoalModeBlocked" @click="handleGoalCompose">
                   Edit
                 </n-button>
                 <n-button
                   v-if="currentRealSession.goal?.status === 'active'"
                   size="small"
                   tertiary
+                  :disabled="isCurrentSessionGoalModeBlocked"
                   @click="handleGoalPause"
                 >
                   Pause
@@ -984,6 +985,7 @@
                   v-else-if="currentRealSession.goal"
                   size="small"
                   tertiary
+                  :disabled="isCurrentSessionGoalModeBlocked"
                   @click="handleGoalResume"
                 >
                   Resume
@@ -992,6 +994,7 @@
                   v-if="currentRealSession.goal"
                   size="small"
                   tertiary
+                  :disabled="isCurrentSessionGoalModeBlocked"
                   @click="handleGoalClear"
                 >
                   Clear
@@ -1013,6 +1016,9 @@
             </div>
             <div v-else class="goal-empty">
               Persistent Codex thread goal is not set for this session.
+            </div>
+            <div v-if="isCurrentSessionGoalModeBlocked" class="goal-empty">
+              {{ goalModeUnavailableMessage() }}
             </div>
           </div>
 
@@ -2856,6 +2862,35 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
   const session = currentSession.value;
   return session && !isDraftSession(session) ? session : null;
 });
+const runtimeHasCodex = computed(() => codexRuntimeConfig.value?.hasCodex === true);
+const runtimeHasClaudeCode = computed(() => codexRuntimeConfig.value?.hasClaudeCode === true);
+const runtimeCodexVersion = computed(() => codexRuntimeConfig.value?.codexVersion?.trim() || '');
+const runtimeGoalModeMinVersion = computed(
+  () => codexRuntimeConfig.value?.goalModeMinCodexVersion?.trim() || '0.133.0'
+);
+const runtimeSupportsGoalMode = computed(() => codexRuntimeConfig.value?.supportsGoalMode === true);
+const isMessageCapabilityBlocked = computed(() => {
+  if (!codexRuntimeConfig.value) {
+    return false;
+  }
+  if (selectedAgent.value === 'codex') {
+    return !runtimeHasCodex.value;
+  }
+  if (selectedAgent.value === 'claude') {
+    return !runtimeHasClaudeCode.value;
+  }
+  return false;
+});
+const isCurrentSessionGoalModeBlocked = computed(() => {
+  const session = currentRealSession.value;
+  if (!session || session.agent !== 'codex') {
+    return false;
+  }
+  if (!codexRuntimeConfig.value) {
+    return false;
+  }
+  return !runtimeSupportsGoalMode.value;
+});
 const showGoalCard = ref(false);
 
 function formatGoalDuration(totalSeconds: number) {
@@ -2981,6 +3016,9 @@ async function handleGoalPause() {
   if (!currentRealSession.value) {
     return;
   }
+  if (!(await ensureGoalModeAvailable())) {
+    return;
+  }
   try {
     await webSessionStore.pauseGoal(currentRealSession.value.id);
   } catch (error) {
@@ -2992,6 +3030,9 @@ async function handleGoalResume() {
   if (!currentRealSession.value) {
     return;
   }
+  if (!(await ensureGoalModeAvailable())) {
+    return;
+  }
   try {
     await webSessionStore.resumeGoal(currentRealSession.value.id);
   } catch (error) {
@@ -3001,6 +3042,9 @@ async function handleGoalResume() {
 
 async function handleGoalClear() {
   if (!currentRealSession.value) {
+    return;
+  }
+  if (!(await ensureGoalModeAvailable())) {
     return;
   }
   try {
@@ -3021,7 +3065,10 @@ function parseComposerGoalCommand(raw: string) {
   };
 }
 
-function handleGoalCompose() {
+async function handleGoalCompose() {
+  if (!(await ensureGoalModeAvailable())) {
+    return;
+  }
   const existing = currentRealSession.value?.goal?.objective?.trim() ?? '';
   const nextValue = existing ? `/goal ${existing}` : '/goal ';
   const sessionId = currentDraftSessionId.value;
@@ -3035,6 +3082,10 @@ function handleGoalCompose() {
 async function toggleGoalCard() {
   showGoalCard.value = !showGoalCard.value;
   if (showGoalCard.value && currentRealSession.value?.agent === 'codex') {
+    if (!(await ensureGoalModeAvailable())) {
+      showGoalCard.value = false;
+      return;
+    }
     try {
       await webSessionStore.refreshGoal(currentRealSession.value.id);
     } catch (error) {
@@ -3185,6 +3236,7 @@ function handleWebSessionDocumentVisibilityChange() {
     return;
   }
   refreshTabHeaderLayout();
+  void loadCodexRuntimeConfig();
   void refreshWebSessionCatchUp('document-visible');
 }
 
@@ -3193,6 +3245,7 @@ function handleWebSessionWindowFocus() {
     return;
   }
   refreshTabHeaderLayout();
+  void loadCodexRuntimeConfig();
   void refreshWebSessionCatchUp('window-focus');
 }
 
@@ -3201,6 +3254,7 @@ function handleWebSessionWindowPageShow() {
     return;
   }
   refreshTabHeaderLayout();
+  void loadCodexRuntimeConfig();
   void refreshWebSessionCatchUp('window-pageshow');
 }
 
@@ -3871,13 +3925,18 @@ const hasDraftContent = computed(
 );
 const canSend = computed(
   () =>
+    !isMessageCapabilityBlocked.value &&
     !isRunActive.value &&
     !isSubmittingMessage.value &&
     hasDraftContent.value &&
     !isDraftAttachmentUploading.value
 );
 const canStageDuringRun = computed(
-  () => isRunActive.value && hasDraftContent.value && !isDraftAttachmentUploading.value
+  () =>
+    !isMessageCapabilityBlocked.value &&
+    isRunActive.value &&
+    hasDraftContent.value &&
+    !isDraftAttachmentUploading.value
 );
 const canOpenSendQuickActions = computed(() =>
   isRunActive.value ? canStageDuringRun.value : canSend.value
@@ -3919,6 +3978,7 @@ const scheduledSendSelectedTimeLabel = computed(() =>
 );
 const canConfirmScheduledSend = computed(
   () =>
+    !isMessageCapabilityBlocked.value &&
     Number.isFinite(scheduledSendAt.value) &&
     Number(scheduledSendAt.value) > Date.now() &&
     hasDraftContent.value &&
@@ -3935,6 +3995,16 @@ const composerPlaceholder = computed(() =>
     : t('webSession.inputPlaceholder')
 );
 const composerHint = computed(() => {
+  if (codexRuntimeConfig.value && selectedAgent.value === 'codex' && !runtimeHasCodex.value) {
+    return t('webSession.composerHintCodexMissing');
+  }
+  if (
+    codexRuntimeConfig.value &&
+    selectedAgent.value === 'claude' &&
+    !runtimeHasClaudeCode.value
+  ) {
+    return t('webSession.composerHintClaudeMissing');
+  }
   if (isDraftAttachmentUploading.value) {
     return t('webSession.composerHintUploading');
   }
@@ -8745,6 +8815,9 @@ async function prepareSessionForSend(session: WebSessionSummary) {
 
 async function continueErroredSession(session: WebSessionSummary) {
   const prepared = await prepareSessionForSend(session);
+  if (!(await ensureMessageCapabilityAvailable(prepared.session.agent))) {
+    return;
+  }
   await webSessionStore.sendMessage(prepared.session.id, 'continue', []);
   if (prepared.navigateProjectId) {
     projectStore.addRecentProject(prepared.navigateProjectId);
@@ -8800,17 +8873,23 @@ async function handleSubmit() {
     const goalCommand = parseComposerGoalCommand(draftText);
     if (goalCommand) {
       if (!goalCommand.objective) {
-        handleGoalCompose();
+        await handleGoalCompose();
         return;
       }
       if (attachments.length > 0) {
         throw new Error('/goal does not accept attachments');
+      }
+      if (!(await ensureGoalModeAvailable())) {
+        return;
       }
       await webSessionStore.setGoal(session.id, goalCommand.objective, 'active');
       settingsStore.recordWebSessionRecentInput(draftText);
       void settingsStore.syncWebSessionQuickInputToServer();
       webSessionStore.clearDraft(props.projectId, draftSessionId);
       message.success('Goal updated');
+      return;
+    }
+    if (!(await ensureMessageCapabilityAvailable(session.agent))) {
       return;
     }
     await webSessionStore.sendMessage(
@@ -8862,6 +8941,9 @@ async function handleConfirmScheduledSend() {
     const attachments = [...draftAttachments.value];
     const prepared = await prepareSessionForSend(session);
     session = prepared.session;
+    if (!(await ensureMessageCapabilityAvailable(session.agent))) {
+      return;
+    }
     await webSessionStore.scheduleMessage(
       session.id,
       draftText,
@@ -8888,6 +8970,9 @@ async function handleConfirmScheduledSend() {
 
 async function handlePreinput(mode: 'redirect' | 'queue') {
   if (!currentRealSession.value || isDraftAttachmentUploading.value || !hasDraftContent.value) {
+    return;
+  }
+  if (!(await ensureMessageCapabilityAvailable(currentRealSession.value.agent))) {
     return;
   }
   try {
@@ -9143,6 +9228,58 @@ function formatSessionInteractionError(error: unknown) {
   return rawMessage || t('common.error');
 }
 
+async function refreshRuntimeCapabilities() {
+  await loadCodexRuntimeConfig();
+  return codexRuntimeConfig.value;
+}
+
+function goalModeUnavailableMessage() {
+  if (runtimeCodexVersion.value) {
+    return t('webSession.goalModeUnavailableWithCurrent', {
+      requiredVersion: runtimeGoalModeMinVersion.value,
+      currentVersion: runtimeCodexVersion.value,
+    });
+  }
+  return t('webSession.goalModeUnavailable', {
+    version: runtimeGoalModeMinVersion.value,
+  });
+}
+
+async function ensureMessageCapabilityAvailable(agent: 'codex' | 'claude') {
+  const config = await refreshRuntimeCapabilities();
+  if (!config) {
+    return true;
+  }
+  if (agent === 'codex') {
+    if (config.hasCodex === true) {
+      return true;
+    }
+    message.warning(t('webSession.codexNotInstalled'));
+    return false;
+  }
+  if (config.hasClaudeCode === true) {
+    return true;
+  }
+  message.warning(t('webSession.claudeCodeNotInstalled'));
+  return false;
+}
+
+async function ensureGoalModeAvailable() {
+  const config = await refreshRuntimeCapabilities();
+  if (!config) {
+    return true;
+  }
+  if (config.hasCodex !== true) {
+    message.warning(t('webSession.codexNotInstalled'));
+    return false;
+  }
+  if (config.supportsGoalMode === true) {
+    return true;
+  }
+  message.warning(goalModeUnavailableMessage());
+  return false;
+}
+
 function findInlinePlanChoiceOption(mode: 'execute' | 'plan') {
   if (!inlinePlanChoice.value) {
     return null;
@@ -9199,6 +9336,9 @@ async function handlePlanCardImplement() {
 
     const answered = await answerInlinePlanChoice('execute');
     if (!answered) {
+      if (!(await ensureMessageCapabilityAvailable(targetSession.agent))) {
+        return;
+      }
       await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
     }
 
