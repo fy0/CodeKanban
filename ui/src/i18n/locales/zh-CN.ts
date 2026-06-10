@@ -823,6 +823,7 @@ export default {
     liveDoneDetail: '等待下一条消息',
     liveError: '执行出现问题',
     liveErrorDetail: '本轮执行被中断或失败',
+    autoRetryRateLimitNotice: '已开启自动重试，但当前 429/限流错误不在默认范围内。',
     liveTooltipStartedAt: '开始时间',
     liveTooltipElapsed: '已开始时间',
     liveTooltipSinceLastActivity: '距上一条活动',

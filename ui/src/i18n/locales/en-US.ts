@@ -843,6 +843,8 @@ export default {
     liveDoneDetail: 'Waiting for the next message',
     liveError: 'Execution hit an error',
     liveErrorDetail: 'This run failed or was interrupted',
+    autoRetryRateLimitNotice:
+      'Auto retry is enabled, but the current 429/rate-limit error is outside the default scope.',
     liveTooltipStartedAt: 'Started at',
     liveTooltipElapsed: 'Elapsed',
     liveTooltipSinceLastActivity: 'Since last activity',

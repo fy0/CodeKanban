@@ -303,6 +303,77 @@ describe('webSession auto retry optimistic updates', () => {
     expect(confirmedSession?.autoRetryPreset).toBe('gentle_stop');
   });
 
+  it('keeps the optimistic auto retry toggle after ack until a newer summary confirms it', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession();
+    listMock.mockResolvedValue([session]);
+
+    await store.loadSessions(session.projectId, true);
+    await store.openEventStream();
+    await flushMicrotasks();
+
+    const updatePromise = store.updateAutoRetry(session.id, {
+      enabled: true,
+      scope: 'network_only',
+      preset: 'gentle_stop',
+    });
+    await flushMicrotasks();
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    const commandSocket = findSocket('/api/v1/web-sessions/ws');
+    if (!eventSocket || !commandSocket) {
+      throw new Error('expected both event and command sockets to be connected');
+    }
+
+    const requestId = String(commandSocket.sent[0]?.rid ?? '');
+    commandSocket.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'set_ar',
+    });
+    await updatePromise;
+
+    eventSocket.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession(
+        makeSession({
+          updatedAt: '2026-04-10T10:00:01.000Z',
+        })
+      ),
+    });
+
+    const stillOptimisticSession = store.getSessions(session.projectId)[0];
+    expect(stillOptimisticSession?.autoRetryEnabled).toBe(true);
+    expect(stillOptimisticSession?.autoRetryScope).toBe('network_only');
+    expect(stillOptimisticSession?.autoRetryPreset).toBe('gentle_stop');
+
+    eventSocket.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession(
+        makeSession({
+          autoRetryEnabled: true,
+          updatedAt: '2026-04-10T10:00:02.000Z',
+        })
+      ),
+    });
+
+    const confirmedSession = store.getSessions(session.projectId)[0];
+    expect(confirmedSession?.autoRetryEnabled).toBe(true);
+    expect(confirmedSession?.autoRetryScope).toBe('network_only');
+    expect(confirmedSession?.autoRetryPreset).toBe('gentle_stop');
+  });
+
   it('keeps the optimistic active call timeout toggle when an older summary arrives first', async () => {
     const store = useWebSessionStore();
     const session = makeSession({ activeCallTimeoutEnabled: false });

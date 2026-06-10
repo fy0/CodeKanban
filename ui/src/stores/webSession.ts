@@ -492,7 +492,7 @@ type PendingAutoRetryOverride = {
   scope: WebSessionSummary['autoRetryScope'];
   preset: WebSessionSummary['autoRetryPreset'];
   appliedAt: number;
-  expiresAt: number;
+  ackedAt?: number;
 };
 
 type PendingActiveCallTimeoutOverride = {
@@ -1716,7 +1716,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
       scope: config.scope,
       preset: config.preset,
       appliedAt,
-      expiresAt: appliedAt + WEB_SESSION_AUTO_RETRY_OPTIMISTIC_TTL_MS,
+    });
+  }
+
+  function acknowledgePendingAutoRetryOverride(sessionId: string, ackedAt = Date.now()) {
+    const pendingOverride = pendingAutoRetryOverrides.get(sessionId);
+    if (!pendingOverride) {
+      return;
+    }
+    pendingAutoRetryOverrides.set(sessionId, {
+      ...pendingOverride,
+      ackedAt,
     });
   }
 
@@ -1729,19 +1739,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!pendingOverride) {
       return summary;
     }
-    if (Date.now() > pendingOverride.expiresAt) {
-      pendingAutoRetryOverrides.delete(summary.id);
-      return summary;
-    }
     const matchesPendingConfig =
       summary.autoRetryEnabled === pendingOverride.enabled &&
       summary.autoRetryScope === pendingOverride.scope &&
       summary.autoRetryPreset === pendingOverride.preset;
-    if (matchesPendingConfig) {
+    const updatedAt = Date.parse(summary.updatedAt || '');
+    const hasAuthoritativeUpdate =
+      Number.isFinite(updatedAt) &&
+      updatedAt >= (pendingOverride.ackedAt ?? pendingOverride.appliedAt);
+    if (matchesPendingConfig && hasAuthoritativeUpdate) {
       pendingAutoRetryOverrides.delete(summary.id);
       return summary;
     }
-    const updatedAt = Date.parse(summary.updatedAt || '');
     const mergedUpdatedAt = Number.isFinite(updatedAt)
       ? Math.max(updatedAt, pendingOverride.appliedAt)
       : pendingOverride.appliedAt;
@@ -3424,6 +3433,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (frame.k === 'ack') {
+      if (frame.op === 'set_ar' && frame.sid) {
+        acknowledgePendingAutoRetryOverride(frame.sid, Date.now());
+      }
       if (frame.rid && pending.has(frame.rid)) {
         pending.get(frame.rid)?.resolve(frame);
         pending.delete(frame.rid);
@@ -3891,7 +3903,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!force && loadedProjects.value[projectId]) {
       return sessionsByProject.value[projectId] ?? [];
     }
-    const sessions = await webSessionApi.list(projectId);
+    const sessions = (await webSessionApi.list(projectId)).map(session =>
+      applyPendingActiveCallTimeoutOverride(applyPendingAutoRetryOverride(session))
+    );
     sessionsByProject.value = {
       ...sessionsByProject.value,
       [projectId]: sortSessions(sessions),

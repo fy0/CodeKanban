@@ -1275,6 +1275,12 @@
                         >
                           {{ t('webSession.infiniteRetry') }}
                         </n-checkbox>
+                        <div
+                          v-if="autoRetryRateLimitNotice"
+                          class="composer-settings-popover-tip is-warning"
+                        >
+                          {{ t('webSession.autoRetryRateLimitNotice') }}
+                        </div>
                         <n-checkbox
                           v-model:checked="webSessionActiveCallTimeoutEnabledValue"
                           size="small"
@@ -2435,6 +2441,7 @@ import {
   resolveWebSessionSidebarSortTimestamp,
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
+import { shouldShowAutoRetryRateLimitNotice } from '@/components/web-session/webSessionAutoRetryNotice';
 import {
   formatWebSessionDateTime,
   formatWebSessionTimestamp,
@@ -3047,6 +3054,12 @@ const activeCallTimeoutPopoverTip = computed(() =>
 );
 const composerSettingsHasActiveItems = computed(
   () => currentSessionAutoRetryEnabled.value || currentSessionActiveCallTimeoutEnabled.value
+);
+const autoRetryRateLimitNotice = computed(() =>
+  shouldShowAutoRetryRateLimitNotice(
+    currentRealSession.value,
+    displayLiveState.value.phase === 'error' ? displayLiveState.value.errorMessage : ''
+  )
 );
 const webSessionAutoContinueEnabledValue = computed({
   get: () => currentSessionAutoRetryEnabled.value,
@@ -14784,6 +14797,10 @@ defineExpose({
   font-size: 11px;
   line-height: 1.45;
   color: var(--n-text-color-3);
+}
+
+.composer-settings-popover-tip.is-warning {
+  color: var(--n-warning-color, #d97706);
 }
 
 .composer-input-shell {
