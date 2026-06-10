@@ -1006,8 +1006,8 @@
                   Budget {{ currentRealSession.goal.tokenBudget }}
                 </span>
                 <span>{{ formatGoalDuration(currentRealSession.goal.timeUsedSeconds) }}</span>
-                <span :title="formatDateTime(currentRealSession.goal.updatedAt)">
-                  {{ formatTime(currentRealSession.goal.updatedAt) }}
+                <span :title="formatIsoDateTime(currentRealSession.goal.updatedAt)">
+                  {{ formatIsoTime(currentRealSession.goal.updatedAt) }}
                 </span>
               </div>
             </div>
@@ -2166,6 +2166,7 @@ import {
   AddOutline,
   ArchiveOutline,
   ChevronDownOutline,
+  CreateOutline,
   FlashOutline,
   ImageOutline,
   RadioOutline,
@@ -2322,6 +2323,10 @@ import {
   formatWebSessionDateTime,
   formatWebSessionTimestamp,
 } from '@/components/web-session/webSessionTimeFormat';
+import {
+  resolveWebSessionLiveTimeCopy,
+  type WebSessionLiveTimeTooltipItem,
+} from '@/components/web-session/webSessionLiveTime';
 import {
   buildOrderedTabSessions,
   resolveActiveTabSessionId,
@@ -2509,12 +2514,6 @@ type CommandExecutionDetail = {
   status: 'running' | 'done' | 'error';
   latestToolId?: string;
   items: CommandExecutionDetailItem[];
-};
-
-type LiveTimeTooltipItem = {
-  key: string;
-  label: string;
-  value: string;
 };
 
 type ImageViewPreviewState = 'loading' | 'ready' | 'error';
@@ -7089,88 +7088,32 @@ function formatDateTime(timestamp: number) {
   return formatWebSessionDateTime(timestamp, locale.value);
 }
 
-function formatElapsedDuration(startedAt: number, endedAt: number) {
-  const diff = Math.max(0, endedAt - startedAt);
-  const totalSeconds = Math.floor(diff / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-  }
-
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+function formatIsoTime(value?: string | null) {
+  const timestamp = Date.parse(typeof value === 'string' ? value : '');
+  return Number.isFinite(timestamp) ? formatTime(timestamp) : '';
 }
 
-function isValidTimestamp(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0;
-}
-
-function getLiveStateEndedAt(state: WebSessionLiveState) {
-  return state.running ? liveStateClockMs.value : state.updatedAt;
-}
-
-function getLiveRunStartedAt(state: WebSessionLiveState) {
-  return isValidTimestamp(state.startedAt) ? state.startedAt : undefined;
-}
-
-function getLiveToolStartedAt(state: WebSessionLiveState) {
-  return isValidTimestamp(state.tool?.startedAt) ? state.tool.startedAt : undefined;
-}
-
-function getLiveOperationStartedAt(state: WebSessionLiveState) {
-  if (state.phase === 'tool') {
-    return getLiveToolStartedAt(state) ?? getLiveRunStartedAt(state);
-  }
-  if (state.phase === 'waiting_approval') {
-    return isValidTimestamp(pendingApproval.value?.requestedAt)
-      ? pendingApproval.value.requestedAt
-      : getLiveRunStartedAt(state);
-  }
-  if (state.phase === 'waiting_input') {
-    return isValidTimestamp(pendingUserInput.value?.requestedAt)
-      ? pendingUserInput.value.requestedAt
-      : getLiveRunStartedAt(state);
-  }
-  if (
-    state.phase === 'starting' ||
-    state.phase === 'thinking' ||
-    state.phase === 'waiting_plan_approval'
-  ) {
-    return getLiveRunStartedAt(state);
-  }
-  return getLiveRunStartedAt(state);
-}
-
-function isUserOriginatedInteractionBlock(block: WebSessionBlock) {
-  return (
-    block.kind === 'user' ||
-    block.detail?.type === 'approval_response' ||
-    block.detail?.type === 'user_input_response'
-  );
-}
-
-function getLivePreviousInteractionAt(state: WebSessionLiveState) {
-  const endedAt = getLiveStateEndedAt(state);
-  for (let index = blocks.value.length - 1; index >= 0; index -= 1) {
-    const block = blocks.value[index];
-    if (!isValidTimestamp(block.timestamp) || block.timestamp > endedAt) {
-      continue;
-    }
-    if (isUserOriginatedInteractionBlock(block)) {
-      return block.timestamp;
-    }
-  }
-  return undefined;
+function formatIsoDateTime(value?: string | null) {
+  const timestamp = Date.parse(typeof value === 'string' ? value : '');
+  return Number.isFinite(timestamp) ? formatDateTime(timestamp) : '';
 }
 
 function getLiveElapsedText(state: WebSessionLiveState) {
-  const startedAt = getLiveOperationStartedAt(state);
-  if (!startedAt) {
-    return '';
-  }
-  return formatElapsedDuration(startedAt, getLiveStateEndedAt(state));
+  return resolveWebSessionLiveTimeCopy({
+    state,
+    blocks: blocks.value,
+    session: currentRealSession.value,
+    pendingApproval: pendingApproval.value,
+    pendingUserInput: pendingUserInput.value,
+    now: liveStateClockMs.value,
+    labels: {
+      startedAt: t('webSession.liveTooltipStartedAt'),
+      elapsed: t('webSession.liveTooltipElapsed'),
+      sinceLastActivity: t('webSession.liveTooltipSinceLastActivity'),
+    },
+    formatTime,
+    formatDateTime,
+  }).timeText;
 }
 
 function getLiveTimeText(state: WebSessionLiveState) {
@@ -7181,53 +7124,22 @@ function getLiveTimeText(state: WebSessionLiveState) {
   return formatTime(state.updatedAt);
 }
 
-function getLiveTimeTooltipItems(state: WebSessionLiveState): LiveTimeTooltipItem[] {
-  const startedAt = getLiveOperationStartedAt(state);
-  const elapsed = getLiveElapsedText(state);
-  const previousInteractionAt = getLivePreviousInteractionAt(state);
-  const endedAt = getLiveStateEndedAt(state);
-  const items: LiveTimeTooltipItem[] = [];
-
-  if (startedAt) {
-    items.push({
-      key: 'started-at',
-      label: t('webSession.liveTooltipStartedAt'),
-      value: formatDateTime(startedAt),
-    });
-  }
-
-  if (elapsed) {
-    items.push({
-      key: 'elapsed',
-      label: t('webSession.liveTooltipElapsed'),
-      value: elapsed,
-    });
-  }
-
-  if (previousInteractionAt) {
-    items.push({
-      key: 'since-previous-interaction',
-      label: t('webSession.liveTooltipSincePreviousInteraction'),
-      value: formatElapsedDuration(previousInteractionAt, endedAt),
-    });
-  }
-
-  if (items.length > 0) {
-    return items;
-  }
-
-  const updatedAt = formatDateTime(state.updatedAt);
-  if (updatedAt) {
-    return [
-      {
-        key: 'updated-at',
-        label: t('webSession.liveTooltipStartedAt'),
-        value: updatedAt,
-      },
-    ];
-  }
-
-  return [];
+function getLiveTimeTooltipItems(state: WebSessionLiveState): WebSessionLiveTimeTooltipItem[] {
+  return resolveWebSessionLiveTimeCopy({
+    state,
+    blocks: blocks.value,
+    session: currentRealSession.value,
+    pendingApproval: pendingApproval.value,
+    pendingUserInput: pendingUserInput.value,
+    now: liveStateClockMs.value,
+    labels: {
+      startedAt: t('webSession.liveTooltipStartedAt'),
+      elapsed: t('webSession.liveTooltipElapsed'),
+      sinceLastActivity: t('webSession.liveTooltipSinceLastActivity'),
+    },
+    formatTime,
+    formatDateTime,
+  }).tooltipItems;
 }
 
 function stringifyValue(value: unknown): string {

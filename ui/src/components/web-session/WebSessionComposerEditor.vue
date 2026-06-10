@@ -264,13 +264,10 @@ function buildSlashCommandHighlightExtension(codeMirror: CodeMirrorBundle) {
       }
 
       buildDecorations(view: CodeMirrorView) {
-        const builder: Array<ReturnType<typeof codeMirror.Decoration.mark>["range"]> = [];
         const commandMark = codeMirror.Decoration.mark({
           class: 'cm-slash-command cm-slash-command--goal',
         });
-        const argMark = codeMirror.Decoration.mark({
-          class: 'cm-slash-command-arg cm-slash-command-arg--goal',
-        });
+        const ranges: ReturnType<typeof commandMark.range>[] = [];
 
         for (const { from, to } of view.visibleRanges) {
           const text = view.state.doc.sliceString(from, to);
@@ -279,11 +276,11 @@ function buildSlashCommandHighlightExtension(codeMirror: CodeMirrorBundle) {
           while ((match = regex.exec(text))) {
             const raw = match[0] || '';
             const start = from + match.index;
-            builder.push(commandMark.range(start, start + raw.length));
+            ranges.push(commandMark.range(start, start + raw.length));
           }
         }
 
-        return codeMirror.Decoration.set(builder, true);
+        return codeMirror.Decoration.set(ranges, true);
       }
     },
     {

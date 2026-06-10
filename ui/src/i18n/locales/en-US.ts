@@ -845,7 +845,7 @@ export default {
     liveErrorDetail: 'This run failed or was interrupted',
     liveTooltipStartedAt: 'Started at',
     liveTooltipElapsed: 'Elapsed',
-    liveTooltipSincePreviousInteraction: 'Since previous interaction',
+    liveTooltipSinceLastActivity: 'Since last activity',
     approvalTitle: 'Approval Required',
     approvalPromptFallback: 'The agent is waiting for confirmation before continuing.',
     approvalApprove: 'Approve',

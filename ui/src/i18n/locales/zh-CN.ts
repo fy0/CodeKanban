@@ -825,7 +825,7 @@ export default {
     liveErrorDetail: '本轮执行被中断或失败',
     liveTooltipStartedAt: '开始时间',
     liveTooltipElapsed: '已开始时间',
-    liveTooltipSincePreviousInteraction: '距上一条交互',
+    liveTooltipSinceLastActivity: '距上一条活动',
     approvalTitle: '需要审批',
     approvalPromptFallback: 'Agent 正在等待你确认下一步操作。',
     approvalApprove: '批准',
