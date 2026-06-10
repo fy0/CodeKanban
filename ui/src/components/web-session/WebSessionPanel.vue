@@ -6045,13 +6045,39 @@ function replaceDraftSessionState(
   persistDraftSessionState(projectId, nextDrafts, nextActiveDraftId);
 }
 
+function resolveCurrentProjectWorktreeId(...worktreeIds: Array<string | null | undefined>) {
+  for (const worktreeId of worktreeIds) {
+    const normalizedWorktreeId = String(worktreeId || '').trim();
+    if (!normalizedWorktreeId) {
+      continue;
+    }
+    const worktree = projectStore.worktrees.find(item => item.id === normalizedWorktreeId);
+    if (worktree) {
+      return worktree.id;
+    }
+  }
+  return null;
+}
+
+function resolveCurrentProjectWorktree(worktreeId?: string | null) {
+  const normalizedWorktreeId = resolveCurrentProjectWorktreeId(worktreeId);
+  if (!normalizedWorktreeId) {
+    return null;
+  }
+  return projectStore.worktrees.find(item => item.id === normalizedWorktreeId) ?? null;
+}
+
+function resolveCreateSessionWorktreeId(source: SessionTab | null) {
+  const worktreeId = isDraftSession(source)
+    ? resolveCurrentProjectWorktreeId(source.worktreeId, projectStore.selectedWorktreeId)
+    : resolveCurrentProjectWorktreeId(projectStore.selectedWorktreeId, source?.worktreeId);
+  return worktreeId ?? undefined;
+}
+
 function resolveDraftContext(worktreeId?: string | null) {
-  const normalizedWorktreeId = String(worktreeId || '').trim();
-  const worktree = normalizedWorktreeId
-    ? projectStore.worktrees.find(item => item.id === normalizedWorktreeId)
-    : null;
+  const worktree = resolveCurrentProjectWorktree(worktreeId);
   return {
-    worktreeId: worktree?.id ?? (normalizedWorktreeId || null),
+    worktreeId: worktree?.id ?? null,
     cwd: worktree?.path || projectStore.currentProject?.path || currentSession.value?.cwd || '',
   };
 }
@@ -8257,9 +8283,7 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
   try {
     const source = currentSession.value;
     const agent = forceAgent ?? source?.agent ?? selectedAgent.value;
-    const worktreeId = isDraftSession(source)
-      ? (source.worktreeId ?? undefined)
-      : (projectStore.selectedWorktreeId ?? source?.worktreeId ?? undefined);
+    const worktreeId = resolveCreateSessionWorktreeId(source);
     const session = await webSessionStore.createSession(props.projectId, {
       worktreeId,
       agent,
