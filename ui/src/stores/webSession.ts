@@ -1253,6 +1253,13 @@ function getTransportRetryPayload(payload?: Record<string, unknown>) {
   };
 }
 
+function getBlockFreshnessTimestamp(block: WebSessionBlock) {
+  const freshness = block.observedAt ?? block.timestamp;
+  return typeof freshness === 'number' && Number.isFinite(freshness) && freshness > 0
+    ? freshness
+    : null;
+}
+
 function isRetryClearingProgressBlock(
   block: WebSessionBlock,
   retryPayload: ReturnType<typeof getTransportRetryPayload>
@@ -1279,6 +1286,16 @@ function isRetryClearingProgressBlock(
     default:
       return false;
   }
+}
+
+function getRetryClearingProgressTimestamp(
+  block: WebSessionBlock,
+  retryPayload: ReturnType<typeof getTransportRetryPayload>
+) {
+  if (!isRetryClearingProgressBlock(block, retryPayload)) {
+    return null;
+  }
+  return getBlockFreshnessTimestamp(block);
 }
 
 function parseUserInputQuestions(value: unknown): WebSessionUserInputQuestion[] {
@@ -2974,6 +2991,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           updatedAt: number;
         }
       | undefined;
+    let latestProgressTimestamp: number | undefined;
 
     for (const block of buildBlocks(sessionId)) {
       updatedAt = block.observedAt || block.timestamp || updatedAt;
@@ -2995,16 +3013,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
         activeSubAgents = new Map();
         knownSubAgents = new Map();
         errorMessage = '';
-        retryState = undefined;
       }
       const retryPayload = getTransportRetryPayload(block.payload);
+      const progressTimestamp = getRetryClearingProgressTimestamp(block, retryPayload);
+      if (progressTimestamp != null) {
+        latestProgressTimestamp = Math.max(latestProgressTimestamp ?? 0, progressTimestamp);
+      }
       if (block.itemType === 'note' && retryPayload) {
         retryState = {
           ...retryPayload,
           updatedAt: block.observedAt || block.timestamp || updatedAt,
         };
-      } else if (retryState && isRetryClearingProgressBlock(block, retryPayload)) {
-        retryState = undefined;
       }
       if (block.kind === 'tool' && block.tool) {
         const normalizedToolKind = normalizeToolKindValue(
@@ -3080,12 +3099,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (session?.status === 'running') {
+      const hasRecoveredFromRetry =
+        retryState != null &&
+        latestProgressTimestamp != null &&
+        latestProgressTimestamp > retryState.updatedAt;
       const hasNewerWorkingSummary =
         retryState != null &&
         assistantState === 'working' &&
         assistantStateUpdatedAt != null &&
         assistantStateUpdatedAt > retryState.updatedAt;
-      if (retryState && !hasNewerWorkingSummary) {
+      if (retryState && !hasRecoveredFromRetry && !hasNewerWorkingSummary) {
         return withActiveSubAgents(
           {
             phase: 'retrying',

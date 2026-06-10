@@ -1542,6 +1542,251 @@ describe('webSession loading behavior', () => {
     ]);
   });
 
+  it('clears retrying state when a newer assistant update arrives on the same history item', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-retry-assistant-recovered',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 2,
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          {
+            id: 'assistant-1',
+            oi: 1,
+            kd: 'assistant',
+            tp: 'agent_message',
+            txt: 'Draft reply',
+            ts2: Date.parse('2026-04-09T10:00:00.000Z'),
+            obs: Date.parse('2026-04-09T10:00:00.000Z'),
+            dn: false,
+          },
+          {
+            id: 'retry-1',
+            oi: 2,
+            kd: 'system',
+            tp: 'note',
+            txt: 'Reconnecting... 1/5',
+            ts2: Date.parse('2026-04-09T10:00:10.000Z'),
+            obs: Date.parse('2026-04-09T10:00:10.000Z'),
+            lvl: 'warn',
+            pl: {
+              code: 'transport_retrying',
+              txt: 'Reconnecting... 1/5',
+              attempt: 1,
+              maxAttempts: 5,
+            },
+          },
+        ],
+        hasMore: false,
+        total: 2,
+      },
+      pendingInputs: [],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'retrying',
+      running: true,
+      retry: expect.objectContaining({
+        attempt: 1,
+        maxAttempts: 5,
+      }),
+    });
+
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: {
+        id: 'assistant-1',
+        oi: 1,
+        kd: 'assistant',
+        tp: 'agent_message',
+        txt: 'Draft reply recovered',
+        ts2: Date.parse('2026-04-09T10:00:00.000Z'),
+        obs: Date.parse('2026-04-09T10:00:20.000Z'),
+        dn: false,
+      },
+    });
+
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'thinking',
+      running: true,
+    });
+    expect(store.getLiveState(session.id).retry).toBeUndefined();
+  });
+
+  it('clears retrying state when a newer tool update arrives on the same history item', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-retry-tool-recovered',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 2,
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          {
+            id: 'tool-1',
+            oi: 1,
+            kd: 'tool',
+            tp: 'command_execution',
+            ts2: Date.parse('2026-04-09T10:00:00.000Z'),
+            obs: Date.parse('2026-04-09T10:00:00.000Z'),
+            tl: {
+              id: 'tool-1',
+              name: 'Shell',
+              kind: 'command_execution',
+              st: 'running',
+              out: '',
+            },
+          },
+          {
+            id: 'retry-2',
+            oi: 2,
+            kd: 'system',
+            tp: 'note',
+            txt: 'Reconnecting... 1/5',
+            ts2: Date.parse('2026-04-09T10:00:10.000Z'),
+            obs: Date.parse('2026-04-09T10:00:10.000Z'),
+            lvl: 'warn',
+            pl: {
+              code: 'transport_retrying',
+              txt: 'Reconnecting... 1/5',
+              attempt: 1,
+              maxAttempts: 5,
+            },
+          },
+        ],
+        hasMore: false,
+        total: 2,
+      },
+      pendingInputs: [],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'retrying',
+      running: true,
+    });
+
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: {
+        id: 'tool-1',
+        oi: 1,
+        kd: 'tool',
+        tp: 'command_execution',
+        ts2: Date.parse('2026-04-09T10:00:00.000Z'),
+        obs: Date.parse('2026-04-09T10:00:21.000Z'),
+        tl: {
+          id: 'tool-1',
+          name: 'Shell',
+          kind: 'command_execution',
+          st: 'running',
+          out: 'Recovered output',
+        },
+      },
+    });
+
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'tool',
+      running: true,
+      tool: expect.objectContaining({
+        id: 'tool-1',
+      }),
+    });
+    expect(store.getLiveState(session.id).retry).toBeUndefined();
+  });
+
+  it('keeps retrying state when no newer runtime progress has arrived', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-retry-still-active',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 2,
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          {
+            id: 'assistant-2',
+            oi: 1,
+            kd: 'assistant',
+            tp: 'agent_message',
+            txt: 'Still running',
+            ts2: Date.parse('2026-04-09T10:00:00.000Z'),
+            obs: Date.parse('2026-04-09T10:00:00.000Z'),
+            dn: false,
+          },
+          {
+            id: 'retry-3',
+            oi: 2,
+            kd: 'system',
+            tp: 'note',
+            txt: 'Reconnecting... 2/5',
+            ts2: Date.parse('2026-04-09T10:00:10.000Z'),
+            obs: Date.parse('2026-04-09T10:00:10.000Z'),
+            lvl: 'warn',
+            pl: {
+              code: 'transport_retrying',
+              txt: 'Reconnecting... 2/5',
+              attempt: 2,
+              maxAttempts: 5,
+            },
+          },
+        ],
+        hasMore: false,
+        total: 2,
+      },
+      pendingInputs: [],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'retrying',
+      running: true,
+      retry: expect.objectContaining({
+        attempt: 2,
+        maxAttempts: 5,
+      }),
+    });
+  });
+
   it('replies to websocket heartbeat pings on the event stream', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
