@@ -1134,6 +1134,7 @@
                     class="composer-select claude-runtime-select"
                     size="small"
                     :menu-props="claudeRuntimeSelectMenuProps"
+                    :render-option="renderModelOption"
                     :options="claudeRuntimeOptions"
                   />
                   <n-select
@@ -6732,12 +6733,12 @@ const modelSelectStyle = computed<CSSProperties>(() => ({
 const claudeRuntimeOptions = computed(() =>
   CLAUDE_RUNTIME_OPTIONS.map(option => ({
     ...option,
-    label: option.menuLabel ?? option.label,
+    label: option.label,
   }))
 );
 const selectedClaudeRuntimeLabel = computed(() => {
   const runtime = selectedClaudeRuntime.value;
-  return CLAUDE_RUNTIME_OPTIONS.find(option => option.value === runtime)?.label ?? 'Claude Code';
+  return CLAUDE_RUNTIME_OPTIONS.find(option => option.value === runtime)?.label ?? 'CC';
 });
 
 const modelOptions = computed(() => {
@@ -14142,7 +14143,7 @@ defineExpose({
 }
 
 .claude-runtime-select {
-  width: 172px;
+  width: 72px;
 }
 
 :global(.web-session-model-select-menu) {
@@ -15103,7 +15104,7 @@ defineExpose({
   }
 
   .claude-runtime-select {
-    width: 172px;
+    width: 72px;
   }
 
   .composer-mode-switch {

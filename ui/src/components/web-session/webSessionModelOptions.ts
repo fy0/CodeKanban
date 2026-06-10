@@ -17,7 +17,7 @@ export const CLAUDE_MODEL_OPTIONS: WebSessionModelOption[] = [
 ];
 
 export const CLAUDE_RUNTIME_OPTIONS: WebSessionModelOption[] = [
-  { label: 'Claude Code', value: 'claude' },
+  { label: 'CC', value: 'claude', menuLabel: 'Claude Code' },
   { label: 'CCR', value: 'ccr', menuLabel: 'Claude Code Router' },
 ];
 

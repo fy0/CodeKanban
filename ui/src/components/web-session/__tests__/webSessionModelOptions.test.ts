@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CLAUDE_MODEL_OPTIONS,
+  CLAUDE_RUNTIME_OPTIONS,
   CODEX_ADDITIONAL_MODEL_OPTIONS,
   CODEX_MODEL_OPTIONS,
   CODEX_PRIMARY_MODEL_OPTIONS,
@@ -51,6 +52,15 @@ describe('webSessionModelOptions', () => {
 
   it('keeps claude models unchanged', () => {
     expect(CLAUDE_MODEL_OPTIONS.map(option => option.value)).toEqual(['opus', 'sonnet', 'haiku']);
+  });
+
+  it('uses compact claude runtime labels with full menu labels', () => {
+    expect(CLAUDE_RUNTIME_OPTIONS.map(option => option.value)).toEqual(['claude', 'ccr']);
+    expect(CLAUDE_RUNTIME_OPTIONS.map(option => option.label)).toEqual(['CC', 'CCR']);
+    expect(CLAUDE_RUNTIME_OPTIONS.map(option => option.menuLabel)).toEqual([
+      'Claude Code',
+      'Claude Code Router',
+    ]);
   });
 
   it('exports model picker sentinels', () => {
