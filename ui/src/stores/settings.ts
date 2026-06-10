@@ -850,15 +850,35 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
   }
 
-  function exportClientBackup(locale: string): SettingsBackupClientPayload {
+  function exportClientBackup(
+    locale: string,
+    options?: { includeQuickInputRecent?: boolean }
+  ): SettingsBackupClientPayload {
+    const serialized = serializeSettingsForBackup(settings.value);
+    if (options?.includeQuickInputRecent === false && serialized.webSessionQuickInput) {
+      const { recent: _recent, ...restQuickInput } = serialized.webSessionQuickInput;
+      serialized.webSessionQuickInput = restQuickInput;
+      if (!('pinned' in serialized.webSessionQuickInput)) {
+        delete serialized.webSessionQuickInput;
+      }
+    }
     return {
       locale: typeof locale === 'string' && locale.trim() ? locale.trim() : 'zh-CN',
-      settings: serializeSettingsForBackup(settings.value),
+      settings: serialized,
     };
   }
 
   function importClientBackup(payload: SettingsBackupClientPayload) {
-    settings.value = deserializeSettingsFromBackup(payload?.settings);
+    if (payload?.settings) {
+      const importedSettings = cloneSettingsBackupClientSettings(payload.settings);
+      if (importedSettings) {
+        importedSettings.webSessionQuickInput = preserveImportedQuickInputFields(
+          importedSettings.webSessionQuickInput,
+          settings.value.webSessionQuickInput
+        );
+        settings.value = deserializeSettingsFromBackup(importedSettings);
+      }
+    }
     saveSettings(settings.value);
     if (typeof window !== 'undefined' && window.localStorage && payload?.locale) {
       window.localStorage.setItem(APP_LOCALE_STORAGE_KEY, payload.locale);
@@ -1001,6 +1021,29 @@ function deserializeSettingsFromBackup(value: unknown): GeneralSettings {
   return loadResult.settings;
 }
 
+function cloneSettingsBackupClientSettings(
+  value: SettingsBackupClientPayload['settings']
+): SettingsBackupClientPayload['settings'] {
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  return JSON.parse(JSON.stringify(value)) as SettingsBackupClientPayload['settings'];
+}
+
+function preserveImportedQuickInputFields(
+  imported: Partial<WebSessionQuickInputSettings> | undefined,
+  current: WebSessionQuickInputSettings
+) {
+  const next = imported ? { ...imported } : {};
+  if (!('pinned' in next)) {
+    next.pinned = [...current.pinned];
+  }
+  if (!('recent' in next)) {
+    next.recent = [...current.recent];
+  }
+  return next;
+}
+
 function cloneDefaultSettings(): GeneralSettings {
   return {
     theme: { ...defaultSettings.theme },
@@ -1074,8 +1117,7 @@ function loadSettingsFromParsed(
     panelShortcut?: PanelShortcutSetting;
   };
 
-  let currentPresetId =
-    parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
+  let currentPresetId = parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
   if (!parsed.currentPresetId && !legacyParsed.currentPresetId && parsed.theme) {
     const matchedPreset = THEME_PRESETS.find(
       p => p.colors.primaryColor === parsed.theme?.primaryColor
@@ -1135,9 +1177,7 @@ function loadSettingsFromParsed(
       ),
       defaultTerminalSnapshotZlibCompression:
         parsed.defaultTerminalSnapshotZlibCompression !== false,
-      terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(
-        parsed.terminalConnectionPolicy
-      ),
+      terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(parsed.terminalConnectionPolicy),
       inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
         parsed.inactiveTerminalSnapshotIntervalMs
       ),

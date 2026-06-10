@@ -94,11 +94,20 @@ terminal:
 	if item.Payload.Server == nil {
 		t.Fatal("expected server payload")
 	}
-	if item.Payload.Server.DailyTip.Enabled {
+	if item.CreatedAt == nil || item.CreatedAt.IsZero() {
+		t.Fatal("expected createdAt to be set")
+	}
+	if item.Payload.Server.DailyTip == nil || item.Payload.Server.DailyTip.Enabled {
 		t.Fatal("expected exported daily tip to be false")
+	}
+	if item.Payload.Server.TerminalShell == nil {
+		t.Fatal("expected terminal shell payload")
 	}
 	if got := item.Payload.Server.TerminalShell.Shell; strings.TrimSpace(got) != "/bin/sh" {
 		t.Fatalf("terminal shell = %q, want /bin/sh", got)
+	}
+	if item.Payload.Server.AuthAccess == nil {
+		t.Fatal("expected auth access payload")
 	}
 	if item.Payload.Server.AuthAccess.ProxyHeader != utils.DefaultAuthProxyHeader {
 		t.Fatalf("proxyHeader = %q, want %q", item.Payload.Server.AuthAccess.ProxyHeader, utils.DefaultAuthProxyHeader)
@@ -156,6 +165,16 @@ func TestSystemSettingsBackupPreviewWarnsOnVersionDifference(t *testing.T) {
 	if len(payload.Item.Warnings) == 0 {
 		t.Fatal("expected version difference warning")
 	}
+	foundBreakingWarning := false
+	for _, issue := range payload.Item.Warnings {
+		if issue.Code == "source_app_breaking_version_differs" {
+			foundBreakingWarning = true
+			break
+		}
+	}
+	if !foundBreakingWarning {
+		t.Fatalf("expected breaking version warning, got %#v", payload.Item.Warnings)
+	}
 }
 
 func TestSystemSettingsBackupPreviewRejectsInvalidShell(t *testing.T) {
@@ -167,13 +186,16 @@ func TestSystemSettingsBackupPreviewRejectsInvalidShell(t *testing.T) {
 		SourceApp:           utils.SettingsBackupSourceApp{Name: "Code Kanban", Version: "1.0.0", Channel: "stable"},
 		Payload: utils.SettingsBackupPayload{
 			Server: &utils.SettingsBackupServerPayload{
-				AIAssistantStatus:    cfg.Terminal.AIAssistantStatus,
-				Developer:            cfg.Developer,
-				DailyTip:             utils.BackupDailyTipSettings{Enabled: true},
-				WebSessionQuickInput: cfg.UI.WebSessionQuickInput,
-				Worktree:             cfg.Worktree,
-				TerminalShell:        utils.SettingsBackupShellConfig{Platform: "linux", Shell: "/definitely/missing/shell"},
-				AuthAccess:           utils.DefaultAuthAccessConfig(),
+				AIAssistantStatus: loPtr(cfg.Terminal.AIAssistantStatus),
+				Developer:         loPtr(cfg.Developer),
+				DailyTip:          loPtr(utils.BackupDailyTipSettings{Enabled: true}),
+				WebSessionQuickInput: &utils.SettingsBackupQuickInputSection{
+					Pinned: loPtr(append([]string(nil), cfg.UI.WebSessionQuickInput.Pinned...)),
+					Recent: loPtr(append([]string(nil), cfg.UI.WebSessionQuickInput.Recent...)),
+				},
+				Worktree:      loPtr(cfg.Worktree),
+				TerminalShell: loPtr(utils.SettingsBackupShellConfig{Platform: "linux", Shell: "/definitely/missing/shell"}),
+				AuthAccess:    loPtr(utils.DefaultAuthAccessConfig()),
 			},
 		},
 	}
@@ -234,15 +256,15 @@ terminal:
 		SourceApp:           utils.SettingsBackupSourceApp{Name: "Code Kanban", Version: "1.0.0", Channel: "stable"},
 		Payload: utils.SettingsBackupPayload{
 			Server: &utils.SettingsBackupServerPayload{
-				AIAssistantStatus: utils.AIAssistantStatusConfig{
+				AIAssistantStatus: loPtr(utils.AIAssistantStatusConfig{
 					ClaudeCode: false,
 					Codex:      false,
 					QwenCode:   true,
 					Gemini:     true,
 					Cursor:     false,
 					Copilot:    true,
-				},
-				Developer: utils.DeveloperConfig{
+				}),
+				Developer: loPtr(utils.DeveloperConfig{
 					EnableTerminalScrollback:       true,
 					RenameSessionTitleEachCommand:  true,
 					EnableTerminalStateSnapshot:    true,
@@ -259,27 +281,27 @@ terminal:
 							Tool:       false,
 						},
 					},
+				}),
+				DailyTip: loPtr(utils.BackupDailyTipSettings{Enabled: false}),
+				WebSessionQuickInput: &utils.SettingsBackupQuickInputSection{
+					Pinned: loPtr([]string{"Plan", "Ship"}),
+					Recent: loPtr([]string{"Deploy"}),
 				},
-				DailyTip: utils.BackupDailyTipSettings{Enabled: false},
-				WebSessionQuickInput: utils.WebSessionQuickInputConfig{
-					Pinned: []string{"Plan", "Ship"},
-					Recent: []string{"Deploy"},
-				},
-				Worktree: utils.WorktreeConfig{
+				Worktree: loPtr(utils.WorktreeConfig{
 					GlobalBaseDir:        t.TempDir(),
 					GlobalDirNamePattern: "{projectName}-custom",
-				},
-				TerminalShell: utils.SettingsBackupShellConfig{
+				}),
+				TerminalShell: loPtr(utils.SettingsBackupShellConfig{
 					Platform: "linux",
 					Shell:    "/bin/sh",
-				},
-				AuthAccess: utils.AuthAccessConfig{
+				}),
+				AuthAccess: loPtr(utils.AuthAccessConfig{
 					AccessRules: utils.AuthAccessRulesConfig{
 						BypassIPs: []string{"127.0.0.1"},
 					},
 					ProxyHeader:    utils.DefaultAuthProxyHeader,
 					TrustedProxies: []string{"10.0.0.0/24"},
-				},
+				}),
 			},
 		},
 	}
@@ -330,6 +352,105 @@ terminal:
 		!strings.Contains(content, "globalDirNamePattern: \"{projectName}-custom\"") &&
 		!strings.Contains(content, "globalDirNamePattern: {projectName}-custom") {
 		t.Fatalf("expected worktree pattern rewrite, got:\n%s", content)
+	}
+}
+
+func TestSystemSettingsBackupPreviewRejectsLegacySchemaV1(t *testing.T) {
+	cfg, _ := loadSystemSettingsBackupTestConfig(t, "")
+	app := newSystemSettingsBackupTestApp(t, cfg, nil, nil)
+	backup := utils.SettingsBackupFile{
+		BackupSchemaVersion: 1,
+		BackupKind:          utils.SettingsBackupKind,
+		SourceApp:           utils.SettingsBackupSourceApp{Name: "Code Kanban", Version: "0.1.0-alpha", Channel: "dev"},
+		Payload: utils.SettingsBackupPayload{
+			Server: loPtr(utils.BuildSettingsBackupServerPayload(cfg)),
+		},
+	}
+
+	body, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("marshal backup failed: %v", err)
+	}
+	resp := mustSystemSettingsBackupRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/api/v1/system/settings-backup/preview",
+		bytes.NewBuffer(body),
+	)
+	if resp.StatusCode != http.StatusBadRequest {
+		rawBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want %d; body=%s", resp.StatusCode, http.StatusBadRequest, string(rawBody))
+	}
+}
+
+func TestSystemSettingsBackupImportAppliesOnlySelectedServerSections(t *testing.T) {
+	cfg, _ := loadSystemSettingsBackupTestConfig(t, `
+ui:
+  dailyTipEnabled: true
+  webSessionQuickInput:
+    pinned: ["continue"]
+    recent: ["keep"]
+developer:
+  enableTerminalScrollback: false
+  renameSessionTitleEachCommand: false
+worktree:
+  globalBaseDir: /tmp/original
+  globalDirNamePattern: "{projectName}-{branch}"
+terminal:
+  shell:
+    linux: /bin/bash
+`)
+	terminalStub := &settingsBackupTerminalManagerStub{}
+	webSessionStub := &settingsBackupWebSessionManagerStub{}
+	app := newSystemSettingsBackupTestApp(t, cfg, terminalStub, webSessionStub)
+
+	backup := utils.SettingsBackupFile{
+		BackupSchemaVersion: utils.SettingsBackupSchemaVersion,
+		BackupKind:          utils.SettingsBackupKind,
+		SourceApp:           utils.SettingsBackupSourceApp{Name: "Code Kanban", Version: "0.1.0-alpha", Channel: "dev"},
+		Payload: utils.SettingsBackupPayload{
+			Server: &utils.SettingsBackupServerPayload{
+				DailyTip: loPtr(utils.BackupDailyTipSettings{Enabled: false}),
+				WebSessionQuickInput: &utils.SettingsBackupQuickInputSection{
+					Pinned: loPtr([]string{"Plan"}),
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("marshal backup failed: %v", err)
+	}
+	resp := mustSystemSettingsBackupRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/api/v1/system/settings-backup/import",
+		bytes.NewBuffer(body),
+	)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	if cfg.UI.DailyTipEnabled {
+		t.Fatal("expected daily tip to be updated")
+	}
+	if got := cfg.UI.WebSessionQuickInput.Pinned; len(got) != 1 || got[0] != "Plan" {
+		t.Fatalf("unexpected pinned quick input: %#v", got)
+	}
+	if got := cfg.UI.WebSessionQuickInput.Recent; len(got) != 1 || got[0] != "keep" {
+		t.Fatalf("expected recent quick input to be preserved, got %#v", got)
+	}
+	if cfg.Developer.EnableTerminalScrollback {
+		t.Fatalf("developer config should remain unchanged: %#v", cfg.Developer)
+	}
+	if terminalStub.scrollbackEnabled {
+		t.Fatal("did not expect developer hot reload when developer section is omitted")
+	}
+	if webSessionStub.refreshCount != 0 {
+		t.Fatalf("unexpected web session refresh count = %d", webSessionStub.refreshCount)
 	}
 }
 

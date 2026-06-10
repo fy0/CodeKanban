@@ -1581,21 +1581,108 @@
                 <n-alert type="info" :bordered="false" :show-icon="false">
                   {{ t('settings.backupDescription') }}
                 </n-alert>
-                <n-space wrap>
+                <div class="settings-backup-group">
+                  <div class="settings-backup-group__title">
+                    {{ t('settings.backupExportGroupTitle') }}
+                  </div>
+                  <n-space vertical size="small">
+                    <n-checkbox v-model:checked="settingsBackupExportOptions.includeServer">
+                      {{ t('settings.backupOptionIncludeServer') }}
+                    </n-checkbox>
+                    <n-checkbox v-model:checked="settingsBackupExportOptions.includeClient">
+                      {{ t('settings.backupOptionIncludeClient') }}
+                    </n-checkbox>
+                    <n-switch
+                      v-model:value="settingsBackupExportOptions.includeQuickInputRecent"
+                      :disabled="
+                        !settingsBackupExportOptions.includeServer &&
+                        !settingsBackupExportOptions.includeClient
+                      "
+                    >
+                      <template #checked>{{ t('common.yes') }}</template>
+                      <template #unchecked>{{ t('common.no') }}</template>
+                    </n-switch>
+                    <span class="form-tip">{{ t('settings.backupOptionIncludeRecent') }}</span>
+                  </n-space>
+                  <div class="settings-backup-subgroup">
+                    <div class="settings-backup-subgroup__title">
+                      {{ t('settings.backupAdvancedTitle') }}
+                    </div>
+                    <n-space vertical size="small">
+                      <n-switch
+                        v-model:value="settingsBackupExportOptions.includeSecurityAccess"
+                        :disabled="!settingsBackupExportOptions.includeServer"
+                      >
+                        <template #checked>{{ t('common.yes') }}</template>
+                        <template #unchecked>{{ t('common.no') }}</template>
+                      </n-switch>
+                      <span class="form-tip">{{
+                        t('settings.backupOptionIncludeSecurityAccess')
+                      }}</span>
+                      <n-select
+                        v-model:value="settingsBackupExportOptions.fileNameRule"
+                        :options="settingsBackupFileNameRuleOptions"
+                      />
+                      <n-switch v-model:value="settingsBackupExportOptions.includeMetadata">
+                        <template #checked>{{ t('common.yes') }}</template>
+                        <template #unchecked>{{ t('common.no') }}</template>
+                      </n-switch>
+                      <span class="form-tip">{{ t('settings.backupOptionIncludeMetadata') }}</span>
+                    </n-space>
+                  </div>
                   <n-button
                     type="primary"
                     :loading="settingsBackupExporting"
+                    :disabled="!settingsBackupCanExport"
                     @click="handleExportSettingsBackup"
                   >
                     {{ t('settings.backupExportAction') }}
                   </n-button>
+                </div>
+                <div class="settings-backup-group">
+                  <div class="settings-backup-group__title">
+                    {{ t('settings.backupImportGroupTitle') }}
+                  </div>
+                  <n-radio-group
+                    v-model:value="settingsBackupImportMode"
+                    name="settings-backup-mode"
+                  >
+                    <n-space vertical size="small">
+                      <n-radio
+                        v-for="option in settingsBackupImportModeOptions"
+                        :key="option.value"
+                        :value="option.value"
+                      >
+                        {{ option.label }}
+                      </n-radio>
+                    </n-space>
+                  </n-radio-group>
+                  <div class="settings-backup-subgroup">
+                    <div class="settings-backup-subgroup__title">
+                      {{ t('settings.backupAdvancedTitle') }}
+                    </div>
+                    <n-space vertical size="small">
+                      <n-select
+                        v-model:value="settingsBackupVersionWarningMode"
+                        :options="settingsBackupVersionWarningModeOptions"
+                      />
+                      <n-switch v-model:value="settingsBackupAllowBreakingVersionContinue">
+                        <template #checked>{{ t('common.yes') }}</template>
+                        <template #unchecked>{{ t('common.no') }}</template>
+                      </n-switch>
+                      <span class="form-tip">
+                        {{ t('settings.backupOptionAllowBreakingVersionContinue') }}
+                      </span>
+                      <span class="form-tip">{{ t('settings.backupImportStrategyTip') }}</span>
+                    </n-space>
+                  </div>
                   <n-button
                     :loading="settingsBackupImporting"
                     @click="handleChooseSettingsBackupFile"
                   >
                     {{ t('settings.backupImportAction') }}
                   </n-button>
-                </n-space>
+                </div>
                 <div v-if="settingsBackupSelectedFileName" class="settings-backup-file-name">
                   {{ t('settings.backupSelectedFile', { name: settingsBackupSelectedFileName }) }}
                 </div>
@@ -1675,13 +1762,21 @@
           <n-gi>
             <div class="settings-backup-meta-label">{{ t('settings.backupCreatedBy') }}</div>
             <div class="settings-backup-meta-value">
-              {{ settingsBackupPreview?.sourceApp?.version ?? '-' }}
+              {{
+                settingsBackupPreview?.sourceApp?.version
+                  ? `${settingsBackupPreview?.sourceApp?.version} / ${settingsBackupPreview?.sourceApp?.channel || '-'}`
+                  : '-'
+              }}
             </div>
           </n-gi>
           <n-gi>
             <div class="settings-backup-meta-label">{{ t('settings.backupCurrentVersion') }}</div>
             <div class="settings-backup-meta-value">
-              {{ settingsBackupPreview?.currentApp?.version ?? '-' }}
+              {{
+                settingsBackupPreview?.currentApp?.version
+                  ? `${settingsBackupPreview?.currentApp?.version} / ${settingsBackupPreview?.currentApp?.channel || '-'}`
+                  : '-'
+              }}
             </div>
           </n-gi>
           <n-gi>
@@ -1694,7 +1789,17 @@
               }}
             </div>
           </n-gi>
+          <n-gi>
+            <div class="settings-backup-meta-label">{{ t('settings.backupCreatedAt') }}</div>
+            <div class="settings-backup-meta-value">
+              {{ pendingSettingsBackup?.createdAt || '-' }}
+            </div>
+          </n-gi>
         </n-grid>
+
+        <n-alert type="info" :bordered="false" :show-icon="false">
+          {{ settingsBackupImportSummary }}
+        </n-alert>
 
         <n-alert
           v-for="issue in settingsBackupPreviewErrors"
@@ -1714,16 +1819,42 @@
         >
           {{ issue.message }}
         </n-alert>
+        <n-alert
+          v-if="
+            settingsBackupHasBreakingVersionMismatch && !settingsBackupAllowBreakingVersionContinue
+          "
+          type="warning"
+          :bordered="false"
+          :show-icon="false"
+        >
+          {{ t('settings.backupBreakingVersionBlocked') }}
+        </n-alert>
+        <n-alert
+          v-if="
+            settingsBackupVersionWarningMode === 'strict' && settingsBackupHasAnyVersionMismatch
+          "
+          type="warning"
+          :bordered="false"
+          :show-icon="false"
+        >
+          {{ t('settings.backupStrictVersionBlocked') }}
+        </n-alert>
 
         <div>
           <div class="settings-backup-section-title">{{ t('settings.backupSectionsTitle') }}</div>
+          <span class="form-tip">{{ t('settings.backupUncheckedTip') }}</span>
           <div class="settings-backup-section-list">
             <div
               v-for="section in settingsBackupPreviewSections"
               :key="section.key"
               class="settings-backup-section-item"
             >
-              <div class="settings-backup-section-item__title">{{ section.label }}</div>
+              <n-checkbox
+                :checked="settingsBackupSelectedSectionKeySet.has(section.key)"
+                @update:checked="checked => handleToggleSettingsBackupSection(section.key, checked)"
+              >
+                <span class="settings-backup-section-item__title">{{ section.label }}</span>
+              </n-checkbox>
               <div class="settings-backup-section-item__meta">
                 {{ section.target }} · {{ section.action }}
               </div>
@@ -1735,13 +1866,14 @@
         </div>
 
         <n-space justify="end">
-          <n-button @click="showSettingsBackupPreviewDialog = false">
+          <n-button @click="closeSettingsBackupPreviewDialog">
             {{ t('common.cancel') }}
           </n-button>
           <n-button
+            v-if="settingsBackupImportMode !== 'preview-only'"
             type="primary"
             :loading="settingsBackupImporting"
-            :disabled="!settingsBackupPreview?.canImport"
+            :disabled="!settingsBackupCanConfirmImport"
             @click="handleConfirmSettingsBackupImport"
           >
             {{ t('settings.backupImportConfirm') }}
@@ -1821,7 +1953,6 @@ import {
   createThemeMaintenanceWarningController,
   createThemeSelectionController,
 } from '@/utils/themeMaintenanceWarning';
-import type { AppInfo } from '@/stores/app';
 import Apis from '@/api';
 import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
@@ -1840,16 +1971,22 @@ import {
   type DailyTipDefinition,
 } from '@/utils/dailyTips';
 import {
+  buildImportableSettingsBackup,
   buildSettingsBackupFile,
   downloadSettingsBackupFile,
   exportServerSettingsBackup,
+  formatSettingsBackupFileName,
+  hasSettingsBackupContent,
   importSettingsBackup,
   parseSettingsBackupJSON,
   previewSettingsBackup,
   type SettingsBackupFile,
+  type SettingsBackupExportOptions,
+  type SettingsBackupImportMode,
   type SettingsBackupPreviewIssue,
   type SettingsBackupPreviewResult,
   type SettingsBackupPreviewSection,
+  type SettingsBackupVersionWarningMode,
 } from '@/utils/settingsBackup';
 
 type ShortcutTarget = 'terminal' | 'notepad';
@@ -1866,6 +2003,20 @@ const DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS = {
 } as const;
 const DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT =
   'The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue.';
+const DEFAULT_SETTINGS_BACKUP_EXPORT_OPTIONS: SettingsBackupExportOptions = {
+  includeServer: true,
+  includeClient: true,
+  includeSecurityAccess: false,
+  includeQuickInputRecent: false,
+  fileNameRule: 'app-version-datetime',
+  includeMetadata: true,
+};
+const SETTINGS_BACKUP_BREAKING_WARNING_CODES = new Set(['source_app_breaking_version_differs']);
+const SETTINGS_BACKUP_VERSION_WARNING_CODES = new Set([
+  'source_app_version_differs',
+  'source_app_breaking_version_differs',
+  'source_app_channel_differs',
+]);
 
 type ItemResponse<T> = {
   item?: T;
@@ -1950,6 +2101,13 @@ const settingsBackupFileInputRef = ref<HTMLInputElement | null>(null);
 const settingsBackupSelectedFileName = ref('');
 const pendingSettingsBackup = ref<SettingsBackupFile | null>(null);
 const settingsBackupPreview = ref<SettingsBackupPreviewResult | null>(null);
+const settingsBackupExportOptions = reactive<SettingsBackupExportOptions>({
+  ...DEFAULT_SETTINGS_BACKUP_EXPORT_OPTIONS,
+});
+const settingsBackupImportMode = ref<SettingsBackupImportMode>('preview-confirm');
+const settingsBackupVersionWarningMode = ref<SettingsBackupVersionWarningMode>('standard');
+const settingsBackupAllowBreakingVersionContinue = ref(false);
+const settingsBackupSelectedSectionKeys = ref<string[]>([]);
 const showSettingsBackupPreviewDialog = ref(false);
 const authSaving = ref(false);
 const authAccessLoading = ref(false);
@@ -1982,6 +2140,89 @@ const settingsBackupPreviewErrors = computed<SettingsBackupPreviewIssue[]>(
 const settingsBackupPreviewSections = computed<SettingsBackupPreviewSection[]>(
   () => settingsBackupPreview.value?.sections ?? []
 );
+const settingsBackupSelectedSectionKeySet = computed(
+  () => new Set(settingsBackupSelectedSectionKeys.value)
+);
+const settingsBackupCanExport = computed(
+  () => settingsBackupExportOptions.includeServer || settingsBackupExportOptions.includeClient
+);
+const settingsBackupSelectedSectionCount = computed(
+  () => settingsBackupSelectedSectionKeys.value.length
+);
+const settingsBackupFilteredImport = computed<SettingsBackupFile | null>(() => {
+  if (!pendingSettingsBackup.value) {
+    return null;
+  }
+  return buildImportableSettingsBackup(
+    pendingSettingsBackup.value,
+    settingsBackupSelectedSectionKeys.value
+  );
+});
+const settingsBackupHasFilteredImportContent = computed(() =>
+  hasSettingsBackupContent(settingsBackupFilteredImport.value)
+);
+const settingsBackupHasBreakingVersionMismatch = computed(() =>
+  settingsBackupPreviewWarnings.value.some(issue =>
+    SETTINGS_BACKUP_BREAKING_WARNING_CODES.has(issue.code)
+  )
+);
+const settingsBackupHasAnyVersionMismatch = computed(() =>
+  settingsBackupPreviewWarnings.value.some(issue =>
+    SETTINGS_BACKUP_VERSION_WARNING_CODES.has(issue.code)
+  )
+);
+const settingsBackupBlockedByVersionPolicy = computed(() => {
+  if (
+    settingsBackupHasBreakingVersionMismatch.value &&
+    !settingsBackupAllowBreakingVersionContinue.value
+  ) {
+    return true;
+  }
+  return (
+    settingsBackupVersionWarningMode.value === 'strict' && settingsBackupHasAnyVersionMismatch.value
+  );
+});
+const settingsBackupCanConfirmImport = computed(
+  () =>
+    Boolean(settingsBackupPreview.value?.canImport) &&
+    settingsBackupHasFilteredImportContent.value &&
+    !settingsBackupBlockedByVersionPolicy.value
+);
+const settingsBackupImportSummary = computed(() =>
+  t('settings.backupPreviewSummary', { count: settingsBackupSelectedSectionCount.value })
+);
+const settingsBackupFileNameRuleOptions = computed(() => [
+  { label: t('settings.backupFileNameRuleVersionDate'), value: 'app-version-date' },
+  { label: t('settings.backupFileNameRuleVersionDateTime'), value: 'app-version-datetime' },
+  {
+    label: t('settings.backupFileNameRuleChannelVersionDateTime'),
+    value: 'channel-app-version-datetime',
+  },
+]);
+const settingsBackupImportModeOptions = computed(() => [
+  { label: t('settings.backupImportModePreviewOnly'), value: 'preview-only' },
+  { label: t('settings.backupImportModePreviewConfirm'), value: 'preview-confirm' },
+  { label: t('settings.backupImportModeDirect'), value: 'direct-import' },
+]);
+const settingsBackupVersionWarningModeOptions = computed(() => [
+  { label: t('settings.backupVersionWarningModeStandard'), value: 'standard' },
+  { label: t('settings.backupVersionWarningModeStrict'), value: 'strict' },
+]);
+
+watch(
+  () => settingsBackupExportOptions.includeServer,
+  includeServer => {
+    if (!includeServer) {
+      settingsBackupExportOptions.includeSecurityAccess = false;
+    }
+  }
+);
+
+watch(showSettingsBackupPreviewDialog, show => {
+  if (!show && !settingsBackupImporting.value && pendingSettingsBackup.value) {
+    resetSettingsBackupPreviewState();
+  }
+});
 
 // 使用 composable 获取主题和终端配色选项
 const presetOptions = useThemeOptions();
@@ -2832,12 +3073,6 @@ async function handleSaveAuthAccessConfig() {
   }
 }
 
-function buildSettingsBackupFileName(info?: AppInfo | null) {
-  const version = info?.version?.trim() || '0.0.0';
-  const date = new Date().toISOString().slice(0, 10);
-  return `codekanban-settings-backup-v${version}-${date}.json`;
-}
-
 function resetSettingsBackupFileInput() {
   if (settingsBackupFileInputRef.value) {
     settingsBackupFileInputRef.value.value = '';
@@ -2849,27 +3084,122 @@ function handleChooseSettingsBackupFile() {
   settingsBackupFileInputRef.value?.click();
 }
 
-async function refreshSettingsAfterBackupImport() {
-  await Promise.all([
-    loadAIStatus(),
-    loadDeveloperConfig(),
-    loadWorktreeSettings(),
-    loadShellsConfig(),
-    loadAuthAccessConfig(),
-    settingsStore.loadDailyTipSettings(true),
-    settingsStore.loadWebSessionQuickInput(true),
-  ]);
+function resetSettingsBackupPreviewState(options?: { keepSelectedFileName?: boolean }) {
+  if (!options?.keepSelectedFileName) {
+    settingsBackupSelectedFileName.value = '';
+  }
+  pendingSettingsBackup.value = null;
+  settingsBackupPreview.value = null;
+  settingsBackupSelectedSectionKeys.value = [];
+}
+
+function closeSettingsBackupPreviewDialog() {
+  if (settingsBackupImporting.value) {
+    return;
+  }
+  showSettingsBackupPreviewDialog.value = false;
+  resetSettingsBackupPreviewState();
+}
+
+function handleToggleSettingsBackupSection(key: string, checked: boolean) {
+  const selected = new Set(settingsBackupSelectedSectionKeys.value);
+  if (checked) {
+    selected.add(key);
+  } else {
+    selected.delete(key);
+  }
+  settingsBackupSelectedSectionKeys.value = Array.from(selected);
+}
+
+function canAutoImportSettingsBackup(preview: SettingsBackupPreviewResult) {
+  if (settingsBackupImportMode.value !== 'direct-import' || !preview.canImport) {
+    return false;
+  }
+  const warnings = preview.warnings ?? [];
+  if (
+    warnings.some(issue => SETTINGS_BACKUP_BREAKING_WARNING_CODES.has(issue.code)) &&
+    !settingsBackupAllowBreakingVersionContinue.value
+  ) {
+    return false;
+  }
+  if (
+    settingsBackupVersionWarningMode.value === 'strict' &&
+    warnings.some(issue => SETTINGS_BACKUP_VERSION_WARNING_CODES.has(issue.code))
+  ) {
+    return false;
+  }
+  return warnings.length === 0;
+}
+
+async function refreshSettingsAfterBackupImport(importedBackup: SettingsBackupFile) {
+  const tasks: Array<Promise<unknown>> = [];
+  const server = importedBackup.payload.server;
+
+  if (server?.aiAssistantStatus) {
+    tasks.push(loadAIStatus());
+  }
+  if (server?.developer) {
+    tasks.push(loadDeveloperConfig());
+  }
+  if (server?.worktree) {
+    tasks.push(loadWorktreeSettings());
+  }
+  if (server?.terminalShell) {
+    tasks.push(loadShellsConfig());
+  }
+  if (server?.authAccess) {
+    tasks.push(loadAuthAccessConfig());
+  }
+  if (server?.dailyTip) {
+    tasks.push(settingsStore.loadDailyTipSettings(true));
+  }
+  if (server?.webSessionQuickInput?.pinned || server?.webSessionQuickInput?.recent) {
+    tasks.push(settingsStore.loadWebSessionQuickInput(true));
+  }
+
+  if (tasks.length > 0) {
+    await Promise.all(tasks);
+  }
+}
+
+async function executeSettingsBackupImport(backup: SettingsBackupFile) {
+  await importSettingsBackup(backup);
+
+  const clientPayload = backup.payload.client;
+  if (clientPayload) {
+    settingsStore.importClientBackup(clientPayload);
+  }
+
+  await refreshSettingsAfterBackupImport(backup);
 }
 
 async function handleExportSettingsBackup() {
+  if (!settingsBackupCanExport.value) {
+    message.error(t('settings.backupNothingSelected'));
+    return;
+  }
   settingsBackupExporting.value = true;
   try {
     const serverBackup = await exportServerSettingsBackup();
     const backup = buildSettingsBackupFile({
       serverBackup,
-      clientPayload: settingsStore.exportClientBackup(locale.value),
+      clientPayload: settingsStore.exportClientBackup(locale.value, {
+        includeQuickInputRecent: settingsBackupExportOptions.includeQuickInputRecent,
+      }),
+      exportOptions: settingsBackupExportOptions,
     });
-    downloadSettingsBackupFile(backup, buildSettingsBackupFileName(serverBackup.sourceApp));
+    if (!hasSettingsBackupContent(backup)) {
+      message.error(t('settings.backupNothingSelected'));
+      return;
+    }
+    downloadSettingsBackupFile(
+      backup,
+      formatSettingsBackupFileName({
+        appInfo: serverBackup.sourceApp,
+        rule: settingsBackupExportOptions.fileNameRule,
+        createdAt: backup.createdAt,
+      })
+    );
     message.success(t('settings.backupExportSuccess'));
   } catch (error) {
     console.error('Failed to export settings backup:', error);
@@ -2894,12 +3224,28 @@ async function handleSettingsBackupFileChange(event: Event) {
     const preview = await previewSettingsBackup(backup);
     pendingSettingsBackup.value = backup;
     settingsBackupPreview.value = preview;
+    settingsBackupSelectedSectionKeys.value = (preview.sections ?? []).map(section => section.key);
+
+    if (canAutoImportSettingsBackup(preview)) {
+      const importableBackup = buildImportableSettingsBackup(
+        backup,
+        settingsBackupSelectedSectionKeys.value
+      );
+      if (!hasSettingsBackupContent(importableBackup)) {
+        message.error(t('settings.backupNothingSelected'));
+        showSettingsBackupPreviewDialog.value = true;
+        return;
+      }
+      await executeSettingsBackupImport(importableBackup);
+      resetSettingsBackupPreviewState();
+      message.success(t('settings.backupImportSuccess'));
+      return;
+    }
+
     showSettingsBackupPreviewDialog.value = true;
   } catch (error) {
     console.error('Failed to parse or preview settings backup:', error);
-    pendingSettingsBackup.value = null;
-    settingsBackupPreview.value = null;
-    settingsBackupSelectedFileName.value = '';
+    resetSettingsBackupPreviewState();
     message.error(error instanceof Error ? error.message : t('settings.backupImportFailed'));
   } finally {
     settingsBackupImporting.value = false;
@@ -2908,23 +3254,15 @@ async function handleSettingsBackupFileChange(event: Event) {
 }
 
 async function handleConfirmSettingsBackupImport() {
-  if (!pendingSettingsBackup.value || !settingsBackupPreview.value?.canImport) {
+  if (!settingsBackupFilteredImport.value || !settingsBackupCanConfirmImport.value) {
     return;
   }
 
   settingsBackupImporting.value = true;
   try {
-    await importSettingsBackup(pendingSettingsBackup.value);
-
-    const clientPayload = pendingSettingsBackup.value.payload.client;
-    if (clientPayload) {
-      settingsStore.importClientBackup(clientPayload);
-    }
-
-    await refreshSettingsAfterBackupImport();
+    await executeSettingsBackupImport(settingsBackupFilteredImport.value);
     showSettingsBackupPreviewDialog.value = false;
-    pendingSettingsBackup.value = null;
-    settingsBackupPreview.value = null;
+    resetSettingsBackupPreviewState();
     message.success(t('settings.backupImportSuccess'));
   } catch (error) {
     console.error('Failed to import settings backup:', error);
@@ -4219,6 +4557,29 @@ function formatShortcutLabel(event: KeyboardEvent) {
 .settings-backup-file-name {
   font-size: 13px;
   color: var(--n-text-color-2);
+}
+
+.settings-backup-group,
+.settings-backup-subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-surface-color, var(--n-card-color)) 90%, transparent);
+}
+
+.settings-backup-subgroup {
+  padding: 12px;
+  background: color-mix(in srgb, var(--n-card-color) 92%, transparent);
+}
+
+.settings-backup-group__title,
+.settings-backup-subgroup__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--n-text-color-1);
 }
 
 .settings-backup-meta-label {

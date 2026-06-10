@@ -951,8 +951,7 @@ export default {
     composerHintRecovered:
       'The previous run was interrupted by an app restart. Send a new message to continue this session.',
     codexNotInstalled: 'Codex was not detected. Install Codex before continuing.',
-    claudeCodeNotInstalled:
-      'Claude Code was not detected. Install Claude Code before continuing.',
+    claudeCodeNotInstalled: 'Claude Code was not detected. Install Claude Code before continuing.',
     goalModeUnavailable: 'Goal mode requires Codex >= {version}.',
     goalModeUnavailableWithCurrent:
       'Goal mode requires Codex >= {requiredVersion}. Current version: {currentVersion}.',
@@ -1364,6 +1363,9 @@ export default {
     backupTitle: 'Backup & Restore',
     backupDescription:
       'Export the current instance settings as JSON or import a previously exported backup. Imports are validated first and show version compatibility warnings plus affected sections.',
+    backupExportGroupTitle: 'Export Settings',
+    backupImportGroupTitle: 'Import Settings',
+    backupAdvancedTitle: 'Advanced Options',
     backupExportAction: 'Export Settings Backup',
     backupImportAction: 'Import Settings Backup',
     backupExportSuccess: 'Settings backup exported',
@@ -1375,13 +1377,38 @@ export default {
     backupSchemaVersion: 'Backup Schema Version',
     backupCreatedBy: 'Backup Source Version',
     backupCurrentVersion: 'Current App Version',
+    backupCreatedAt: 'Exported At',
     backupImportStatus: 'Import Status',
     backupImportAllowed: 'Import Allowed',
     backupImportBlocked: 'Import Blocked',
     backupSectionsTitle: 'Settings To Apply',
     backupSelectedFile: 'Selected file: {name}',
+    backupPreviewSummary:
+      '{count} setting sections will be imported. Unchecked items keep current values.',
+    backupUncheckedTip: 'Unchecked items are skipped and keep their current values.',
+    backupBreakingVersionBlocked:
+      'This backup differs at a breaking compatibility level. Continuing is blocked by default unless you explicitly allow it.',
+    backupStrictVersionBlocked:
+      'Strict warning mode blocks import when version or channel differs from the current app.',
+    backupNothingSelected: 'Select at least one backup section to export',
     backupVersionTip:
       'Backup files include both the backup schema version and the source app version. Imports are allowed when the schema is supported; differing app versions trigger a warning before confirmation.',
+    backupOptionIncludeServer: 'Include server settings',
+    backupOptionIncludeClient: 'Include current browser local settings',
+    backupOptionIncludeRecent: 'Include quick input recent entries',
+    backupOptionIncludeSecurityAccess: 'Include security access rules',
+    backupOptionIncludeMetadata: 'Write export description and timestamp',
+    backupOptionAllowBreakingVersionContinue: 'Allow continue across breaking versions',
+    backupImportStrategyTip:
+      'This version supports replace-only imports for checked sections. Merge import is deferred.',
+    backupFileNameRuleVersionDate: 'App version + date',
+    backupFileNameRuleVersionDateTime: 'App version + date time',
+    backupFileNameRuleChannelVersionDateTime: 'Channel + app version + date time',
+    backupImportModePreviewOnly: 'Preview only',
+    backupImportModePreviewConfirm: 'Preview then confirm',
+    backupImportModeDirect: 'Direct import',
+    backupVersionWarningModeStandard: 'Standard',
+    backupVersionWarningModeStrict: 'Strict',
   },
   dailyTip: {
     title: 'Daily Tip',

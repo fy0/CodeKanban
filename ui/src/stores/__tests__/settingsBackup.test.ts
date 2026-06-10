@@ -42,18 +42,23 @@ describe('settings backup helpers in store', () => {
     const store = useSettingsStore();
     store.updateRecentProjectsLimit(7);
     store.updateShowWebSessionReasoning(true);
+    store.recordWebSessionRecentInput('Ship it');
 
-    const payload = store.exportClientBackup('en-US');
+    const payload = store.exportClientBackup('en-US', {
+      includeQuickInputRecent: false,
+    });
 
     expect(payload.locale).toBe('en-US');
     expect(payload.settings.version).toBe(4);
     expect(payload.settings.recentProjectsLimit).toBe(7);
     expect(payload.settings.showWebSessionReasoning).toBe(true);
+    expect(payload.settings.webSessionQuickInput?.recent).toBeUndefined();
   });
 
   it('imports client backup and updates locale plus persisted storage', () => {
     const store = useSettingsStore();
     const { recentProjectsLimit, showWebSessionReasoning } = storeToRefs(store);
+    store.recordWebSessionRecentInput('Keep this');
 
     store.importClientBackup({
       locale: 'en-US',
@@ -75,6 +80,9 @@ describe('settings backup helpers in store', () => {
         panelShortcuts: {
           terminal: { code: 'Backquote', display: '`' },
           notepad: { code: 'Digit1', display: '1' },
+        },
+        webSessionQuickInput: {
+          pinned: ['Plan'],
         },
         webSessionQuickInputDirectSend: true,
         terminalQuickActions: [],
@@ -109,6 +117,8 @@ describe('settings backup helpers in store', () => {
 
     expect(recentProjectsLimit.value).toBe(6);
     expect(showWebSessionReasoning.value).toBe(true);
+    expect(store.webSessionQuickInput.recent).toEqual(['Keep this']);
+    expect(store.webSessionQuickInput.pinned).toEqual(['Plan']);
     expect(localStorage.getItem('app-locale')).toBe('en-US');
     expect(i18n.global.locale).toBe('en-US');
   });
