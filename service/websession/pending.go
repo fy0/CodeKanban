@@ -3,6 +3,7 @@ package websession
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 var (
 	errInvalidPendingInputMode = errors.New("invalid pending input mode")
 	errEmptyPendingInput       = errors.New("message is empty")
+	errPendingInputNotFound    = errors.New("pending input not found")
 )
 
 func normalizePendingInputMode(mode PendingInputMode) PendingInputMode {
@@ -66,6 +68,16 @@ func sanitizePendingAttachmentIDs(attachmentIDs []string) []string {
 	return sanitized
 }
 
+func (m *Manager) validatePendingAttachmentIDs(attachmentIDs []string) error {
+	sanitized := sanitizePendingAttachmentIDs(attachmentIDs)
+	for _, attachmentID := range sanitized {
+		if _, err := m.loadAttachment(attachmentID); err != nil {
+			return fmt.Errorf("attachment %s not found", attachmentID)
+		}
+	}
+	return nil
+}
+
 func insertPendingInput(queue []PendingInput, item PendingInput) []PendingInput {
 	if item.Mode != PendingInputModeRedirect {
 		return append(queue, item)
@@ -105,15 +117,19 @@ func (m *Manager) queuePendingInput(
 	if normalizedPendingID == "" {
 		normalizedPendingID = utils.NewID()
 	}
+	sanitizedAttachmentIDs := sanitizePendingAttachmentIDs(attachmentIDs)
 	item := PendingInput{
 		ID:            normalizedPendingID,
 		Mode:          normalizedMode,
 		Text:          strings.TrimSpace(text),
-		AttachmentIDs: sanitizePendingAttachmentIDs(attachmentIDs),
+		AttachmentIDs: sanitizedAttachmentIDs,
 		CreatedAt:     time.Now(),
 	}
 	if item.Text == "" && len(item.AttachmentIDs) == 0 {
 		return PendingInput{}, errEmptyPendingInput
+	}
+	if err := m.validatePendingAttachmentIDs(sanitizedAttachmentIDs); err != nil {
+		return PendingInput{}, err
 	}
 
 	m.mu.Lock()
@@ -186,6 +202,144 @@ func (m *Manager) removePendingInput(sessionID, pendingID string) bool {
 		m.triggerPendingProcessing(sessionID)
 	}
 	return removed
+}
+
+func normalizePendingPartitionIndex(index int) int {
+	if index < 0 {
+		return 0
+	}
+	return index
+}
+
+func pendingPartitionItemCount(items []PendingInput, mode PendingInputMode) int {
+	count := 0
+	for _, item := range items {
+		if item.Mode == mode {
+			count++
+		}
+	}
+	return count
+}
+
+func reorderPendingInput(queue []PendingInput, pendingID string, mode PendingInputMode, index int) ([]PendingInput, bool) {
+	normalizedMode := normalizePendingInputMode(mode)
+	normalizedPendingID := strings.TrimSpace(pendingID)
+	if normalizedMode == "" || normalizedPendingID == "" || len(queue) == 0 {
+		return queue, false
+	}
+
+	itemIndex := -1
+	var item PendingInput
+	remaining := make([]PendingInput, 0, len(queue)-1)
+	for idx, queued := range queue {
+		if itemIndex == -1 && queued.ID == normalizedPendingID {
+			itemIndex = idx
+			item = clonePendingInput(queued)
+			continue
+		}
+		remaining = append(remaining, queued)
+	}
+	if itemIndex == -1 {
+		return queue, false
+	}
+
+	item.Mode = normalizedMode
+	targetIndex := normalizePendingPartitionIndex(index)
+	partitionCount := pendingPartitionItemCount(remaining, normalizedMode)
+	if targetIndex > partitionCount {
+		targetIndex = partitionCount
+	}
+
+	result := make([]PendingInput, 0, len(queue))
+	inserted := false
+	seenInPartition := 0
+	for _, queued := range remaining {
+		if !inserted && queued.Mode == normalizedMode && seenInPartition == targetIndex {
+			result = append(result, item)
+			inserted = true
+		}
+		result = append(result, queued)
+		if queued.Mode == normalizedMode {
+			seenInPartition++
+		}
+	}
+	if inserted {
+		return result, true
+	}
+
+	if normalizedMode == PendingInputModeRedirect {
+		insertAt := len(result)
+		for idx, queued := range result {
+			if queued.Mode != PendingInputModeRedirect {
+				insertAt = idx
+				break
+			}
+		}
+		next := make([]PendingInput, 0, len(result)+1)
+		next = append(next, result[:insertAt]...)
+		next = append(next, item)
+		next = append(next, result[insertAt:]...)
+		return next, true
+	}
+
+	return append(result, item), true
+}
+
+func (m *Manager) updatePendingInput(sessionID, pendingID, text string) (PendingInput, error) {
+	normalizedPendingID := strings.TrimSpace(pendingID)
+	if normalizedPendingID == "" {
+		return PendingInput{}, errPendingInputNotFound
+	}
+	normalizedText := strings.TrimSpace(text)
+	if normalizedText == "" {
+		return PendingInput{}, errEmptyPendingInput
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	queue := m.pendingInputs[sessionID]
+	if len(queue) == 0 {
+		return PendingInput{}, errPendingInputNotFound
+	}
+	for idx, item := range queue {
+		if item.ID != normalizedPendingID {
+			continue
+		}
+		item.Text = normalizedText
+		queue[idx] = item
+		m.pendingInputs[sessionID] = queue
+		return clonePendingInput(item), nil
+	}
+	return PendingInput{}, errPendingInputNotFound
+}
+
+func (m *Manager) reorderPendingInput(sessionID, pendingID string, mode PendingInputMode, index int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	queue := m.pendingInputs[sessionID]
+	if len(queue) == 0 {
+		return errPendingInputNotFound
+	}
+	next, ok := reorderPendingInput(queue, pendingID, mode, index)
+	if !ok {
+		return errPendingInputNotFound
+	}
+	m.pendingInputs[sessionID] = next
+	return nil
+}
+
+func (m *Manager) clearPendingInputsForSession(sessionID string) bool {
+	m.mu.Lock()
+	if len(m.pendingInputs[sessionID]) == 0 {
+		m.mu.Unlock()
+		return false
+	}
+	delete(m.pendingInputs, sessionID)
+	delete(m.pendingDirty, sessionID)
+	m.mu.Unlock()
+	m.broadcastPendingInputs(sessionID)
+	m.triggerPendingProcessing(sessionID)
+	return true
 }
 
 func (m *Manager) clearPendingInputs(sessionID string) {

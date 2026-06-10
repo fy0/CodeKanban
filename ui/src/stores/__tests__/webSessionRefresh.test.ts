@@ -558,6 +558,265 @@ describe('webSession loading behavior', () => {
     expect(store.getPendingInputs(session.id)).toEqual([]);
   });
 
+  it('updates pending inputs via the backend command channel and pending events', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-pending-update',
+      status: 'running',
+      assistantState: 'working',
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [
+        {
+          id: 'pending-1',
+          mode: 'queue',
+          text: 'Queued follow-up',
+          attachmentIds: [],
+          createdAt: '2026-04-09T10:01:00.000Z',
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+
+    const updatePromise = store.updatePendingInput(session.id, 'pending-1', 'Updated follow-up');
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'pending_update',
+      p: {
+        id: 'pending-1',
+        txt: 'Updated follow-up',
+      },
+    });
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_update',
+      ok: 1,
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending',
+      pi: [
+        {
+          id: 'pending-1',
+          m: 'queue',
+          txt: 'Updated follow-up',
+          atts: [],
+          ca: Date.parse('2026-04-09T10:01:00.000Z'),
+        },
+      ],
+    });
+
+    await updatePromise;
+    expect(store.getPendingInputs(session.id)[0]?.text).toBe('Updated follow-up');
+  });
+
+  it('reorders pending inputs via the backend command channel and pending events', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-pending-reorder',
+      status: 'running',
+      assistantState: 'working',
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [
+        {
+          id: 'pending-1',
+          mode: 'queue',
+          text: 'First queued follow-up',
+          attachmentIds: [],
+          createdAt: '2026-04-09T10:01:00.000Z',
+        },
+        {
+          id: 'pending-2',
+          mode: 'queue',
+          text: 'Second queued follow-up',
+          attachmentIds: [],
+          createdAt: '2026-04-09T10:02:00.000Z',
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+
+    const reorderPromise = store.reorderPendingInput(session.id, 'pending-2', 'queue', 0);
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'pending_reorder',
+      p: {
+        id: 'pending-2',
+        mode: 'queue',
+        idx: 0,
+      },
+    });
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_reorder',
+      ok: 1,
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending',
+      pi: [
+        {
+          id: 'pending-2',
+          m: 'queue',
+          txt: 'Second queued follow-up',
+          atts: [],
+          ca: Date.parse('2026-04-09T10:02:00.000Z'),
+        },
+        {
+          id: 'pending-1',
+          m: 'queue',
+          txt: 'First queued follow-up',
+          atts: [],
+          ca: Date.parse('2026-04-09T10:01:00.000Z'),
+        },
+      ],
+    });
+
+    await reorderPromise;
+    expect(store.getPendingInputs(session.id).map(item => item.id)).toEqual([
+      'pending-2',
+      'pending-1',
+    ]);
+  });
+
+  it('clears pending inputs via the backend command channel and pending events', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-pending-clear',
+      status: 'running',
+      assistantState: 'working',
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [
+        {
+          id: 'pending-1',
+          mode: 'queue',
+          text: 'Queued follow-up',
+          attachmentIds: [],
+          createdAt: '2026-04-09T10:01:00.000Z',
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+
+    const clearPromise = store.clearPendingInputs(session.id);
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'pending_clear',
+      p: {},
+    });
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_clear',
+      ok: 1,
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending',
+      pi: [],
+    });
+
+    await clearPromise;
+    expect(store.getPendingInputs(session.id)).toEqual([]);
+  });
+
   it('shows optimistic pending previews before the backend pending event arrives', async () => {
     const store = useWebSessionStore();
     const session = makeSession({

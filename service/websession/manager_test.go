@@ -609,6 +609,156 @@ func TestHandleSendCommandRejectsMissingCodexBinary(t *testing.T) {
 	}
 }
 
+func TestHandlePendingUpdateCommandRepliesWithAckAndSnapshot(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	item := PendingInput{
+		ID:        "pending-1",
+		Mode:      PendingInputModeQueue,
+		Text:      "first draft",
+		CreatedAt: time.Now(),
+	}
+	manager.mu.Lock()
+	manager.pendingInputs[created.ID] = []PendingInput{item}
+	manager.mu.Unlock()
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_pending_update","sid":%q,"op":"pending_update","p":{"id":%q,"txt":"updated draft"}}`, created.ID, item.ID)),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	if len(conn.frames) != 2 {
+		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "pending_update" {
+		t.Fatalf("expected first frame to be pending_update ack, got %#v", conn.frames[0])
+	}
+	if conn.frames[1].Kind != "snap" || conn.frames[1].SessionID != created.ID {
+		t.Fatalf("expected second frame to be session snapshot, got %#v", conn.frames[1])
+	}
+	if len(conn.frames[1].Pending) != 1 || conn.frames[1].Pending[0].Text != "updated draft" {
+		t.Fatalf("expected snapshot pending input to be updated, got %#v", conn.frames[1].Pending)
+	}
+}
+
+func TestHandlePendingReorderCommandMovesAcrossPartitions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	manager.mu.Lock()
+	manager.pendingInputs[created.ID] = []PendingInput{
+		{ID: "redirect-1", Mode: PendingInputModeRedirect, Text: "redirect-1", CreatedAt: time.Now()},
+		{ID: "queue-1", Mode: PendingInputModeQueue, Text: "queue-1", CreatedAt: time.Now()},
+		{ID: "queue-2", Mode: PendingInputModeQueue, Text: "queue-2", CreatedAt: time.Now()},
+	}
+	manager.mu.Unlock()
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_pending_reorder","sid":%q,"op":"pending_reorder","p":{"id":"queue-2","mode":"redirect","idx":0}}`, created.ID)),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	if len(conn.frames) != 2 {
+		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "pending_reorder" {
+		t.Fatalf("expected first frame to be pending_reorder ack, got %#v", conn.frames[0])
+	}
+	if got := conn.frames[1].Pending; len(got) != 3 || got[0].ID != "queue-2" || got[0].Mode != "redirect" || got[1].ID != "redirect-1" || got[2].ID != "queue-1" {
+		t.Fatalf("expected reordered pending inputs in snapshot, got %#v", got)
+	}
+}
+
+func TestHandlePendingClearCommandClearsSnapshot(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	manager.mu.Lock()
+	manager.pendingInputs[created.ID] = []PendingInput{
+		{ID: "queue-1", Mode: PendingInputModeQueue, Text: "queue-1", CreatedAt: time.Now()},
+	}
+	manager.mu.Unlock()
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_pending_clear","sid":%q,"op":"pending_clear","p":{}}`, created.ID)),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	if len(conn.frames) != 2 {
+		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "pending_clear" {
+		t.Fatalf("expected first frame to be pending_clear ack, got %#v", conn.frames[0])
+	}
+	if len(conn.frames[1].Pending) != 0 {
+		t.Fatalf("expected cleared pending inputs in snapshot, got %#v", conn.frames[1].Pending)
+	}
+}
+
 func TestHandleGoalSetCommandRejectsOldCodexVersion(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

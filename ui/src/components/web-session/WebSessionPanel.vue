@@ -1356,18 +1356,123 @@
               </div>
 
               <div v-if="pendingInputs.length > 0" class="pending-inputs">
-                <div v-for="item in pendingInputs" :key="item.id" class="pending-input-item">
-                  <span class="pending-input-badge" :class="`mode-${item.mode}`">
-                    {{ pendingModeLabel(item.mode) }}
-                  </span>
-                  <span class="pending-input-preview">{{ pendingInputPreview(item) }}</span>
-                  <button
-                    type="button"
-                    class="pending-input-remove"
-                    @click="handleRemovePendingInput(item.id)"
+                <div class="pending-input-section-list">
+                  <div
+                    v-for="(item, index) in pendingInputs"
+                    :key="item.id"
+                    class="pending-input-chip"
                   >
-                    ×
-                  </button>
+                    <n-popover trigger="click" placement="bottom-start" :show-arrow="false">
+                      <template #trigger>
+                        <button type="button" class="pending-input-trigger">
+                          <span class="pending-input-badge" :class="`mode-${item.mode}`">
+                            {{
+                              item.mode === 'redirect'
+                                ? t('webSession.pendingRedirect')
+                                : t('webSession.pendingQueue')
+                            }}
+                          </span>
+                          <span class="pending-input-preview">
+                            {{ pendingInputPreview(item) }}
+                          </span>
+                        </button>
+                      </template>
+                      <div class="pending-input-popover-card">
+                        <div class="pending-input-popover-header">
+                          <span class="pending-input-badge" :class="`mode-${item.mode}`">
+                            {{
+                              item.mode === 'redirect'
+                                ? t('webSession.pendingRedirect')
+                                : t('webSession.pendingQueue')
+                            }}
+                          </span>
+                          <span class="pending-input-position">
+                            {{ t('webSession.pendingPosition', { index: index + 1 }) }}
+                          </span>
+                          <span
+                            v-if="item.attachmentIds.length > 0"
+                            class="pending-input-attachments"
+                          >
+                            {{
+                              t('webSession.pendingAttachmentsCount', {
+                                count: item.attachmentIds.length,
+                              })
+                            }}
+                          </span>
+                        </div>
+                        <div v-if="isEditingPendingInput(item.id)" class="pending-input-editor">
+                          <n-input
+                            v-model:value="pendingEditText"
+                            type="textarea"
+                            size="small"
+                            :autosize="{ minRows: 2, maxRows: 3 }"
+                          />
+                          <div class="pending-input-editor-actions">
+                            <n-button size="tiny" tertiary @click="cancelPendingEdit">
+                              {{ t('common.cancel') }}
+                            </n-button>
+                            <n-button
+                              size="tiny"
+                              type="primary"
+                              :disabled="!pendingEditCanSave"
+                              @click="handlePendingEditSave(item.id)"
+                            >
+                              {{ t('common.save') }}
+                            </n-button>
+                          </div>
+                        </div>
+                        <template v-else>
+                          <div class="pending-input-popover-text">
+                            {{ pendingInputPreview(item) }}
+                          </div>
+                          <div class="pending-input-popover-actions">
+                            <button
+                              type="button"
+                              class="pending-input-action"
+                              :disabled="index === 0"
+                              @click="handleMovePendingInputToAbsoluteIndex(item, index - 1)"
+                            >
+                              {{ t('webSession.pendingMoveUp') }}
+                            </button>
+                            <button
+                              type="button"
+                              class="pending-input-action"
+                              :disabled="index >= pendingInputs.length - 1"
+                              @click="handleMovePendingInputToAbsoluteIndex(item, index + 1)"
+                            >
+                              {{ t('webSession.pendingMoveDown') }}
+                            </button>
+                            <button
+                              type="button"
+                              class="pending-input-action"
+                              @click="handleTogglePendingPriority(item)"
+                            >
+                              {{
+                                item.mode === 'redirect'
+                                  ? t('webSession.pendingDemoteToQueue')
+                                  : t('webSession.pendingPromoteToRedirect')
+                              }}
+                            </button>
+                            <button
+                              v-if="item.text.trim()"
+                              type="button"
+                              class="pending-input-action"
+                              @click="startPendingEdit(item)"
+                            >
+                              {{ t('common.edit') }}
+                            </button>
+                          </div>
+                        </template>
+                      </div>
+                    </n-popover>
+                    <button
+                      type="button"
+                      class="pending-input-remove"
+                      @click.stop="handleRemovePendingInput(item.id)"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -3889,6 +3994,9 @@ function openDraftAttachmentPreview(
 const pendingInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingInputs(currentRealSession.value.id) : []
 );
+const pendingEditingId = ref('');
+const pendingEditText = ref('');
+const pendingEditCanSave = computed(() => pendingEditText.value.trim().length > 0);
 const scheduledInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getScheduledInputs(currentRealSession.value.id) : []
 );
@@ -9161,16 +9269,93 @@ function handleUserInputSingleSelect(questionId: string, value: string | null) {
   };
 }
 
-function pendingModeLabel(mode: WebSessionPendingInput['mode']) {
-  return mode === 'redirect' ? t('webSession.pendingRedirect') : t('webSession.pendingQueue');
-}
-
 function pendingInputPreview(item: WebSessionPendingInput) {
   const text = item.text.trim();
   if (text) {
     return text.length > 72 ? `${text.slice(0, 72)}...` : text;
   }
   return t('webSession.pendingAttachments', { count: item.attachmentIds.length });
+}
+
+function isEditingPendingInput(pendingId: string) {
+  return pendingEditingId.value === pendingId;
+}
+
+function startPendingEdit(item: WebSessionPendingInput) {
+  pendingEditingId.value = item.id;
+  pendingEditText.value = item.text;
+}
+
+function cancelPendingEdit() {
+  pendingEditingId.value = '';
+  pendingEditText.value = '';
+}
+
+async function handlePendingEditSave(pendingId: string) {
+  if (!currentRealSession.value || !pendingEditCanSave.value) {
+    return;
+  }
+  try {
+    await webSessionStore.updatePendingInput(
+      currentRealSession.value.id,
+      pendingId,
+      pendingEditText.value
+    );
+    cancelPendingEdit();
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleMovePendingInput(
+  item: WebSessionPendingInput,
+  mode: WebSessionPendingInput['mode'],
+  index: number
+) {
+  if (!currentRealSession.value) {
+    return;
+  }
+  try {
+    await webSessionStore.reorderPendingInput(currentRealSession.value.id, item.id, mode, index);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleMovePendingInputToAbsoluteIndex(
+  item: WebSessionPendingInput,
+  absoluteIndex: number
+) {
+  const currentItems = pendingInputs.value;
+  const clampedIndex = Math.max(0, Math.min(absoluteIndex, currentItems.length - 1));
+  const targetItem = currentItems[clampedIndex];
+  if (!targetItem) {
+    return;
+  }
+
+  const targetMode = targetItem.mode;
+  const partitionItems = currentItems.filter(entry => entry.mode === targetMode);
+  const partitionIndex = partitionItems.findIndex(entry => entry.id === targetItem.id);
+  const nextIndex = partitionIndex < 0 ? partitionItems.length : partitionIndex;
+  await handleMovePendingInput(item, targetMode, nextIndex);
+}
+
+async function handleTogglePendingPriority(item: WebSessionPendingInput) {
+  if (!currentRealSession.value) {
+    return;
+  }
+  const targetMode = item.mode === 'redirect' ? 'queue' : 'redirect';
+  const targetIndex = pendingInputs.value.filter(entry => entry.mode === targetMode).length;
+  try {
+    await webSessionStore.reorderPendingInput(
+      currentRealSession.value.id,
+      item.id,
+      targetMode,
+      targetIndex
+    );
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
 }
 
 function scheduledModeLabel(mode: WebSessionScheduledInput['mode']) {
@@ -9197,7 +9382,22 @@ async function handleRemovePendingInput(pendingId: string) {
     return;
   }
   try {
+    if (pendingEditingId.value === pendingId) {
+      cancelPendingEdit();
+    }
     await webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleClearPendingInputs() {
+  if (!currentRealSession.value || pendingInputs.value.length === 0) {
+    return;
+  }
+  try {
+    await webSessionStore.clearPendingInputs(currentRealSession.value.id);
+    cancelPendingEdit();
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -14827,8 +15027,106 @@ defineExpose({
 .pending-inputs {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
   margin-bottom: 2px;
+}
+
+.pending-inputs-clear {
+  border: none;
+  background: transparent;
+  color: var(--n-text-color-3);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.pending-input-section-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pending-input-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: min(220px, 100%);
+  padding: 3px 8px 3px 5px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 98%, var(--n-primary-color) 2%);
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 72%, transparent);
+}
+
+.pending-input-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  border: none;
+  background: transparent;
+  padding: 1px 0;
+  cursor: pointer;
+  color: inherit;
+}
+
+.pending-input-popover-card {
+  display: grid;
+  gap: 8px;
+  width: min(280px, 70vw);
+}
+
+.pending-input-popover-header,
+.pending-input-popover-actions,
+.pending-input-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.pending-input-popover-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--n-text-color-2);
+  word-break: break-word;
+}
+
+.pending-input-position,
+.pending-input-attachments {
+  font-size: 11px;
+  color: var(--n-text-color-3);
+}
+
+.pending-input-action,
+.pending-input-remove {
+  border: none;
+  background: transparent;
+  color: var(--n-text-color-3);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.pending-input-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pending-input-editor {
+  display: grid;
+  gap: 4px;
+}
+
+.pending-input-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .scheduled-inputs {
@@ -14923,23 +15221,11 @@ defineExpose({
   font-weight: 600;
 }
 
-.pending-input-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 100%;
-  padding: 4px 6px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 98%, var(--n-primary-color) 2%);
-}
-
 .pending-input-badge {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
-  border-radius: 999px;
+  padding: 2px 6px;
+  border-radius: 6px;
   font-size: 10px;
   font-weight: 600;
   flex-shrink: 0;
@@ -14957,19 +15243,22 @@ defineExpose({
 
 .pending-input-preview {
   min-width: 0;
-  flex: 1;
-  font-size: 11px;
-  color: var(--n-text-color-3);
+  display: block;
+  font-size: 13px;
+  color: var(--n-text-color-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 150px;
 }
 
 .pending-input-remove {
-  border: none;
-  background: transparent;
-  color: var(--n-text-color-3);
-  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
   font-size: 13px;
   line-height: 1;
   flex-shrink: 0;

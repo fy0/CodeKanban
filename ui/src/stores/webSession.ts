@@ -373,6 +373,8 @@ export interface WebSessionPendingInput {
   createdAt: number;
 }
 
+type WebSessionPendingInputMode = WebSessionPendingInput['mode'];
+
 export interface WebSessionScheduledInput {
   id: string;
   mode: 'send' | 'interrupt' | 'queue';
@@ -4275,6 +4277,59 @@ export const useWebSessionStore = defineStore('web-session', () => {
     );
   }
 
+  async function updatePendingInput(sessionId: string, pendingId: string, text: string) {
+    const normalizedText = text.trim();
+    await runRuntimeMutationCommand(
+      sessionId,
+      'pending_update',
+      { id: pendingId, txt: normalizedText },
+      {
+        label: 'pending_update',
+        predicate: () =>
+          getPendingInputs(sessionId).some(
+            item => item.id === pendingId && item.text === normalizedText
+          ),
+      }
+    );
+  }
+
+  async function reorderPendingInput(
+    sessionId: string,
+    pendingId: string,
+    mode: WebSessionPendingInputMode,
+    index: number
+  ) {
+    const normalizedIndex = Math.max(0, Math.trunc(index));
+    await runRuntimeMutationCommand(
+      sessionId,
+      'pending_reorder',
+      {
+        id: pendingId,
+        mode,
+        idx: normalizedIndex,
+      },
+      {
+        label: 'pending_reorder',
+        predicate: () => {
+          const partition = getPendingInputs(sessionId).filter(item => item.mode === mode);
+          return partition[normalizedIndex]?.id === pendingId;
+        },
+      }
+    );
+  }
+
+  async function clearPendingInputs(sessionId: string) {
+    await runRuntimeMutationCommand(
+      sessionId,
+      'pending_clear',
+      {},
+      {
+        label: 'pending_clear',
+        predicate: () => getPendingInputs(sessionId).length === 0,
+      }
+    );
+  }
+
   async function scheduleMessage(
     sessionId: string,
     text: string,
@@ -4838,6 +4893,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     uploadAttachment,
     removeDraftAttachment,
     removePendingInput,
+    updatePendingInput,
+    reorderPendingInput,
+    clearPendingInputs,
     removeScheduledInput,
     clearDraft,
     moveDraft,

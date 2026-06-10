@@ -2109,6 +2109,12 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleUserInputCommand(client, frame)
 	case "pending_del":
 		return m.handlePendingDeleteCommand(client, frame)
+	case "pending_update":
+		return m.handlePendingUpdateCommand(client, frame)
+	case "pending_reorder":
+		return m.handlePendingReorderCommand(client, frame)
+	case "pending_clear":
+		return m.handlePendingClearCommand(client, frame)
 	case "schedule_send":
 		return m.handleScheduleSendCommand(ctx, client, frame)
 	case "scheduled_del":
@@ -2384,6 +2390,57 @@ func (m *Manager) handlePendingDeleteCommand(client *client, frame wireCommandFr
 	if !m.removePendingInput(frame.SessionID, payload.PendingID) {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", "pending input not found", false))
 	}
+	return m.sendAckWithSnapshot(context.Background(), client, frame)
+}
+
+func (m *Manager) handlePendingUpdateCommand(client *client, frame wireCommandFrame) error {
+	var payload struct {
+		PendingID string `json:"id"`
+		Text      string `json:"txt"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid pending update payload", false))
+	}
+	if strings.TrimSpace(payload.PendingID) == "" {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "pending id is required", false))
+	}
+	if _, err := m.updatePendingInput(frame.SessionID, payload.PendingID, payload.Text); err != nil {
+		code := "invalid_state"
+		if errors.Is(err, errPendingInputNotFound) {
+			code = "not_found"
+		}
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, code, err.Error(), false))
+	}
+	return m.sendAckWithSnapshot(context.Background(), client, frame)
+}
+
+func (m *Manager) handlePendingReorderCommand(client *client, frame wireCommandFrame) error {
+	var payload struct {
+		PendingID string `json:"id"`
+		Mode      string `json:"mode"`
+		Index     int    `json:"idx"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid pending reorder payload", false))
+	}
+	if strings.TrimSpace(payload.PendingID) == "" {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "pending id is required", false))
+	}
+	if normalizePendingInputMode(PendingInputMode(payload.Mode)) == "" {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid pending mode", false))
+	}
+	if err := m.reorderPendingInput(frame.SessionID, payload.PendingID, PendingInputMode(payload.Mode), payload.Index); err != nil {
+		code := "invalid_state"
+		if errors.Is(err, errPendingInputNotFound) {
+			code = "not_found"
+		}
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, code, err.Error(), false))
+	}
+	return m.sendAckWithSnapshot(context.Background(), client, frame)
+}
+
+func (m *Manager) handlePendingClearCommand(client *client, frame wireCommandFrame) error {
+	m.clearPendingInputsForSession(frame.SessionID)
 	return m.sendAckWithSnapshot(context.Background(), client, frame)
 }
 
