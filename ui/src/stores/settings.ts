@@ -26,6 +26,14 @@ import {
   sanitizeWebSessionActivityDisplayMode,
   type WebSessionActivityDisplayMode,
 } from '@/constants/webSessionActivityDisplayMode';
+import dayjs from 'dayjs';
+import i18n from '@/i18n';
+import {
+  APP_LOCALE_STORAGE_KEY,
+  SETTINGS_STORAGE_KEY,
+  type SettingsBackupClientPayload,
+  type SettingsBackupClientSettings,
+} from '@/utils/settingsBackup';
 
 /**
  * 终端主题跟随应用主题的特殊值
@@ -247,7 +255,6 @@ type LoadSettingsResult = {
   shouldPersist: boolean;
 };
 
-const STORAGE_KEY = 'general_settings';
 const STORAGE_VERSION = 4;
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
@@ -843,6 +850,25 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
   }
 
+  function exportClientBackup(locale: string): SettingsBackupClientPayload {
+    return {
+      locale: typeof locale === 'string' && locale.trim() ? locale.trim() : 'zh-CN',
+      settings: serializeSettingsForBackup(settings.value),
+    };
+  }
+
+  function importClientBackup(payload: SettingsBackupClientPayload) {
+    settings.value = deserializeSettingsFromBackup(payload?.settings);
+    saveSettings(settings.value);
+    if (typeof window !== 'undefined' && window.localStorage && payload?.locale) {
+      window.localStorage.setItem(APP_LOCALE_STORAGE_KEY, payload.locale);
+    }
+    if (payload?.locale === 'zh-CN' || payload?.locale === 'en-US') {
+      i18n.global.locale = payload.locale;
+      dayjs.locale(payload.locale === 'zh-CN' ? 'zh-cn' : 'en');
+    }
+  }
+
   return {
     theme,
     currentPresetId,
@@ -920,12 +946,14 @@ export const useSettingsStore = defineStore('settings', () => {
     applySystemThemePreset,
     toggleFollowSystemTheme,
     applyCustomTheme,
+    exportClientBackup,
+    importClientBackup,
   };
 });
 
 function loadSettings(): LoadSettingsResult {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as
         | (Partial<PersistedGeneralSettings> & {
@@ -933,100 +961,7 @@ function loadSettings(): LoadSettingsResult {
             followSystemTheme?: unknown;
           })
         | null;
-
-      if (!parsed || typeof parsed !== 'object') {
-        return {
-          settings: cloneDefaultSettings(),
-          shouldPersist: false,
-        };
-      }
-
-      const parsedVersion = typeof parsed.version === 'number' ? parsed.version : undefined;
-
-      if (parsedVersion != null && parsedVersion > STORAGE_VERSION) {
-        console.warn(`Unsupported settings version "${parsedVersion}", falling back to defaults.`);
-        return {
-          settings: cloneDefaultSettings(),
-          shouldPersist: false,
-        };
-      }
-
-      const legacyParsed = parsed as Partial<GeneralSettings> & {
-        panelShortcut?: PanelShortcutSetting;
-      };
-
-      // 兼容旧版本：如果没有 currentPresetId，根据主题判断
-      let currentPresetId =
-        parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
-      if (!parsed.currentPresetId && !legacyParsed.currentPresetId && parsed.theme) {
-        // 尝试匹配现有主题到预设
-        const matchedPreset = THEME_PRESETS.find(
-          p => p.colors.primaryColor === parsed.theme?.primaryColor
-        );
-        if (matchedPreset) {
-          currentPresetId = matchedPreset.id;
-        }
-      }
-      const currentPresetTheme = getPresetById(currentPresetId)?.colors ?? defaultTheme;
-
-      return {
-        settings: {
-          theme: sanitizeThemeSettings(parsed.theme ?? currentPresetTheme),
-          currentPresetId,
-          followSystemThemeSetting:
-            parsedVersion != null && parsedVersion >= 2
-              ? sanitizeFollowSystemThemeSetting(parsed.followSystemTheme)
-              : FOLLOW_SYSTEM_THEME_DEFAULT,
-          customTheme: sanitizeOptionalThemeSettings(parsed.customTheme),
-          recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
-          maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
-          panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
-          webSessionQuickInput: sanitizeWebSessionQuickInput(parsed.webSessionQuickInput),
-          webSessionQuickInputDirectSend: sanitizeWebSessionQuickInputDirectSend(
-            parsed.webSessionQuickInputDirectSend
-          ),
-          terminalQuickActions: sanitizeTerminalQuickActions(parsed.terminalQuickActions),
-          editor: sanitizeEditorSettings(parsed.editor),
-          confirmBeforeTerminalClose:
-            parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
-          showWebSessionReasoning: sanitizeShowWebSessionReasoning(
-            parsed.showWebSessionReasoning,
-            loadLegacyShowWebSessionReasoning()
-          ),
-          webSessionActivityDisplayMode: sanitizeWebSessionActivityDisplayMode(
-            parsed.webSessionActivityDisplayMode
-          ),
-          webSessionAutoContinueScope: sanitizeWebSessionAutoContinueScope(
-            parsed.webSessionAutoContinueScope
-          ),
-          webSessionAutoContinuePreset: sanitizeWebSessionAutoContinuePreset(
-            parsed.webSessionAutoContinuePreset
-          ),
-          webSessionStreamingMarkdownThrottleMode: sanitizeWebSessionStreamingMarkdownThrottleMode(
-            parsed.webSessionStreamingMarkdownThrottleMode
-          ),
-          webSessionStreamingMarkdownThrottleCustomMs:
-            sanitizeWebSessionStreamingMarkdownThrottleCustomMs(
-              parsed.webSessionStreamingMarkdownThrottleCustomMs
-            ),
-          terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
-          terminalFont: sanitizeTerminalFont(parsed.terminalFont),
-          terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
-          defaultTerminalRenderMode: sanitizeTerminalRenderMode(parsed.defaultTerminalRenderMode),
-          defaultTerminalSnapshotIntervalMs: sanitizeDefaultTerminalSnapshotIntervalMs(
-            parsed.defaultTerminalSnapshotIntervalMs
-          ),
-          defaultTerminalSnapshotZlibCompression:
-            parsed.defaultTerminalSnapshotZlibCompression !== false,
-          terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(
-            parsed.terminalConnectionPolicy
-          ),
-          inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
-            parsed.inactiveTerminalSnapshotIntervalMs
-          ),
-        },
-        shouldPersist: parsedVersion !== STORAGE_VERSION,
-      };
+      return loadSettingsFromParsed(parsed);
     }
   } catch (error) {
     console.warn('Failed to load settings, falling back to defaults.', error);
@@ -1045,10 +980,25 @@ function saveSettings(settings: GeneralSettings) {
       ...restSettings,
       followSystemTheme: followSystemThemeSetting,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(persisted));
   } catch (error) {
     console.error('Failed to persist settings:', error);
   }
+}
+
+function serializeSettingsForBackup(settings: GeneralSettings): SettingsBackupClientSettings {
+  const { followSystemThemeSetting, ...restSettings } = settings;
+  return {
+    version: STORAGE_VERSION,
+    ...restSettings,
+    followSystemTheme: followSystemThemeSetting,
+  };
+}
+
+function deserializeSettingsFromBackup(value: unknown): GeneralSettings {
+  const parsed = value as Partial<SettingsBackupClientSettings> | null | undefined;
+  const loadResult = loadSettingsFromParsed(parsed);
+  return loadResult.settings;
 }
 
 function cloneDefaultSettings(): GeneralSettings {
@@ -1091,6 +1041,108 @@ function cloneDefaultSettings(): GeneralSettings {
     inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
       defaultSettings.inactiveTerminalSnapshotIntervalMs
     ),
+  };
+}
+
+function loadSettingsFromParsed(
+  parsed:
+    | (Partial<PersistedGeneralSettings> & {
+        panelShortcut?: PanelShortcutSetting;
+        followSystemTheme?: unknown;
+      })
+    | null
+    | undefined
+): LoadSettingsResult {
+  if (!parsed || typeof parsed !== 'object') {
+    return {
+      settings: cloneDefaultSettings(),
+      shouldPersist: false,
+    };
+  }
+
+  const parsedVersion = typeof parsed.version === 'number' ? parsed.version : undefined;
+
+  if (parsedVersion != null && parsedVersion > STORAGE_VERSION) {
+    console.warn(`Unsupported settings version "${parsedVersion}", falling back to defaults.`);
+    return {
+      settings: cloneDefaultSettings(),
+      shouldPersist: false,
+    };
+  }
+
+  const legacyParsed = parsed as Partial<GeneralSettings> & {
+    panelShortcut?: PanelShortcutSetting;
+  };
+
+  let currentPresetId =
+    parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
+  if (!parsed.currentPresetId && !legacyParsed.currentPresetId && parsed.theme) {
+    const matchedPreset = THEME_PRESETS.find(
+      p => p.colors.primaryColor === parsed.theme?.primaryColor
+    );
+    if (matchedPreset) {
+      currentPresetId = matchedPreset.id;
+    }
+  }
+  const currentPresetTheme = getPresetById(currentPresetId)?.colors ?? defaultTheme;
+
+  return {
+    settings: {
+      theme: sanitizeThemeSettings(parsed.theme ?? currentPresetTheme),
+      currentPresetId,
+      followSystemThemeSetting:
+        parsedVersion != null && parsedVersion >= 2
+          ? sanitizeFollowSystemThemeSetting(parsed.followSystemTheme)
+          : FOLLOW_SYSTEM_THEME_DEFAULT,
+      customTheme: sanitizeOptionalThemeSettings(parsed.customTheme),
+      recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
+      maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
+      panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
+      webSessionQuickInput: sanitizeWebSessionQuickInput(parsed.webSessionQuickInput),
+      webSessionQuickInputDirectSend: sanitizeWebSessionQuickInputDirectSend(
+        parsed.webSessionQuickInputDirectSend
+      ),
+      terminalQuickActions: sanitizeTerminalQuickActions(parsed.terminalQuickActions),
+      editor: sanitizeEditorSettings(parsed.editor),
+      confirmBeforeTerminalClose:
+        parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
+      showWebSessionReasoning: sanitizeShowWebSessionReasoning(
+        parsed.showWebSessionReasoning,
+        loadLegacyShowWebSessionReasoning()
+      ),
+      webSessionActivityDisplayMode: sanitizeWebSessionActivityDisplayMode(
+        parsed.webSessionActivityDisplayMode
+      ),
+      webSessionAutoContinueScope: sanitizeWebSessionAutoContinueScope(
+        parsed.webSessionAutoContinueScope
+      ),
+      webSessionAutoContinuePreset: sanitizeWebSessionAutoContinuePreset(
+        parsed.webSessionAutoContinuePreset
+      ),
+      webSessionStreamingMarkdownThrottleMode: sanitizeWebSessionStreamingMarkdownThrottleMode(
+        parsed.webSessionStreamingMarkdownThrottleMode
+      ),
+      webSessionStreamingMarkdownThrottleCustomMs:
+        sanitizeWebSessionStreamingMarkdownThrottleCustomMs(
+          parsed.webSessionStreamingMarkdownThrottleCustomMs
+        ),
+      terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
+      terminalFont: sanitizeTerminalFont(parsed.terminalFont),
+      terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
+      defaultTerminalRenderMode: sanitizeTerminalRenderMode(parsed.defaultTerminalRenderMode),
+      defaultTerminalSnapshotIntervalMs: sanitizeDefaultTerminalSnapshotIntervalMs(
+        parsed.defaultTerminalSnapshotIntervalMs
+      ),
+      defaultTerminalSnapshotZlibCompression:
+        parsed.defaultTerminalSnapshotZlibCompression !== false,
+      terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(
+        parsed.terminalConnectionPolicy
+      ),
+      inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
+        parsed.inactiveTerminalSnapshotIntervalMs
+      ),
+    },
+    shouldPersist: parsedVersion !== STORAGE_VERSION,
   };
 }
 

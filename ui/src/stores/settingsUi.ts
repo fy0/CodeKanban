@@ -9,6 +9,7 @@ export const SETTINGS_SECTION_IDS = [
   'developer',
   'worktree',
   'theme',
+  'backup',
 ] as const;
 
 export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];

@@ -1569,6 +1569,47 @@
               </div>
             </n-card>
           </section>
+
+          <section
+            v-show="isSettingsSectionVisible('backup')"
+            :ref="el => registerSettingsSectionRef('backup', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('backup')"
+          >
+            <n-card :title="t('settings.backupTitle')" size="huge">
+              <n-space vertical size="large">
+                <n-alert type="info" :bordered="false" :show-icon="false">
+                  {{ t('settings.backupDescription') }}
+                </n-alert>
+                <n-space wrap>
+                  <n-button
+                    type="primary"
+                    :loading="settingsBackupExporting"
+                    @click="handleExportSettingsBackup"
+                  >
+                    {{ t('settings.backupExportAction') }}
+                  </n-button>
+                  <n-button
+                    :loading="settingsBackupImporting"
+                    @click="handleChooseSettingsBackupFile"
+                  >
+                    {{ t('settings.backupImportAction') }}
+                  </n-button>
+                </n-space>
+                <div v-if="settingsBackupSelectedFileName" class="settings-backup-file-name">
+                  {{ t('settings.backupSelectedFile', { name: settingsBackupSelectedFileName }) }}
+                </div>
+                <span class="form-tip">{{ t('settings.backupVersionTip') }}</span>
+                <input
+                  ref="settingsBackupFileInputRef"
+                  type="file"
+                  accept="application/json,.json"
+                  class="settings-hidden-file-input"
+                  @change="handleSettingsBackupFileChange"
+                />
+              </n-space>
+            </n-card>
+          </section>
         </div>
       </main>
     </div>
@@ -1617,6 +1658,97 @@
       @acknowledge="handleDailyTipClose"
       @disable="handleDailyTipDisable"
     />
+    <n-modal
+      v-model:show="showSettingsBackupPreviewDialog"
+      preset="card"
+      style="width: min(820px, calc(100vw - 32px))"
+      :title="t('settings.backupPreviewTitle')"
+    >
+      <n-space vertical size="large">
+        <n-grid :cols="2" :x-gap="16" :y-gap="12">
+          <n-gi>
+            <div class="settings-backup-meta-label">{{ t('settings.backupSchemaVersion') }}</div>
+            <div class="settings-backup-meta-value">
+              {{ settingsBackupPreview?.backupSchemaVersion ?? '-' }}
+            </div>
+          </n-gi>
+          <n-gi>
+            <div class="settings-backup-meta-label">{{ t('settings.backupCreatedBy') }}</div>
+            <div class="settings-backup-meta-value">
+              {{ settingsBackupPreview?.sourceApp?.version ?? '-' }}
+            </div>
+          </n-gi>
+          <n-gi>
+            <div class="settings-backup-meta-label">{{ t('settings.backupCurrentVersion') }}</div>
+            <div class="settings-backup-meta-value">
+              {{ settingsBackupPreview?.currentApp?.version ?? '-' }}
+            </div>
+          </n-gi>
+          <n-gi>
+            <div class="settings-backup-meta-label">{{ t('settings.backupImportStatus') }}</div>
+            <div class="settings-backup-meta-value">
+              {{
+                settingsBackupPreview?.canImport
+                  ? t('settings.backupImportAllowed')
+                  : t('settings.backupImportBlocked')
+              }}
+            </div>
+          </n-gi>
+        </n-grid>
+
+        <n-alert
+          v-for="issue in settingsBackupPreviewErrors"
+          :key="`backup-error-${issue.code}`"
+          type="error"
+          :bordered="false"
+          :show-icon="false"
+        >
+          {{ issue.message }}
+        </n-alert>
+        <n-alert
+          v-for="issue in settingsBackupPreviewWarnings"
+          :key="`backup-warning-${issue.code}`"
+          type="warning"
+          :bordered="false"
+          :show-icon="false"
+        >
+          {{ issue.message }}
+        </n-alert>
+
+        <div>
+          <div class="settings-backup-section-title">{{ t('settings.backupSectionsTitle') }}</div>
+          <div class="settings-backup-section-list">
+            <div
+              v-for="section in settingsBackupPreviewSections"
+              :key="section.key"
+              class="settings-backup-section-item"
+            >
+              <div class="settings-backup-section-item__title">{{ section.label }}</div>
+              <div class="settings-backup-section-item__meta">
+                {{ section.target }} · {{ section.action }}
+              </div>
+              <div v-if="section.changedKeys?.length" class="settings-backup-section-item__keys">
+                {{ section.changedKeys.join(', ') }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <n-space justify="end">
+          <n-button @click="showSettingsBackupPreviewDialog = false">
+            {{ t('common.cancel') }}
+          </n-button>
+          <n-button
+            type="primary"
+            :loading="settingsBackupImporting"
+            :disabled="!settingsBackupPreview?.canImport"
+            @click="handleConfirmSettingsBackupImport"
+          >
+            {{ t('settings.backupImportConfirm') }}
+          </n-button>
+        </n-space>
+      </n-space>
+    </n-modal>
   </div>
 </template>
 
@@ -1689,6 +1821,7 @@ import {
   createThemeMaintenanceWarningController,
   createThemeSelectionController,
 } from '@/utils/themeMaintenanceWarning';
+import type { AppInfo } from '@/stores/app';
 import Apis from '@/api';
 import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
@@ -1706,6 +1839,18 @@ import {
   selectRandomDailyTipIndex,
   type DailyTipDefinition,
 } from '@/utils/dailyTips';
+import {
+  buildSettingsBackupFile,
+  downloadSettingsBackupFile,
+  exportServerSettingsBackup,
+  importSettingsBackup,
+  parseSettingsBackupJSON,
+  previewSettingsBackup,
+  type SettingsBackupFile,
+  type SettingsBackupPreviewIssue,
+  type SettingsBackupPreviewResult,
+  type SettingsBackupPreviewSection,
+} from '@/utils/settingsBackup';
 
 type ShortcutTarget = 'terminal' | 'notepad';
 
@@ -1799,6 +1944,13 @@ const themeSelectionController = createThemeSelectionController({
   confirmPresetThemeChange: themeWarningController.confirmPresetThemeChange,
   confirmFollowSystemEnable: themeWarningController.confirmFollowSystemEnable,
 });
+const settingsBackupExporting = ref(false);
+const settingsBackupImporting = ref(false);
+const settingsBackupFileInputRef = ref<HTMLInputElement | null>(null);
+const settingsBackupSelectedFileName = ref('');
+const pendingSettingsBackup = ref<SettingsBackupFile | null>(null);
+const settingsBackupPreview = ref<SettingsBackupPreviewResult | null>(null);
+const showSettingsBackupPreviewDialog = ref(false);
 const authSaving = ref(false);
 const authAccessLoading = ref(false);
 const authAccessSaving = ref(false);
@@ -1821,6 +1973,15 @@ const securityAdminLoginPassword = ref('');
 const securityAdminLoginLoading = ref(false);
 const showDailyTipDialog = ref(false);
 const activeDailyTipIndex = ref(0);
+const settingsBackupPreviewWarnings = computed<SettingsBackupPreviewIssue[]>(
+  () => settingsBackupPreview.value?.warnings ?? []
+);
+const settingsBackupPreviewErrors = computed<SettingsBackupPreviewIssue[]>(
+  () => settingsBackupPreview.value?.errors ?? []
+);
+const settingsBackupPreviewSections = computed<SettingsBackupPreviewSection[]>(
+  () => settingsBackupPreview.value?.sections ?? []
+);
 
 // 使用 composable 获取主题和终端配色选项
 const presetOptions = useThemeOptions();
@@ -2671,6 +2832,108 @@ async function handleSaveAuthAccessConfig() {
   }
 }
 
+function buildSettingsBackupFileName(info?: AppInfo | null) {
+  const version = info?.version?.trim() || '0.0.0';
+  const date = new Date().toISOString().slice(0, 10);
+  return `codekanban-settings-backup-v${version}-${date}.json`;
+}
+
+function resetSettingsBackupFileInput() {
+  if (settingsBackupFileInputRef.value) {
+    settingsBackupFileInputRef.value.value = '';
+  }
+}
+
+function handleChooseSettingsBackupFile() {
+  resetSettingsBackupFileInput();
+  settingsBackupFileInputRef.value?.click();
+}
+
+async function refreshSettingsAfterBackupImport() {
+  await Promise.all([
+    loadAIStatus(),
+    loadDeveloperConfig(),
+    loadWorktreeSettings(),
+    loadShellsConfig(),
+    loadAuthAccessConfig(),
+    settingsStore.loadDailyTipSettings(true),
+    settingsStore.loadWebSessionQuickInput(true),
+  ]);
+}
+
+async function handleExportSettingsBackup() {
+  settingsBackupExporting.value = true;
+  try {
+    const serverBackup = await exportServerSettingsBackup();
+    const backup = buildSettingsBackupFile({
+      serverBackup,
+      clientPayload: settingsStore.exportClientBackup(locale.value),
+    });
+    downloadSettingsBackupFile(backup, buildSettingsBackupFileName(serverBackup.sourceApp));
+    message.success(t('settings.backupExportSuccess'));
+  } catch (error) {
+    console.error('Failed to export settings backup:', error);
+    message.error(error instanceof Error ? error.message : t('settings.backupExportFailed'));
+  } finally {
+    settingsBackupExporting.value = false;
+  }
+}
+
+async function handleSettingsBackupFileChange(event: Event) {
+  const input = event.target as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  settingsBackupImporting.value = true;
+  settingsBackupSelectedFileName.value = file.name;
+  try {
+    const text = await file.text();
+    const backup = parseSettingsBackupJSON(text);
+    const preview = await previewSettingsBackup(backup);
+    pendingSettingsBackup.value = backup;
+    settingsBackupPreview.value = preview;
+    showSettingsBackupPreviewDialog.value = true;
+  } catch (error) {
+    console.error('Failed to parse or preview settings backup:', error);
+    pendingSettingsBackup.value = null;
+    settingsBackupPreview.value = null;
+    settingsBackupSelectedFileName.value = '';
+    message.error(error instanceof Error ? error.message : t('settings.backupImportFailed'));
+  } finally {
+    settingsBackupImporting.value = false;
+    resetSettingsBackupFileInput();
+  }
+}
+
+async function handleConfirmSettingsBackupImport() {
+  if (!pendingSettingsBackup.value || !settingsBackupPreview.value?.canImport) {
+    return;
+  }
+
+  settingsBackupImporting.value = true;
+  try {
+    await importSettingsBackup(pendingSettingsBackup.value);
+
+    const clientPayload = pendingSettingsBackup.value.payload.client;
+    if (clientPayload) {
+      settingsStore.importClientBackup(clientPayload);
+    }
+
+    await refreshSettingsAfterBackupImport();
+    showSettingsBackupPreviewDialog.value = false;
+    pendingSettingsBackup.value = null;
+    settingsBackupPreview.value = null;
+    message.success(t('settings.backupImportSuccess'));
+  } catch (error) {
+    console.error('Failed to import settings backup:', error);
+    message.error(error instanceof Error ? error.message : t('settings.backupImportFailed'));
+  } finally {
+    settingsBackupImporting.value = false;
+  }
+}
+
 const primaryColor = computed({
   get: () => theme.value.primaryColor,
   set: value => {
@@ -3379,6 +3642,17 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
         t('settings.sampleCard'),
       ],
     },
+    {
+      id: 'backup',
+      title: t('settings.backupTitle'),
+      description: t('settings.backupDescription'),
+      searchTerms: [
+        t('settings.backupExportAction'),
+        t('settings.backupImportAction'),
+        t('settings.backupPreviewTitle'),
+        t('settings.backupSchemaVersion'),
+      ],
+    },
   ];
 
   return cards;
@@ -3936,6 +4210,61 @@ function formatShortcutLabel(event: KeyboardEvent) {
 
 .settings-command-input--shell {
   max-width: 320px;
+}
+
+.settings-hidden-file-input {
+  display: none;
+}
+
+.settings-backup-file-name {
+  font-size: 13px;
+  color: var(--n-text-color-2);
+}
+
+.settings-backup-meta-label {
+  font-size: 12px;
+  color: var(--n-text-color-3);
+  margin-bottom: 4px;
+}
+
+.settings-backup-meta-value {
+  font-size: 14px;
+  color: var(--n-text-color-1);
+  font-weight: 500;
+}
+
+.settings-backup-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--n-text-color-1);
+  margin-bottom: 12px;
+}
+
+.settings-backup-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-backup-section-item {
+  border: 1px solid var(--n-border-color);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--app-surface-color, var(--n-card-color));
+}
+
+.settings-backup-section-item__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--n-text-color-1);
+}
+
+.settings-backup-section-item__meta,
+.settings-backup-section-item__keys {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--n-text-color-3);
+  word-break: break-word;
 }
 
 .settings-collapsible-field {

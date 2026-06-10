@@ -68,6 +68,8 @@ func registerSystemRoutes(
 	terminalManager systemTerminalManager,
 	webSessionManager *websession.Manager,
 ) {
+	registerSystemSettingsBackupRoutes(group, cfg, terminalManager, webSessionManager)
+
 	huma.Get(group, "/system/version", func(ctx context.Context, input *struct{}) (*versionResponse, error) {
 		resp := &versionResponse{}
 		resp.Body.Name = appInfo.Name

@@ -8,6 +8,9 @@ export type MessageSchema = typeof zhCN;
  * 检测浏览器语言并映射到支持的语言
  */
 function detectBrowserLocale(): 'zh-CN' | 'en-US' {
+  if (typeof navigator === 'undefined') {
+    return 'zh-CN';
+  }
   // 获取浏览器语言列表
   const browserLanguages = navigator.languages || [navigator.language];
 
@@ -29,13 +32,21 @@ function detectBrowserLocale(): 'zh-CN' | 'en-US' {
   return 'zh-CN';
 }
 
+function getLocaleStorage() {
+  if (typeof localStorage !== 'undefined') {
+    return localStorage;
+  }
+  return null;
+}
+
+const localeStorage = getLocaleStorage();
 // 从 localStorage 获取保存的语言，如果没有则根据浏览器语言自动检测
-const savedLocale = localStorage.getItem('app-locale');
+const savedLocale = localeStorage?.getItem('app-locale');
 const initialLocale = savedLocale || detectBrowserLocale();
 
 // 如果是首次访问（没有保存的语言），保存检测到的语言
-if (!savedLocale) {
-  localStorage.setItem('app-locale', initialLocale);
+if (!savedLocale && localeStorage) {
+  localeStorage.setItem('app-locale', initialLocale);
 }
 
 const i18n = createI18n<[MessageSchema], 'zh-CN' | 'en-US'>({

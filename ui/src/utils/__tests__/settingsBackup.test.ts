@@ -1,0 +1,153 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPinia, setActivePinia } from 'pinia';
+
+import { useAppStore } from '@/stores/app';
+import {
+  SETTINGS_BACKUP_KIND,
+  SETTINGS_BACKUP_SCHEMA_VERSION,
+  buildSettingsBackupFile,
+  parseSettingsBackupJSON,
+} from '@/utils/settingsBackup';
+
+describe('settingsBackup helpers', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T08:00:00Z'));
+  });
+
+  it('builds a complete backup file with server and client payloads', () => {
+    const appStore = useAppStore();
+    appStore.setAppInfo({
+      name: 'Code Kanban',
+      version: '1.2.3',
+      channel: 'stable',
+    });
+
+    const backup = buildSettingsBackupFile({
+      serverBackup: {
+        backupSchemaVersion: SETTINGS_BACKUP_SCHEMA_VERSION,
+        backupKind: SETTINGS_BACKUP_KIND,
+        createdAt: '2026-06-09T00:00:00Z',
+        sourceApp: {
+          name: 'Code Kanban',
+          version: '1.2.3',
+          channel: 'stable',
+        },
+        payload: {
+          server: {
+            aiAssistantStatus: {
+              claudeCode: true,
+              codex: true,
+              qwenCode: true,
+              gemini: false,
+              cursor: false,
+              copilot: false,
+            },
+            developer: {
+              enableTerminalScrollback: false,
+              renameSessionTitleEachCommand: false,
+              enableTerminalStateSnapshot: true,
+              webSessionCodexDefaultSyncMode: 'fast',
+              webSessionActiveCallTimeout: {
+                enabledMode: 'default',
+                timeoutMode: 'default',
+                customTimeoutSeconds: 120,
+                promptTemplate: 'Continue',
+                callKinds: {
+                  useDefault: true,
+                  mcp: true,
+                  command: false,
+                  tool: true,
+                },
+              },
+            },
+            dailyTip: { enabled: true },
+            webSessionQuickInput: { pinned: ['continue'], recent: [] },
+            worktree: { globalBaseDir: '', globalDirNamePattern: '{projectName}-{branch}' },
+            terminalShell: { platform: 'linux', shell: '/bin/bash' },
+            authAccess: {
+              accessRules: {
+                bypassIPs: [],
+                bypassDomains: [],
+                forceAuthIPs: [],
+                forceAuthDomains: [],
+              },
+              proxyHeader: 'X-Forwarded-For',
+              trustedProxies: [],
+            },
+          },
+        },
+      },
+      clientPayload: {
+        locale: 'zh-CN',
+        settings: {
+          version: 4,
+          theme: {
+            primaryColor: '#123456',
+            surfaceColor: '#ffffff',
+            bodyColor: '#eeeeee',
+            textColor: '#111111',
+            terminalBg: '#000000',
+            terminalFg: '#ffffff',
+          },
+          currentPresetId: 'light',
+          followSystemTheme: 0,
+          customTheme: null,
+          recentProjectsLimit: 10,
+          maxTerminalsPerProject: 12,
+          panelShortcuts: {
+            terminal: { code: 'Backquote', display: '`' },
+            notepad: { code: 'Digit1', display: '1' },
+          },
+          webSessionQuickInputDirectSend: false,
+          terminalQuickActions: [],
+          editor: { defaultEditor: 'vscode', customCommand: '' },
+          confirmBeforeTerminalClose: true,
+          showWebSessionReasoning: false,
+          webSessionActivityDisplayMode: 'default',
+          webSessionAutoContinueScope: 'network_only',
+          webSessionAutoContinuePreset: 'gentle_stop',
+          webSessionStreamingMarkdownThrottleMode: 'default',
+          webSessionStreamingMarkdownThrottleCustomMs: 100,
+          terminalThemeId: 'follow-theme',
+          terminalFont: {
+            fontFamily: 'Menlo',
+            fontSize: 14,
+            fontWeight: 'normal',
+            fontWeightBold: 'bold',
+            lineHeight: 1.1,
+            letterSpacing: 0,
+          },
+          terminalWebGLRenderer: 'auto',
+          defaultTerminalRenderMode: 'live',
+          defaultTerminalSnapshotIntervalMs: null,
+          defaultTerminalSnapshotZlibCompression: true,
+          terminalConnectionPolicy: 'active-only',
+          inactiveTerminalSnapshotIntervalMs: 1000,
+        },
+      },
+    });
+
+    expect(backup.backupSchemaVersion).toBe(SETTINGS_BACKUP_SCHEMA_VERSION);
+    expect(backup.backupKind).toBe(SETTINGS_BACKUP_KIND);
+    expect(backup.sourceApp.version).toBe('1.2.3');
+    expect(backup.payload.server?.terminalShell.shell).toBe('/bin/bash');
+    expect(backup.payload.client?.locale).toBe('zh-CN');
+  });
+
+  it('parses backup JSON text', () => {
+    const parsed = parseSettingsBackupJSON(
+      JSON.stringify({
+        backupSchemaVersion: 1,
+        backupKind: 'settings',
+        createdAt: '2026-06-10T08:00:00Z',
+        sourceApp: { name: 'Code Kanban', version: '1.0.0', channel: 'stable' },
+        payload: {},
+      })
+    );
+
+    expect(parsed.backupSchemaVersion).toBe(1);
+    expect(parsed.backupKind).toBe('settings');
+  });
+});
