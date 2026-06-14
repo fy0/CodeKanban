@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -4630,6 +4631,41 @@ cat >/dev/null
 
 func writeFakeClaudeDeferredCLI(t *testing.T) string {
 	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		dir := t.TempDir()
+		stateFile := filepath.Join(dir, "claude-deferred-state.txt")
+		psPath := filepath.Join(dir, "fake-claude-deferred.ps1")
+		cmdPath := filepath.Join(dir, "fake-claude-deferred.cmd")
+		psStateFile := strings.ReplaceAll(stateFile, "'", "''")
+		script := `$stateFile = '` + psStateFile + `'
+[Console]::In.ReadToEnd() | Out-Null
+$count = 0
+if (Test-Path -LiteralPath $stateFile) {
+  $raw = Get-Content -LiteralPath $stateFile -Raw
+  [int]::TryParse(($raw.Trim()), [ref]$count) | Out-Null
+}
+$count += 1
+Set-Content -LiteralPath $stateFile -Value $count -NoNewline
+if ($count -eq 1) {
+  Write-Output '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
+  Write-Output '{"type":"assistant","uuid":"assistant_tool","message":{"type":"message","role":"assistant","id":"assistant_tool_msg","content":[{"type":"tool_use","id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}],"stop_reason":"tool_use"}}'
+  Write-Output '{"type":"result","session_id":"claude-session-test","stop_reason":"tool_deferred","deferred_tool_use":{"id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}}'
+  exit 0
+}
+Write-Output '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
+Write-Output '{"type":"assistant","uuid":"assistant_done","message":{"type":"message","role":"assistant","id":"assistant_done_msg","content":[{"type":"text","text":"continuing after the answer"}],"stop_reason":"end_turn"}}'
+Write-Output '{"type":"result","session_id":"claude-session-test","stop_reason":"end_turn"}'
+`
+		if err := os.WriteFile(psPath, []byte(script), 0o644); err != nil {
+			t.Fatalf("write fake claude deferred ps1 failed: %v", err)
+		}
+		cmd := "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-claude-deferred.ps1\"\r\nexit /b %ERRORLEVEL%\r\n"
+		if err := os.WriteFile(cmdPath, []byte(cmd), 0o755); err != nil {
+			t.Fatalf("write fake claude deferred cmd failed: %v", err)
+		}
+		return cmdPath
+	}
 
 	path := filepath.Join(t.TempDir(), "fake-claude-deferred.sh")
 	script := `#!/bin/sh

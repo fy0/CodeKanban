@@ -195,7 +195,7 @@ func (m *Manager) buildClaudeResumeCommand(ctx context.Context, session tables.W
 	}
 	cmd := m.buildClaudeCommand(ctx, claudeRuntime, args)
 	cmd.Dir = session.Cwd
-	cmd.Env = os.Environ()
+	cmd.Env = m.claudeCommandEnv(claudeRuntime)
 	return cmd, nil
 }
 

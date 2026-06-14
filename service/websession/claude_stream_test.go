@@ -17,6 +17,16 @@ import (
 	"go.uber.org/zap"
 )
 
+func envContainsValue(env []string, key, value string) bool {
+	prefix := key + "="
+	for _, item := range env {
+		if item == prefix+value {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBuildExecCommandClaudeUsesStreamJSONInput(t *testing.T) {
 	store, err := newStore(t.TempDir())
 	if err != nil {
@@ -73,34 +83,8 @@ func TestBuildExecCommandClaudeRouterUsesCCRCodeAndInjectsHookSettings(t *testin
 	if err != nil {
 		t.Fatalf("newStore returned error: %v", err)
 	}
-	ccrConfigPath := filepath.Join(t.TempDir(), "config.json")
-	initialConfig := `{
-  "Router": {"default": "provider,model"},
-  "claudeCodeSettings": {
-    "allowedHttpHookUrls": ["https://example.com/custom"],
-    "hooks": {
-      "PreToolUse": [
-        {
-          "matcher": "AskUserQuestion",
-          "hooks": [
-            {"type": "http", "url": "https://example.com/custom-ask"}
-          ]
-        },
-        {
-          "matcher": "ExitPlanMode",
-          "hooks": [
-            {"type": "http", "url": "http://127.0.0.1:1/claude-hooks/pre-tool-use"}
-          ]
-        }
-      ]
-    }
-  }
-}`
-	if err := os.WriteFile(ccrConfigPath, []byte(initialConfig), 0o644); err != nil {
-		t.Fatalf("failed to write CCR config: %v", err)
-	}
 	manager := &Manager{
-		cfg:     Config{DataDir: t.TempDir(), ClaudePath: "claude", CCRPath: "ccr", CCRConfigPath: ccrConfigPath},
+		cfg:     Config{DataDir: t.TempDir(), ClaudePath: "claude", CCRPath: "ccr"},
 		store:   store,
 		logger:  zap.NewNop(),
 		runs:    map[string]*activeRun{},
@@ -133,58 +117,54 @@ func TestBuildExecCommandClaudeRouterUsesCCRCodeAndInjectsHookSettings(t *testin
 		}
 	}
 	if strings.Contains(joinedArgs, "--settings") {
-		t.Fatalf("expected CCR runtime to let ccr generate one merged settings file, got %v", cmd.Args)
+		t.Fatalf("expected CCR runtime to let ccr code own --settings args, got %v", cmd.Args)
 	}
-	data, err := os.ReadFile(ccrConfigPath)
+	if manager.ccrHookClaudePath == "" {
+		t.Fatalf("expected CCR runtime to configure a Claude settings shim")
+	}
+	if !envContainsValue(cmd.Env, "CLAUDE_PATH", manager.ccrHookClaudePath) {
+		t.Fatalf("expected CCR runtime to pass shim via CLAUDE_PATH, got %v", cmd.Env)
+	}
+	shimData, err := os.ReadFile(strings.TrimSuffix(manager.ccrHookClaudePath, ".cmd") + ".js")
 	if err != nil {
-		t.Fatalf("failed to read CCR config: %v", err)
+		t.Fatalf("failed to read CodeKanban CCR shim: %v", err)
 	}
-	if !strings.Contains(string(data), "claudeCodeSettings") ||
-		!strings.Contains(string(data), "AskUserQuestion") ||
-		!strings.Contains(string(data), "ExitPlanMode") ||
-		!strings.Contains(string(data), "allowedHttpHookUrls") {
-		t.Fatalf("expected CCR config to include injected CodeKanban hooks, got %s", string(data))
+	if !strings.Contains(string(shimData), "settings.allowedHttpHookUrls = mergeUniqueStrings") ||
+		!strings.Contains(string(shimData), "settings.hooks = mergeHooks") {
+		t.Fatalf("expected CodeKanban CCR shim to merge hook settings, got %s", string(shimData))
 	}
-	if !strings.Contains(string(data), "https://example.com/custom-ask") {
-		t.Fatalf("expected existing user hook to be preserved, got %s", string(data))
+	settingsData, err := os.ReadFile(manager.claudeHookSettingsPath)
+	if err != nil {
+		t.Fatalf("failed to read Claude hook settings: %v", err)
 	}
-	if strings.Contains(string(data), "http://127.0.0.1:1/claude-hooks/pre-tool-use") {
-		t.Fatalf("expected stale CodeKanban hook to be replaced, got %s", string(data))
+	if strings.Contains(string(settingsData), `"http://127.0.0.1:`) &&
+		!strings.Contains(string(settingsData), "/claude-hooks/pre-tool-use") {
+		t.Fatalf("expected allowedHttpHookUrls to allow the full hook URL, got %s", string(settingsData))
+	}
+	if !strings.Contains(string(settingsData), `"matcher":"AskUserQuestion"`) ||
+		!strings.Contains(string(settingsData), `"matcher":"ExitPlanMode"`) {
+		t.Fatalf("expected hook settings for AskUserQuestion and ExitPlanMode, got %s", string(settingsData))
 	}
 }
 
-func TestEnsureCCRClaudeHookSettingsRetriesAfterFailure(t *testing.T) {
+func TestEnsureCCRClaudeHookSettingsDoesNotRequireCCRConfig(t *testing.T) {
 	store, err := newStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("newStore returned error: %v", err)
 	}
-	ccrConfigPath := filepath.Join(t.TempDir(), "missing", "config.json")
 	manager := &Manager{
-		cfg:     Config{DataDir: t.TempDir(), ClaudePath: "claude", CCRPath: "ccr", CCRConfigPath: ccrConfigPath},
+		cfg:     Config{DataDir: t.TempDir(), ClaudePath: "claude", CCRPath: "ccr", CCRConfigPath: filepath.Join(t.TempDir(), "missing", "config.json")},
 		store:   store,
 		logger:  zap.NewNop(),
 		runs:    map[string]*activeRun{},
 		clients: map[*client]struct{}{},
 	}
 
-	if err := manager.ensureCCRClaudeHookSettings(); err == nil {
-		t.Fatal("expected first CCR hook settings write to fail")
-	}
-	if err := os.MkdirAll(filepath.Dir(ccrConfigPath), 0o755); err != nil {
-		t.Fatalf("failed to create CCR config dir: %v", err)
-	}
-	if err := os.WriteFile(ccrConfigPath, []byte(`{"Router":{"default":"provider,model"}}`), 0o644); err != nil {
-		t.Fatalf("failed to write CCR config: %v", err)
-	}
 	if err := manager.ensureCCRClaudeHookSettings(); err != nil {
-		t.Fatalf("expected second CCR hook settings write to retry and succeed, got %v", err)
+		t.Fatalf("expected CCR hook setup to use the shim without reading CCR config, got %v", err)
 	}
-	data, err := os.ReadFile(ccrConfigPath)
-	if err != nil {
-		t.Fatalf("failed to read CCR config: %v", err)
-	}
-	if !strings.Contains(string(data), "claudeCodeSettings") {
-		t.Fatalf("expected CCR config to include injected settings after retry, got %s", string(data))
+	if manager.ccrHookClaudePath == "" {
+		t.Fatal("expected CCR hook setup to configure the Claude shim path")
 	}
 }
 
@@ -636,6 +616,44 @@ func TestClaudeHookServerDefersAndAllowsAskUserQuestion(t *testing.T) {
 	}
 }
 
+func TestClaudeHookAnswerIsMirroredToNativeSessionID(t *testing.T) {
+	store, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("newStore returned error: %v", err)
+	}
+	manager := &Manager{store: store}
+	nativeSessionID := "claude-native-session"
+	session := tables.WebSessionTable{
+		NativeSessionID: &nativeSessionID,
+	}
+	session.ID = "web-session-1"
+	payload := claudeHookAnswerFile{
+		Answers: map[string]string{
+			"What should happen next?": "Implement",
+		},
+	}
+
+	if err := manager.writeClaudeHookAnswerForSession(session, "tool-1", payload); err != nil {
+		t.Fatalf("writeClaudeHookAnswerForSession returned error: %v", err)
+	}
+	for _, sessionID := range []string{session.ID, nativeSessionID} {
+		answer, err := manager.readClaudeHookAnswer(sessionID, "tool-1")
+		if err != nil {
+			t.Fatalf("readClaudeHookAnswer(%q) returned error: %v", sessionID, err)
+		}
+		if got := answer.Answers["What should happen next?"]; got != "Implement" {
+			t.Fatalf("expected mirrored answer for %q, got %#v", sessionID, answer.Answers)
+		}
+	}
+
+	manager.deleteClaudeHookAnswerForSession(session, "tool-1")
+	for _, sessionID := range []string{session.ID, nativeSessionID} {
+		if _, err := os.Stat(manager.store.claudeHookAnswerPath(sessionID, "tool-1")); !os.IsNotExist(err) {
+			t.Fatalf("expected answer for %q to be cleaned up, got err=%v", sessionID, err)
+		}
+	}
+}
+
 func TestRespondToUserInputClaudeResumesAfterDeferredTool(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -705,6 +723,12 @@ func TestRespondToUserInputClaudeResumesAfterDeferredTool(t *testing.T) {
 	}
 	if _, err := os.Stat(manager.store.claudeHookAnswerPath(created.ID, "tool_ask_resume")); !os.IsNotExist(err) {
 		t.Fatalf("expected deferred answer file to be cleaned up, got err=%v", err)
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
+		t.Fatalf("expected native Claude session id to be stored")
+	}
+	if _, err := os.Stat(manager.store.claudeHookAnswerPath(*record.NativeSessionID, "tool_ask_resume")); !os.IsNotExist(err) {
+		t.Fatalf("expected native deferred answer file to be cleaned up, got err=%v", err)
 	}
 }
 

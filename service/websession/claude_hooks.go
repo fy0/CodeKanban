@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"code-kanban/model/tables"
 	"code-kanban/utils"
 )
 
@@ -79,6 +80,24 @@ func (m *Manager) writeClaudeHookAnswer(
 	return os.WriteFile(m.store.claudeHookAnswerPath(sessionID, toolUseID), encoded, 0o644)
 }
 
+func (m *Manager) writeClaudeHookAnswerForSession(
+	session tables.WebSessionTable,
+	toolUseID string,
+	payload claudeHookAnswerFile,
+) error {
+	if err := m.writeClaudeHookAnswer(session.ID, toolUseID, payload); err != nil {
+		return err
+	}
+	nativeSessionID := ""
+	if session.NativeSessionID != nil {
+		nativeSessionID = strings.TrimSpace(*session.NativeSessionID)
+	}
+	if nativeSessionID == "" || nativeSessionID == strings.TrimSpace(session.ID) {
+		return nil
+	}
+	return m.writeClaudeHookAnswer(nativeSessionID, toolUseID, payload)
+}
+
 func (m *Manager) readClaudeHookAnswer(sessionID, toolUseID string) (claudeHookAnswerFile, error) {
 	data, err := os.ReadFile(m.store.claudeHookAnswerPath(sessionID, toolUseID))
 	if err != nil {
@@ -96,6 +115,18 @@ func (m *Manager) deleteClaudeHookAnswer(sessionID, toolUseID string) {
 		return
 	}
 	_ = os.Remove(m.store.claudeHookAnswerPath(sessionID, toolUseID))
+}
+
+func (m *Manager) deleteClaudeHookAnswerForSession(session tables.WebSessionTable, toolUseID string) {
+	m.deleteClaudeHookAnswer(session.ID, toolUseID)
+	if session.NativeSessionID == nil {
+		return
+	}
+	nativeSessionID := strings.TrimSpace(*session.NativeSessionID)
+	if nativeSessionID == "" || nativeSessionID == strings.TrimSpace(session.ID) {
+		return
+	}
+	m.deleteClaudeHookAnswer(nativeSessionID, toolUseID)
 }
 
 func (m *Manager) ensureClaudeHookServer() (string, error) {
@@ -136,54 +167,118 @@ func (m *Manager) ensureClaudeHookServer() (string, error) {
 }
 
 func (m *Manager) ensureCCRClaudeHookSettings() error {
-	if _, err := m.ensureClaudeHookServer(); err != nil {
+	if settingsPath, err := m.ensureClaudeHookServer(); err != nil {
 		return err
+	} else if strings.TrimSpace(settingsPath) == "" {
+		return fmt.Errorf("claude hook settings path is not configured")
 	}
 	m.ccrHookMu.Lock()
 	defer m.ccrHookMu.Unlock()
 	if m.ccrHookReady {
 		return nil
 	}
-	m.ccrHookErr = m.writeCCRClaudeHookSettings()
+	m.ccrHookErr = m.writeCCRClaudeHookShim()
 	if m.ccrHookErr == nil {
 		m.ccrHookReady = true
 	}
 	return m.ccrHookErr
 }
 
-func (m *Manager) writeCCRClaudeHookSettings() error {
-	if strings.TrimSpace(m.cfg.CCRConfigPath) == "" {
-		return fmt.Errorf("claude code router config path is not configured")
+func (m *Manager) writeCCRClaudeHookShim() error {
+	if m.store == nil || strings.TrimSpace(m.store.rootDir) == "" {
+		return fmt.Errorf("web session store is not configured")
 	}
-	data, err := os.ReadFile(m.cfg.CCRConfigPath)
-	if err != nil {
-		return fmt.Errorf("read claude code router config: %w", err)
-	}
-	var config map[string]any
-	if err := json.Unmarshal(data, &config); err != nil {
-		return fmt.Errorf("parse claude code router config: %w", err)
-	}
-	if config == nil {
-		config = map[string]any{}
-	}
-	claudeSettings, _ := config["claudeCodeSettings"].(map[string]any)
-	if claudeSettings == nil {
-		claudeSettings = map[string]any{}
-		config["claudeCodeSettings"] = claudeSettings
-	}
-	injectClaudeHookSettings(claudeSettings, m.claudeHookBaseURL, m.claudeHookToken)
-	encoded, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
+	shimDir := filepath.Join(m.store.rootDir, "claude-code-router")
+	if err := os.MkdirAll(shimDir, 0o755); err != nil {
 		return err
 	}
-	encoded = append(encoded, '\n')
-	return os.WriteFile(m.cfg.CCRConfigPath, encoded, 0o644)
+	scriptPath := filepath.Join(shimDir, "claude-settings-shim.js")
+	cmdPath := filepath.Join(shimDir, "claude-settings-shim.cmd")
+	script := fmt.Sprintf(`const fs = require("fs");
+const { spawn } = require("child_process");
+
+const realClaude = %q;
+const hookSettingsPath = %q;
+
+function readJSON(path) {
+  return JSON.parse(fs.readFileSync(path, "utf8"));
+}
+
+function mergeUniqueStrings(target, source) {
+  const seen = new Set((Array.isArray(target) ? target : []).filter(Boolean));
+  for (const value of Array.isArray(source) ? source : []) {
+    if (value && !seen.has(value)) {
+      seen.add(value);
+    }
+  }
+  return Array.from(seen);
+}
+
+function isCodeKanbanHook(hook) {
+  return hook && typeof hook === "object" && String(hook.url || hook.command || "").includes("/claude-hooks/pre-tool-use");
+}
+
+function mergeHooks(target, source) {
+  const next = target && typeof target === "object" && !Array.isArray(target) ? target : {};
+  const incoming = source && typeof source === "object" && !Array.isArray(source) ? source : {};
+  for (const [eventName, entries] of Object.entries(incoming)) {
+    const existing = Array.isArray(next[eventName]) ? next[eventName] : [];
+    const filtered = existing
+      .map((entry) => {
+        if (!entry || typeof entry !== "object" || !Array.isArray(entry.hooks)) return entry;
+        const hooks = entry.hooks.filter((hook) => !isCodeKanbanHook(hook));
+        return hooks.length ? { ...entry, hooks } : null;
+      })
+      .filter(Boolean);
+    next[eventName] = filtered.concat(Array.isArray(entries) ? entries : []);
+  }
+  return next;
+}
+
+try {
+  const args = process.argv.slice(2);
+  const settingsIndex = args.lastIndexOf("--settings");
+  if (settingsIndex >= 0 && args[settingsIndex + 1]) {
+    const settingsPath = args[settingsIndex + 1];
+    const settings = readJSON(settingsPath);
+    const hookSettings = readJSON(hookSettingsPath);
+    settings.allowedHttpHookUrls = mergeUniqueStrings(settings.allowedHttpHookUrls, hookSettings.allowedHttpHookUrls);
+    settings.hooks = mergeHooks(settings.hooks, hookSettings.hooks);
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  }
+} catch (error) {
+  console.error("CodeKanban Claude settings shim failed:", error && error.message ? error.message : error);
+}
+
+const child = spawn(realClaude, process.argv.slice(2), {
+  stdio: "inherit",
+  env: process.env,
+});
+child.on("exit", (code, signal) => {
+  if (signal) process.kill(process.pid, signal);
+  process.exit(code || 0);
+});
+child.on("error", (error) => {
+  console.error(error && error.message ? error.message : error);
+  process.exit(1);
+});
+`, m.cfg.ClaudePath, m.claudeHookSettingsPath)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
+		return err
+	}
+	cmd := fmt.Sprintf("@echo off\r\nnode \"%%~dp0%s\" %%*\r\nexit /b %%ERRORLEVEL%%\r\n", filepath.Base(scriptPath))
+	if err := os.WriteFile(cmdPath, []byte(cmd), 0o755); err != nil {
+		return err
+	}
+	m.ccrHookClaudePath = cmdPath
+	return nil
 }
 
 func (m *Manager) claudeHookSettings() map[string]any {
+	hookURL := codeKanbanClaudeHookURL(m.claudeHookBaseURL)
 	return map[string]any{
 		"allowedHttpHookUrls": []string{
-			m.claudeHookBaseURL,
+			hookURL,
 		},
 		"hooks": map[string]any{
 			"PreToolUse": codeKanbanClaudeHookEntries(m.claudeHookBaseURL, m.claudeHookToken),
@@ -191,14 +286,19 @@ func (m *Manager) claudeHookSettings() map[string]any {
 	}
 }
 
+func codeKanbanClaudeHookURL(baseURL string) string {
+	return baseURL + "/claude-hooks/pre-tool-use"
+}
+
 func codeKanbanClaudeHookEntries(baseURL, token string) []map[string]any {
+	hookURL := codeKanbanClaudeHookURL(baseURL)
 	return []map[string]any{
 		{
 			"matcher": "AskUserQuestion",
 			"hooks": []map[string]any{
 				{
 					"type": "http",
-					"url":  baseURL + "/claude-hooks/pre-tool-use",
+					"url":  hookURL,
 					"headers": map[string]any{
 						"Authorization": "Bearer " + token,
 					},
@@ -210,7 +310,7 @@ func codeKanbanClaudeHookEntries(baseURL, token string) []map[string]any {
 			"hooks": []map[string]any{
 				{
 					"type": "http",
-					"url":  baseURL + "/claude-hooks/pre-tool-use",
+					"url":  hookURL,
 					"headers": map[string]any{
 						"Authorization": "Bearer " + token,
 					},
@@ -218,102 +318,6 @@ func codeKanbanClaudeHookEntries(baseURL, token string) []map[string]any {
 			},
 		},
 	}
-}
-
-func injectClaudeHookSettings(settings map[string]any, baseURL, token string) {
-	settings["allowedHttpHookUrls"] = appendUniqueStringValues(settings["allowedHttpHookUrls"], baseURL)
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
-		hooks = map[string]any{}
-		settings["hooks"] = hooks
-	}
-	existingEntries, _ := hooks["PreToolUse"].([]any)
-	filtered := make([]any, 0, len(existingEntries)+2)
-	for _, entry := range existingEntries {
-		entryMap, ok := entry.(map[string]any)
-		if !ok {
-			filtered = append(filtered, entry)
-			continue
-		}
-		matcher, _ := entryMap["matcher"].(string)
-		if matcher == "AskUserQuestion" || matcher == "ExitPlanMode" {
-			if cleaned, keep := removeCodeKanbanClaudeHooks(entryMap); keep {
-				filtered = append(filtered, cleaned)
-			}
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	for _, entry := range codeKanbanClaudeHookEntries(baseURL, token) {
-		filtered = append(filtered, entry)
-	}
-	hooks["PreToolUse"] = filtered
-}
-
-func removeCodeKanbanClaudeHooks(entry map[string]any) (map[string]any, bool) {
-	rawHooks, ok := entry["hooks"].([]any)
-	if !ok {
-		return entry, true
-	}
-	filteredHooks := make([]any, 0, len(rawHooks))
-	for _, hook := range rawHooks {
-		if isCodeKanbanClaudeHook(hook) {
-			continue
-		}
-		filteredHooks = append(filteredHooks, hook)
-	}
-	if len(filteredHooks) == 0 {
-		return nil, false
-	}
-	cleaned := make(map[string]any, len(entry))
-	for key, value := range entry {
-		cleaned[key] = value
-	}
-	cleaned["hooks"] = filteredHooks
-	return cleaned, true
-}
-
-func isCodeKanbanClaudeHook(hook any) bool {
-	hookMap, ok := hook.(map[string]any)
-	if !ok {
-		return false
-	}
-	hookURL, _ := hookMap["url"].(string)
-	return strings.Contains(hookURL, "/claude-hooks/pre-tool-use")
-}
-
-func appendUniqueStringValues(current any, values ...string) []string {
-	result := []string{}
-	seen := map[string]struct{}{}
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return
-		}
-		if _, ok := seen[value]; ok {
-			return
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	switch typed := current.(type) {
-	case []any:
-		for _, item := range typed {
-			if value, ok := item.(string); ok {
-				add(value)
-			}
-		}
-	case []string:
-		for _, value := range typed {
-			add(value)
-		}
-	case string:
-		add(typed)
-	}
-	for _, value := range values {
-		add(value)
-	}
-	return result
 }
 
 func (m *Manager) handleClaudePreToolUseHook(w http.ResponseWriter, r *http.Request) {
