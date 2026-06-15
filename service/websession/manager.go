@@ -36,6 +36,7 @@ const (
 	sessionOrderStep              = 1000.0
 	defaultToolOutputLimit        = 4000
 	planPromptPreamble            = "You are operating in planning mode. Inspect the project first, summarize the goal, and propose a concrete plan before making changes. Do not mutate files until the user confirms execution or explicitly asks you to proceed immediately. If additional permissions are needed, call them out explicitly."
+	goalBootstrapPromptPreamble   = "<goal_bootstrap>\nGoal:\n%s\n</goal_bootstrap>\nStart working on the goal above now."
 	recoveryReasonProcessRestart  = "process_restart"
 	recoveryMessageProcessRestart = "Session runtime was interrupted because the app restarted. Send a new message to continue."
 	errCodexNotInstalled          = "Codex is not installed. Install Codex before sending messages in this session."
@@ -116,38 +117,43 @@ type wsConn interface {
 }
 
 type activeRun struct {
-	sessionID          string
-	agent              Agent
-	backend            SessionBackend
-	runID              string
-	assistantMessageID string
-	currentToolMessage string
-	lastError          string
-	lastErrorCode      string
-	transportRetrySeen bool
-	cmd                *exec.Cmd
-	cancel             context.CancelFunc
-	done               chan struct{}
-	mu                 sync.Mutex
-	stdin              io.WriteCloser
-	recentRuntimeLines []string
-	pendingApproval    string
-	pendingServerReq   *pendingServerRequest
-	app                *codexAppServerClient
-	assistantDeltaSeen map[string]bool
-	claudeResumeOnly   bool
-	deferredUserInput  bool
-	completedPlanTool  bool
-	commandGroupID     string
-	commandGroupKind   string
-	commandGroupFirst  int64
-	commandGroupCount  int
-	commandGroupTools  map[string]struct{}
-	abortPayload       map[string]any
-	activeCalls        map[string]trackedActiveCall
-	activeCallPausedAt *time.Time
-	activeCallTimer    *time.Timer
-	activeCallInFlight bool
+	sessionID              string
+	agent                  Agent
+	backend                SessionBackend
+	runID                  string
+	hiddenBootstrap        bool
+	bootstrapGoalObjective string
+	bootstrapGoalState     GoalStatus
+	bootstrapResult        chan error
+	bootstrapOnce          sync.Once
+	assistantMessageID     string
+	currentToolMessage     string
+	lastError              string
+	lastErrorCode          string
+	transportRetrySeen     bool
+	cmd                    *exec.Cmd
+	cancel                 context.CancelFunc
+	done                   chan struct{}
+	mu                     sync.Mutex
+	stdin                  io.WriteCloser
+	recentRuntimeLines     []string
+	pendingApproval        string
+	pendingServerReq       *pendingServerRequest
+	app                    *codexAppServerClient
+	assistantDeltaSeen     map[string]bool
+	claudeResumeOnly       bool
+	deferredUserInput      bool
+	completedPlanTool      bool
+	commandGroupID         string
+	commandGroupKind       string
+	commandGroupFirst      int64
+	commandGroupCount      int
+	commandGroupTools      map[string]struct{}
+	abortPayload           map[string]any
+	activeCalls            map[string]trackedActiveCall
+	activeCallPausedAt     *time.Time
+	activeCallTimer        *time.Timer
+	activeCallInFlight     bool
 }
 
 type attachmentMeta struct {
@@ -1541,6 +1547,60 @@ func (m *Manager) SetSessionGoal(
 	return m.mapSessionSummary(refreshed), nil
 }
 
+func (m *Manager) BootstrapSessionGoal(
+	ctx context.Context,
+	sessionID string,
+	objective string,
+	status GoalStatus,
+) error {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if record.ArchivedAt != nil {
+		return fmt.Errorf("session is archived")
+	}
+	if normalizeAgent(Agent(record.Agent)) != AgentCodex {
+		return fmt.Errorf("goal is only supported for codex sessions")
+	}
+	if effectiveSessionBackend(record) != SessionBackendCodexAppServer {
+		return fmt.Errorf("goal bootstrap is only supported for codex app-server sessions")
+	}
+	if err := m.ensureSessionMessagingAvailable(record); err != nil {
+		return err
+	}
+	if err := m.ensureSessionGoalModeSupported(record); err != nil {
+		return err
+	}
+	if m.hasActiveRun(sessionID) {
+		return fmt.Errorf("session is already running")
+	}
+
+	trimmedObjective := strings.TrimSpace(objective)
+	normalizedStatus := status
+	if normalizedStatus == "" {
+		normalizedStatus = GoalStatusActive
+	}
+	if normalizeGoalStatus(string(normalizedStatus)) == "" {
+		return fmt.Errorf("invalid goal status")
+	}
+	if trimmedObjective == "" {
+		return fmt.Errorf("goal objective is required")
+	}
+	if len([]rune(trimmedObjective)) > 4000 {
+		return fmt.Errorf("goal objective must be at most 4000 characters")
+	}
+
+	return m.startHiddenSessionRun(
+		ctx,
+		record,
+		buildGoalBootstrapPrompt(trimmedObjective),
+		nil,
+		trimmedObjective,
+		normalizedStatus,
+	)
+}
+
 func (m *Manager) UpdateSessionGoalStatus(
 	ctx context.Context,
 	sessionID string,
@@ -2083,6 +2143,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleGoalGetCommand(ctx, client, frame)
 	case "goal_set":
 		return m.handleGoalSetCommand(ctx, client, frame)
+	case "goal_bootstrap":
+		return m.handleGoalBootstrapCommand(ctx, client, frame)
 	case "goal_pause":
 		return m.handleGoalStatusCommand(ctx, client, frame, GoalStatusPaused)
 	case "goal_resume":
@@ -2555,6 +2617,20 @@ func (m *Manager) handleGoalSetCommand(ctx context.Context, client *client, fram
 	return m.sendAckWithSnapshot(ctx, client, frame)
 }
 
+func (m *Manager) handleGoalBootstrapCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	var payload struct {
+		Objective string `json:"obj"`
+		Status    string `json:"st"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid goal bootstrap payload", false))
+	}
+	if err := m.BootstrapSessionGoal(ctx, frame.SessionID, payload.Objective, GoalStatus(payload.Status)); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	return m.sendAckWithSnapshot(ctx, client, frame)
+}
+
 func (m *Manager) handleGoalStatusCommand(
 	ctx context.Context,
 	client *client,
@@ -2755,6 +2831,145 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attachmentIDs []string) error {
 	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+}
+
+func (m *Manager) ensureCodexThread(ctx context.Context, session tables.WebSessionTable) (string, error) {
+	if normalizeAgent(Agent(session.Agent)) != AgentCodex {
+		return "", fmt.Errorf("thread bootstrap is only supported for codex sessions")
+	}
+	if effectiveSessionBackend(session) != SessionBackendCodexAppServer {
+		return "", fmt.Errorf("thread bootstrap is only supported for codex app-server sessions")
+	}
+
+	threadID := ""
+	err := m.withCodexQueryClient(ctx, session.Cwd, func(client *codexAppServerClient) error {
+		response, err := client.request(ctx, "thread/start", codexThreadStartParams(session))
+		if err != nil {
+			return err
+		}
+		threadID = strings.TrimSpace(parseCodexThreadID(response.Result))
+		if threadID == "" {
+			return fmt.Errorf("codex app-server did not return a thread id")
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := m.updateRuntimeState(ctx, session.ID, map[string]any{
+		"native_session_id": threadID,
+		"updated_at":        time.Now(),
+	}); err != nil {
+		return "", err
+	}
+	return threadID, nil
+}
+
+func buildGoalBootstrapPrompt(objective string) string {
+	return fmt.Sprintf(goalBootstrapPromptPreamble, strings.TrimSpace(objective))
+}
+
+func isGoalBootstrapPrompt(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	return strings.Contains(trimmed, "<goal_bootstrap>") &&
+		strings.Contains(trimmed, "</goal_bootstrap>") &&
+		strings.Contains(trimmed, "\nGoal:\n")
+}
+
+func (m *Manager) startHiddenSessionRun(
+	ctx context.Context,
+	record tables.WebSessionTable,
+	text string,
+	attachments []Attachment,
+	bootstrapGoalObjective string,
+	bootstrapGoalStatus GoalStatus,
+) error {
+	text = strings.TrimSpace(text)
+	if text == "" && len(attachments) == 0 {
+		return fmt.Errorf("message is empty")
+	}
+	m.cancelAutoRetryTimer(record.ID)
+	if m.hasActiveRun(record.ID) {
+		return fmt.Errorf("session is already running")
+	}
+
+	runID := utils.NewID()
+	now := time.Now()
+	updates := applyAssistantStateUpdates(map[string]any{
+		"status":                     string(StatusRunning),
+		"has_unread":                 false,
+		"last_error":                 nil,
+		"auto_retry_attempt":         0,
+		"auto_retry_next_at":         nil,
+		"auto_retry_last_error_code": nil,
+		"updated_at":                 now,
+	}, AssistantStateWorking, now)
+	if err := model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
+		Where("id = ?", record.ID).
+		Updates(updates).Error; err != nil {
+		return err
+	}
+
+	if _, err := m.appendAndBroadcast(ctx, record.ID, record, Event{
+		ID:        utils.NewID(),
+		Seq:       0,
+		Type:      "run_st",
+		RunID:     runID,
+		Timestamp: now,
+		Payload: map[string]any{
+			"ag":  string(normalizeAgent(Agent(record.Agent))),
+			"md":  record.Model,
+			"re":  record.ReasoningEffort,
+			"wm":  effectiveWorkflowMode(record),
+			"pl":  effectivePermissionLevel(record),
+			"src": "goal_bootstrap",
+		},
+	}); err != nil {
+		return err
+	}
+
+	m.broadcastSessionSummary(ctx, record.ID)
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	run := &activeRun{
+		sessionID:              record.ID,
+		agent:                  Agent(record.Agent),
+		backend:                effectiveSessionBackend(record),
+		runID:                  runID,
+		cancel:                 cancel,
+		done:                   make(chan struct{}),
+		hiddenBootstrap:        true,
+		bootstrapGoalObjective: strings.TrimSpace(bootstrapGoalObjective),
+		bootstrapGoalState: func() GoalStatus {
+			if bootstrapGoalStatus == "" {
+				return GoalStatusActive
+			}
+			return bootstrapGoalStatus
+		}(),
+	}
+	if run.bootstrapGoalObjective != "" {
+		run.bootstrapResult = make(chan error, 1)
+	}
+
+	m.mu.Lock()
+	m.runs[record.ID] = run
+	m.mu.Unlock()
+
+	go m.runSession(runCtx, run, record, text, attachments)
+	if run.bootstrapResult == nil {
+		return nil
+	}
+	select {
+	case err := <-run.bootstrapResult:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("goal bootstrap timed out")
+	}
 }
 
 func (m *Manager) sendMessageInternal(
@@ -5389,6 +5604,16 @@ func (r *activeRun) setInput(stdin io.WriteCloser) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stdin = stdin
+}
+
+func (r *activeRun) resolveBootstrap(err error) {
+	if r == nil || r.bootstrapResult == nil {
+		return
+	}
+	r.bootstrapOnce.Do(func() {
+		r.bootstrapResult <- err
+		close(r.bootstrapResult)
+	})
 }
 
 func (r *activeRun) clearInput() {

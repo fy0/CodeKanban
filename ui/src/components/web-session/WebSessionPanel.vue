@@ -957,7 +957,7 @@
           </div>
 
           <div
-            v-if="currentSession?.agent === 'codex' && showGoalCard"
+            v-if="isGoalCardVisible"
             class="goal-card"
             :class="currentSessionGoal ? `status-${currentSessionGoal.status}` : 'status-empty'"
           >
@@ -1015,11 +1015,7 @@
               </div>
             </div>
             <div v-else class="goal-empty">
-              {{
-                isDraftSession(currentSession)
-                  ? 'Draft session goal will be created when you send the /goal command.'
-                  : 'Persistent Codex thread goal is not set for this session.'
-              }}
+              {{ 'Persistent Codex thread goal is not set for this session.' }}
             </div>
             <div v-if="isCurrentSessionGoalModeBlocked" class="goal-empty">
               {{ goalModeUnavailableMessage() }}
@@ -1186,13 +1182,23 @@
                       type="button"
                       class="composer-settings-trigger"
                       :class="{
-                        'has-active-settings': showGoalCard,
-                        'is-active': showGoalCard,
+                        'has-active-settings': isGoalCardVisible,
+                        'is-active': isGoalCardVisible,
                         'has-goal': Boolean(currentRealSession?.goal),
                       }"
-                      :title="selectedAgent === 'codex' ? 'Toggle goal card' : 'Goal is only available for Codex'"
+                      :title="
+                        selectedAgent === 'codex'
+                          ? isCurrentDraftCodexSession
+                            ? 'Insert /goal'
+                            : 'Toggle goal card'
+                          : 'Goal is only available for Codex'
+                      "
                       :aria-label="
-                        selectedAgent === 'codex' ? 'Toggle goal card' : 'Goal is only available for Codex'
+                        selectedAgent === 'codex'
+                          ? isCurrentDraftCodexSession
+                            ? 'Insert /goal'
+                            : 'Toggle goal card'
+                          : 'Goal is only available for Codex'
                       "
                       :disabled="selectedAgent !== 'codex' || !currentSession"
                       @click="toggleGoalCard"
@@ -3008,6 +3014,14 @@ const isCurrentSessionGoalModeBlocked = computed(() => {
   return !runtimeSupportsGoalMode.value;
 });
 const currentSessionGoal = computed(() => currentRealSession.value?.goal ?? null);
+const isCurrentDraftCodexSession = computed(() => {
+  const session = currentSession.value;
+  return Boolean(session && session.agent === 'codex' && isDraftSession(session));
+});
+const isGoalCardVisible = computed(() => {
+  const session = currentSession.value;
+  return Boolean(session && session.agent === 'codex' && !isDraftSession(session) && showGoalCard.value);
+});
 const showGoalCard = ref(false);
 
 function formatGoalDuration(totalSeconds: number) {
@@ -3203,6 +3217,11 @@ async function handleGoalCompose() {
 }
 
 async function toggleGoalCard() {
+  if (isCurrentDraftCodexSession.value) {
+    showGoalCard.value = false;
+    await handleGoalCompose();
+    return;
+  }
   showGoalCard.value = !showGoalCard.value;
   if (showGoalCard.value && currentRealSession.value?.agent === 'codex') {
     if (!(await ensureGoalModeAvailable())) {
@@ -9032,7 +9051,14 @@ async function handleSubmit() {
       if (!(await ensureGoalModeAvailable())) {
         return;
       }
-      await webSessionStore.setGoal(session.id, goalCommand.objective, 'active');
+      if (session.agent !== 'codex') {
+        throw new Error('Goal is only available for Codex');
+      }
+      if (session.nativeSessionId) {
+        await webSessionStore.setGoal(session.id, goalCommand.objective, 'active');
+      } else {
+        await webSessionStore.bootstrapGoal(session.id, goalCommand.objective, 'active');
+      }
       settingsStore.recordWebSessionRecentInput(draftText);
       void settingsStore.syncWebSessionQuickInputToServer();
       webSessionStore.clearDraft(props.projectId, draftSessionId);

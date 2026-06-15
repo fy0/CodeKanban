@@ -290,6 +290,92 @@ describe('webSession loading behavior', () => {
     expect(store.getBlocks(archivedSession.id)).toHaveLength(1);
   });
 
+  it('sends goal_bootstrap for draft codex goal starts', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-goal-bootstrap',
+      nativeSessionId: null,
+      status: 'idle',
+      assistantState: null,
+      goal: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+
+    await store.loadSessions(session.projectId);
+
+    const socket = findSocket('/api/v1/web-sessions/ws');
+    expect(socket).toBeNull();
+
+    const promise = store.bootstrapGoal(session.id, 'Start from the goal immediately', 'active');
+    await flushMicrotasks();
+
+    const commandSocket = findSocket('/api/v1/web-sessions/ws');
+    expect(commandSocket).not.toBeNull();
+    const sent = commandSocket!.sent[0] as {
+      op: string;
+      rid: string;
+      sid: string;
+      p: Record<string, unknown>;
+    };
+    expect(sent.op).toBe('goal_bootstrap');
+    expect(sent.sid).toBe(session.id);
+    expect(sent.p).toEqual({
+      obj: 'Start from the goal immediately',
+      st: 'active',
+    });
+
+    commandSocket!.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: sent.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'goal_bootstrap',
+      ok: 1,
+    });
+    commandSocket!.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'snap',
+      s: {
+        ...toWireSession({
+          ...session,
+          nativeSessionId: 'native-bootstrapped',
+          status: 'running',
+          assistantState: 'working',
+          goal: {
+            threadId: 'native-bootstrapped',
+            objective: 'Start from the goal immediately',
+            status: 'active',
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: '2026-04-09T10:00:00.000Z',
+            updatedAt: '2026-04-09T10:00:00.000Z',
+          },
+        }),
+        goal: {
+          tid: 'native-bootstrapped',
+          obj: 'Start from the goal immediately',
+          st: 'active',
+          tu: 0,
+          tsu: 0,
+          ca: Date.parse('2026-04-09T10:00:00.000Z'),
+          ua: Date.parse('2026-04-09T10:00:00.000Z'),
+        },
+      },
+    });
+
+    await promise;
+
+    const updated = store.getSessions(session.projectId).find(item => item.id === session.id);
+    expect(updated?.nativeSessionId).toBe('native-bootstrapped');
+    expect(updated?.goal?.objective).toBe('Start from the goal immediately');
+  });
+
   it('passes abort signals through snapshot loads triggered by tab activation', async () => {
     const store = useWebSessionStore();
     const session = makeSession({

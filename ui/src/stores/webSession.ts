@@ -4616,6 +4616,32 @@ export const useWebSessionStore = defineStore('web-session', () => {
     );
   }
 
+  async function bootstrapGoal(
+    sessionId: string,
+    objective: string,
+    status: WebSessionGoal['status'] = 'active'
+  ) {
+    await runRuntimeMutationCommand(
+      sessionId,
+      'goal_bootstrap',
+      { obj: objective, st: status },
+      {
+        label: 'goal_bootstrap',
+        predicate: () => {
+          const session = findSessionById(sessionId);
+          if (!session) {
+            return false;
+          }
+          return (
+            session.goal?.objective?.trim() === objective.trim() &&
+            Boolean(session.nativeSessionId) &&
+            getLiveState(sessionId).running
+          );
+        },
+      }
+    );
+  }
+
   async function pauseGoal(sessionId: string) {
     await runRuntimeMutationCommand(sessionId, 'goal_pause', {}, {
       label: 'goal_pause',
@@ -4892,6 +4918,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updateWorkflowMode,
     refreshGoal,
     setGoal,
+    bootstrapGoal,
     pauseGoal,
     resumeGoal,
     clearGoal,

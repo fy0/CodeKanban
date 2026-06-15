@@ -279,6 +279,17 @@ export class WebSessionCommandChannel {
     });
   }
 
+  async bootstrapGoal(sessionId, input = {}) {
+    return await this._executeCommand({
+      operation: "goal_bootstrap",
+      sessionId,
+      payload: {
+        obj: ensureString(input.objective, "objective"),
+        st: ensureOptionalString(input.status),
+      },
+    });
+  }
+
   async pauseGoal(sessionId) {
     return await this._executeCommand({
       operation: "goal_pause",

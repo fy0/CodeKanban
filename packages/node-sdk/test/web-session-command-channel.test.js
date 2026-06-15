@@ -279,3 +279,42 @@ test('WebSessionCommandChannel setGoal sends the expected payload', async () => 
   await promise;
   channel.close();
 });
+
+test('WebSessionCommandChannel bootstrapGoal sends the expected payload', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const channel = new WebSessionCommandChannel({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/ws',
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  await channel.waitForOpen();
+  const promise = channel.bootstrapGoal('ws1', {
+    objective: 'Generate the first draft immediately',
+    status: 'active',
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const socket = FakeWebSocket.instances[0];
+  assert.equal(socket.sent[0].op, 'goal_bootstrap');
+  assert.deepEqual(socket.sent[0].p, {
+    obj: 'Generate the first draft immediately',
+    st: 'active',
+  });
+
+  socket.emitJson({
+    v: 1,
+    k: 'ack',
+    rid: socket.sent[0].rid,
+    sid: 'ws1',
+    ts: 1710000000030,
+    op: 'goal_bootstrap',
+    ok: 1,
+  });
+
+  await promise;
+  channel.close();
+});

@@ -118,6 +118,9 @@ func (m *Manager) mapThreadReadItem(
 		}
 		result.Kind = "user"
 		result.Text = strings.TrimSpace(strings.Join(texts, "\n"))
+		if isGoalBootstrapPrompt(result.Text) && len(attachments) == 0 {
+			return HistoryItem{}, nil
+		}
 		result.Attachments = attachments
 		return result, nil
 	case "agentMessage":
@@ -499,6 +502,7 @@ func (m *Manager) syncSessionFromThreadSource(
 
 	metadataUpdates := map[string]any{
 		"source_kind":       string(defaultSessionBackend(AgentCodex)),
+		"native_session_id": nilIfEmpty(remote.Summary.ID),
 		"source_created_at": remote.Summary.CreatedAt,
 		"source_updated_at": remote.Summary.UpdatedAt,
 		"last_synced_at":    time.Now(),
@@ -544,6 +548,14 @@ func (m *Manager) syncSessionFromThreadSource(
 			historyItem, itemErr := m.mapThreadReadItem(rawItem, 0)
 			if itemErr != nil {
 				return SessionSnapshot{}, itemErr
+			}
+			if strings.TrimSpace(historyItem.ID) == "" &&
+				strings.TrimSpace(historyItem.Kind) == "" &&
+				strings.TrimSpace(historyItem.ItemType) == "" &&
+				strings.TrimSpace(historyItem.Text) == "" &&
+				historyItem.Tool == nil &&
+				len(historyItem.Attachments) == 0 {
+				continue
 			}
 			historyItem.SourceTurnID = nilIfEmptyHistory(turnID)
 			historyItems = append(historyItems, historyItem)

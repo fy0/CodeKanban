@@ -483,6 +483,9 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 		if text == "" && len(attachments) == 0 {
 			return nil
 		}
+		if isGoalBootstrapPrompt(text) && len(attachments) == 0 {
+			return nil
+		}
 		return []HistoryItem{{
 			ID:          utils.NewID(),
 			Kind:        "user",

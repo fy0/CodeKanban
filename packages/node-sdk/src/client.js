@@ -1383,6 +1383,15 @@ export class CodeKanbanClient {
     );
   }
 
+  async bootstrapWebSessionGoal({ sessionId, objective, status }) {
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.bootstrapGoal(sessionId, {
+        objective,
+        status: ensureOptionalString(status),
+      }),
+    );
+  }
+
   async pauseWebSessionGoal({ sessionId }) {
     return await this.withWebSessionCommandChannel((channel) =>
       channel.pauseGoal(sessionId),

@@ -366,6 +366,7 @@ func (m *Manager) runCodexAppServerSession(
 ) {
 	client, stderr, err := startCodexAppServer(ctx, m.cfg.CodexPath, session.Cwd)
 	if err != nil {
+		run.resolveBootstrap(err)
 		m.handleRunFailure(session.ID, session, run, err)
 		return
 	}
@@ -393,23 +394,45 @@ func (m *Manager) runCodexAppServerSession(
 			"experimentalApi": true,
 		},
 	}); err != nil {
+		run.resolveBootstrap(err)
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
 	}
 
 	threadID, err := m.startOrResumeCodexThread(ctx, session, run, client)
 	if err != nil {
+		run.resolveBootstrap(err)
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
 	}
 
 	turnResponse, err := client.request(ctx, "turn/start", codexTurnStartParams(session, threadID, text, attachments))
 	if err != nil {
+		run.resolveBootstrap(err)
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
 	}
 	if turnID := parseCodexTurnID(turnResponse.Result); turnID != "" {
 		run.currentToolMessage = turnID
+	}
+	if strings.TrimSpace(run.bootstrapGoalObjective) != "" {
+		if _, err := client.request(ctx, "thread/goal/set", map[string]any{
+			"threadId":  threadID,
+			"objective": strings.TrimSpace(run.bootstrapGoalObjective),
+			"status":    string(run.bootstrapGoalState),
+		}); err != nil {
+			run.resolveBootstrap(err)
+			m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
+			return
+		}
+		if err := m.syncCodexGoalState(ctx, session, client, threadID); err != nil {
+			run.resolveBootstrap(err)
+			m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
+			return
+		}
+		run.resolveBootstrap(nil)
+	} else {
+		run.resolveBootstrap(nil)
 	}
 
 	incoming := client.incoming

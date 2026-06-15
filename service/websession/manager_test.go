@@ -811,6 +811,62 @@ func TestHandleGoalSetCommandRejectsOldCodexVersion(t *testing.T) {
 	}
 }
 
+func TestHandleGoalBootstrapCommandStartsHiddenCodexRun(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_goal_bootstrap","sid":%q,"op":"goal_bootstrap","p":{"obj":"Generate a first draft immediately","st":"active"}}`, created.ID)),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	if len(conn.frames) < 2 {
+		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "ack" {
+		t.Fatalf("expected first frame to be ack, got %#v", conn.frames[0])
+	}
+	last := conn.frames[len(conn.frames)-1]
+	if last.Kind != "snap" || last.Session == nil {
+		t.Fatalf("expected final frame to be snapshot, got %#v", last)
+	}
+	if last.Session.Goal == nil {
+		t.Fatalf("expected snapshot to include goal, got %#v", last.Session)
+	}
+	if last.Session.Goal.Objective != "Generate a first draft immediately" {
+		t.Fatalf("expected snapshot goal objective to be hydrated, got %#v", last.Session.Goal)
+	}
+	if last.Session.NativeSessionID == nil || strings.TrimSpace(*last.Session.NativeSessionID) == "" {
+		t.Fatalf("expected snapshot to include native session id, got %#v", last.Session)
+	}
+}
+
 func TestHandleScheduleSendCommandRejectsMissingCodexBinary(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -5065,6 +5121,10 @@ func writeFakeCodexAppServerCLI(t *testing.T, mode string) string {
 
 	path := filepath.Join(t.TempDir(), "fake-codex-app-server.js")
 	script := fmt.Sprintf(`#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  process.stdout.write('codex 0.137.0\n');
+  process.exit(0);
+}
 const readline = require('readline');
 const fs = require('fs');
 
@@ -5072,6 +5132,29 @@ const mode = %q;
 const threadId = 'thread_test';
 const turnId = 'turn_test';
 const stateFile = __filename + '.state';
+const goalStateFile = stateFile + '.goal.json';
+
+function readGoalState() {
+  try {
+    return JSON.parse(fs.readFileSync(goalStateFile, 'utf8'));
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeGoalState(value) {
+  if (!value) {
+    try {
+      fs.unlinkSync(goalStateFile);
+    } catch (error) {
+      // Ignore missing state files in tests.
+    }
+    return;
+  }
+  fs.writeFileSync(goalStateFile, JSON.stringify(value));
+}
+
+let goalState = readGoalState();
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + '\n');
@@ -5396,6 +5479,67 @@ rl.on('line', line => {
       ? message.params.threadId
       : threadId;
     respondThread(message.id, resumedThreadId);
+    return;
+  }
+
+  if (message.method === 'thread/goal/set') {
+    const params = message.params || {};
+    const nextObjective =
+      typeof params.objective === 'string' && params.objective.trim()
+        ? params.objective.trim()
+        : goalState && typeof goalState.objective === 'string'
+          ? goalState.objective
+          : '';
+    const nextStatus =
+      typeof params.status === 'string' && params.status.trim()
+        ? params.status.trim()
+        : goalState && typeof goalState.status === 'string'
+          ? goalState.status
+          : 'active';
+    if (!nextObjective) {
+      send({
+        id: message.id,
+        error: { message: 'objective is required' },
+      });
+      return;
+    }
+    const timestamp = 1712797200;
+    goalState = {
+      threadId,
+      objective: nextObjective,
+      status: nextStatus,
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: goalState && goalState.createdAt ? goalState.createdAt : timestamp,
+      updatedAt: timestamp,
+    };
+    writeGoalState(goalState);
+    send({
+      id: message.id,
+      result: {
+        goal: goalState,
+      },
+    });
+    send({
+      method: 'thread/goal/updated',
+      params: {
+        threadId,
+        turnId: null,
+        goal: goalState,
+      },
+    });
+    return;
+  }
+
+  if (message.method === 'thread/goal/get') {
+    goalState = readGoalState();
+    send({
+      id: message.id,
+      result: {
+        goal: goalState,
+      },
+    });
     return;
   }
 
