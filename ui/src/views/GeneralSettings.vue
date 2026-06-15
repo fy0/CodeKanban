@@ -1851,7 +1851,7 @@
             >
               <n-checkbox
                 :checked="settingsBackupSelectedSectionKeySet.has(section.key)"
-                @update:checked="checked => handleToggleSettingsBackupSection(section.key, checked)"
+                @update:checked="handleToggleSettingsBackupSection(section.key, $event)"
               >
                 <span class="settings-backup-section-item__title">{{ section.label }}</span>
               </n-checkbox>

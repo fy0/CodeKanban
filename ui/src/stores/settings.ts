@@ -250,6 +250,12 @@ type PersistedGeneralSettings = Omit<GeneralSettings, 'followSystemThemeSetting'
   followSystemTheme: FollowSystemThemeSetting;
 };
 
+type ParsedGeneralSettingsInput = Partial<Omit<PersistedGeneralSettings, 'webSessionQuickInput'>> & {
+  webSessionQuickInput?: Partial<WebSessionQuickInputSettings>;
+  panelShortcut?: PanelShortcutSetting;
+  followSystemTheme?: unknown;
+};
+
 type LoadSettingsResult = {
   settings: GeneralSettings;
   shouldPersist: boolean;
@@ -975,12 +981,7 @@ function loadSettings(): LoadSettingsResult {
   try {
     const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored) as
-        | (Partial<PersistedGeneralSettings> & {
-            panelShortcut?: PanelShortcutSetting;
-            followSystemTheme?: unknown;
-          })
-        | null;
+      const parsed = JSON.parse(stored) as ParsedGeneralSettingsInput | null;
       return loadSettingsFromParsed(parsed);
     }
   } catch (error) {
@@ -1016,7 +1017,7 @@ function serializeSettingsForBackup(settings: GeneralSettings): SettingsBackupCl
 }
 
 function deserializeSettingsFromBackup(value: unknown): GeneralSettings {
-  const parsed = value as Partial<SettingsBackupClientSettings> | null | undefined;
+  const parsed = value as ParsedGeneralSettingsInput | null | undefined;
   const loadResult = loadSettingsFromParsed(parsed);
   return loadResult.settings;
 }
@@ -1088,13 +1089,7 @@ function cloneDefaultSettings(): GeneralSettings {
 }
 
 function loadSettingsFromParsed(
-  parsed:
-    | (Partial<PersistedGeneralSettings> & {
-        panelShortcut?: PanelShortcutSetting;
-        followSystemTheme?: unknown;
-      })
-    | null
-    | undefined
+  parsed: ParsedGeneralSettingsInput | null | undefined
 ): LoadSettingsResult {
   if (!parsed || typeof parsed !== 'object') {
     return {
