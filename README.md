@@ -78,7 +78,7 @@ After installing the CLI and skills, restart Codex so the new skill is discovere
 ### Requirements
 - **Node.js**: v20.19.0+ or v22.12.0+
 - **Go**: 1.24.6+
-- **Package Manager**: pnpm (recommended)
+- **Package Manager**: pnpm 9.15.9
 
 ### Install Dependencies
 

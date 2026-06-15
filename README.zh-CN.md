@@ -55,7 +55,7 @@ npm install -g codekanban@latest
 ### 环境要求
 - **Node.js**: v20.19.0+ 或 v22.12.0+
 - **Go**: 1.24.6+
-- **包管理器**: pnpm（推荐）
+- **包管理器**: pnpm 9.15.9
 
 ### 安装依赖
 

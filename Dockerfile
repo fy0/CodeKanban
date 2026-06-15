@@ -4,7 +4,7 @@ FROM node:22.12-alpine AS frontend-builder
 WORKDIR /app/ui
 
 # Install pnpm using npm
-RUN npm install -g pnpm@latest
+RUN npm install -g pnpm@9.15.9
 
 # Copy frontend package files
 COPY ui/package.json ui/pnpm-lock.yaml ./
