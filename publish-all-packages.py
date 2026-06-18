@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 
 
+MIN_NODE_VERSION_FOR_NPM_OIDC = (22, 14, 0)
+MIN_NPM_VERSION_FOR_OIDC = (11, 5, 1)
+
+
 def run_command(cmd: list[str], cwd: Path | None = None, shell: bool = False) -> int:
     """执行命令并实时输出"""
     print(f"\n[执行] {' '.join(cmd)}")
@@ -32,6 +36,77 @@ def run_command(cmd: list[str], cwd: Path | None = None, shell: bool = False) ->
 def is_github_actions() -> bool:
     """检查是否在 GitHub Actions 环境中运行"""
     return os.getenv('GITHUB_ACTIONS') == 'true'
+
+
+def command_output(cmd: list[str], cwd: Path | None = None) -> str:
+    """执行命令并返回 stdout"""
+    result = subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if result.returncode != 0:
+        raise RuntimeError(result.stdout.strip() or f"command failed: {' '.join(cmd)}")
+    return result.stdout.strip()
+
+
+def parse_version(value: str) -> tuple[int, int, int]:
+    """解析 node/npm 版本号，忽略 v 前缀和预发布后缀"""
+    cleaned = value.strip().lstrip('v').split('-', 1)[0]
+    parts = cleaned.split('.')
+    version = []
+    for part in parts[:3]:
+        try:
+            version.append(int(part))
+        except ValueError:
+            version.append(0)
+    while len(version) < 3:
+        version.append(0)
+    return tuple(version)
+
+
+def check_github_actions_oidc(root_dir: Path) -> int:
+    """校验 GitHub Actions OIDC 发布所需环境"""
+    print("\n[认证] GitHub Actions 环境：使用 npm Trusted Publishing (OIDC)")
+
+    request_token = os.getenv('ACTIONS_ID_TOKEN_REQUEST_TOKEN')
+    request_url = os.getenv('ACTIONS_ID_TOKEN_REQUEST_URL')
+    if not request_token or not request_url:
+        print("[错误] 未检测到 GitHub Actions OIDC 请求环境变量")
+        print("[提示] 请确认 workflow job 配置了 permissions.id-token: write，并使用 GitHub-hosted runner")
+        return 1
+
+    try:
+        node_version_text = command_output(["node", "--version"], cwd=root_dir)
+        npm_version_text = command_output(["npm", "--version"], cwd=root_dir)
+    except RuntimeError as exc:
+        print(f"[错误] 检查 node/npm 版本失败: {exc}")
+        return 1
+
+    node_version = parse_version(node_version_text)
+    npm_version = parse_version(npm_version_text)
+    print(f"[认证] Node.js: {node_version_text}")
+    print(f"[认证] npm: {npm_version_text}")
+
+    if node_version < MIN_NODE_VERSION_FOR_NPM_OIDC:
+        required = ".".join(str(part) for part in MIN_NODE_VERSION_FOR_NPM_OIDC)
+        print(f"[错误] npm OIDC 发布需要 Node.js >= {required}")
+        return 1
+
+    if npm_version < MIN_NPM_VERSION_FOR_OIDC:
+        required = ".".join(str(part) for part in MIN_NPM_VERSION_FOR_OIDC)
+        print(f"[错误] npm OIDC 发布需要 npm >= {required}")
+        return 1
+
+    print("[认证] OIDC 环境检查通过，npm publish 将在发布时换取短期令牌")
+    return 0
+
+
+def check_local_npm_auth(root_dir: Path) -> int:
+    """本地发布仍使用当前 npm 登录状态"""
+    print("\n[认证] 本地环境：检查 npm 登录状态...")
+    auth_result = run_command(["npm", "whoami"], cwd=root_dir)
+    if auth_result != 0:
+        print("\n[错误] npm whoami 失败，请先运行 npm login 或改用 GitHub Actions OIDC 发布")
+        return auth_result
+    print("[认证] npm 登录状态正常")
+    return 0
 
 
 def main():
@@ -66,42 +141,19 @@ def main():
         "linux-arm64"
     ]
 
-    # 调试信息：检查 npm 认证
-    print("\n[调试] 检查 npm 认证状态...")
-    check_auth_cmd = ["npm", "whoami"]
-    auth_result = run_command(check_auth_cmd, cwd=root_dir)
-
-    if auth_result != 0:
-        print("\n[警告] npm whoami 失败，可能未正确认证")
-        print("[调试] 检查 .npmrc 配置...")
-        npmrc_path = Path.home() / ".npmrc"
-        if npmrc_path.exists():
-            print(f"[调试] 找到 .npmrc: {npmrc_path}")
-            # 不打印内容，避免泄露 token
-        else:
-            print(f"[警告] 未找到 .npmrc: {npmrc_path}")
-
-        if is_github_actions():
-            print("[调试] 在 GitHub Actions 中，检查 NODE_AUTH_TOKEN 环境变量...")
-            if os.getenv('NODE_AUTH_TOKEN'):
-                print("[调试] NODE_AUTH_TOKEN 已设置 (长度: {})".format(len(os.getenv('NODE_AUTH_TOKEN', ''))))
-            else:
-                print("[错误] NODE_AUTH_TOKEN 未设置！")
-                return 1
+    if is_github_actions():
+        auth_result = check_github_actions_oidc(root_dir)
     else:
-        print("[调试] npm 认证成功")
+        auth_result = check_local_npm_auth(root_dir)
+    if auth_result != 0:
+        return auth_result
 
     # 构建发布命令
     publish_cmd = ["npm", "publish", "--access", "public"]
-
-    # Granular access tokens 在某些情况下与 --provenance 不兼容
-    # 暂时禁用以测试基本发布功能
-    use_provenance = False
-    if is_github_actions() and use_provenance:
-        publish_cmd.append("--provenance")
-        print("\n[信息] 检测到 GitHub Actions 环境，将使用 --provenance 发布")
+    if is_github_actions():
+        print("\n[信息] 使用 npm Trusted Publishing (OIDC) 发布")
     else:
-        print("\n[信息] 使用标准发布模式（不使用 provenance）")
+        print("\n[信息] 使用本地 npm 登录凭据发布")
 
     # 发布所有平台包
     print("\n[步骤 1/2] 发布平台包")
