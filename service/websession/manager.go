@@ -131,6 +131,7 @@ type activeRun struct {
 	lastError              string
 	lastErrorCode          string
 	transportRetrySeen     bool
+	transportRemoteURL     string
 	cmd                    *exec.Cmd
 	cancel                 context.CancelFunc
 	done                   chan struct{}

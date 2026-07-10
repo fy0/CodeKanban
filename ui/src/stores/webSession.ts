@@ -360,6 +360,7 @@ export interface WebSessionLiveState {
   retry?: {
     code: string;
     message: string;
+    remoteUrl?: string;
     attempt?: number;
     maxAttempts?: number;
   };
@@ -1247,9 +1248,14 @@ function getTransportRetryPayload(payload?: Record<string, unknown>) {
     payload.maxAttempts > 0
       ? Math.trunc(payload.maxAttempts)
       : undefined;
+  const remoteUrl =
+    typeof payload.remoteUrl === 'string' && payload.remoteUrl.trim()
+      ? payload.remoteUrl.trim()
+      : undefined;
   return {
     code: 'transport_retrying',
     message: String(payload.txt ?? '').trim(),
+    remoteUrl,
     attempt,
     maxAttempts,
   };
@@ -2997,6 +3003,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       | {
           code: string;
           message: string;
+          remoteUrl?: string;
           attempt?: number;
           maxAttempts?: number;
           updatedAt: number;
@@ -3129,6 +3136,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
             retry: {
               code: retryState.code,
               message: retryState.message,
+              remoteUrl: retryState.remoteUrl,
               attempt: retryState.attempt,
               maxAttempts: retryState.maxAttempts,
             },

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -162,6 +163,7 @@ type codexTransportRetryInfo struct {
 	Message     string
 	Attempt     int
 	MaxAttempts int
+	RemoteURL   string
 }
 
 func startCodexAppServer(ctx context.Context, codexPath, cwd string) (*codexAppServerClient, io.Reader, error) {
@@ -399,12 +401,13 @@ func (m *Manager) runCodexAppServerSession(
 		return
 	}
 
-	threadID, err := m.startOrResumeCodexThread(ctx, session, run, client)
+	threadID, modelProvider, err := m.startOrResumeCodexThread(ctx, session, run, client)
 	if err != nil {
 		run.resolveBootstrap(err)
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
 	}
+	run.transportRemoteURL = readCodexRemoteURL(ctx, client, session.Cwd, modelProvider)
 
 	turnResponse, err := client.request(ctx, "turn/start", codexTurnStartParams(session, threadID, text, attachments))
 	if err != nil {
@@ -576,7 +579,7 @@ func (m *Manager) startOrResumeCodexThread(
 	session tables.WebSessionTable,
 	run *activeRun,
 	client *codexAppServerClient,
-) (string, error) {
+) (string, string, error) {
 	existingThreadID := ""
 	if session.NativeSessionID != nil {
 		existingThreadID = strings.TrimSpace(*session.NativeSessionID)
@@ -592,24 +595,86 @@ func (m *Manager) startOrResumeCodexThread(
 		response, err = client.request(ctx, "thread/start", codexThreadStartParams(session))
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
+	responsePayload := decodeRawObject(response.Result)
 	threadID := parseCodexThreadID(response.Result)
 	if threadID == "" {
 		threadID = existingThreadID
 	}
 	if threadID == "" {
-		return "", fmt.Errorf("codex app-server did not return a thread id")
+		return "", "", fmt.Errorf("codex app-server did not return a thread id")
 	}
 	if err := m.updateRuntimeState(context.Background(), session.ID, map[string]any{
 		"native_session_id": threadID,
 		"updated_at":        time.Now(),
 	}); err != nil {
-		return "", err
+		return "", "", err
 	}
 	run.currentToolMessage = threadID
-	return threadID, nil
+	return threadID, strings.TrimSpace(stringValue(responsePayload["modelProvider"])), nil
+}
+
+func readCodexRemoteURL(
+	ctx context.Context,
+	client *codexAppServerClient,
+	cwd string,
+	activeProvider string,
+) string {
+	if client == nil {
+		return ""
+	}
+	response, err := client.request(ctx, "config/read", map[string]any{
+		"cwd":           strings.TrimSpace(cwd),
+		"includeLayers": false,
+	})
+	if err != nil {
+		return ""
+	}
+	return parseCodexRemoteURL(response.Result, activeProvider)
+}
+
+func parseCodexRemoteURL(raw json.RawMessage, activeProvider string) string {
+	result := decodeRawObject(raw)
+	config := decodeRawObject(result["config"])
+	providerName := firstNonEmpty(
+		strings.TrimSpace(activeProvider),
+		strings.TrimSpace(stringValue(config["model_provider"])),
+	)
+	if providerName == "" {
+		return ""
+	}
+
+	providers := decodeRawObject(config["model_providers"])
+	provider := decodeRawObject(providers[providerName])
+	if len(provider) == 0 {
+		for name, candidate := range providers {
+			if strings.EqualFold(strings.TrimSpace(name), providerName) {
+				provider = decodeRawObject(candidate)
+				break
+			}
+		}
+	}
+	return sanitizeCodexRemoteURL(stringValue(provider["base_url"]))
+}
+
+func sanitizeCodexRemoteURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return ""
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.RawFragment = ""
+	return parsed.String()
 }
 
 func (m *Manager) handleCodexAppServerMessage(
@@ -659,6 +724,7 @@ func (m *Manager) handleCodexAppServerMessage(
 	case "error":
 		run.lastError = parseCodexTurnError(message.Params)
 		if retryInfo, ok := classifyCodexTransportRetryMessage(run.lastError); ok {
+			retryInfo = retryInfo.withRemoteURL(run.transportRemoteURL)
 			run.transportRetrySeen = true
 			m.appendRunNote(session.ID, session, run, codexRetryNoteLevel, retryInfo.Message, retryInfo.payload())
 			run.lastError = ""
@@ -753,7 +819,22 @@ func (i codexTransportRetryInfo) payload() map[string]any {
 	if i.MaxAttempts > 0 {
 		payload["maxAttempts"] = i.MaxAttempts
 	}
+	if strings.TrimSpace(i.RemoteURL) != "" {
+		payload["remoteUrl"] = strings.TrimSpace(i.RemoteURL)
+	}
 	return payload
+}
+
+func (i codexTransportRetryInfo) withRemoteURL(remoteURL string) codexTransportRetryInfo {
+	remoteURL = strings.TrimSpace(remoteURL)
+	if remoteURL == "" {
+		return i
+	}
+	i.RemoteURL = remoteURL
+	if !strings.Contains(i.Message, remoteURL) {
+		i.Message = strings.TrimSpace(i.Message) + "\n" + remoteURL
+	}
+	return i
 }
 
 func (m *Manager) handleCodexAppServerItemStarted(

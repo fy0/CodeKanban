@@ -2121,6 +2121,12 @@ func TestCodexAppServerTransportRetryPersistsAsNoteAndCompletes(t *testing.T) {
 		if got := int(numberValue(event.Payload["maxAttempts"])); got != 5 {
 			t.Fatalf("expected max attempts 5, got %d", got)
 		}
+		if got := stringValue(event.Payload["remoteUrl"]); got != "https://proxy.example.test/v1" {
+			t.Fatalf("expected sanitized retry remote URL, got %q", got)
+		}
+		if got := stringValue(event.Payload["txt"]); !strings.HasSuffix(got, "\nhttps://proxy.example.test/v1") {
+			t.Fatalf("expected retry note text to include the remote URL, got %q", got)
+		}
 		break
 	}
 	if !retryNoteFound {
@@ -2140,11 +2146,69 @@ func TestCodexAppServerTransportRetryPersistsAsNoteAndCompletes(t *testing.T) {
 			continue
 		}
 		retryItemFound = true
+		if got := stringValue(item.Payload["remoteUrl"]); got != "https://proxy.example.test/v1" {
+			t.Fatalf("expected projected retry remote URL, got %q", got)
+		}
+		if !strings.HasSuffix(item.Text, "\nhttps://proxy.example.test/v1") {
+			t.Fatalf("expected projected retry text to include the remote URL, got %q", item.Text)
+		}
 		break
 	}
 	if !retryItemFound {
 		t.Fatalf("expected projected retry note in history items, got %#v", history.Items)
 	}
+}
+
+func TestCodexAppServerTransportRetryContinuesWhenRemoteURLIsUnavailable(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "config_read_unsupported_reconnect"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected session status %q, got %q", StatusDone, record.Status)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	for _, event := range rawEvents {
+		if event.Type != "note" || stringValue(event.Payload["code"]) != codexTransportRetryingCode {
+			continue
+		}
+		if got := stringValue(event.Payload["remoteUrl"]); got != "" {
+			t.Fatalf("expected retry note without an unverified remote URL, got %q", got)
+		}
+		if got := stringValue(event.Payload["txt"]); strings.Contains(got, "proxy.example.test") {
+			t.Fatalf("expected retry note text without a guessed remote URL, got %q", got)
+		}
+		return
+	}
+	t.Fatalf("expected transport retry note in raw events, got %#v", rawEvents)
 }
 
 func TestCodexAppServerTransportRetryExhaustionFailsRun(t *testing.T) {
@@ -5161,7 +5225,13 @@ function send(message) {
 }
 
 function respondThread(id, explicitThreadId) {
-  send({ id, result: { thread: { id: explicitThreadId || threadId } } });
+  send({
+    id,
+    result: {
+      modelProvider: 'TestProvider',
+      thread: { id: explicitThreadId || threadId },
+    },
+  });
 }
 
 function emitReasoning() {
@@ -5429,6 +5499,32 @@ rl.on('line', line => {
     return;
   }
 
+  if (message.method === 'config/read') {
+    if (mode === 'config_read_unsupported_reconnect') {
+      send({
+        id: message.id,
+        error: { code: -32601, message: 'config/read is unavailable' },
+      });
+      return;
+    }
+    send({
+      id: message.id,
+      result: {
+        config: {
+          model_provider: 'TestProvider',
+          model_providers: {
+            TestProvider: {
+              base_url:
+                'https://user:password@proxy.example.test/v1?token=secret#fragment',
+            },
+          },
+        },
+        origins: {},
+      },
+    });
+    return;
+  }
+
   if (message.method === 'thread/list') {
     const archived = !!(message.params && message.params.archived);
     if (mode === 'list_threads') {
@@ -5565,7 +5661,7 @@ rl.on('line', line => {
       return;
     }
 
-    if (mode === 'reconnect_then_success') {
+    if (mode === 'reconnect_then_success' || mode === 'config_read_unsupported_reconnect') {
       send({
         method: 'error',
         params: {

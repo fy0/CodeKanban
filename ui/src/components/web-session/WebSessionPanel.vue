@@ -753,7 +753,11 @@
                       <span class="live-orb"></span>
                       <div class="live-copy">
                         <div class="live-title">{{ liveStateLabel }}</div>
-                        <div class="live-detail" :class="{ 'is-placeholder': !liveStateDetail }">
+                        <div
+                          class="live-detail"
+                          :class="{ 'is-placeholder': !liveStateDetail }"
+                          :title="liveStateDetailTitle"
+                        >
                           {{ liveStateSecondaryText }}
                         </div>
                       </div>
@@ -4878,6 +4882,9 @@ const liveStateDetail = computed(() => {
   if (pendingUserInput.value?.prompt) {
     return pendingUserInput.value.prompt;
   }
+  if (displayLiveState.value.phase === 'retrying' && displayLiveState.value.retry?.remoteUrl) {
+    return displayLiveState.value.retry.remoteUrl.trim();
+  }
   if (displayLiveState.value.phase === 'retrying' && displayLiveState.value.retry?.message) {
     const message = displayLiveState.value.retry.message.trim();
     if (message && message !== liveStateLabel.value) {
@@ -4894,6 +4901,12 @@ const liveStateDetail = computed(() => {
     return displayLiveState.value.errorMessage;
   }
   return '';
+});
+const liveStateDetailTitle = computed(() => {
+  if (displayLiveState.value.phase !== 'retrying') {
+    return undefined;
+  }
+  return displayLiveState.value.retry?.remoteUrl?.trim() || undefined;
 });
 const liveStateSecondaryText = computed(() => {
   if (liveStateDetail.value) {

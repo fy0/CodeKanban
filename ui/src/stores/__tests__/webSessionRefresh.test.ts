@@ -1923,6 +1923,7 @@ describe('webSession loading behavior', () => {
             pl: {
               code: 'transport_retrying',
               txt: 'Reconnecting... 1/5',
+              remoteUrl: 'https://proxy.example.test/v1',
               attempt: 1,
               maxAttempts: 5,
             },
@@ -1941,6 +1942,7 @@ describe('webSession loading behavior', () => {
       phase: 'retrying',
       running: true,
       retry: expect.objectContaining({
+        remoteUrl: 'https://proxy.example.test/v1',
         attempt: 1,
         maxAttempts: 5,
       }),
