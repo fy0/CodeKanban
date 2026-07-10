@@ -150,6 +150,23 @@ const (
 	codexTurnOutcomeFailed
 )
 
+type codexTurnScope struct {
+	threadID string
+	turnID   string
+}
+
+func (s codexTurnScope) contains(params json.RawMessage) bool {
+	threadID := codexNotificationThreadID(params)
+	if threadID != "" && threadID != strings.TrimSpace(s.threadID) {
+		return false
+	}
+	turnID := codexNotificationTurnID(params)
+	if turnID != "" && strings.TrimSpace(s.turnID) != "" && turnID != strings.TrimSpace(s.turnID) {
+		return false
+	}
+	return true
+}
+
 const (
 	codexTransportRetryingCode       = "transport_retrying"
 	codexTransportRetryExhaustedCode = "transport_retry_exhausted"
@@ -415,9 +432,11 @@ func (m *Manager) runCodexAppServerSession(
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
 	}
-	if turnID := parseCodexTurnID(turnResponse.Result); turnID != "" {
+	turnID := parseCodexTurnID(turnResponse.Result)
+	if turnID != "" {
 		run.currentToolMessage = turnID
 	}
+	rootScope := codexTurnScope{threadID: threadID, turnID: turnID}
 	if strings.TrimSpace(run.bootstrapGoalObjective) != "" {
 		if _, err := client.request(ctx, "thread/goal/set", map[string]any{
 			"threadId":  threadID,
@@ -457,7 +476,7 @@ func (m *Manager) runCodexAppServerSession(
 				incoming = nil
 				continue
 			}
-			outcome, err := m.handleCodexAppServerMessage(session, run, client, message)
+			outcome, err := m.handleCodexAppServerMessage(session, run, client, rootScope, message)
 			if err != nil {
 				run.lastError = err.Error()
 				if outcome == codexTurnOutcomeFailed {
@@ -681,12 +700,17 @@ func (m *Manager) handleCodexAppServerMessage(
 	session tables.WebSessionTable,
 	run *activeRun,
 	client *codexAppServerClient,
+	rootScope codexTurnScope,
 	message codexAppServerIncoming,
 ) (codexTurnOutcome, error) {
+	isRootEvent := rootScope.contains(message.Params)
 	switch strings.TrimSpace(message.Method) {
 	case "":
 		return codexTurnOutcomeNone, nil
 	case "thread/started":
+		if !isRootEvent {
+			return codexTurnOutcomeNone, nil
+		}
 		if threadID := parseCodexThreadID(message.Params); threadID != "" {
 			_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
 				"native_session_id": threadID,
@@ -695,33 +719,47 @@ func (m *Manager) handleCodexAppServerMessage(
 		}
 		return codexTurnOutcomeNone, nil
 	case "turn/started":
+		if !isRootEvent {
+			return codexTurnOutcomeNone, nil
+		}
 		if turnID := parseCodexTurnID(message.Params); turnID != "" {
 			run.currentToolMessage = turnID
 		}
 		return codexTurnOutcomeNone, nil
 	case "item/started":
-		m.handleCodexAppServerItemStarted(session, run, message.Params)
+		m.handleCodexAppServerItemStarted(session, run, message.Params, isRootEvent)
 		return codexTurnOutcomeNone, nil
 	case "item/agentMessage/delta":
-		m.handleCodexAppServerAgentDelta(session, run, message.Params)
+		m.handleCodexAppServerAgentDelta(session, run, message.Params, isRootEvent)
 		return codexTurnOutcomeNone, nil
 	case "item/completed":
-		m.handleCodexAppServerItemCompleted(session, run, message.Params)
+		m.handleCodexAppServerItemCompleted(session, run, message.Params, isRootEvent)
 		return codexTurnOutcomeNone, nil
 	case "thread/tokenUsage/updated":
-		m.handleCodexAppServerUsage(session, run, message.Params)
+		if isRootEvent {
+			m.handleCodexAppServerUsage(session, run, message.Params)
+		}
 		return codexTurnOutcomeNone, nil
 	case "thread/goal/updated":
+		if !isRootEvent {
+			return codexTurnOutcomeNone, nil
+		}
 		if err := m.handleCodexAppServerGoalUpdated(session, message.Params); err != nil {
 			return codexTurnOutcomeFailed, err
 		}
 		return codexTurnOutcomeNone, nil
 	case "thread/goal/cleared":
+		if !isRootEvent {
+			return codexTurnOutcomeNone, nil
+		}
 		if err := m.handleCodexAppServerGoalCleared(session); err != nil {
 			return codexTurnOutcomeFailed, err
 		}
 		return codexTurnOutcomeNone, nil
 	case "error":
+		if !isRootEvent {
+			return codexTurnOutcomeNone, nil
+		}
 		run.lastError = parseCodexTurnError(message.Params)
 		if retryInfo, ok := classifyCodexTransportRetryMessage(run.lastError); ok {
 			retryInfo = retryInfo.withRemoteURL(run.transportRemoteURL)
@@ -737,6 +775,9 @@ func (m *Manager) handleCodexAppServerMessage(
 		}
 		return codexTurnOutcomeFailed, fmt.Errorf("%s", firstNonEmpty(run.lastError, "codex app-server turn failed"))
 	case "turn/completed":
+		if !isRootEvent {
+			return codexTurnOutcomeNone, nil
+		}
 		status, errMessage := parseCodexTurnCompletion(message.Params)
 		_ = m.finalizeLatestTurnUsage(context.Background(), session.ID)
 		if status == "completed" {
@@ -841,6 +882,7 @@ func (m *Manager) handleCodexAppServerItemStarted(
 	session tables.WebSessionTable,
 	run *activeRun,
 	params json.RawMessage,
+	isRootEvent bool,
 ) {
 	payload := decodeRawObject(params)
 	item := decodeRawObject(payload["item"])
@@ -850,7 +892,9 @@ func (m *Manager) handleCodexAppServerItemStarted(
 		return
 	case "agent_message":
 		messageID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
-		run.assistantMessageID = messageID
+		if isRootEvent {
+			run.assistantMessageID = messageID
+		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
@@ -867,12 +911,16 @@ func (m *Manager) handleCodexAppServerItemStarted(
 		toolInput := codexToolInput(item)
 		toolMeta := codexToolMeta(item)
 		toolID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
+		parentID := ""
+		if isRootEvent {
+			parentID = run.assistantMessageID
+		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
 			Type:      "tool_st",
 			RunID:     run.runID,
-			ParentID:  run.assistantMessageID,
+			ParentID:  parentID,
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
@@ -882,7 +930,9 @@ func (m *Manager) handleCodexAppServerItemStarted(
 				"meta": toolMeta,
 			},
 		})
-		m.trackActiveCodexToolStart(run, toolID, itemType, toolName, toolInput, toolMeta)
+		if isRootEvent {
+			m.trackActiveCodexToolStart(run, toolID, itemType, toolName, toolInput, toolMeta)
+		}
 	}
 }
 
@@ -890,10 +940,15 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 	session tables.WebSessionTable,
 	run *activeRun,
 	params json.RawMessage,
+	isRootEvent bool,
 ) {
 	payload := decodeRawObject(params)
-	messageID := firstNonEmpty(stringValue(payload["itemId"]), run.assistantMessageID, utils.NewID())
-	if run.assistantMessageID != messageID {
+	fallbackMessageID := ""
+	if isRootEvent {
+		fallbackMessageID = run.assistantMessageID
+	}
+	messageID := firstNonEmpty(stringValue(payload["itemId"]), fallbackMessageID, utils.NewID())
+	if isRootEvent && run.assistantMessageID != messageID {
 		run.assistantMessageID = messageID
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
@@ -927,6 +982,7 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 	session tables.WebSessionTable,
 	run *activeRun,
 	params json.RawMessage,
+	isRootEvent bool,
 ) {
 	payload := decodeRawObject(params)
 	item := decodeRawObject(payload["item"])
@@ -935,7 +991,11 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 	case "user_message":
 		return
 	case "agent_message":
-		messageID := firstNonEmpty(stringValue(item["id"]), run.assistantMessageID, utils.NewID())
+		fallbackMessageID := ""
+		if isRootEvent {
+			fallbackMessageID = run.assistantMessageID
+		}
+		messageID := firstNonEmpty(stringValue(item["id"]), fallbackMessageID, utils.NewID())
 		if !run.assistantDeltaWasSeen(messageID) {
 			text := stringValue(item["text"])
 			if strings.TrimSpace(text) != "" {
@@ -966,10 +1026,10 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 		})
 	default:
 		toolSucceeded := codexToolSucceeded(item)
-		if toolSucceeded && codexToolIsPlan(item) {
+		if isRootEvent && toolSucceeded && codexToolIsPlan(item) {
 			run.markCompletedPlanTool()
 		}
-		if toolSucceeded && itemType == "context_compaction" {
+		if isRootEvent && toolSucceeded && itemType == "context_compaction" {
 			record, err := m.GetSession(context.Background(), session.ID)
 			if err == nil {
 				_ = m.updateRuntimeState(
@@ -980,12 +1040,16 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			}
 		}
 		toolID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
+		parentID := ""
+		if isRootEvent {
+			parentID = run.assistantMessageID
+		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
 			Type:      "tool_end",
 			RunID:     run.runID,
-			ParentID:  run.assistantMessageID,
+			ParentID:  parentID,
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
@@ -995,7 +1059,9 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 				"meta": codexToolMeta(item),
 			},
 		})
-		m.trackActiveCodexToolComplete(run, toolID)
+		if isRootEvent {
+			m.trackActiveCodexToolComplete(run, toolID)
+		}
 	}
 }
 
@@ -1404,6 +1470,24 @@ func parseCodexTurnID(raw json.RawMessage) string {
 	payload := decodeRawObject(raw)
 	turn := decodeRawObject(payload["turn"])
 	return stringValue(turn["id"])
+}
+
+func codexNotificationThreadID(raw json.RawMessage) string {
+	payload := decodeRawObject(raw)
+	thread := decodeRawObject(payload["thread"])
+	return strings.TrimSpace(firstNonEmpty(
+		stringValue(payload["threadId"]),
+		stringValue(thread["id"]),
+	))
+}
+
+func codexNotificationTurnID(raw json.RawMessage) string {
+	payload := decodeRawObject(raw)
+	turn := decodeRawObject(payload["turn"])
+	return strings.TrimSpace(firstNonEmpty(
+		stringValue(payload["turnId"]),
+		stringValue(turn["id"]),
+	))
 }
 
 func parseCodexTurnError(raw json.RawMessage) string {

@@ -2234,6 +2234,124 @@ func TestSendMessageCodexAppServerAllowsNextTurnAfterTurnCompleted(t *testing.T)
 	waitForFakeCodexAppServerExitCount(t, codexPath, 2)
 }
 
+func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "sub_agent_thread_isolation")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "delegate and wait", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if manager.hasActiveRun(created.ID) {
+			_ = manager.AbortSession(created.ID)
+		}
+	})
+
+	waitForFile(t, codexPath+".state.child-completed")
+	waitForHistoryToolEvent(t, manager, created.ID, "child_plan", "tool_end")
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusRunning) {
+		t.Fatalf("expected root session to remain running after child completion, got %q", record.Status)
+	}
+	if record.NativeSessionID == nil || *record.NativeSessionID != "thread_test" {
+		t.Fatalf("expected child thread start to preserve root native session id, got %#v", record.NativeSessionID)
+	}
+	if !manager.hasActiveRun(created.ID) {
+		t.Fatal("expected active run to remain registered after child completion")
+	}
+
+	manager.mu.RLock()
+	run := manager.runs[created.ID]
+	manager.mu.RUnlock()
+	if run == nil {
+		t.Fatal("expected active run while root turn is still running")
+	}
+	run.mu.Lock()
+	_, tracksChildCommand := run.activeCalls["child_command"]
+	rootAssistantMessageID := run.assistantMessageID
+	completedPlanTool := run.completedPlanTool
+	lastError := run.lastError
+	run.mu.Unlock()
+	if tracksChildCommand {
+		t.Fatal("expected child command to be excluded from root active-call tracking")
+	}
+	if rootAssistantMessageID != "" {
+		t.Fatalf("expected child message not to replace root assistant message id, got %q", rootAssistantMessageID)
+	}
+	if completedPlanTool {
+		t.Fatal("expected child plan not to mark the root plan as completed")
+	}
+	if lastError != "" {
+		t.Fatalf("expected child error not to fail the root run, got %q", lastError)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if historyHasEvent(rawEvents, "run_done") || historyHasEvent(rawEvents, "run_fail") {
+		t.Fatalf("expected no terminal run event before root completion, got %#v", rawEvents)
+	}
+	for _, event := range rawEvents {
+		if event.Type == "usage" && int64(numberValue(event.Payload["in"])) == 999 {
+			t.Fatalf("expected child usage not to overwrite root context accounting, got %#v", event)
+		}
+	}
+	if err := os.WriteFile(codexPath+".state.release-root", []byte("1"), 0o644); err != nil {
+		t.Fatalf("release fake root turn: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+	rawEvents, err = manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error after root completion: %v", err)
+	}
+	terminalCount := 0
+	sawChildResult := false
+	sawRootAnswer := false
+	for _, event := range rawEvents {
+		if event.Type == "run_done" {
+			terminalCount++
+		}
+		if event.Type == "tool_end" && strings.Contains(eventToolOutput(event), "child result preserved") {
+			sawChildResult = true
+		}
+		if event.Type == "txt_d" && strings.Contains(stringValue(event.Payload["txt"]), "root-finished-after-child") {
+			sawRootAnswer = true
+		}
+	}
+	if terminalCount != 1 {
+		t.Fatalf("expected exactly one root run_done event, got %d", terminalCount)
+	}
+	if !sawChildResult {
+		t.Fatal("expected completed sub-agent wait result to be preserved")
+	}
+	if !sawRootAnswer {
+		t.Fatal("expected root answer after sub-agent completion")
+	}
+}
+
 func TestCodexAppServerTransportRetryPersistsAsNoteAndCompletes(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -4859,7 +4977,7 @@ func TestHandleCodexAppServerItemCompletedPreservesFullPlanOutput(t *testing.T) 
 	planText := testLongPlanText()
 	params := []byte(fmt.Sprintf(`{"item":{"type":"plan","id":"plan_test","text":%q}}`, planText))
 
-	manager.handleCodexAppServerItemCompleted(*session, run, params)
+	manager.handleCodexAppServerItemCompleted(*session, run, params, true)
 
 	history, err := manager.History(context.Background(), session.ID, 20, nil)
 	if err != nil {
@@ -5106,6 +5224,7 @@ func TestHandleCodexAppServerContextCompactionResetsContextEstimateBaseline(t *t
 		*session,
 		run,
 		[]byte(`{"item":{"type":"contextCompaction","id":"compact_test","status":"completed","summary":["Compacted previous messages into a summary."]}}`),
+		true,
 	)
 	manager.handleCodexAppServerUsage(
 		*session,
@@ -5416,8 +5535,11 @@ const fs = require('fs');
 const mode = %q;
 const threadId = 'thread_test';
 const turnId = 'turn_test';
+const childThreadId = 'thread_child';
+const childTurnId = 'turn_child';
 const stateFile = __filename + '.state';
 const goalStateFile = stateFile + '.goal.json';
+let activeThreadId = threadId;
 
 function readGoalState() {
   try {
@@ -5460,7 +5582,7 @@ function emitReasoning() {
     method: 'item/started',
     params: {
       item: { type: 'reasoning', id: 'rs_test', summary: [], content: [] },
-      threadId,
+      threadId: activeThreadId,
       turnId,
     },
   });
@@ -5468,7 +5590,7 @@ function emitReasoning() {
     method: 'item/completed',
     params: {
       item: { type: 'reasoning', id: 'rs_test', summary: [], content: [] },
-      threadId,
+      threadId: activeThreadId,
       turnId,
     },
   });
@@ -5479,7 +5601,7 @@ function emitPlan() {
     method: 'item/started',
     params: {
       item: { type: 'plan', id: 'plan_test', text: '## Plan\n- Review the repo\n- Make the change' },
-      threadId,
+      threadId: activeThreadId,
       turnId,
     },
   });
@@ -5487,7 +5609,7 @@ function emitPlan() {
     method: 'item/completed',
     params: {
       item: { type: 'plan', id: 'plan_test', text: '## Plan\n- Review the repo\n- Make the change' },
-      threadId,
+      threadId: activeThreadId,
       turnId,
     },
   });
@@ -5632,26 +5754,26 @@ function finishTurn(text) {
     method: 'item/started',
     params: {
       item: { type: 'agentMessage', id: 'msg_test', text: '', phase: 'final_answer', memoryCitation: null },
-      threadId,
+      threadId: activeThreadId,
       turnId,
     },
   });
   send({
     method: 'item/agentMessage/delta',
-    params: { threadId, turnId, itemId: 'msg_test', delta: text },
+    params: { threadId: activeThreadId, turnId, itemId: 'msg_test', delta: text },
   });
   send({
     method: 'item/completed',
     params: {
       item: { type: 'agentMessage', id: 'msg_test', text, phase: 'final_answer', memoryCitation: null },
-      threadId,
+      threadId: activeThreadId,
       turnId,
     },
   });
   send({
     method: 'thread/tokenUsage/updated',
     params: {
-      threadId,
+      threadId: activeThreadId,
       turnId,
       tokenUsage: {
         total: { inputTokens: 5, cachedInputTokens: 0, outputTokens: 3 },
@@ -5661,17 +5783,168 @@ function finishTurn(text) {
   send({
     method: 'turn/completed',
     params: {
-      threadId,
+      threadId: activeThreadId,
       turn: { id: turnId, items: [], status: 'completed', error: null },
     },
   });
+}
+
+function startSubAgentThreadIsolationTurn() {
+  send({
+    method: 'item/started',
+    params: {
+      item: {
+        type: 'collabAgentToolCall',
+        id: 'root_wait',
+        agentsStates: {},
+        receiverThreadIds: [childThreadId],
+        senderThreadId: threadId,
+        status: 'inProgress',
+        tool: 'wait',
+      },
+      threadId,
+      turnId,
+    },
+  });
+  send({
+    method: 'thread/started',
+    params: { thread: { id: childThreadId } },
+  });
+  send({
+    method: 'turn/started',
+    params: {
+      threadId: childThreadId,
+      turn: { id: childTurnId, items: [], status: 'inProgress', error: null },
+    },
+  });
+  send({
+    method: 'item/started',
+    params: {
+      item: { type: 'agentMessage', id: 'child_message', text: '', phase: 'commentary' },
+      threadId: childThreadId,
+      turnId: childTurnId,
+    },
+  });
+  send({
+    method: 'item/agentMessage/delta',
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      itemId: 'child_message',
+      delta: 'child still working',
+    },
+  });
+  send({
+    method: 'item/completed',
+    params: {
+      item: { type: 'agentMessage', id: 'child_message', text: 'child still working', phase: 'commentary' },
+      threadId: childThreadId,
+      turnId: childTurnId,
+    },
+  });
+  send({
+    method: 'item/started',
+    params: {
+      item: { type: 'plan', id: 'child_plan', text: 'child plan' },
+      threadId: childThreadId,
+      turnId: childTurnId,
+    },
+  });
+  send({
+    method: 'item/completed',
+    params: {
+      item: { type: 'plan', id: 'child_plan', text: 'child plan' },
+      threadId: childThreadId,
+      turnId: childTurnId,
+    },
+  });
+  send({
+    method: 'item/started',
+    params: {
+      item: { type: 'commandExecution', id: 'child_command', command: 'sleep 30' },
+      threadId: childThreadId,
+      turnId: childTurnId,
+    },
+  });
+  send({
+    method: 'thread/tokenUsage/updated',
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      tokenUsage: {
+        total: { inputTokens: 999, cachedInputTokens: 111, outputTokens: 222 },
+      },
+    },
+  });
+  send({
+    method: 'error',
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      error: { message: 'child failure should not fail root' },
+      willRetry: false,
+    },
+  });
+  send({
+    method: 'turn/completed',
+    params: {
+      threadId: childThreadId,
+      turn: {
+        id: childTurnId,
+        items: [],
+        status: 'failed',
+        error: { message: 'child failure should not fail root' },
+      },
+    },
+  });
+  fs.writeFileSync(stateFile + '.child-completed', '1');
+
+  const releaseTimer = setInterval(() => {
+    if (!fs.existsSync(stateFile + '.release-root')) {
+      return;
+    }
+    clearInterval(releaseTimer);
+    send({
+      method: 'item/completed',
+      params: {
+        item: {
+          type: 'commandExecution',
+          id: 'child_command',
+          command: 'sleep 30',
+          status: 'failed',
+          aggregatedOutput: 'child command stopped',
+        },
+        threadId: childThreadId,
+        turnId: childTurnId,
+      },
+    });
+    send({
+      method: 'item/completed',
+      params: {
+        item: {
+          type: 'collabAgentToolCall',
+          id: 'root_wait',
+          agentsStates: {
+            [childThreadId]: { status: 'errored', message: 'child result preserved' },
+          },
+          receiverThreadIds: [childThreadId],
+          senderThreadId: threadId,
+          status: 'completed',
+          tool: 'wait',
+        },
+        threadId,
+        turnId,
+      },
+    });
+    finishTurn('root-finished-after-child');
+  }, 10);
 }
 
 function failTurn(message) {
   send({
     method: 'turn/completed',
     params: {
-      threadId,
+      threadId: activeThreadId,
       turn: {
         id: turnId,
         items: [],
@@ -5795,6 +6068,7 @@ rl.on('line', line => {
     const resumedThreadId = message.params && typeof message.params.threadId === 'string'
       ? message.params.threadId
       : threadId;
+    activeThreadId = resumedThreadId;
     respondThread(message.id, resumedThreadId);
     return;
   }
@@ -5879,6 +6153,11 @@ rl.on('line', line => {
       writePersistentTurnCount(persistedTurns);
       finishTurn('done-' + persistedTurns);
       setTimeout(() => process.exit(0), 200);
+      return;
+    }
+
+    if (mode === 'sub_agent_thread_isolation') {
+      startSubAgentThreadIsolationTurn();
       return;
     }
 
@@ -6173,6 +6452,43 @@ func waitForFakeCodexAppServerExitCount(t *testing.T, codexPath string, count in
 
 	content, _ := os.ReadFile(exitPath)
 	t.Fatalf("expected fake codex app-server exit count %d, got %d", count, strings.Count(string(content), "\n"))
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected file %s to be created", path)
+}
+
+func waitForHistoryToolEvent(
+	t *testing.T,
+	manager *Manager,
+	sessionID string,
+	toolID string,
+	eventType string,
+) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		events, err := manager.store.readEvents(sessionID)
+		if err == nil {
+			for _, event := range events {
+				if event.Type == eventType && stringValue(event.Payload["tid"]) == toolID {
+					return
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %s event for tool %s", eventType, toolID)
 }
 
 func waitForPendingServerRequest(
