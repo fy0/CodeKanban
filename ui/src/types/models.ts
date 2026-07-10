@@ -307,7 +307,30 @@ export type WebSessionContextEstimateMode =
   | 'latest_turn_delta'
   | 'latest_token_count';
 
-export type WebSessionContextWindowSource = 'config' | 'default' | 'session_usage' | 'unavailable';
+export type WebSessionContextWindowSource =
+  | 'config'
+  | 'default'
+  | 'model_catalog'
+  | 'session_usage'
+  | 'unavailable';
+
+export type WebSessionReasoningEffort =
+  | 'default'
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
+  | 'ultra';
+
+export interface WebSessionCodexModelInfo {
+  model: string;
+  displayName: string;
+  defaultReasoningEffort: WebSessionReasoningEffort;
+  supportedReasoningEfforts: WebSessionReasoningEffort[];
+}
 
 export type WebSessionGoalStatus =
   | 'active'
@@ -329,9 +352,11 @@ export interface WebSessionGoal {
 }
 
 export interface WebSessionCodexRuntimeConfig {
+  model?: string;
   contextWindowTokens: number;
   compactLimitTokens: number;
-  source: Exclude<WebSessionContextWindowSource, 'session_usage' | 'unavailable'>;
+  source: WebSessionContextWindowSource;
+  models: WebSessionCodexModelInfo[];
   hasCodex: boolean;
   hasClaudeCode: boolean;
   codexVersion?: string | null;
@@ -358,7 +383,7 @@ export interface WebSessionSummary {
   claudeRuntime?: 'claude' | 'ccr';
   title: string;
   model: string;
-  reasoningEffort: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningEffort: WebSessionReasoningEffort;
   workflowMode: 'default' | 'plan';
   permissionLevel: 'default' | 'elevated' | 'yolo';
   activeCallTimeoutEnabled?: boolean;

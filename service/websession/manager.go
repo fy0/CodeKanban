@@ -1422,10 +1422,20 @@ func (m *Manager) RenameSession(ctx context.Context, sessionID, title string) (S
 }
 
 func (m *Manager) UpdateModel(ctx context.Context, sessionID, modelName string) (SessionSummary, error) {
-	return m.updateFields(ctx, sessionID, map[string]any{
-		"model":      strings.TrimSpace(modelName),
+	normalized := strings.TrimSpace(modelName)
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	updates := map[string]any{
+		"model":      normalized,
 		"updated_at": time.Now(),
-	})
+	}
+	if !sameCodexModel(record.Model, normalized) {
+		updates["session_context_window_tokens"] = 0
+		updates["session_context_window_observed_at"] = nil
+	}
+	return m.updateFields(ctx, sessionID, updates)
 }
 
 func (m *Manager) UpdateClaudeRuntime(
@@ -1757,25 +1767,27 @@ func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent
 		permissionLevel = PermissionLevelElevated
 	}
 	return m.updateFields(ctx, sessionID, map[string]any{
-		"agent":             string(normalized),
-		"claude_runtime":    string(defaultClaudeRuntime(normalized)),
-		"backend":           string(defaultSessionBackend(normalized)),
-		"model":             defaultModel(normalized, ""),
-		"reasoning_effort":  string(defaultReasoningEffort(normalized, "")),
-		"permission_level":  string(permissionLevel),
-		"native_session_id": nil,
-		"source_kind":       defaultSourceKind(normalized),
-		"sync_state":        SyncStateMissing,
-		"last_sync_mode":    "",
-		"source_created_at": nil,
-		"source_updated_at": nil,
-		"last_synced_at":    nil,
-		"thread_path":       nil,
-		"thread_preview":    nil,
-		"turn_count":        0,
-		"item_count":        0,
-		"sync_error":        nil,
-		"updated_at":        time.Now(),
+		"agent":                              string(normalized),
+		"claude_runtime":                     string(defaultClaudeRuntime(normalized)),
+		"backend":                            string(defaultSessionBackend(normalized)),
+		"model":                              defaultModel(normalized, ""),
+		"reasoning_effort":                   string(defaultReasoningEffort(normalized, "")),
+		"permission_level":                   string(permissionLevel),
+		"native_session_id":                  nil,
+		"source_kind":                        defaultSourceKind(normalized),
+		"sync_state":                         SyncStateMissing,
+		"last_sync_mode":                     "",
+		"source_created_at":                  nil,
+		"source_updated_at":                  nil,
+		"last_synced_at":                     nil,
+		"thread_path":                        nil,
+		"thread_preview":                     nil,
+		"turn_count":                         0,
+		"item_count":                         0,
+		"sync_error":                         nil,
+		"session_context_window_tokens":      0,
+		"session_context_window_observed_at": nil,
+		"updated_at":                         time.Now(),
 	})
 }
 
@@ -4539,8 +4551,8 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		if strings.TrimSpace(session.Model) != "" {
 			args = append(args, "--model", strings.TrimSpace(session.Model))
 		}
-		if effort := normalizeReasoningEffort(ReasoningEffort(session.ReasoningEffort)); effort != ReasoningEffortDefault {
-			args = append(args, "-c", fmt.Sprintf("reasoning_effort=%q", string(effort)))
+		if effort := normalizeCodexReasoningEffort(session.Model, ReasoningEffort(session.ReasoningEffort)); effort != ReasoningEffortDefault {
+			args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", string(effort)))
 		}
 		for _, attachment := range attachments {
 			args = append(args, "--image", attachment.Path)
@@ -5350,6 +5362,8 @@ func normalizeReasoningEffort(effort ReasoningEffort) ReasoningEffort {
 	switch strings.ToLower(strings.TrimSpace(string(effort))) {
 	case string(ReasoningEffortNone):
 		return ReasoningEffortNone
+	case string(ReasoningEffortMinimal):
+		return ReasoningEffortMinimal
 	case string(ReasoningEffortLow):
 		return ReasoningEffortLow
 	case string(ReasoningEffortMedium):
@@ -5358,9 +5372,44 @@ func normalizeReasoningEffort(effort ReasoningEffort) ReasoningEffort {
 		return ReasoningEffortHigh
 	case string(ReasoningEffortXHigh):
 		return ReasoningEffortXHigh
+	case string(ReasoningEffortMax):
+		return ReasoningEffortMax
+	case string(ReasoningEffortUltra):
+		return ReasoningEffortUltra
 	default:
 		return ReasoningEffortDefault
 	}
+}
+
+func normalizeCodexReasoningEffort(modelName string, effort ReasoningEffort) ReasoningEffort {
+	normalized := normalizeReasoningEffort(effort)
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	switch modelName {
+	case "gpt-5.6-sol", "gpt-5.6-terra":
+		switch normalized {
+		case ReasoningEffortDefault,
+			ReasoningEffortLow,
+			ReasoningEffortMedium,
+			ReasoningEffortHigh,
+			ReasoningEffortXHigh,
+			ReasoningEffortMax,
+			ReasoningEffortUltra:
+			return normalized
+		}
+	case "gpt-5.6-luna":
+		switch normalized {
+		case ReasoningEffortDefault,
+			ReasoningEffortLow,
+			ReasoningEffortMedium,
+			ReasoningEffortHigh,
+			ReasoningEffortXHigh,
+			ReasoningEffortMax:
+			return normalized
+		}
+	default:
+		return normalized
+	}
+	return ReasoningEffortDefault
 }
 
 func normalizeWorkflowMode(mode WorkflowMode) WorkflowMode {

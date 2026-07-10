@@ -2333,6 +2333,7 @@ import type {
   DeveloperConfig,
   WebSessionCodexRuntimeConfig,
   WebSessionContextWindowSource,
+  WebSessionReasoningEffort,
   WebSessionSummary,
 } from '@/types/models';
 import {
@@ -2391,6 +2392,7 @@ import {
   CUSTOM_MODEL_VALUE,
   MORE_MODELS_VALUE,
   defaultModelForAgent,
+  resolveCodexReasoningEfforts,
   type WebSessionClaudeRuntimeOption,
 } from '@/components/web-session/webSessionModelOptions';
 import {
@@ -2517,7 +2519,6 @@ const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
 const LIVE_TIME_TICK_MS = 1000;
-const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
 const DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS = 120;
 const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
 const MOBILE_COMPOSER_OVERLAY_OPEN_GUARD_MS = 180;
@@ -2931,7 +2932,7 @@ const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 const draftAgent = ref<'claude' | 'codex'>('codex');
 const draftClaudeRuntime = ref<WebSessionClaudeRuntimeOption>('claude');
 const draftModel = ref(defaultModelForAgent('codex'));
-const draftReasoningEffort = ref<'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'>('xhigh');
+const draftReasoningEffort = ref<WebSessionReasoningEffort>('xhigh');
 const draftWorkflowMode = ref<'default' | 'plan'>('default');
 const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>('elevated');
 const draftSessions = ref<DraftSessionTab[]>([]);
@@ -4202,7 +4203,7 @@ const selectedAgentLabel = computed(
     agentOptions.find(option => option.value === selectedAgent.value)?.label ?? selectedAgent.value
 );
 const selectedModelLabel = computed(
-  () => String(selectedModel.value || '').trim() || t('common.default')
+  () => getKnownModelLabel(selectedModel.value) || t('common.default')
 );
 const selectedReasoningEffortLabel = computed(
   () =>
@@ -4277,39 +4278,50 @@ const contextUsageIndicator = computed(() => {
   const sessionSource =
     session.contextWindowSource === 'session_usage' ||
     session.contextWindowSource === 'config' ||
+    session.contextWindowSource === 'model_catalog' ||
     session.contextWindowSource === 'default' ||
     session.contextWindowSource === 'unavailable'
       ? session.contextWindowSource
-      : session.agent === 'codex'
-        ? ('default' as WebSessionContextWindowSource)
-        : ('unavailable' as WebSessionContextWindowSource);
-  const sessionUsageWindowTokens =
-    sessionSource === 'session_usage' &&
+      : ('unavailable' as WebSessionContextWindowSource);
+  const sessionWindowTokens =
     typeof session.contextWindowTokens === 'number' &&
-    Number.isFinite(session.contextWindowTokens)
-      ? Math.max(0, session.contextWindowTokens)
+    Number.isFinite(session.contextWindowTokens) &&
+    session.contextWindowTokens > 0
+      ? session.contextWindowTokens
       : null;
-  const source = sessionUsageWindowTokens
+  const runtimeConfigMatchesModel =
+    typeof runtimeConfig?.model === 'string' &&
+    runtimeConfig.model.trim() !== '' &&
+    runtimeConfig.model.trim().toLowerCase() === session.model.trim().toLowerCase();
+  const runtimeWindowTokens =
+    runtimeConfigMatchesModel &&
+    typeof runtimeConfig?.contextWindowTokens === 'number' &&
+    Number.isFinite(runtimeConfig.contextWindowTokens) &&
+    runtimeConfig.contextWindowTokens > 0
+      ? runtimeConfig.contextWindowTokens
+      : null;
+  const canUseSessionWindow =
+    sessionWindowTokens !== null &&
+    (sessionSource === 'session_usage' ||
+      sessionSource === 'config' ||
+      sessionSource === 'model_catalog');
+  const contextWindowTokens = canUseSessionWindow ? sessionWindowTokens : runtimeWindowTokens;
+  const source = canUseSessionWindow
     ? sessionSource
-    : (runtimeConfig?.source ?? sessionSource);
-
-  const contextWindowTokens =
-    sessionUsageWindowTokens ??
-    (typeof runtimeConfig?.contextWindowTokens === 'number' &&
-    Number.isFinite(runtimeConfig.contextWindowTokens)
-      ? Math.max(0, runtimeConfig.contextWindowTokens)
-      : typeof session.contextWindowTokens === 'number' &&
-          Number.isFinite(session.contextWindowTokens)
-        ? Math.max(0, session.contextWindowTokens)
-        : session.agent === 'codex' && isDraftSession(session)
-          ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS
-          : null);
+    : runtimeWindowTokens
+      ? (runtimeConfig?.source ?? 'unavailable')
+      : 'unavailable';
+  const runtimeCompactLimitTokens =
+    runtimeConfigMatchesModel &&
+    typeof runtimeConfig?.compactLimitTokens === 'number' &&
+    Number.isFinite(runtimeConfig.compactLimitTokens) &&
+    runtimeConfig.compactLimitTokens > 0
+      ? runtimeConfig.compactLimitTokens
+      : null;
   const compactLimitTokens =
-    sessionUsageWindowTokens ??
-    (typeof runtimeConfig?.compactLimitTokens === 'number' &&
-    Number.isFinite(runtimeConfig.compactLimitTokens)
-      ? Math.max(0, runtimeConfig.compactLimitTokens)
-      : contextWindowTokens);
+    source === 'session_usage'
+      ? contextWindowTokens
+      : (runtimeCompactLimitTokens ?? contextWindowTokens);
 
   if (session.agent !== 'codex' || !contextWindowTokens || !compactLimitTokens) {
     return {
@@ -5823,10 +5835,13 @@ function normalizeDraftSession(
     reasoningEffort:
       session.reasoningEffort === 'default' ||
       session.reasoningEffort === 'none' ||
+      session.reasoningEffort === 'minimal' ||
       session.reasoningEffort === 'low' ||
       session.reasoningEffort === 'medium' ||
       session.reasoningEffort === 'high' ||
-      session.reasoningEffort === 'xhigh'
+      session.reasoningEffort === 'xhigh' ||
+      session.reasoningEffort === 'max' ||
+      session.reasoningEffort === 'ultra'
         ? session.reasoningEffort
         : defaultReasoningEffortForAgent(agent),
     workflowMode: session.workflowMode === 'plan' ? 'plan' : 'default',
@@ -5889,8 +5904,8 @@ function normalizeDraftSession(
     },
     contextEstimateMode: 'cumulative_total',
     lastContextCompactionAt: null,
-    contextWindowTokens: agent === 'codex' ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS : null,
-    contextWindowSource: agent === 'codex' ? 'default' : 'unavailable',
+    contextWindowTokens: null,
+    contextWindowSource: 'unavailable',
     isDraft: true,
   };
 }
@@ -6324,8 +6339,8 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
     },
     contextEstimateMode: 'cumulative_total',
     lastContextCompactionAt: null,
-    contextWindowTokens: nextAgent === 'codex' ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS : null,
-    contextWindowSource: nextAgent === 'codex' ? 'default' : 'unavailable',
+    contextWindowTokens: null,
+    contextWindowSource: 'unavailable',
     isDraft: true,
   };
   replaceDraftSessionState([...draftSessions.value, draft], draft.id);
@@ -6944,8 +6959,48 @@ function resolveModelSelectWidth(label: string) {
   return clamp(MODEL_SELECT_MIN_WIDTH, width, MODEL_SELECT_MAX_WIDTH);
 }
 
-function defaultReasoningEffortForAgent(agent: 'claude' | 'codex') {
+function defaultReasoningEffortForAgent(
+  agent: 'claude' | 'codex'
+): WebSessionReasoningEffort {
   return agent === 'codex' ? 'xhigh' : 'default';
+}
+
+function reasoningEffortLabel(effort: WebSessionReasoningEffort) {
+  switch (effort) {
+    case 'default':
+      return t('common.default');
+    case 'none':
+      return 'Off';
+    case 'minimal':
+      return 'Minimal';
+    case 'low':
+      return 'Low';
+    case 'medium':
+      return 'Mid';
+    case 'high':
+      return 'High';
+    case 'xhigh':
+      return 'Xhigh';
+    case 'max':
+      return 'Max';
+    case 'ultra':
+      return 'Ultra';
+  }
+}
+
+function supportedCodexReasoningEfforts(model: string) {
+  return resolveCodexReasoningEfforts(model, codexRuntimeConfig.value?.models ?? []);
+}
+
+function reasoningEffortForModel(
+  model: string,
+  currentEffort: WebSessionReasoningEffort
+): WebSessionReasoningEffort {
+  const supported = supportedCodexReasoningEfforts(model);
+  if (!supported || currentEffort === 'default' || supported.includes(currentEffort)) {
+    return currentEffort;
+  }
+  return 'default';
 }
 
 function withCurrentReasoningEffortOption(
@@ -7022,14 +7077,25 @@ const modelOptions = computed(() => {
 });
 
 const reasoningEffortOptions = computed(() => {
-  const options = [
-    { label: t('common.default'), value: 'default' },
-    { label: 'Off', value: 'none' },
-    { label: 'Low', value: 'low' },
-    { label: 'Mid', value: 'medium' },
-    { label: 'High', value: 'high' },
-    { label: 'Xhigh', value: 'xhigh' },
-  ];
+  const supported =
+    selectedAgent.value === 'codex' ? supportedCodexReasoningEfforts(selectedModel.value) : null;
+  if (supported) {
+    return ['default', ...supported].map(value => ({
+      label: reasoningEffortLabel(value as WebSessionReasoningEffort),
+      value,
+    }));
+  }
+  const options: Array<{ label: string; value: WebSessionReasoningEffort }> = [
+    'default',
+    'none',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+  ].map(value => ({
+    label: reasoningEffortLabel(value as WebSessionReasoningEffort),
+    value: value as WebSessionReasoningEffort,
+  }));
   const activeEffort = currentSession.value?.reasoningEffort ?? draftReasoningEffort.value;
   return withCurrentReasoningEffortOption(options, activeEffort);
 });
@@ -7101,19 +7167,31 @@ const selectedModel = computed({
       openCustomModelDialog();
       return;
     }
+    const currentEffort = currentSession.value?.reasoningEffort ?? draftReasoningEffort.value;
+    const nextEffort =
+      selectedAgent.value === 'codex'
+        ? reasoningEffortForModel(next, currentEffort)
+        : currentEffort;
     draftModel.value = next;
+    draftReasoningEffort.value = nextEffort;
     if (isDraftSession(currentSession.value)) {
       updateActiveDraftSession(current => ({
         ...current,
         model: next,
+        reasoningEffort: nextEffort,
         updatedAt: new Date().toISOString(),
       }));
       return;
     }
     if (currentRealSession.value) {
       const noticeKey = getRuntimeSwitchNoticeKey();
-      void webSessionStore
-        .updateModel(currentRealSession.value.id, next)
+      const sessionID = currentRealSession.value.id;
+      void (async () => {
+        await webSessionStore.updateModel(sessionID, next);
+        if (nextEffort !== currentEffort) {
+          await webSessionStore.updateReasoningEffort(sessionID, nextEffort);
+        }
+      })()
         .then(() => showRuntimeSwitchNotice(noticeKey))
         .catch(error => {
           message.error(error instanceof Error ? error.message : t('common.error'));
@@ -7147,10 +7225,10 @@ const selectedClaudeRuntime = computed<WebSessionClaudeRuntimeOption>({
   },
 });
 
-const selectedReasoningEffort = computed<'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'>({
+const selectedReasoningEffort = computed<WebSessionReasoningEffort>({
   get: () => currentSession.value?.reasoningEffort ?? draftReasoningEffort.value,
   set: value => {
-    const next = value as 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+    const next = value as WebSessionReasoningEffort;
     draftReasoningEffort.value = next;
     if (isDraftSession(currentSession.value)) {
       updateActiveDraftSession(current => ({
@@ -7312,7 +7390,13 @@ function openCustomModelDialog() {
         message.warning(t('webSession.customModelEmpty'));
         return false;
       }
+      const currentEffort = currentSession.value?.reasoningEffort ?? draftReasoningEffort.value;
+      const nextEffort =
+        selectedAgent.value === 'codex'
+          ? reasoningEffortForModel(nextModel, currentEffort)
+          : currentEffort;
       draftModel.value = nextModel;
+      draftReasoningEffort.value = nextEffort;
       if (!currentSession.value) {
         return true;
       }
@@ -7320,12 +7404,17 @@ function openCustomModelDialog() {
         updateActiveDraftSession(current => ({
           ...current,
           model: nextModel,
+          reasoningEffort: nextEffort,
           updatedAt: new Date().toISOString(),
         }));
         return true;
       }
       try {
-        await webSessionStore.updateModel(currentSession.value.id, nextModel);
+        const sessionID = currentSession.value.id;
+        await webSessionStore.updateModel(sessionID, nextModel);
+        if (nextEffort !== currentEffort) {
+          await webSessionStore.updateReasoningEffort(sessionID, nextEffort);
+        }
         return true;
       } catch (error) {
         message.error(error instanceof Error ? error.message : t('common.error'));

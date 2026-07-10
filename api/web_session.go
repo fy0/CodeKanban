@@ -184,7 +184,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		ctx context.Context,
 		_ *struct{},
 	) (*h.ItemResponse[websession.CodexRuntimeConfig], error) {
-		resp := h.NewItemResponse(c.manager.GetCodexRuntimeConfig())
+		resp := h.NewItemResponse(c.manager.GetCodexRuntimeConfigWithModels())
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {

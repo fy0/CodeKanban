@@ -10,6 +10,7 @@ import type {
   WebSessionAttachment,
   WebSessionContextWindowSource,
   WebSessionGoal,
+  WebSessionReasoningEffort,
   WebSessionSummary,
 } from '@/types/models';
 import {
@@ -42,7 +43,7 @@ type WireSession = {
   ag: 'claude' | 'codex';
   cr?: 'claude' | 'ccr';
   md: string;
-  re?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  re?: WebSessionReasoningEffort;
   wm: 'default' | 'plan';
   pl: 'default' | 'elevated' | 'yolo';
   acte?: boolean;
@@ -4561,7 +4562,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   async function updateReasoningEffort(
     sessionId: string,
-    reasoningEffort: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'
+    reasoningEffort: WebSessionReasoningEffort
   ) {
     await sendCommand('set_re', sessionId, { re: reasoningEffort });
   }
@@ -4853,7 +4854,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       agent: 'claude' | 'codex';
       claudeRuntime?: 'claude' | 'ccr';
       model?: string;
-      reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+      reasoningEffort?: WebSessionReasoningEffort;
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
       activeCallTimeoutEnabled?: boolean;

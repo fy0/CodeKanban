@@ -9,6 +9,7 @@ import {
   CUSTOM_MODEL_VALUE,
   MORE_MODELS_VALUE,
   defaultModelForAgent,
+  resolveCodexReasoningEfforts,
 } from '@/components/web-session/webSessionModelOptions';
 
 describe('webSessionModelOptions', () => {
@@ -16,13 +17,23 @@ describe('webSessionModelOptions', () => {
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.value)).toEqual([
       'gpt-5.4',
       'gpt-5.5',
-      'gpt-5.6',
+      'gpt-5.6-sol',
+      'gpt-5.6-luna',
+      'gpt-5.6-terra',
     ]);
-    expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.label)).toEqual(['5.4', '5.5', '5.6']);
+    expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.label)).toEqual([
+      '5.4',
+      '5.5',
+      '5.6S',
+      '5.6L',
+      '5.6T',
+    ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.menuLabel)).toEqual([
       'GPT-5.4',
       'GPT-5.5',
-      'GPT-5.6',
+      'GPT-5.6 Sol',
+      'GPT-5.6 Luna',
+      'GPT-5.6 Terra',
     ]);
   });
 
@@ -46,7 +57,10 @@ describe('webSessionModelOptions', () => {
       'GPT-5.4 Pro',
       'GPT-5.5 Pro',
     ]);
-    expect(allValues).toContain('gpt-5.6');
+    expect(allValues).toEqual(
+      expect.arrayContaining(['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'])
+    );
+    expect(allValues).not.toContain('gpt-5.6');
     expect(allValues).not.toContain('gpt-5.4-nano');
   });
 
@@ -71,5 +85,54 @@ describe('webSessionModelOptions', () => {
   it('uses gpt-5.5 as the codex default model', () => {
     expect(defaultModelForAgent('codex')).toBe('gpt-5.5');
     expect(defaultModelForAgent('claude')).toBe('opus');
+  });
+
+  it('uses model-specific reasoning efforts from the Codex catalog', () => {
+    const catalog = [
+      {
+        model: 'gpt-5.6-sol',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const,
+      },
+      {
+        model: 'gpt-5.6-luna',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] as const,
+      },
+    ].map(item => ({ ...item, supportedReasoningEfforts: [...item.supportedReasoningEfforts] }));
+
+    expect(resolveCodexReasoningEfforts('gpt-5.6-sol', catalog)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+    ]);
+    expect(resolveCodexReasoningEfforts('gpt-5.6-luna', catalog)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ]);
+  });
+
+  it('falls back per 5.6 model without exposing none or Luna ultra', () => {
+    expect(resolveCodexReasoningEfforts('gpt-5.6-terra')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+    ]);
+    expect(resolveCodexReasoningEfforts('gpt-5.6-luna')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ]);
+    expect(resolveCodexReasoningEfforts('gpt-5.6-luna')).not.toContain('none');
+    expect(resolveCodexReasoningEfforts('gpt-5.6-luna')).not.toContain('ultra');
   });
 });

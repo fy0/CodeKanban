@@ -209,6 +209,8 @@ func claudeReasoningEffortArg(effort ReasoningEffort) string {
 		return "high"
 	case ReasoningEffortXHigh:
 		return "max"
+	case ReasoningEffortMax:
+		return "max"
 	default:
 		return ""
 	}

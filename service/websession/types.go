@@ -80,10 +80,13 @@ type ReasoningEffort string
 const (
 	ReasoningEffortDefault ReasoningEffort = "default"
 	ReasoningEffortNone    ReasoningEffort = "none"
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
 	ReasoningEffortLow     ReasoningEffort = "low"
 	ReasoningEffortMedium  ReasoningEffort = "medium"
 	ReasoningEffortHigh    ReasoningEffort = "high"
 	ReasoningEffortXHigh   ReasoningEffort = "xhigh"
+	ReasoningEffortMax     ReasoningEffort = "max"
+	ReasoningEffortUltra   ReasoningEffort = "ultra"
 )
 
 type Usage struct {
@@ -114,6 +117,7 @@ type ContextWindowSource string
 const (
 	ContextWindowSourceConfig       ContextWindowSource = "config"
 	ContextWindowSourceDefault      ContextWindowSource = "default"
+	ContextWindowSourceModelCatalog ContextWindowSource = "model_catalog"
 	ContextWindowSourceSessionUsage ContextWindowSource = "session_usage"
 	ContextWindowSourceUnavailable  ContextWindowSource = "unavailable"
 )

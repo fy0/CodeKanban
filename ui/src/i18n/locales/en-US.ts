@@ -914,7 +914,7 @@ export default {
     contextUsageSource: 'Source: {source}',
     contextUsageSourceSessionUsage: 'hidden Codex session usage',
     contextUsageSourceConfig: 'local Codex config',
-    contextUsageSourceDefault: 'default 400000',
+    contextUsageSourceDefault: 'model default',
     contextUsageMode: 'Mode: {mode}',
     contextUsageModeLatestTokenCount: 'estimated from the latest hidden Codex usage snapshot',
     contextUsageModeLatestTurnDelta: 'estimated from the latest turn delta',

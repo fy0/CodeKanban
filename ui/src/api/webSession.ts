@@ -1,6 +1,7 @@
 import type {
   WebSessionAttachment,
   WebSessionCodexRuntimeConfig,
+  WebSessionReasoningEffort,
   WebSessionSummary,
 } from '@/types/models';
 import { urlBase } from '@/api';
@@ -113,7 +114,7 @@ export const webSessionApi = {
       agent: 'claude' | 'codex';
       claudeRuntime?: 'claude' | 'ccr';
       model?: string;
-      reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+      reasoningEffort?: WebSessionReasoningEffort;
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
       activeCallTimeoutEnabled?: boolean;

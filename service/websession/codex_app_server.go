@@ -1010,20 +1010,33 @@ func (m *Manager) handleCodexAppServerUsage(
 	in := int64(numberValue(total["inputTokens"]))
 	cin := int64(numberValue(total["cachedInputTokens"]))
 	out := int64(numberValue(total["outputTokens"]))
-	_ = m.updateRuntimeState(context.Background(), session.ID, contextEstimateTotalsUpdate(in, cin, out))
+	contextWindow := int64(numberValue(tokenUsage["modelContextWindow"]))
+	updates := contextEstimateTotalsUpdate(in, cin, out)
+	if contextWindow > 0 {
+		updates["session_context_window_tokens"] = contextWindow
+		updates["session_context_window_observed_at"] = time.Now()
+	}
+	_ = m.updateRuntimeState(context.Background(), session.ID, updates)
 
+	eventPayload := map[string]any{
+		"in":  in,
+		"cin": cin,
+		"out": out,
+	}
+	if contextWindow > 0 {
+		eventPayload["cwt"] = contextWindow
+	}
 	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
 		Type:      "usage",
 		RunID:     run.runID,
 		Timestamp: time.Now(),
-		Payload: map[string]any{
-			"in":  in,
-			"cin": cin,
-			"out": out,
-		},
+		Payload:   eventPayload,
 	})
+	if contextWindow > 0 {
+		m.broadcastSessionSummary(context.Background(), session.ID)
+	}
 }
 
 func applySessionGoalUpdates(updates map[string]any, goal *SessionGoal) {
@@ -1352,7 +1365,7 @@ func codexCollaborationMode(session tables.WebSessionTable) map[string]any {
 		"model":                  strings.TrimSpace(session.Model),
 		"developer_instructions": nil,
 	}
-	if effort := normalizeReasoningEffort(ReasoningEffort(session.ReasoningEffort)); effort != ReasoningEffortDefault {
+	if effort := normalizeCodexReasoningEffort(session.Model, ReasoningEffort(session.ReasoningEffort)); effort != ReasoningEffortDefault {
 		settings["reasoning_effort"] = string(effort)
 	} else {
 		settings["reasoning_effort"] = nil

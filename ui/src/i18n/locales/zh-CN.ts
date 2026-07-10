@@ -888,7 +888,7 @@ export default {
     contextUsageSource: '来源：{source}',
     contextUsageSourceSessionUsage: 'Codex 会话隐藏 usage',
     contextUsageSourceConfig: 'Codex 本地配置',
-    contextUsageSourceDefault: '默认值 400000',
+    contextUsageSourceDefault: '模型默认值',
     contextUsageMode: '口径：{mode}',
     contextUsageModeLatestTokenCount: '按 Codex 隐藏 usage 最新快照估算',
     contextUsageModeLatestTurnDelta: '按最近一轮 turn 增量估算',

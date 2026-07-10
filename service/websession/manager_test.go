@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -1244,7 +1245,11 @@ func TestManagerListSessionsIncludesConfiguredContextWindow(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("model_context_window = 1000000\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(configDir, "config.toml"),
+		[]byte("model = \"gpt-5.5\"\nmodel_context_window = 1000000\n"),
+		0o644,
+	); err != nil {
 		t.Fatalf("write config failed: %v", err)
 	}
 
@@ -1270,11 +1275,88 @@ func TestManagerListSessionsIncludesConfiguredContextWindow(t *testing.T) {
 		t.Fatalf("expected contextWindowSource %q, got %q", ContextWindowSourceConfig, items[0].ContextWindowSource)
 	}
 	config := manager.GetCodexRuntimeConfig()
+	if config.Model != "gpt-5.5" {
+		t.Fatalf("expected runtime model gpt-5.5, got %q", config.Model)
+	}
 	if config.ContextWindowTokens != 1000000 {
 		t.Fatalf("expected runtime context window 1000000, got %d", config.ContextWindowTokens)
 	}
 	if config.CompactLimitTokens != 1000000 {
 		t.Fatalf("expected runtime compact limit fallback 1000000, got %d", config.CompactLimitTokens)
+	}
+}
+
+func TestManagerListSessionsDoesNotUseContextWindowFromDifferentConfiguredModel(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+	configDir := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir failed: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(configDir, "config.toml"),
+		[]byte("model = \"gpt-5.4\"\nmodel_context_window = 1000000\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	project := seedProject(t)
+	seedWebSession(t, project.ID, "Codex", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	items, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(items))
+	}
+	if items[0].ContextWindowTokens != nil {
+		t.Fatalf("expected no context window for a model override, got %#v", items[0].ContextWindowTokens)
+	}
+	if items[0].ContextWindowSource != ContextWindowSourceUnavailable {
+		t.Fatalf("expected contextWindowSource %q, got %q", ContextWindowSourceUnavailable, items[0].ContextWindowSource)
+	}
+}
+
+func TestUpdateModelClearsObservedContextWindow(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Codex", 1000)
+	observedAt := time.Now()
+	if err := model.GetDB().Model(session).Updates(map[string]any{
+		"session_context_window_tokens":      int64(353400),
+		"session_context_window_observed_at": observedAt,
+	}).Error; err != nil {
+		t.Fatalf("seed observed context window failed: %v", err)
+	}
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	if _, err := manager.UpdateModel(context.Background(), session.ID, "gpt-5.6-luna"); err != nil {
+		t.Fatalf("UpdateModel returned error: %v", err)
+	}
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.SessionContextWindowTokens != 0 {
+		t.Fatalf("expected observed context window to be cleared, got %d", record.SessionContextWindowTokens)
+	}
+	if record.SessionContextWindowObservedAt != nil {
+		t.Fatalf("expected observed context timestamp to be cleared, got %v", record.SessionContextWindowObservedAt)
 	}
 }
 
@@ -1394,6 +1476,43 @@ func TestGetCodexRuntimeConfigGoalModeDisabledForOldVersion(t *testing.T) {
 	}
 	if config.SupportsGoalMode {
 		t.Fatal("expected supportsGoalMode false")
+	}
+}
+
+func TestGetCodexRuntimeConfigIncludesModelReasoningCatalog(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexModelCatalogCLI(t),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	config := manager.GetCodexRuntimeConfigWithModels()
+	if len(config.Models) != 3 {
+		t.Fatalf("expected 3 catalog models, got %#v", config.Models)
+	}
+	if got := config.Models[0].SupportedReasoningEfforts; !reflect.DeepEqual(got, []ReasoningEffort{
+		ReasoningEffortLow,
+		ReasoningEffortMedium,
+		ReasoningEffortHigh,
+		ReasoningEffortXHigh,
+		ReasoningEffortMax,
+		ReasoningEffortUltra,
+	}) {
+		t.Fatalf("unexpected Sol reasoning efforts: %#v", got)
+	}
+	if got := config.Models[2].SupportedReasoningEfforts; !reflect.DeepEqual(got, []ReasoningEffort{
+		ReasoningEffortLow,
+		ReasoningEffortMedium,
+		ReasoningEffortHigh,
+		ReasoningEffortXHigh,
+		ReasoningEffortMax,
+	}) {
+		t.Fatalf("unexpected Luna reasoning efforts: %#v", got)
 	}
 }
 
@@ -1718,6 +1837,57 @@ func TestBuildExecCommandCodexClosesStdinWhenPromptArgProvided(t *testing.T) {
 	}
 	if !strings.Contains(joinedArgs, "-s workspace-write") {
 		t.Fatalf("expected default codex permissions to use workspace-write sandbox, got args %v", cmd.Args)
+	}
+}
+
+func TestBuildExecCommandCodexUsesModelReasoningEffortConfigKey(t *testing.T) {
+	manager := &Manager{cfg: Config{CodexPath: "codex"}}
+	session := tables.WebSessionTable{
+		Agent:           string(AgentCodex),
+		Model:           "gpt-5.6-sol",
+		ReasoningEffort: string(ReasoningEffortUltra),
+		WorkflowMode:    string(WorkflowModeDefault),
+		PermissionLevel: string(PermissionLevelDefault),
+		Cwd:             "/tmp/project",
+	}
+
+	cmd, _, _, err := manager.buildExecCommand(context.Background(), session, "say hi", nil)
+	if err != nil {
+		t.Fatalf("buildExecCommand returned error: %v", err)
+	}
+	found := false
+	for i := 0; i+1 < len(cmd.Args); i++ {
+		if cmd.Args[i] == "-c" && cmd.Args[i+1] == `model_reasoning_effort="ultra"` {
+			found = true
+		}
+		if cmd.Args[i] == "-c" && strings.HasPrefix(cmd.Args[i+1], `reasoning_effort=`) {
+			t.Fatalf("legacy reasoning_effort config key must not be used: %v", cmd.Args)
+		}
+	}
+	if !found {
+		t.Fatalf("expected model_reasoning_effort config override, got %v", cmd.Args)
+	}
+}
+
+func TestNormalizeCodexReasoningEffortUsesModelCapabilities(t *testing.T) {
+	tests := []struct {
+		name   string
+		model  string
+		effort ReasoningEffort
+		want   ReasoningEffort
+	}{
+		{name: "Sol Ultra", model: "gpt-5.6-sol", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
+		{name: "Terra Max", model: "gpt-5.6-terra", effort: ReasoningEffortMax, want: ReasoningEffortMax},
+		{name: "Luna Ultra", model: "gpt-5.6-luna", effort: ReasoningEffortUltra, want: ReasoningEffortDefault},
+		{name: "Sol None", model: "gpt-5.6-sol", effort: ReasoningEffortNone, want: ReasoningEffortDefault},
+		{name: "Legacy None", model: "gpt-5.5", effort: ReasoningEffortNone, want: ReasoningEffortNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeCodexReasoningEffort(tt.model, tt.effort); got != tt.want {
+				t.Fatalf("normalizeCodexReasoningEffort(%q, %q) = %q, want %q", tt.model, tt.effort, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -4764,7 +4934,7 @@ func TestHandleCodexAppServerUsageDefaultsContextEstimateToCumulativeTotal(t *te
 	manager.handleCodexAppServerUsage(
 		*session,
 		run,
-		[]byte(`{"tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":30,"outputTokens":10}}}`),
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":30,"outputTokens":10},"modelContextWindow":353400}}`),
 	)
 
 	record, err := manager.GetSession(context.Background(), session.ID)
@@ -4780,6 +4950,12 @@ func TestHandleCodexAppServerUsageDefaultsContextEstimateToCumulativeTotal(t *te
 	}
 	if summary.ContextEstimate.InputTokens != 120 || summary.ContextEstimate.CachedInputTokens != 30 || summary.ContextEstimate.OutputTokens != 10 {
 		t.Fatalf("unexpected context estimate: %#v", summary.ContextEstimate)
+	}
+	if summary.ContextWindowTokens == nil || *summary.ContextWindowTokens != 353400 {
+		t.Fatalf("expected model context window 353400, got %#v", summary.ContextWindowTokens)
+	}
+	if summary.ContextWindowSource != ContextWindowSourceSessionUsage {
+		t.Fatalf("expected context window source %q, got %q", ContextWindowSourceSessionUsage, summary.ContextWindowSource)
 	}
 }
 
@@ -5095,6 +5271,51 @@ exit 1
 `, version)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex version cli failed: %v", err)
+	}
+	return path
+}
+
+func writeFakeCodexModelCatalogCLI(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "fake-codex-model-catalog.js")
+	script := `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  process.stdout.write('codex 0.144.1\n');
+  process.exit(0);
+}
+const readline = require('readline');
+const input = readline.createInterface({ input: process.stdin });
+const option = reasoningEffort => ({ reasoningEffort, description: reasoningEffort });
+input.on('line', line => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    process.stdout.write(JSON.stringify({ id: message.id, result: { userAgent: 'fake-codex' } }) + '\n');
+    return;
+  }
+  if (message.method === 'model/list') {
+    const model = (name, efforts, defaultReasoningEffort) => ({
+      model: name,
+      displayName: name,
+      defaultReasoningEffort,
+      supportedReasoningEfforts: efforts.map(option),
+    });
+    process.stdout.write(JSON.stringify({
+      id: message.id,
+      result: {
+        data: [
+          model('gpt-5.6-sol', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'low'),
+          model('gpt-5.6-terra', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium'),
+          model('gpt-5.6-luna', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
+        ],
+        nextCursor: null,
+      },
+    }) + '\n');
+  }
+});
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake Codex model catalog CLI failed: %v", err)
 	}
 	return path
 }
