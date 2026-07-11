@@ -17,7 +17,7 @@ export type WorkspaceRouteTab =
 
 export type DesktopWorkspaceRouteTab = Extract<
   WorkspaceRouteTab,
-  'terminal' | 'web' | 'changes' | 'files' | 'kanban'
+  'terminal' | 'web' | 'changes' | 'files'
 >;
 export type MobileWorkspaceRouteTab = Extract<
   WorkspaceRouteTab,
@@ -29,7 +29,6 @@ const DESKTOP_WORKSPACE_ROUTE_TAB_SET = new Set<DesktopWorkspaceRouteTab>([
   'web',
   'changes',
   'files',
-  'kanban',
 ]);
 
 const MOBILE_WORKSPACE_ROUTE_TAB_SET = new Set<MobileWorkspaceRouteTab>([

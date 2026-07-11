@@ -59,17 +59,6 @@
           </n-icon>
           <span class="tab-label">{{ t('nav.files') }}</span>
         </button>
-        <button
-          type="button"
-          class="tab-item"
-          :class="{ active: activeTab === 'kanban' }"
-          @click="activateTab('kanban')"
-        >
-          <n-icon size="16">
-            <GridOutline />
-          </n-icon>
-          <span class="tab-label">{{ t('nav.kanban') }}</span>
-        </button>
       </div>
       <div v-if="activeTab === 'terminal' || activeTab === 'web'" class="tab-actions">
         <n-tooltip placement="bottom" :delay="250">
@@ -152,9 +141,6 @@
 
     <!-- Tab内容 -->
     <div class="tab-content">
-      <div v-show="activeTab === 'kanban'" class="tab-pane kanban-pane">
-        <KanbanBoard :project-id="projectId" />
-      </div>
       <div v-show="activeTab === 'terminal'" class="tab-pane terminal-pane">
         <div class="terminal-split">
           <div class="terminal-main">
@@ -196,7 +182,6 @@ import {
   ChatbubblesOutline,
   FolderOpenOutline,
   GitBranchOutline,
-  GridOutline,
   TerminalOutline,
 } from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
@@ -224,7 +209,6 @@ import {
 } from '@/components/changes/gitChangesBehavior';
 import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
-import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import DockedNotificationSidebar from '@/components/workspace/DockedNotificationSidebar.vue';
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
@@ -827,12 +811,6 @@ if (typeof window !== 'undefined') {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-}
-
-.kanban-pane {
-  padding: 24px;
-  overflow-y: auto;
-  background-color: var(--app-surface-color, #ffffff);
 }
 
 .terminal-pane {

@@ -5,7 +5,7 @@ import { resolveWorkspaceShortcutTarget } from '@/utils/workspaceTabShortcut';
 describe('workspaceTabShortcut', () => {
   it('switches back to the previous visited tab when it differs from the current tab', () => {
     expect(resolveWorkspaceShortcutTarget('terminal', 'files')).toBe('files');
-    expect(resolveWorkspaceShortcutTarget('web', 'kanban')).toBe('kanban');
+    expect(resolveWorkspaceShortcutTarget('web', 'files')).toBe('files');
   });
 
   it('falls back to web when only one non-web tab has been visited', () => {

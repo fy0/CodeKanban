@@ -57,12 +57,14 @@ describe('workspaceRoute', () => {
 
   it('normalizes invalid desktop and mobile tabs to their defaults', () => {
     expect(normalizeDesktopWorkspaceRouteTab('projects')).toBe('terminal');
+    expect(normalizeDesktopWorkspaceRouteTab('kanban')).toBe('terminal');
     expect(normalizeMobileWorkspaceRouteTab('kanban')).toBe('projects');
   });
 
   it('resolves desktop tabs from explicit query values, legacy deep links, and fallback state', () => {
     expect(resolveDesktopWorkspaceRouteTab({ tab: 'files' }, 'terminal')).toBe('files');
     expect(resolveDesktopWorkspaceRouteTab({ tab: 'changes' }, 'terminal')).toBe('changes');
+    expect(resolveDesktopWorkspaceRouteTab({ tab: 'kanban' }, 'web')).toBe('terminal');
     expect(resolveDesktopWorkspaceRouteTab({ webSessionId: 'session-1' }, 'terminal')).toBe('web');
     expect(resolveDesktopWorkspaceRouteTab({}, 'web')).toBe('web');
   });
