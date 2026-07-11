@@ -66,6 +66,55 @@ func TestParseCodexDeepHistoryCapturesToolsAndTimestamps(t *testing.T) {
 	}
 }
 
+func TestParseCodexDeepHistoryFiltersIncompleteTurnContinuationPrompt(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-04-09T01:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"inspect the repo","images":[]}}`,
+		`{"timestamp":"2026-04-09T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":` + strconv.Quote(incompleteTurnContinuationPrompt) + `,"images":[]}}`,
+		`{"timestamp":"2026-04-09T01:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":` + strconv.Quote(incompleteTurnContinuationPrompt) + `}]}}`,
+		`{"timestamp":"2026-04-09T01:00:03Z","type":"event_msg","payload":{"type":"agent_message","message":"done"}}`,
+	})
+
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory returned error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected only the real user and assistant messages, got %#v", items)
+	}
+	if items[0].Kind != "user" || items[0].Text != "inspect the repo" {
+		t.Fatalf("unexpected first item: %#v", items[0])
+	}
+	if items[1].Kind != "assistant" || items[1].Text != "done" {
+		t.Fatalf("unexpected final item: %#v", items[1])
+	}
+}
+
+func TestMapThreadReadItemFiltersIncompleteTurnContinuationPrompt(t *testing.T) {
+	manager := &Manager{}
+
+	item, err := manager.mapThreadReadItem(map[string]any{
+		"id":   "internal_continue",
+		"type": "userMessage",
+		"content": []any{
+			map[string]any{"type": "text", "text": incompleteTurnContinuationPrompt},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("mapThreadReadItem returned error: %v", err)
+	}
+	if item.Kind != "" || item.Text != "" {
+		t.Fatalf("expected internal continuation prompt to be filtered, got %#v", item)
+	}
+}
+
 func TestParseCodexDeepHistoryCapturesPlanFromCompletedEvent(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

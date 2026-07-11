@@ -483,7 +483,7 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 		if text == "" && len(attachments) == 0 {
 			return nil
 		}
-		if isGoalBootstrapPrompt(text) && len(attachments) == 0 {
+		if isHiddenCodexPrompt(text) && len(attachments) == 0 {
 			return nil
 		}
 		return []HistoryItem{{
@@ -655,6 +655,9 @@ func (m *Manager) applyCodexResponseItem(
 			item.ItemType = "system_message"
 			item.Level = "info"
 		default:
+			if isHiddenCodexPrompt(text) {
+				return
+			}
 			item.Kind = "user"
 			item.ItemType = "user_message"
 		}

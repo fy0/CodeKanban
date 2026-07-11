@@ -142,6 +142,9 @@ type activeRun struct {
 	pendingServerReq       *pendingServerRequest
 	app                    *codexAppServerClient
 	assistantDeltaSeen     map[string]bool
+	assistantMessagePhases map[string]string
+	assistantMessageText   map[string]bool
+	completedFinalAnswer   bool
 	claudeResumeOnly       bool
 	deferredUserInput      bool
 	completedPlanTool      bool
@@ -2882,6 +2885,10 @@ func buildGoalBootstrapPrompt(objective string) string {
 	return fmt.Sprintf(goalBootstrapPromptPreamble, strings.TrimSpace(objective))
 }
 
+const incompleteTurnContinuationPrompt = `<codekanban_internal_continue reason="missing_final_answer">
+Continue from where you stopped. Finish the user's request and provide a non-empty final answer.
+</codekanban_internal_continue>`
+
 func isGoalBootstrapPrompt(text string) bool {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -2890,6 +2897,16 @@ func isGoalBootstrapPrompt(text string) bool {
 	return strings.Contains(trimmed, "<goal_bootstrap>") &&
 		strings.Contains(trimmed, "</goal_bootstrap>") &&
 		strings.Contains(trimmed, "\nGoal:\n")
+}
+
+func isIncompleteTurnContinuationPrompt(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	return strings.Contains(trimmed, `<codekanban_internal_continue reason="missing_final_answer">`) &&
+		strings.Contains(trimmed, "</codekanban_internal_continue>")
+}
+
+func isHiddenCodexPrompt(text string) bool {
+	return isGoalBootstrapPrompt(text) || isIncompleteTurnContinuationPrompt(text)
 }
 
 func (m *Manager) startHiddenSessionRun(
@@ -5771,6 +5788,79 @@ func (r *activeRun) completedPlanToolSeen() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.completedPlanTool
+}
+
+func (r *activeRun) hasPendingServerRequest() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pendingServerReq != nil
+}
+
+func (r *activeRun) recordAssistantMessageStarted(messageID string, phase string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return
+	}
+	if r.assistantMessagePhases == nil {
+		r.assistantMessagePhases = make(map[string]string)
+	}
+	r.assistantMessagePhases[messageID] = strings.ToLower(strings.TrimSpace(phase))
+}
+
+func (r *activeRun) recordAssistantMessageDelta(messageID string, text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return
+	}
+	if r.assistantMessageText == nil {
+		r.assistantMessageText = make(map[string]bool)
+	}
+	r.assistantMessageText[messageID] = true
+}
+
+func (r *activeRun) recordAssistantMessageCompleted(messageID string, phase string, text string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return
+	}
+	if r.assistantMessagePhases == nil {
+		r.assistantMessagePhases = make(map[string]string)
+	}
+	normalizedPhase := strings.ToLower(strings.TrimSpace(phase))
+	if normalizedPhase == "" {
+		normalizedPhase = r.assistantMessagePhases[messageID]
+	} else {
+		r.assistantMessagePhases[messageID] = normalizedPhase
+	}
+	hasText := strings.TrimSpace(text) != "" || r.assistantMessageText[messageID]
+	if normalizedPhase == "final_answer" && hasText {
+		r.completedFinalAnswer = true
+	}
+}
+
+func (r *activeRun) completedFinalAnswerSeen() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.completedFinalAnswer
+}
+
+func (r *activeRun) resetCodexTurnCompletionEvidence() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.assistantMessageID = ""
+	r.assistantDeltaSeen = nil
+	r.assistantMessagePhases = nil
+	r.assistantMessageText = nil
+	r.completedFinalAnswer = false
 }
 
 func (r *activeRun) markAssistantDeltaSeen(messageID string) {

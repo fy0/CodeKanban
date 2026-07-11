@@ -118,7 +118,7 @@ func (m *Manager) mapThreadReadItem(
 		}
 		result.Kind = "user"
 		result.Text = strings.TrimSpace(strings.Join(texts, "\n"))
-		if isGoalBootstrapPrompt(result.Text) && len(attachments) == 0 {
+		if isHiddenCodexPrompt(result.Text) && len(attachments) == 0 {
 			return HistoryItem{}, nil
 		}
 		result.Attachments = attachments

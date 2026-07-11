@@ -2234,6 +2234,215 @@ func TestSendMessageCodexAppServerAllowsNextTurnAfterTurnCompleted(t *testing.T)
 	waitForFakeCodexAppServerExitCount(t, codexPath, 2)
 }
 
+func TestCodexAppServerAutoContinuesIncompleteGPT56Turn(t *testing.T) {
+	tests := []struct {
+		name         string
+		mode         string
+		workflowMode WorkflowMode
+	}{
+		{name: "plan commentary only", mode: "incomplete_commentary_then_success", workflowMode: WorkflowModePlan},
+		{name: "default tool only", mode: "incomplete_tool_then_success", workflowMode: WorkflowModeDefault},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cleanup := initTestDB(t)
+			defer cleanup()
+
+			project := seedProject(t)
+			manager, err := NewManager(Config{
+				DataDir:   t.TempDir(),
+				CodexPath: writeFakeCodexAppServerCLI(t, test.mode),
+			}, zap.NewNop())
+			if err != nil {
+				t.Fatalf("NewManager returned error: %v", err)
+			}
+
+			created, err := manager.CreateSession(context.Background(), CreateParams{
+				ProjectID:    project.ID,
+				Agent:        AgentCodex,
+				Model:        "gpt-5.6-sol",
+				WorkflowMode: test.workflowMode,
+			})
+			if err != nil {
+				t.Fatalf("CreateSession returned error: %v", err)
+			}
+
+			if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+				t.Fatalf("SendMessage returned error: %v", err)
+			}
+			waitForSessionToSettle(t, manager, created.ID)
+
+			record, err := manager.GetSession(context.Background(), created.ID)
+			if err != nil {
+				t.Fatalf("GetSession returned error: %v", err)
+			}
+			if record.Status != string(StatusDone) {
+				t.Fatalf("expected completed continuation, got status %q", record.Status)
+			}
+
+			events, err := manager.store.readEvents(created.ID)
+			if err != nil {
+				t.Fatalf("readEvents returned error: %v", err)
+			}
+			if countEventsByType(events, "run_st") != 1 || countEventsByType(events, "run_done") != 1 {
+				t.Fatalf("expected one logical run, got %#v", events)
+			}
+			if countEventsByType(events, "run_fail") != 0 {
+				t.Fatalf("expected successful continuation without run_fail, got %#v", events)
+			}
+			if got := userMessageTexts(events); len(got) != 1 || got[0] != "inspect" {
+				t.Fatalf("expected internal continuation to stay hidden, got %#v", got)
+			}
+
+			sawContinuationNote := false
+			sawFinalAnswer := false
+			for _, event := range events {
+				if event.Type == "note" && stringValue(event.Payload["code"]) == "incomplete_turn_auto_continue" {
+					sawContinuationNote = true
+				}
+				if event.Type == "txt_d" && strings.Contains(stringValue(event.Payload["txt"]), "continued-final") {
+					sawFinalAnswer = true
+				}
+			}
+			if !sawContinuationNote {
+				t.Fatal("expected automatic continuation note")
+			}
+			if !sawFinalAnswer {
+				t.Fatal("expected final answer from the continued turn")
+			}
+		})
+	}
+}
+
+func TestCodexAppServerFailsAfterIncompleteGPT56Continuation(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "incomplete_twice"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+		Model:     "gpt-5.6-luna",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusError) {
+		t.Fatalf("expected incomplete turn to fail, got status %q", record.Status)
+	}
+	if record.AutoRetryLastErrorCode == nil || *record.AutoRetryLastErrorCode != codexIncompleteTurnErrorCode {
+		t.Fatalf("expected incomplete_turn error code, got %#v", record.AutoRetryLastErrorCode)
+	}
+
+	events, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if countEventsByType(events, "note") != 1 || countEventsByType(events, "run_fail") != 1 {
+		t.Fatalf("expected one continuation and one terminal failure, got %#v", events)
+	}
+	if countEventsByType(events, "run_done") != 0 {
+		t.Fatalf("expected no successful completion after repeated incomplete turns, got %#v", events)
+	}
+}
+
+func TestCodexAppServerDoesNotGuardIncompleteNonGPT56Turn(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "incomplete_commentary_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+		Model:     "gpt-5.5",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	events, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if countEventsByType(events, "run_done") != 1 || countEventsByType(events, "note") != 0 {
+		t.Fatalf("expected non-GPT-5.6 behavior to remain unchanged, got %#v", events)
+	}
+}
+
+func TestCodexAppServerDoesNotContinueCompletedGPT56Plan(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "plan_only"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		Model:        "gpt-5.6-terra",
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "plan this", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusRunning) || record.AssistantState != string(AssistantStateWaitingPlanApproval) {
+		t.Fatalf("expected plan approval state, got status=%q assistantState=%q", record.Status, record.AssistantState)
+	}
+
+	events, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if countEventsByType(events, "note") != 0 {
+		t.Fatalf("expected completed plan not to trigger automatic continuation, got %#v", events)
+	}
+}
+
 func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -5789,6 +5998,76 @@ function finishTurn(text) {
   });
 }
 
+function finishIncompleteCommentary(text) {
+  send({
+    method: 'item/started',
+    params: {
+      item: { type: 'agentMessage', id: 'msg_commentary_' + startedTurns, text: '', phase: 'commentary' },
+      threadId: activeThreadId,
+      turnId,
+    },
+  });
+  send({
+    method: 'item/agentMessage/delta',
+    params: {
+      threadId: activeThreadId,
+      turnId,
+      itemId: 'msg_commentary_' + startedTurns,
+      delta: text,
+    },
+  });
+  send({
+    method: 'item/completed',
+    params: {
+      item: {
+        type: 'agentMessage',
+        id: 'msg_commentary_' + startedTurns,
+        text,
+        phase: 'commentary',
+      },
+      threadId: activeThreadId,
+      turnId,
+    },
+  });
+  send({
+    method: 'turn/completed',
+    params: {
+      threadId: activeThreadId,
+      turn: { id: turnId, items: [], status: 'completed', error: null },
+    },
+  });
+}
+
+function finishIncompleteToolOnly() {
+  send({
+    method: 'item/started',
+    params: {
+      item: { type: 'commandExecution', id: 'cmd_incomplete', command: 'apply patch' },
+      threadId: activeThreadId,
+      turnId,
+    },
+  });
+  emitCommandExecutionCompleted('cmd_incomplete', 'apply patch');
+  send({
+    method: 'turn/completed',
+    params: {
+      threadId: activeThreadId,
+      turn: { id: turnId, items: [], status: 'completed', error: null },
+    },
+  });
+}
+
+function finishPlanOnly() {
+  emitPlan();
+  send({
+    method: 'turn/completed',
+    params: {
+      threadId: activeThreadId,
+      turn: { id: turnId, items: [], status: 'completed', error: null },
+    },
+  });
+}
+
 function startSubAgentThreadIsolationTurn() {
   send({
     method: 'item/started',
@@ -6142,6 +6421,34 @@ rl.on('line', line => {
         turn: { id: turnId, items: [], status: 'inProgress', error: null },
       },
     });
+
+    if (mode === 'incomplete_commentary_then_success') {
+      if (startedTurns === 1) {
+        finishIncompleteCommentary('I will inspect the repository next.');
+        return;
+      }
+      finishTurn('continued-final');
+      return;
+    }
+
+    if (mode === 'incomplete_tool_then_success') {
+      if (startedTurns === 1) {
+        finishIncompleteToolOnly();
+        return;
+      }
+      finishTurn('continued-final');
+      return;
+    }
+
+    if (mode === 'incomplete_twice') {
+      finishIncompleteCommentary('Still working.');
+      return;
+    }
+
+    if (mode === 'plan_only') {
+      finishPlanOnly();
+      return;
+    }
 
     if (mode === 'basic' || mode === 'resume_only' || mode === 'plan') {
       finishTurn('done');

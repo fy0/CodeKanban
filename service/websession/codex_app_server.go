@@ -171,7 +171,9 @@ const (
 	codexTransportRetryingCode       = "transport_retrying"
 	codexTransportRetryExhaustedCode = "transport_retry_exhausted"
 	codexRuntimeErrorCode            = "runtime_error"
+	codexIncompleteTurnErrorCode     = "incomplete_turn"
 	codexRetryNoteLevel              = "warn"
+	codexIncompleteTurnMaxRetries    = 1
 )
 
 var codexReconnectProgressPattern = regexp.MustCompile(`(?i)reconnecting\.\.\.\s*(\d+)\s*/\s*(\d+)`)
@@ -462,6 +464,7 @@ func (m *Manager) runCodexAppServerSession(
 	processExited := false
 	turnCompleted := false
 	cancelled := false
+	incompleteTurnRetries := 0
 
 	for !processExited || incoming != nil {
 		select {
@@ -485,6 +488,54 @@ func (m *Manager) runCodexAppServerSession(
 				continue
 			}
 			if outcome == codexTurnOutcomeCompleted && !turnCompleted {
+				if shouldContinueIncompleteCodexTurn(session, run) {
+					if incompleteTurnRetries >= codexIncompleteTurnMaxRetries {
+						run.lastErrorCode = codexIncompleteTurnErrorCode
+						run.lastError = "Codex completed the turn without a final answer after one automatic continuation."
+						killCmdTree(client.cmd)
+						continue
+					}
+
+					incompleteTurnRetries++
+					m.appendRunNote(
+						session.ID,
+						session,
+						run,
+						"warn",
+						"Codex ended the turn without a final answer. Continuing automatically (1/1).",
+						map[string]any{
+							"code":        "incomplete_turn_auto_continue",
+							"attempt":     incompleteTurnRetries,
+							"maxAttempts": codexIncompleteTurnMaxRetries,
+						},
+					)
+					run.resetCodexTurnCompletionEvidence()
+					turnResponse, continueErr := client.request(
+						ctx,
+						"turn/start",
+						codexTurnStartParams(session, threadID, incompleteTurnContinuationPrompt, nil),
+					)
+					if continueErr != nil {
+						run.lastErrorCode = codexIncompleteTurnErrorCode
+						run.lastError = fmt.Sprintf(
+							"Codex ended the turn without a final answer and the automatic continuation could not start: %v",
+							continueErr,
+						)
+						killCmdTree(client.cmd)
+						continue
+					}
+					continuedTurnID := parseCodexTurnID(turnResponse.Result)
+					if strings.TrimSpace(continuedTurnID) == "" {
+						run.lastErrorCode = codexIncompleteTurnErrorCode
+						run.lastError = "Codex ended the turn without a final answer and the automatic continuation did not return a turn id."
+						killCmdTree(client.cmd)
+						continue
+					}
+					run.currentToolMessage = continuedTurnID
+					rootScope = codexTurnScope{threadID: threadID, turnID: continuedTurnID}
+					continue
+				}
+
 				turnCompleted = true
 				finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
 				now := time.Now()
@@ -894,6 +945,7 @@ func (m *Manager) handleCodexAppServerItemStarted(
 		messageID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
 		if isRootEvent {
 			run.assistantMessageID = messageID
+			run.recordAssistantMessageStarted(messageID, stringValue(item["phase"]))
 		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
@@ -962,6 +1014,9 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 			},
 		})
 	}
+	if isRootEvent {
+		run.recordAssistantMessageDelta(messageID, stringValue(payload["delta"]))
+	}
 
 	run.markAssistantDeltaSeen(messageID)
 	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
@@ -996,6 +1051,13 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			fallbackMessageID = run.assistantMessageID
 		}
 		messageID := firstNonEmpty(stringValue(item["id"]), fallbackMessageID, utils.NewID())
+		if isRootEvent {
+			run.recordAssistantMessageCompleted(
+				messageID,
+				stringValue(item["phase"]),
+				stringValue(item["text"]),
+			)
+		}
 		if !run.assistantDeltaWasSeen(messageID) {
 			text := stringValue(item["text"])
 			if strings.TrimSpace(text) != "" {
@@ -1062,6 +1124,25 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 		if isRootEvent {
 			m.trackActiveCodexToolComplete(run, toolID)
 		}
+	}
+}
+
+func shouldContinueIncompleteCodexTurn(session tables.WebSessionTable, run *activeRun) bool {
+	if run == nil || !isGPT56CodexModel(session.Model) {
+		return false
+	}
+	if run.completedFinalAnswerSeen() || run.completedPlanToolSeen() || run.hasPendingServerRequest() {
+		return false
+	}
+	return true
+}
+
+func isGPT56CodexModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra":
+		return true
+	default:
+		return false
 	}
 }
 
