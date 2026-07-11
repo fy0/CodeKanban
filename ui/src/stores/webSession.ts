@@ -1470,6 +1470,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   );
   const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
   const completedTransitionVersionBySession = new Map<string, number>();
+  const currentSessionProjectById = new Map<string, string>();
   let draftAttachmentUploadSeed = 0;
 
   const allSessionIds = computed(() => {
@@ -1485,6 +1486,22 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function getSessions(projectId: string) {
     return sessionsByProject.value[projectId] ?? [];
+  }
+
+  function replaceProjectSessions(projectId: string, sessions: WebSessionSummary[]) {
+    const previous = sessionsByProject.value[projectId] ?? [];
+    previous.forEach(session => {
+      if (currentSessionProjectById.get(session.id) === projectId) {
+        currentSessionProjectById.delete(session.id);
+      }
+    });
+    sessions.forEach(session => {
+      currentSessionProjectById.set(session.id, projectId);
+    });
+    sessionsByProject.value = {
+      ...sessionsByProject.value,
+      [projectId]: sessions,
+    };
   }
 
   function syncSessionCount(projectId: string) {
@@ -1544,9 +1561,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function findSessionById(sessionId: string) {
-    for (const sessions of Object.values(sessionsByProject.value)) {
+    const indexedProjectId = currentSessionProjectById.get(sessionId);
+    if (indexedProjectId) {
+      const indexedSession = getSessions(indexedProjectId).find(item => item.id === sessionId);
+      if (indexedSession) {
+        return indexedSession;
+      }
+      currentSessionProjectById.delete(sessionId);
+    }
+    for (const [projectId, sessions] of Object.entries(sessionsByProject.value)) {
       const matched = sessions.find(item => item.id === sessionId);
       if (matched) {
+        currentSessionProjectById.set(sessionId, projectId);
         return matched;
       }
     }
@@ -2718,10 +2744,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const current = sessionsByProject.value[projectId] ?? [];
     const removed = current.find(item => item.id === sessionId) ?? null;
     const next = current.filter(item => item.id !== sessionId);
-    sessionsByProject.value = {
-      ...sessionsByProject.value,
-      [projectId]: next,
-    };
+    replaceProjectSessions(projectId, next);
     syncSessionCount(projectId);
     const currentActive = activeSessionIdByProject.value[projectId];
     if (currentActive === sessionId) {
@@ -2760,6 +2783,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextSummary = applyPendingActiveCallTimeoutOverride(
       applyPendingAutoRetryOverride(summary)
     );
+    const previousProjectId = currentSessionProjectById.get(nextSummary.id);
+    if (previousProjectId && previousProjectId !== nextSummary.projectId) {
+      removeCurrentSessionRecord(previousProjectId, nextSummary.id);
+    }
     const current = sessionsByProject.value[nextSummary.projectId] ?? [];
     const next = [...current];
     const index = next.findIndex(item => item.id === nextSummary.id);
@@ -2771,10 +2798,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     } else {
       next.unshift(nextSummary);
     }
-    sessionsByProject.value = {
-      ...sessionsByProject.value,
-      [nextSummary.projectId]: sortSessions(next),
-    };
+    replaceProjectSessions(nextSummary.projectId, sortSessions(next));
     syncSessionCount(nextSummary.projectId);
   }
 
@@ -3316,22 +3340,22 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sessionId: string,
     updater: (current: WebSessionSummary) => WebSessionSummary
   ) {
-    const entries = Object.entries(sessionsByProject.value);
-    let changed = false;
-    const nextSessions: Record<string, WebSessionSummary[]> = {};
-    entries.forEach(([projectId, sessions]) => {
-      const nextProjectSessions = sessions.map(item => {
-        if (item.id !== sessionId) {
-          return item;
-        }
-        changed = true;
-        return updater(item);
-      });
-      nextSessions[projectId] = sortSessions(nextProjectSessions);
-    });
-    if (changed) {
-      sessionsByProject.value = nextSessions;
-      return;
+    const indexedProjectId = currentSessionProjectById.get(sessionId);
+    const projectId =
+      indexedProjectId ||
+      Object.entries(sessionsByProject.value).find(([, sessions]) =>
+        sessions.some(item => item.id === sessionId)
+      )?.[0];
+    if (projectId) {
+      const sessions = getSessions(projectId);
+      const index = sessions.findIndex(item => item.id === sessionId);
+      if (index >= 0) {
+        const nextSessions = [...sessions];
+        nextSessions.splice(index, 1, updater(sessions[index]!));
+        replaceProjectSessions(projectId, sortSessions(nextSessions));
+        return;
+      }
+      currentSessionProjectById.delete(sessionId);
     }
 
     const archived = archivedSessionsById.value[sessionId];
@@ -3915,10 +3939,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const sessions = (await webSessionApi.list(projectId)).map(session =>
       applyPendingActiveCallTimeoutOverride(applyPendingAutoRetryOverride(session))
     );
-    sessionsByProject.value = {
-      ...sessionsByProject.value,
-      [projectId]: sortSessions(sessions),
-    };
+    replaceProjectSessions(projectId, sortSessions(sessions));
     syncSessionCount(projectId);
     loadedProjects.value = {
       ...loadedProjects.value,
@@ -4807,10 +4828,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...session,
       orderIndex: (index + 1) * 1000,
     }));
-    sessionsByProject.value = {
-      ...sessionsByProject.value,
-      [projectId]: reorderedWithOrder,
-    };
+    replaceProjectSessions(projectId, reorderedWithOrder);
 
     try {
       await sendCommand('move', moving.id, {
@@ -4818,10 +4836,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         nxt: nextSessionId,
       });
     } catch (error) {
-      sessionsByProject.value = {
-        ...sessionsByProject.value,
-        [projectId]: sortSessions(original),
-      };
+      replaceProjectSessions(projectId, sortSessions(original));
       await loadSessions(projectId, true);
       throw error;
     }

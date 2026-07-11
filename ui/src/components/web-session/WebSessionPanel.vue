@@ -1885,173 +1885,48 @@
               }}</span>
             </div>
 
-            <div
-              v-if="crossProjectSessions.length === 0 && crossProjectArchivedSessions.length === 0"
-              class="session-sidebar-empty"
-            >
+            <div v-if="sidebarIsEmpty" class="session-sidebar-empty">
               {{ t('webSession.emptyTitle') }}
             </div>
 
-            <div v-else class="session-sidebar-list">
-              <div class="session-sidebar-section">
-                <div class="session-sidebar-section-header">
-                  <span>{{ t('webSession.currentSessions') }}</span>
-                  <span class="session-sidebar-section-count">{{
-                    crossProjectSessions.length
-                  }}</span>
-                </div>
-                <div v-if="crossProjectSessions.length === 0" class="session-sidebar-section-empty">
-                  {{ t('webSession.currentSessionsEmpty') }}
-                </div>
-                <button
-                  v-for="item in crossProjectSessions"
-                  :key="`current:${item.projectId}:${item.session.id}`"
-                  type="button"
-                  class="session-sidebar-item"
-                  :class="[
-                    'session-sidebar-row',
-                    ...getSidebarSessionClasses(item),
-                    {
-                      'has-workflow-plan-badge': shouldShowSessionWorkflowPlanBadge(item.session),
-                      'is-archiving': isSessionArchiving(item.session.id),
-                    },
-                    { 'is-active': item.isCurrent },
-                  ]"
-                  :style="{ '--session-sidebar-accent': getSidebarSessionAccentColor(item) }"
-                  :title="getSidebarSessionTitle(item)"
-                  @click="handleSidebarSessionSelect(item)"
-                >
-                  <div class="session-sidebar-main">
-                    <div class="session-sidebar-title-line">
-                      <span
-                        class="session-sidebar-agent-icon"
-                        v-html="getSessionAssistantIcon(item.session)"
-                      ></span>
-                      <span class="session-sidebar-item-title">{{ item.session.title }}</span>
-                      <span
-                        v-if="getSidebarSessionSubtitle(item)"
-                        class="session-sidebar-state-text"
-                      >
-                        · {{ getSidebarSessionSubtitle(item) }}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div class="session-sidebar-actions">
-                    <span
-                      v-if="isSessionArchiving(item.session.id)"
-                      class="session-sidebar-spinner"
-                      aria-hidden="true"
-                    ></span>
-                    <span
-                      v-if="item.projectBadge"
-                      class="project-index-badge session-project-badge"
-                      :class="{ 'is-single-project': isSingleSidebarProject }"
-                      :style="{ '--badge-color': item.projectBadge.color }"
-                    >
-                      {{ item.projectBadge.label }}
-                    </span>
-                    <span
-                      class="session-current-indicator"
-                      :class="{ 'is-hidden': !item.isCurrent }"
-                      :title="t('terminal.currentActiveSession')"
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                        <circle cx="12" cy="12" r="3"></circle>
-                      </svg>
-                    </span>
-                  </div>
-                </button>
-              </div>
-
-              <div class="session-sidebar-section">
-                <div class="session-sidebar-section-header">
-                  <span>{{ t('webSession.archivedSessions') }}</span>
-                  <span class="session-sidebar-section-count">{{ archivedSidebarMeta.total }}</span>
-                </div>
+            <n-virtual-list
+              v-else
+              class="session-sidebar-list"
+              :items="sidebarVirtualItems"
+              :item-size="WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE"
+              item-resizable
+              key-field="key"
+            >
+              <template #default="{ item }">
                 <div
-                  v-if="crossProjectArchivedSessions.length === 0 && !archivedSidebarMeta.loading"
-                  class="session-sidebar-section-empty"
+                  v-if="item.type === 'section'"
+                  class="session-sidebar-virtual-section"
+                  :class="{ 'is-separated': item.separated }"
                 >
-                  {{ t('webSession.archivedSessionsEmpty') }}
+                  <span>{{ item.label }}</span>
+                  <span class="session-sidebar-section-count">{{ item.count }}</span>
                 </div>
-                <div
-                  v-if="archivedSidebarMeta.loading && crossProjectArchivedSessions.length === 0"
-                  class="session-sidebar-section-empty"
-                >
-                  {{ t('common.loading') }}
+                <div v-else-if="item.type === 'empty'" class="session-sidebar-virtual-row">
+                  <div class="session-sidebar-section-empty">{{ item.label }}</div>
                 </div>
-                <button
-                  v-for="item in crossProjectArchivedSessions"
-                  :key="`archived:${item.projectId}:${item.session.id}`"
-                  type="button"
-                  class="session-sidebar-item"
-                  :class="[
-                    'session-sidebar-row',
-                    'is-archived',
-                    ...getSidebarSessionClasses(item),
-                    {
-                      'has-workflow-plan-badge': shouldShowSessionWorkflowPlanBadge(item.session),
-                    },
-                    { 'is-active': item.isCurrent },
-                  ]"
-                  :style="{ '--session-sidebar-accent': getSidebarSessionAccentColor(item) }"
-                  :title="getSidebarSessionTitle(item)"
-                  @click="handleArchivedSidebarSessionSelect(item)"
-                >
-                  <div class="session-sidebar-main">
-                    <div class="session-sidebar-title-line">
-                      <span
-                        class="session-sidebar-agent-icon"
-                        v-html="getSessionAssistantIcon(item.session)"
-                      ></span>
-                      <span class="session-sidebar-item-title">{{ item.session.title }}</span>
-                      <span
-                        v-if="getSidebarSessionSubtitle(item)"
-                        class="session-sidebar-state-text"
-                      >
-                        · {{ getSidebarSessionSubtitle(item) }}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div class="session-sidebar-actions">
-                    <span
-                      v-if="item.projectBadge"
-                      class="project-index-badge session-project-badge"
-                      :class="{ 'is-single-project': isSingleSidebarProject }"
-                      :style="{ '--badge-color': item.projectBadge.color }"
-                    >
-                      {{ item.projectBadge.label }}
-                    </span>
-                    <span class="session-archived-pill">{{ t('webSession.archivedBadge') }}</span>
-                  </div>
-                </button>
-                <button
-                  v-if="archivedSidebarMeta.hasMore"
-                  type="button"
-                  class="session-sidebar-load-more"
-                  :disabled="archivedSidebarMeta.loading"
-                  @click="handleLoadMoreArchived"
-                >
-                  {{
-                    archivedSidebarMeta.loading
-                      ? t('common.loading')
-                      : t('webSession.loadMoreArchived')
-                  }}
-                </button>
-              </div>
-            </div>
+                <div v-else-if="item.type === 'session'" class="session-sidebar-virtual-row">
+                  <WebSessionSidebarRow
+                    :row="item.entry.row"
+                    @select="handleSidebarVirtualSessionSelect(item)"
+                  />
+                </div>
+                <div v-else class="session-sidebar-virtual-row">
+                  <button
+                    type="button"
+                    class="session-sidebar-load-more"
+                    :disabled="item.disabled"
+                    @click="handleLoadMoreArchived"
+                  >
+                    {{ item.label }}
+                  </button>
+                </div>
+              </template>
+            </n-virtual-list>
           </aside>
         </div>
       </div>
@@ -2377,6 +2252,7 @@ import WebSessionApprovalNotifier from '@/components/web-session/WebSessionAppro
 import WebSessionComposerEditor from '@/components/web-session/WebSessionComposerEditor.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
 import WebSessionImportDialog from '@/components/web-session/WebSessionImportDialog.vue';
+import WebSessionSidebarRow from '@/components/web-session/WebSessionSidebarRow.vue';
 import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkillCatalogPanel.vue';
 import type { WebSessionComposerEditorExposed } from '@/components/web-session/webSessionComposerEditor';
 import {
@@ -2488,6 +2364,13 @@ import {
   resolveWebSessionSidebarToggleScope,
   type WebSessionSidebarScope,
 } from '@/components/web-session/webSessionSidebarScope';
+import {
+  buildWebSessionSidebarVirtualItems,
+  WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE,
+  type WebSessionSidebarRowView,
+  type WebSessionSidebarSessionEntry,
+  type WebSessionSidebarVirtualItem,
+} from '@/components/web-session/webSessionSidebarVirtualList';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
 import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
@@ -6826,6 +6709,44 @@ const effectiveSidebarWidthPx = computed(() => {
 const showSidebarStatusText = computed(
   () => effectiveSidebarWidthPx.value >= SIDEBAR_STATUS_TEXT_THRESHOLD
 );
+const currentSidebarEntries = computed<WebSessionSidebarSessionEntry<CrossProjectSessionItem>[]>(
+  () =>
+    crossProjectSessions.value.map(item => ({
+      source: item,
+      row: buildSidebarSessionRow(item, false),
+    }))
+);
+const archivedSidebarEntries = computed<WebSessionSidebarSessionEntry<CrossProjectSessionItem>[]>(
+  () =>
+    crossProjectArchivedSessions.value.map(item => ({
+      source: item,
+      row: buildSidebarSessionRow(item, true),
+    }))
+);
+const sidebarIsEmpty = computed(
+  () =>
+    crossProjectSessions.value.length === 0 &&
+    crossProjectArchivedSessions.value.length === 0 &&
+    archivedSidebarMeta.value.total === 0 &&
+    !archivedSidebarMeta.value.loading
+);
+const sidebarVirtualItems = computed<WebSessionSidebarVirtualItem<CrossProjectSessionItem>[]>(() =>
+  buildWebSessionSidebarVirtualItems({
+    current: currentSidebarEntries.value,
+    archived: archivedSidebarEntries.value,
+    currentLabel: t('webSession.currentSessions'),
+    currentEmptyLabel: t('webSession.currentSessionsEmpty'),
+    archivedLabel: t('webSession.archivedSessions'),
+    archivedEmptyLabel: t('webSession.archivedSessionsEmpty'),
+    archivedLoadingLabel: t('common.loading'),
+    archivedTotal: archivedSidebarMeta.value.total,
+    archivedLoading: archivedSidebarMeta.value.loading,
+    archivedHasMore: archivedSidebarMeta.value.hasMore,
+    loadMoreLabel: archivedSidebarMeta.value.loading
+      ? t('common.loading')
+      : t('webSession.loadMoreArchived'),
+  })
+);
 
 const agentOptions = [
   { label: 'Codex', value: 'codex' },
@@ -8375,6 +8296,19 @@ async function handleArchivedSidebarSessionSelect(item: CrossProjectSessionItem)
     clearArchivedPreviewSession();
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
+}
+
+async function handleSidebarVirtualSessionSelect(
+  item: WebSessionSidebarVirtualItem<CrossProjectSessionItem>
+) {
+  if (item.type !== 'session') {
+    return;
+  }
+  if (item.entry.row.archived) {
+    await handleArchivedSidebarSessionSelect(item.entry.source);
+    return;
+  }
+  await handleSidebarSessionSelect(item.entry.source);
 }
 
 async function handleLoadMoreArchived() {
@@ -10280,25 +10214,7 @@ function joinSessionHoverParts(parts: Array<string | null | undefined>) {
     .join(' · ');
 }
 
-function getSidebarSessionSubtitle(item: CrossProjectSessionItem) {
-  if (!showSidebarStatusText.value) {
-    return '';
-  }
-  return getSessionStatusLabel(item.session);
-}
-
-function getSidebarSessionTitle(item: CrossProjectSessionItem) {
-  return joinSessionHoverParts([
-    item.projectName,
-    item.session.title,
-    getSidebarSessionSubtitle(item),
-    getSessionHoverTimeText(item.session),
-  ]);
-}
-
-function getSidebarSessionAccentColor(item: CrossProjectSessionItem) {
-  const visualInput = getSessionVisualInput(item.session);
-  const tone = visualInput ? getWebSessionSidebarTone(visualInput) : 'default';
+function getSidebarSessionAccentColor(tone: ReturnType<typeof getWebSessionSidebarTone>): string {
   switch (tone) {
     case 'working':
       return '#8b5cf6';
@@ -10317,25 +10233,73 @@ function getSidebarSessionAccentColor(item: CrossProjectSessionItem) {
   }
 }
 
-function getSidebarSessionClasses(item: CrossProjectSessionItem): string[] {
-  const visualInput = getSessionVisualInput(item.session);
-  const tone = visualInput ? getWebSessionSidebarTone(visualInput) : 'default';
+function getSidebarSessionToneClass(tone: ReturnType<typeof getWebSessionSidebarTone>): string {
   switch (tone) {
     case 'working':
-      return ['session-sidebar-working'];
+      return 'session-sidebar-working';
     case 'approval':
-      return ['session-sidebar-approval'];
+      return 'session-sidebar-approval';
     case 'plan_approval':
-      return ['session-sidebar-plan-approval'];
+      return 'session-sidebar-plan-approval';
     case 'completion':
-      return ['session-sidebar-completion'];
+      return 'session-sidebar-completion';
     case 'idle':
-      return ['session-sidebar-idle'];
+      return 'session-sidebar-idle';
     case 'error':
-      return ['session-sidebar-error'];
+      return 'session-sidebar-error';
     default:
-      return [];
+      return '';
   }
+}
+
+function buildSidebarSessionRow(
+  item: CrossProjectSessionItem,
+  archived: boolean
+): WebSessionSidebarRowView {
+  const session = item.session;
+  const phase = webSessionStore.getLiveState(session.id).phase;
+  const hasUnread = hasSessionUnread(session);
+  const displayState = resolveWebSessionDisplayState({
+    isDraft: false,
+    hasUnread,
+    status: session.status,
+    syncState: session.syncState,
+    livePhase: phase,
+    assistantState: session.assistantState,
+  });
+  const subtitle =
+    showSidebarStatusText.value && displayState.statusLabelKey
+      ? t(displayState.statusLabelKey)
+      : '';
+  const tone = getWebSessionSidebarTone({
+    phase,
+    hasUnread,
+    status: session.status,
+  });
+
+  return {
+    key: `${archived ? 'archived' : 'current'}:${item.projectId}:${session.id}`,
+    sessionId: session.id,
+    title: session.title,
+    iconHtml: getAssistantIconByType(session.agent === 'claude' ? 'claude-code' : 'codex'),
+    subtitle,
+    tooltip: joinSessionHoverParts([
+      item.projectName,
+      session.title,
+      subtitle,
+      getSessionHoverTimeText(session),
+    ]),
+    accentColor: getSidebarSessionAccentColor(tone),
+    toneClass: getSidebarSessionToneClass(tone),
+    active: item.isCurrent,
+    archived,
+    archiving: !archived && isSessionArchiving(session.id),
+    hasWorkflowPlanBadge: shouldShowSessionWorkflowPlanBadge(session),
+    singleProject: isSingleSidebarProject.value,
+    projectBadge: item.projectBadge,
+    currentIndicatorTitle: t('terminal.currentActiveSession'),
+    archivedLabel: t('webSession.archivedBadge'),
+  };
 }
 
 function getSessionPillSizeClass() {
@@ -11355,8 +11319,7 @@ defineExpose({
   text-overflow: ellipsis;
 }
 
-.tab-action-spinner,
-.session-sidebar-spinner {
+.tab-action-spinner {
   width: 11px;
   height: 11px;
   flex-shrink: 0;
@@ -12231,11 +12194,37 @@ defineExpose({
 .session-sidebar-list {
   flex: 1;
   min-height: 0;
+  height: 100%;
   overflow-y: auto;
   padding: 6px 0 2px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+}
+
+.session-sidebar-virtual-row {
+  box-sizing: border-box;
+  min-height: 40px;
+  padding-bottom: 6px;
+}
+
+.session-sidebar-virtual-section {
+  box-sizing: border-box;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--n-text-color-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.session-sidebar-virtual-section.is-separated {
+  min-height: 38px;
+  padding-top: 12px;
 }
 
 .session-sidebar-section {
@@ -12275,285 +12264,10 @@ defineExpose({
   color: var(--n-text-color-3);
 }
 
-.session-sidebar-item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 12%, var(--n-border-color));
-  border-left: 4px solid var(--session-sidebar-accent, rgba(15, 23, 42, 0.08));
-  background: var(--app-surface-color, #fff);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-.session-sidebar-item.has-workflow-plan-badge {
-  position: relative;
-  overflow: visible;
-}
-
-.session-sidebar-item.has-workflow-plan-badge::before {
-  content: '';
-  position: absolute;
-  top: 10px;
-  left: -6px;
-  z-index: 2;
-  width: 18px;
-  height: 2px;
-  background: var(--session-sidebar-accent, #0ea5e9);
-  transform: rotate(54deg);
-  transform-origin: center center;
-  pointer-events: none;
-}
-
-.session-sidebar-item.has-workflow-plan-badge::after {
-  content: '';
-  position: absolute;
-  top: 10px;
-  left: -6px;
-  z-index: 2;
-  width: 18px;
-  height: 2px;
-  background: var(--session-sidebar-accent, #0ea5e9);
-  transform: rotate(-54deg);
-  transform-origin: center center;
-  pointer-events: none;
-}
-
-.session-sidebar-item:hover {
-  transform: none;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
-}
-
-.session-sidebar-item.is-active {
-  border-color: color-mix(
-    in srgb,
-    var(--session-sidebar-accent, var(--n-primary-color)) 44%,
-    var(--n-border-color)
-  );
-  background: linear-gradient(
-    135deg,
-    color-mix(
-        in srgb,
-        var(--session-sidebar-accent, var(--n-primary-color)) 14%,
-        var(--app-surface-color, #fff)
-      )
-      0%,
-    color-mix(
-        in srgb,
-        var(--session-sidebar-accent, var(--n-primary-color)) 6%,
-        var(--app-surface-color, #fff)
-      )
-      100%
-  );
-  box-shadow: 0 6px 16px
-    color-mix(in srgb, var(--session-sidebar-accent, var(--n-primary-color)) 20%, transparent);
-}
-
-.session-sidebar-item.is-archived {
-  border-style: dashed;
-}
-
-.session-sidebar-item.is-archiving {
-  cursor: wait;
-}
-
-.session-sidebar-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-}
-
-.session-sidebar-title-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.session-sidebar-agent-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--n-primary-color);
-  flex-shrink: 0;
-}
-
-.session-sidebar-agent-icon :deep(svg) {
-  display: block;
-}
-
-.session-sidebar-item-title {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.session-sidebar-state-text {
-  flex-shrink: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--n-text-color-3);
-}
-
-.session-sidebar-actions {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 @keyframes web-session-action-spin {
   to {
     transform: rotate(360deg);
   }
-}
-
-.session-archived-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 38px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, #94a3b8 16%, transparent);
-  color: color-mix(in srgb, #334155 78%, var(--n-text-color-2));
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.session-sidebar-item.is-active .session-archived-pill {
-  background: color-mix(in srgb, var(--n-primary-color) 18%, rgba(255, 255, 255, 0.92));
-  color: color-mix(in srgb, var(--n-primary-color) 88%, #ffffff 12%);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 26%, transparent),
-    0 1px 2px rgba(59, 130, 246, 0.14);
-}
-
-.project-index-badge.session-project-badge {
-  width: 18px;
-  height: 18px;
-  font-size: 10px;
-  color: #ffffff;
-  background: var(--badge-color, #3b82f6);
-  background-image: none;
-  border: 1px solid
-    color-mix(in srgb, var(--badge-color, #3b82f6) 78%, var(--app-surface-color, #fff) 22%);
-  margin-left: 2px;
-  box-shadow: none;
-}
-
-.project-index-badge.session-project-badge.is-single-project {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.session-current-indicator {
-  width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 0;
-  border-radius: 50%;
-  background: var(--n-primary-color);
-  color: #ffffff;
-  border: 1px solid
-    color-mix(in srgb, var(--n-primary-color) 78%, var(--app-surface-color, #fff) 22%);
-  box-shadow: none;
-  animation: none;
-}
-
-.session-current-indicator.is-hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.session-current-indicator svg {
-  display: block;
-}
-
-.session-sidebar-working {
-  background: color-mix(in srgb, #8b5cf6 8%, var(--app-surface-color, #fff));
-}
-
-.session-sidebar-approval {
-  border-color: rgba(247, 144, 9, 0.44);
-  background: rgba(247, 144, 9, 0.14);
-}
-
-.session-sidebar-item.session-sidebar-approval.is-active,
-.session-sidebar-item.session-sidebar-approval.is-active:hover {
-  border-color: rgba(247, 144, 9, 0.6);
-  background: rgba(247, 144, 9, 0.22);
-  box-shadow: none;
-}
-
-.session-sidebar-plan-approval {
-  border-color: var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3));
-  background: var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14));
-}
-
-.session-sidebar-item.session-sidebar-plan-approval.is-active,
-.session-sidebar-item.session-sidebar-plan-approval.is-active:hover {
-  border-color: color-mix(
-    in srgb,
-    var(--web-session-plan-approval-accent-strong, #0e7490) 14%,
-    var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3)) 86%
-  );
-  border-left-color: var(--web-session-plan-approval-accent, #0891b2);
-  background: linear-gradient(
-    135deg,
-    color-mix(
-        in srgb,
-        var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 92%,
-        var(--app-surface-color, #fff) 8%
-      )
-      0%,
-    color-mix(
-        in srgb,
-        var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 76%,
-        var(--app-surface-color, #fff) 24%
-      )
-      100%
-  );
-  box-shadow:
-    inset 0 0 0 1px
-      color-mix(in srgb, var(--web-session-plan-approval-accent, #0891b2) 16%, transparent),
-    0 6px 18px color-mix(in srgb, var(--web-session-plan-approval-accent, #0891b2) 14%, transparent);
-}
-
-.session-sidebar-completion {
-  background: color-mix(in srgb, #10b981 10%, var(--app-surface-color, #fff));
-}
-
-.session-sidebar-idle {
-  background: color-mix(in srgb, #9ca3af 4%, var(--app-surface-color, #fff));
-}
-
-.session-sidebar-error {
-  background: color-mix(in srgb, #f04438 8%, var(--app-surface-color, #fff));
 }
 
 .session-sidebar-load-more {

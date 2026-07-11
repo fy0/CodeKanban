@@ -2323,4 +2323,50 @@ describe('webSession loading behavior', () => {
     expect(store.eventRecoveryVersion).toBe(1);
     expect(store.eventLastDisconnectReason).toBeNull();
   });
+
+  it('keeps unrelated project collections stable during an optimistic session update', async () => {
+    const store = useWebSessionStore();
+    const targetSession = makeSession({
+      id: 'session-target',
+      projectId: 'project-1',
+      workflowMode: 'default',
+    });
+    const unrelatedSession = makeSession({
+      id: 'session-unrelated',
+      projectId: 'project-2',
+    });
+    listMock.mockImplementation(async (projectId: string) =>
+      projectId === 'project-1' ? [targetSession] : [unrelatedSession]
+    );
+
+    await store.loadSessions('project-1');
+    await store.loadSessions('project-2');
+    const unrelatedCollection = store.getSessions('project-2');
+
+    const updatePromise = store.updateWorkflowMode(targetSession.id, 'plan');
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await flushMicrotasks();
+      if (findSocket('/api/v1/web-sessions/ws')?.sent.length) {
+        break;
+      }
+    }
+
+    expect(store.getSessions('project-1')[0]?.workflowMode).toBe('plan');
+    expect(store.getSessions('project-2')).toBe(unrelatedCollection);
+
+    const commandSocket = findSocket('/api/v1/web-sessions/ws');
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: targetSession.id,
+      ts: Date.now(),
+      op: 'set_wm',
+      ok: 1,
+    });
+    await updatePromise;
+  });
 });
