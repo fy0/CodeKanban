@@ -1522,30 +1522,127 @@
                   class="scheduled-input-item"
                   :class="`state-${item.status}`"
                 >
-                  <span class="scheduled-input-badge" :class="`state-${item.status}`">
-                    {{
-                      item.status === 'expired'
-                        ? t('webSession.scheduledExpiredBadge')
-                        : item.status === 'failed'
-                          ? t('webSession.scheduledFailedBadge')
-                          : t('webSession.scheduledBadge')
-                    }}
-                  </span>
-                  <span class="scheduled-input-mode">
-                    {{
-                      item.action === 'execute_plan'
-                        ? t('webSession.scheduledPlanMode')
-                        : scheduledModeLabel(item.mode)
-                    }}
-                  </span>
-                  <span class="scheduled-input-time" :title="formatDateTime(item.scheduledFor)">
-                    {{ formatTime(item.scheduledFor) }}
-                  </span>
-                  <span class="scheduled-input-preview">{{ scheduledInputPreview(item) }}</span>
+                  <n-popover
+                    trigger="manual"
+                    placement="bottom-start"
+                    :show="activeScheduledInputPopoverId === item.id"
+                    :show-arrow="false"
+                    content-style="padding: 10px 12px;"
+                    @clickoutside="closeScheduledInputPopover"
+                  >
+                    <template #trigger>
+                      <button
+                        type="button"
+                        class="scheduled-input-trigger"
+                        :aria-expanded="activeScheduledInputPopoverId === item.id"
+                        :aria-label="t('webSession.scheduledDetails')"
+                        :aria-busy="scheduledInputActionId === item.id"
+                        @click="toggleScheduledInputPopover(item.id)"
+                      >
+                        <span class="scheduled-input-badge" :class="`state-${item.status}`">
+                          {{
+                            item.status === 'expired'
+                              ? t('webSession.scheduledExpiredBadge')
+                              : item.status === 'failed'
+                                ? t('webSession.scheduledFailedBadge')
+                                : t('webSession.scheduledBadge')
+                          }}
+                        </span>
+                        <span class="scheduled-input-mode">
+                          {{
+                            item.action === 'execute_plan'
+                              ? t('webSession.scheduledPlanMode')
+                              : scheduledModeLabel(item.mode)
+                          }}
+                        </span>
+                        <span
+                          class="scheduled-input-time"
+                          :title="formatDateTime(item.scheduledFor)"
+                        >
+                          {{ formatTime(item.scheduledFor) }}
+                        </span>
+                        <span class="scheduled-input-preview">{{
+                          scheduledInputPreview(item)
+                        }}</span>
+                      </button>
+                    </template>
+                    <div class="scheduled-input-popover-card">
+                      <div class="scheduled-input-popover-header">
+                        <span class="scheduled-input-badge" :class="`state-${item.status}`">
+                          {{
+                            item.status === 'expired'
+                              ? t('webSession.scheduledExpiredBadge')
+                              : item.status === 'failed'
+                                ? t('webSession.scheduledFailedBadge')
+                                : t('webSession.scheduledBadge')
+                          }}
+                        </span>
+                        <span class="scheduled-input-mode">
+                          {{
+                            item.action === 'execute_plan'
+                              ? t('webSession.scheduledPlanMode')
+                              : scheduledModeLabel(item.mode)
+                          }}
+                        </span>
+                      </div>
+                      <div class="scheduled-input-detail-row">
+                        <span>{{ t('webSession.scheduledForLabel') }}</span>
+                        <strong>{{ formatDateTime(item.scheduledFor) }}</strong>
+                      </div>
+                      <div class="scheduled-input-popover-text">
+                        {{ scheduledInputDetailText(item) }}
+                      </div>
+                      <div v-if="item.attachmentIds.length > 0" class="scheduled-input-attachments">
+                        {{
+                          t('webSession.pendingAttachmentsCount', {
+                            count: item.attachmentIds.length,
+                          })
+                        }}
+                      </div>
+                      <div
+                        v-if="item.status === 'failed' || item.status === 'expired'"
+                        class="scheduled-input-error"
+                      >
+                        <span>{{ t('webSession.scheduledFailureReason') }}</span>
+                        <strong>{{ scheduledFailureReason(item) }}</strong>
+                      </div>
+                      <div class="scheduled-input-popover-actions">
+                        <template v-if="item.status !== 'expired'">
+                          <button
+                            type="button"
+                            class="scheduled-input-action is-primary"
+                            :disabled="Boolean(scheduledInputActionId)"
+                            @click="handleDispatchScheduledInputNow(item)"
+                          >
+                            {{ scheduledImmediateActionLabel(item) }}
+                          </button>
+                          <button
+                            type="button"
+                            class="scheduled-input-action"
+                            :disabled="Boolean(scheduledInputActionId)"
+                            @click="openScheduledInputEditDialog(item)"
+                          >
+                            {{ scheduledEditActionLabel(item) }}
+                          </button>
+                        </template>
+                        <button
+                          type="button"
+                          class="scheduled-input-action is-danger"
+                          :disabled="Boolean(scheduledInputActionId)"
+                          @click="handleRemoveScheduledInput(item.id)"
+                        >
+                          {{ scheduledRemoveActionLabel(item) }}
+                        </button>
+                      </div>
+                    </div>
+                  </n-popover>
                   <button
                     type="button"
                     class="scheduled-input-remove"
-                    @click="handleRemoveScheduledInput(item.id)"
+                    :title="scheduledRemoveActionLabel(item)"
+                    :aria-label="scheduledRemoveActionLabel(item)"
+                    :disabled="Boolean(scheduledInputActionId)"
+                    @click.stop="handleRemoveScheduledInput(item.id)"
                   >
                     ×
                   </button>
@@ -1974,6 +2071,28 @@
       @update:show="handleScheduledSendDialogVisibilityChange"
     >
       <div class="scheduled-send-modal-body">
+        <div v-if="scheduledSendPurpose === 'edit_message'" class="scheduled-send-section">
+          <div class="scheduled-send-section-label">
+            {{ t('webSession.scheduledEditContent') }}
+          </div>
+          <n-input
+            v-model:value="scheduledEditText"
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 8 }"
+            :placeholder="t('webSession.inputPlaceholder')"
+          />
+          <div
+            v-if="scheduledEditingInput && scheduledEditingInput.attachmentIds.length > 0"
+            class="scheduled-send-selected"
+          >
+            {{
+              t('webSession.scheduledAttachmentsPreserved', {
+                count: scheduledEditingInput.attachmentIds.length,
+              })
+            }}
+          </div>
+        </div>
+
         <div class="scheduled-send-section">
           <div class="scheduled-send-section-label">
             {{ t('webSession.scheduleSendPresetTitle') }}
@@ -2007,7 +2126,10 @@
           </div>
         </div>
 
-        <div v-if="scheduledSendPurpose === 'message'" class="scheduled-send-section">
+        <div
+          v-if="scheduledSendPurpose === 'message' || scheduledSendPurpose === 'edit_message'"
+          class="scheduled-send-section"
+        >
           <div class="scheduled-send-section-label">
             {{ t('webSession.scheduleSendModeTitle') }}
           </div>
@@ -2565,7 +2687,7 @@ type CommandExecutionDetail = {
 type ImageViewPreviewState = 'loading' | 'ready' | 'error';
 
 type ScheduledSendMode = 'send' | 'interrupt' | 'queue';
-type ScheduledSendPurpose = 'message' | 'execute_plan';
+type ScheduledSendPurpose = 'message' | 'execute_plan' | 'edit_message' | 'edit_plan';
 
 type ScheduledSendPresetOption = {
   key: string;
@@ -2754,6 +2876,10 @@ const planQuickActionAnchor = shallowRef<HTMLElement | null>(null);
 const showScheduledSendDialog = ref(false);
 const scheduledSendPurpose = ref<ScheduledSendPurpose>('message');
 const scheduledPlanDialogTarget = ref<ScheduledPlanDialogTarget | null>(null);
+const scheduledEditingInput = ref<WebSessionScheduledInput | null>(null);
+const scheduledEditText = ref('');
+const activeScheduledInputPopoverId = ref('');
+const scheduledInputActionId = ref('');
 const scheduledSendAt = ref<number | null>(null);
 const scheduledSendMode = ref<ScheduledSendMode>('send');
 const scheduledSendPresetOptions = ref<ScheduledSendPresetOption[]>([]);
@@ -4085,16 +4211,36 @@ const planQuickActionOptions = computed<DropdownOption[]>(() => [
     label: t('webSession.planActionSchedule'),
   },
 ]);
-const scheduledDialogTitle = computed(() =>
-  scheduledSendPurpose.value === 'execute_plan'
-    ? t('webSession.planScheduleTitle')
-    : t('webSession.scheduleSend')
+const isScheduledDialogPlan = computed(
+  () => scheduledSendPurpose.value === 'execute_plan' || scheduledSendPurpose.value === 'edit_plan'
 );
-const scheduledDialogConfirmLabel = computed(() =>
-  scheduledSendPurpose.value === 'execute_plan'
-    ? t('webSession.planScheduleConfirm')
-    : t('webSession.scheduleSendConfirm')
+const isScheduledDialogEdit = computed(
+  () => scheduledSendPurpose.value === 'edit_message' || scheduledSendPurpose.value === 'edit_plan'
 );
+const scheduledDialogTitle = computed(() => {
+  switch (scheduledSendPurpose.value) {
+    case 'execute_plan':
+      return t('webSession.planScheduleTitle');
+    case 'edit_plan':
+      return t('webSession.scheduledPlanEditTitle');
+    case 'edit_message':
+      return t('webSession.scheduledEditTitle');
+    default:
+      return t('webSession.scheduleSend');
+  }
+});
+const scheduledDialogConfirmLabel = computed(() => {
+  switch (scheduledSendPurpose.value) {
+    case 'execute_plan':
+      return t('webSession.planScheduleConfirm');
+    case 'edit_plan':
+      return t('webSession.scheduledPlanEditConfirm');
+    case 'edit_message':
+      return t('webSession.scheduledEditConfirm');
+    default:
+      return t('webSession.scheduleSendConfirm');
+  }
+});
 const selectedScheduledSendPresetKey = computed(
   () =>
     scheduledSendPresetOptions.value.find(option => option.timestamp === scheduledSendAt.value)
@@ -4104,7 +4250,7 @@ const scheduledSendSelectedTimeLabel = computed(() =>
   scheduledSendAt.value ? formatWebSessionDateTime(scheduledSendAt.value, locale.value) : ''
 );
 const scheduledDialogSelectedTimeLabel = computed(() =>
-  scheduledSendPurpose.value === 'execute_plan'
+  isScheduledDialogPlan.value
     ? t('webSession.planScheduleSelectedTime', { time: scheduledSendSelectedTimeLabel.value })
     : t('webSession.scheduleSendSelectedTime', { time: scheduledSendSelectedTimeLabel.value })
 );
@@ -4116,6 +4262,22 @@ const canConfirmScheduledSend = computed(() => {
     scheduledSendSubmitting.value
   ) {
     return false;
+  }
+  if (isScheduledDialogEdit.value) {
+    const editing = scheduledEditingInput.value;
+    const current = editing
+      ? scheduledInputs.value.find(item => item.id === editing.id)
+      : undefined;
+    if (!current || (current.status !== 'scheduled' && current.status !== 'failed')) {
+      return false;
+    }
+    if (scheduledSendPurpose.value === 'edit_plan') {
+      return current.action === 'execute_plan';
+    }
+    return (
+      current.action === 'message' &&
+      (scheduledEditText.value.trim().length > 0 || current.attachmentIds.length > 0)
+    );
   }
   if (scheduledSendPurpose.value === 'execute_plan') {
     const target = scheduledPlanDialogTarget.value;
@@ -4710,6 +4872,8 @@ function openScheduledSendDialog(
   const presets = buildScheduledSendPresetOptions();
   scheduledSendPurpose.value = purpose;
   scheduledPlanDialogTarget.value = purpose === 'execute_plan' ? planTarget : null;
+  scheduledEditingInput.value = null;
+  scheduledEditText.value = '';
   scheduledSendPresetOptions.value = presets;
   scheduledSendAt.value =
     presets.find(option => option.key === '5m')?.timestamp ??
@@ -4722,17 +4886,51 @@ function openScheduledSendDialog(
   closePlanQuickActions();
 }
 
+function openScheduledInputEditDialog(item: WebSessionScheduledInput) {
+  if (
+    !currentRealSession.value ||
+    item.status === 'expired' ||
+    scheduledInputActionId.value === item.id
+  ) {
+    return;
+  }
+  const presets = buildScheduledSendPresetOptions();
+  const fallbackTime =
+    presets.find(option => option.key === '5m')?.timestamp ?? Date.now() + 5 * 60_000;
+  scheduledSendPurpose.value = item.action === 'execute_plan' ? 'edit_plan' : 'edit_message';
+  scheduledPlanDialogTarget.value = null;
+  scheduledEditingInput.value = item;
+  scheduledEditText.value = item.text;
+  scheduledSendPresetOptions.value = presets;
+  scheduledSendAt.value = item.scheduledFor > Date.now() ? item.scheduledFor : fallbackTime;
+  scheduledSendMode.value = item.mode;
+  scheduledSendSubmitting.value = false;
+  activeScheduledInputPopoverId.value = '';
+  showScheduledSendDialog.value = true;
+}
+
 function handleScheduledSendDialogVisibilityChange(show: boolean) {
   showScheduledSendDialog.value = show;
   if (!show) {
     scheduledSendSubmitting.value = false;
     scheduledSendPurpose.value = 'message';
     scheduledPlanDialogTarget.value = null;
+    scheduledEditingInput.value = null;
+    scheduledEditText.value = '';
   }
 }
 
 function handleScheduledSendPresetSelect(timestamp: number) {
   scheduledSendAt.value = timestamp;
+}
+
+function toggleScheduledInputPopover(inputId: string) {
+  activeScheduledInputPopoverId.value =
+    activeScheduledInputPopoverId.value === inputId ? '' : inputId;
+}
+
+function closeScheduledInputPopover() {
+  activeScheduledInputPopoverId.value = '';
 }
 
 const sendQuickActionLongPress = createLongPressTracker({
@@ -9282,6 +9480,10 @@ async function handleSubmit() {
 }
 
 async function handleConfirmScheduledSend() {
+  if (isScheduledDialogEdit.value) {
+    await handleConfirmScheduledInputUpdate();
+    return;
+  }
   if (scheduledSendPurpose.value === 'execute_plan') {
     await handleConfirmScheduledPlanExecution();
     return;
@@ -9376,6 +9578,52 @@ async function handleConfirmScheduledPlanExecution() {
     }
     handleScheduledSendDialogVisibilityChange(false);
     message.success(t('webSession.planScheduleCreated'));
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    scheduledSendSubmitting.value = false;
+  }
+}
+
+async function handleConfirmScheduledInputUpdate() {
+  const editing = scheduledEditingInput.value;
+  const executeAt = Number(scheduledSendAt.value);
+  const currentSession = currentRealSession.value;
+  const current = editing ? scheduledInputs.value.find(item => item.id === editing.id) : undefined;
+  if (
+    !currentSession ||
+    !current ||
+    (current.status !== 'scheduled' && current.status !== 'failed') ||
+    scheduledSendSubmitting.value ||
+    !Number.isFinite(executeAt) ||
+    executeAt <= Date.now()
+  ) {
+    return;
+  }
+  if (
+    current.action === 'message' &&
+    scheduledEditText.value.trim().length === 0 &&
+    current.attachmentIds.length === 0
+  ) {
+    return;
+  }
+
+  scheduledSendSubmitting.value = true;
+  try {
+    if (!(await ensureMessageCapabilityAvailable(currentSession.agent))) {
+      return;
+    }
+    await webSessionStore.updateScheduledInput(currentSession.id, current.id, {
+      scheduledFor: executeAt,
+      ...(current.action === 'message'
+        ? {
+            text: scheduledEditText.value,
+            mode: scheduledSendMode.value,
+          }
+        : {}),
+    });
+    handleScheduledSendDialogVisibilityChange(false);
+    message.success(t('webSession.scheduledUpdated'));
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
@@ -9658,6 +9906,82 @@ function scheduledInputPreview(item: WebSessionScheduledInput) {
   return t('webSession.pendingAttachments', { count: item.attachmentIds.length });
 }
 
+function scheduledInputDetailText(item: WebSessionScheduledInput) {
+  if (item.action === 'execute_plan') {
+    return t('webSession.planActionImplement');
+  }
+  return (
+    item.text.trim() || t('webSession.pendingAttachments', { count: item.attachmentIds.length })
+  );
+}
+
+function scheduledImmediateActionLabel(item: WebSessionScheduledInput) {
+  if (item.action === 'execute_plan') {
+    return item.status === 'failed'
+      ? t('webSession.scheduledRetryPlanNow')
+      : t('webSession.scheduledImplementNow');
+  }
+  return item.status === 'failed'
+    ? t('webSession.scheduledRetryNow')
+    : t('webSession.scheduledSendNow');
+}
+
+function scheduledEditActionLabel(item: WebSessionScheduledInput) {
+  if (item.status === 'failed') {
+    return t('webSession.scheduledReschedule');
+  }
+  return item.action === 'execute_plan' ? t('webSession.scheduledChangeTime') : t('common.edit');
+}
+
+function scheduledRemoveActionLabel(item: WebSessionScheduledInput) {
+  return item.status === 'scheduled'
+    ? t('webSession.scheduledCancel')
+    : t('webSession.scheduledRemove');
+}
+
+function scheduledFailureReason(item: WebSessionScheduledInput) {
+  return item.lastError || t('webSession.scheduledFailureUnknown');
+}
+
+async function performDispatchScheduledInputNow(item: WebSessionScheduledInput) {
+  const session = currentRealSession.value;
+  if (!session || scheduledInputActionId.value) {
+    return;
+  }
+  scheduledInputActionId.value = item.id;
+  closeScheduledInputPopover();
+  try {
+    if (!(await ensureMessageCapabilityAvailable(session.agent))) {
+      return;
+    }
+    await webSessionStore.dispatchScheduledInputNow(session.id, item.id);
+    message.success(
+      item.action === 'execute_plan'
+        ? t('webSession.scheduledPlanStarted')
+        : t('webSession.scheduledSentNow')
+    );
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    scheduledInputActionId.value = '';
+  }
+}
+
+function handleDispatchScheduledInputNow(item: WebSessionScheduledInput) {
+  if (item.action === 'message' && item.mode === 'interrupt' && isRunActive.value) {
+    closeScheduledInputPopover();
+    dialog.warning({
+      title: t('webSession.scheduledInterruptNowTitle'),
+      content: t('webSession.scheduledInterruptNowBody'),
+      positiveText: t('webSession.scheduledInterruptNowConfirm'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: () => performDispatchScheduledInputNow(item),
+    });
+    return;
+  }
+  void performDispatchScheduledInputNow(item);
+}
+
 async function handleRemovePendingInput(pendingId: string) {
   if (!currentRealSession.value) {
     return;
@@ -9685,13 +10009,17 @@ async function handleClearPendingInputs() {
 }
 
 async function handleRemoveScheduledInput(inputId: string) {
-  if (!currentRealSession.value) {
+  if (!currentRealSession.value || scheduledInputActionId.value) {
     return;
   }
+  scheduledInputActionId.value = inputId;
+  closeScheduledInputPopover();
   try {
     await webSessionStore.removeScheduledInput(currentRealSession.value.id, inputId);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    scheduledInputActionId.value = '';
   }
 }
 
@@ -10860,6 +11188,42 @@ watch(
       scheduledSendPurpose.value === 'execute_plan' &&
       target &&
       (target.sessionId !== sessionId || target.planItemId !== planItemId)
+    ) {
+      handleScheduledSendDialogVisibilityChange(false);
+    }
+  }
+);
+
+watch(
+  () => currentRealSession.value?.id ?? '',
+  (sessionId, previousSessionId) => {
+    if (sessionId === previousSessionId) {
+      return;
+    }
+    closeScheduledInputPopover();
+    if (showScheduledSendDialog.value && isScheduledDialogEdit.value) {
+      handleScheduledSendDialogVisibilityChange(false);
+    }
+  }
+);
+
+watch(
+  () => scheduledInputs.value.map(item => `${item.id}:${item.status}`).join('|'),
+  () => {
+    if (
+      activeScheduledInputPopoverId.value &&
+      !scheduledInputs.value.some(item => item.id === activeScheduledInputPopoverId.value)
+    ) {
+      closeScheduledInputPopover();
+    }
+    const editing = scheduledEditingInput.value;
+    const current = editing
+      ? scheduledInputs.value.find(item => item.id === editing.id)
+      : undefined;
+    if (
+      showScheduledSendDialog.value &&
+      isScheduledDialogEdit.value &&
+      (!current || (current.status !== 'scheduled' && current.status !== 'failed'))
     ) {
       handleScheduledSendDialogVisibilityChange(false);
     }
@@ -15400,13 +15764,12 @@ defineExpose({
 
 .scheduled-input-item {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 4px 5px 4px 7px;
   border: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
-  border-radius: 10px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--app-surface-color, #fff) 95%, rgba(245, 158, 11, 0.05));
 }
 
@@ -15416,6 +15779,33 @@ defineExpose({
 
 .scheduled-input-item.state-expired {
   background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, rgba(100, 116, 139, 0.07));
+}
+
+.scheduled-input-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 2px 3px 2px 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+
+.scheduled-input-trigger:hover {
+  background: color-mix(in srgb, var(--n-primary-color) 7%, transparent);
+}
+
+.scheduled-input-trigger:focus-visible,
+.scheduled-input-action:focus-visible,
+.scheduled-input-remove:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--n-primary-color) 62%, transparent);
+  outline-offset: 2px;
 }
 
 .scheduled-input-badge,
@@ -15446,33 +15836,146 @@ defineExpose({
 
 .scheduled-input-mode {
   background: color-mix(in srgb, var(--n-border-color) 72%, transparent);
-  color: var(--n-text-color-2);
+  color: color-mix(in srgb, var(--app-text-color, #333) 78%, transparent);
 }
 
 .scheduled-input-time {
   font-size: 11px;
-  color: var(--n-text-color-2);
+  color: color-mix(in srgb, var(--app-text-color, #333) 70%, transparent);
   white-space: nowrap;
 }
 
 .scheduled-input-preview {
   min-width: 0;
-  flex: 1 1 140px;
-  font-size: 11px;
-  color: var(--n-text-color-3);
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--app-text-color, #333) 78%, transparent);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .scheduled-input-remove {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
+  border-radius: 5px;
   background: transparent;
-  color: var(--n-text-color-3);
+  color: color-mix(in srgb, var(--app-text-color, #333) 58%, transparent);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   flex-shrink: 0;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.scheduled-input-remove:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.scheduled-input-remove:disabled,
+.scheduled-input-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.scheduled-input-popover-card {
+  display: grid;
+  gap: 10px;
+  width: min(340px, 78vw);
+  max-height: min(62vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.scheduled-input-popover-header,
+.scheduled-input-popover-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.scheduled-input-detail-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--app-text-color, #333) 62%, transparent);
+}
+
+.scheduled-input-detail-row strong {
+  min-width: 0;
+  color: color-mix(in srgb, var(--app-text-color, #333) 82%, transparent);
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.scheduled-input-popover-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.scheduled-input-attachments {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--app-text-color, #333) 62%, transparent);
+}
+
+.scheduled-input-error {
+  display: grid;
+  gap: 3px;
+  padding: 8px 9px;
+  border-left: 3px solid rgba(220, 38, 38, 0.72);
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.08);
+  color: #b91c1c;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.scheduled-input-error strong {
+  color: inherit;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.scheduled-input-popover-actions {
+  padding-top: 2px;
+}
+
+.scheduled-input-action {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: color-mix(in srgb, var(--app-text-color, #333) 76%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+
+.scheduled-input-action:hover {
+  color: var(--n-primary-color);
+}
+
+.scheduled-input-action.is-primary {
+  color: var(--n-primary-color);
+  font-weight: 600;
+}
+
+.scheduled-input-action.is-danger {
+  color: #dc2626;
 }
 
 .scheduled-send-modal-body {

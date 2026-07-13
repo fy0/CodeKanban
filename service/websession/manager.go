@@ -77,6 +77,7 @@ type Manager struct {
 	autoRetryTimers             map[string]*time.Timer
 	scheduledInputTimers        map[string]*time.Timer
 	scheduledInputTimerSessions map[string]string
+	scheduledInputLocks         [64]sync.Mutex
 	pendingInputs               map[string][]PendingInput
 	pendingProcessing           map[string]bool
 	pendingDirty                map[string]bool
@@ -2229,6 +2230,10 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleSchedulePlanCommand(ctx, client, frame)
 	case "scheduled_del":
 		return m.handleScheduledDeleteCommand(ctx, client, frame)
+	case "scheduled_update":
+		return m.handleScheduledUpdateCommand(ctx, client, frame)
+	case "scheduled_now":
+		return m.handleScheduledNowCommand(ctx, client, frame)
 	case "del":
 		return m.handleDeleteCommand(ctx, client, frame)
 	case "list":

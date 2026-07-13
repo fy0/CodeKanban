@@ -121,6 +121,152 @@ func TestScheduledInputDispatchesAtDueTime(t *testing.T) {
 	}
 }
 
+func TestUpdateScheduledInputInvalidatesOldTimerAndDispatchesUpdatedMessage(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	originalTime := time.Now().Add(time.Hour).Round(time.Millisecond)
+	item, err := manager.ScheduleInput(
+		context.Background(),
+		created.ID,
+		"Original message",
+		nil,
+		ScheduledInputModeSend,
+		originalTime,
+	)
+	if err != nil {
+		t.Fatalf("ScheduleInput returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.cancelScheduledInputTimersForSession(created.ID)
+	})
+
+	updatedText := "Updated message"
+	updatedMode := ScheduledInputModeSend
+	updatedTime := originalTime.Add(time.Hour)
+	updated, err := manager.UpdateScheduledInput(context.Background(), created.ID, item.ID, scheduledInputUpdate{
+		Text:         &updatedText,
+		Mode:         &updatedMode,
+		ScheduledFor: updatedTime,
+	})
+	if err != nil {
+		t.Fatalf("UpdateScheduledInput returned error: %v", err)
+	}
+	if updated.Text != updatedText || updated.Status != ScheduledInputStatusScheduled || !updated.ScheduledFor.Equal(updatedTime) {
+		t.Fatalf("unexpected updated scheduled input: %#v", updated)
+	}
+
+	manager.executeScheduledInput(item.ID, originalTime)
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); len(got) != 0 {
+		t.Fatalf("expected stale timer callback not to dispatch, got %#v", got)
+	}
+
+	if err := manager.DispatchScheduledInputNow(context.Background(), created.ID, item.ID); err != nil {
+		t.Fatalf("DispatchScheduledInputNow returned error: %v", err)
+	}
+	waitForUserMessageCount(t, manager, created.ID, 1)
+	waitForSessionToSettle(t, manager, created.ID)
+	rawEvents, err = manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error after immediate dispatch: %v", err)
+	}
+	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != updatedText {
+		t.Fatalf("expected updated message to dispatch once, got %q", got)
+	}
+}
+
+func TestScheduledInputFailureReasonClearsWhenRescheduled(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	item, err := manager.ScheduleInput(
+		context.Background(),
+		created.ID,
+		"Retry later",
+		nil,
+		ScheduledInputModeSend,
+		time.Now().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("ScheduleInput returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.cancelScheduledInputTimersForSession(created.ID)
+	})
+	if err := model.GetDB().Model(&tables.WebSessionScheduledInputTable{}).
+		Where("id = ?", item.ID).
+		Update("action", "unsupported").Error; err != nil {
+		t.Fatalf("failed to corrupt scheduled action: %v", err)
+	}
+	if err := manager.DispatchScheduledInputNow(context.Background(), created.ID, item.ID); !errors.Is(err, errInvalidScheduledInputAction) {
+		t.Fatalf("expected invalid action error, got %v", err)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if len(snapshot.ScheduledInputs) != 1 || snapshot.ScheduledInputs[0].Status != ScheduledInputStatusFailed {
+		t.Fatalf("expected failed scheduled input, got %#v", snapshot.ScheduledInputs)
+	}
+	if snapshot.ScheduledInputs[0].LastError != errInvalidScheduledInputAction.Error() {
+		t.Fatalf("expected persisted failure reason, got %#v", snapshot.ScheduledInputs[0])
+	}
+
+	if err := model.GetDB().Model(&tables.WebSessionScheduledInputTable{}).
+		Where("id = ?", item.ID).
+		Update("action", string(ScheduledInputActionMessage)).Error; err != nil {
+		t.Fatalf("failed to restore scheduled action: %v", err)
+	}
+	updatedText := "Retry with changes"
+	updatedMode := ScheduledInputModeQueue
+	updated, err := manager.UpdateScheduledInput(context.Background(), created.ID, item.ID, scheduledInputUpdate{
+		Text:         &updatedText,
+		Mode:         &updatedMode,
+		ScheduledFor: time.Now().Add(2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("UpdateScheduledInput returned error: %v", err)
+	}
+	if updated.Status != ScheduledInputStatusScheduled || updated.LastError != "" {
+		t.Fatalf("expected rescheduled input with cleared error, got %#v", updated)
+	}
+}
+
 func TestSchedulePlanExecutionIncludesTargetAndRejectsDuplicate(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -326,6 +472,9 @@ func TestScheduledPlanExecutionExpiresWhenPlanIsNoLongerCurrent(t *testing.T) {
 	}
 	if len(snapshot.ScheduledInputs) != 1 || snapshot.ScheduledInputs[0].Status != ScheduledInputStatusExpired {
 		t.Fatalf("expected expired scheduled plan, got %#v", snapshot.ScheduledInputs)
+	}
+	if snapshot.ScheduledInputs[0].LastError == "" {
+		t.Fatalf("expected expired plan reason, got %#v", snapshot.ScheduledInputs[0])
 	}
 	if err := manager.RemoveScheduledInput(context.Background(), created.ID, item.ID); err != nil {
 		t.Fatalf("RemoveScheduledInput returned error for expired plan: %v", err)

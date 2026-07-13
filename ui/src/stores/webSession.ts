@@ -122,6 +122,7 @@ type WireScheduledInput = {
   tid?: string;
   m?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
   st?: 'scheduled' | 'failed' | 'expired' | 'dispatched' | 'canceled' | string;
+  err?: string;
   txt?: string;
   atts?: string[];
   sf?: number | null;
@@ -438,6 +439,7 @@ export interface WebSessionScheduledInput {
   targetId: string;
   mode: 'send' | 'interrupt' | 'queue';
   status: 'scheduled' | 'failed' | 'expired';
+  lastError: string;
   text: string;
   attachmentIds: string[];
   scheduledFor: number;
@@ -2369,6 +2371,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     targetId?: string;
     mode?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
     status?: 'scheduled' | 'failed' | 'expired' | 'dispatched' | 'canceled' | string;
+    lastError?: string;
     text?: string;
     attachmentIds?: string[];
     scheduledFor?: string | number | null;
@@ -2430,6 +2433,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       targetId: typeof item.targetId === 'string' ? item.targetId.trim() : '',
       mode,
       status,
+      lastError: typeof item.lastError === 'string' ? item.lastError.trim() : '',
       text: typeof item.text === 'string' ? item.text : '',
       attachmentIds: Array.isArray(item.attachmentIds)
         ? item.attachmentIds.filter((value): value is string => typeof value === 'string')
@@ -3776,6 +3780,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
                   targetId: item.tid,
                   mode: item.m,
                   status: item.st,
+                  lastError: item.err,
                   text: item.txt,
                   attachmentIds: item.atts,
                   scheduledFor: item.sf,
@@ -3835,6 +3840,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
                     targetId: item.tid,
                     mode: item.m,
                     status: item.st,
+                    lastError: item.err,
                     text: item.txt,
                     attachmentIds: item.atts,
                     scheduledFor: item.sf,
@@ -4648,6 +4654,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       targetId: typeof payload?.tid === 'string' ? payload.tid : '',
       mode: typeof payload?.m === 'string' ? payload.m : '',
       status: typeof payload?.st === 'string' ? payload.st : '',
+      lastError: typeof payload?.err === 'string' ? payload.err : '',
       text: typeof payload?.txt === 'string' ? payload.txt : text,
       attachmentIds: Array.isArray(payload?.atts)
         ? payload.atts.filter((value): value is string => typeof value === 'string')
@@ -4697,6 +4704,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       targetId: typeof payload?.tid === 'string' ? payload.tid : target.planItemId,
       mode: typeof payload?.m === 'string' ? payload.m : 'send',
       status: typeof payload?.st === 'string' ? payload.st : '',
+      lastError: typeof payload?.err === 'string' ? payload.err : '',
       text: typeof payload?.txt === 'string' ? payload.txt : 'Implement the plan.',
       attachmentIds: Array.isArray(payload?.atts)
         ? payload.atts.filter((value): value is string => typeof value === 'string')
@@ -4721,6 +4729,72 @@ export const useWebSessionStore = defineStore('web-session', () => {
       );
     }
     return created;
+  }
+
+  async function updateScheduledInput(
+    sessionId: string,
+    inputId: string,
+    update: {
+      scheduledFor: number;
+      text?: string;
+      mode?: 'send' | 'interrupt' | 'queue';
+    }
+  ) {
+    const current = getScheduledInputs(sessionId).find(item => item.id === inputId);
+    if (!current) {
+      throw new Error('scheduled input not found');
+    }
+    const frame = await sendCommand('scheduled_update', sessionId, {
+      id: inputId,
+      at: update.scheduledFor,
+      ...(typeof update.text === 'string' ? { txt: update.text } : {}),
+      ...(update.mode ? { mode: update.mode } : {}),
+    });
+    const payload = asRecord(frame.p);
+    const updated = normalizeScheduledInput({
+      id: typeof payload?.id === 'string' ? payload.id : current.id,
+      action: typeof payload?.a === 'string' ? payload.a : current.action,
+      targetId: typeof payload?.tid === 'string' ? payload.tid : current.targetId,
+      mode: typeof payload?.m === 'string' ? payload.m : (update.mode ?? current.mode),
+      status: typeof payload?.st === 'string' ? payload.st : 'scheduled',
+      lastError: typeof payload?.err === 'string' ? payload.err : '',
+      text: typeof payload?.txt === 'string' ? payload.txt : (update.text ?? current.text),
+      attachmentIds: Array.isArray(payload?.atts)
+        ? payload.atts.filter((value): value is string => typeof value === 'string')
+        : current.attachmentIds,
+      scheduledFor: typeof payload?.sf === 'number' ? payload.sf : update.scheduledFor,
+      createdAt:
+        typeof payload?.ca === 'number' || typeof payload?.ca === 'string'
+          ? payload.ca
+          : current.createdAt,
+      updatedAt:
+        typeof payload?.ua === 'number' || typeof payload?.ua === 'string'
+          ? payload.ua
+          : Date.now(),
+      sentAt:
+        typeof payload?.sa === 'number' || typeof payload?.sa === 'string' ? payload.sa : null,
+      canceledAt:
+        typeof payload?.xa === 'number' || typeof payload?.xa === 'string' ? payload.xa : null,
+    });
+    if (!updated) {
+      throw new Error('invalid scheduled update response');
+    }
+    setScheduledInputs(
+      sessionId,
+      sortScheduledInputs([
+        ...getScheduledInputs(sessionId).filter(item => item.id !== updated.id),
+        updated,
+      ])
+    );
+    return updated;
+  }
+
+  async function dispatchScheduledInputNow(sessionId: string, inputId: string) {
+    await sendCommand('scheduled_now', sessionId, { id: inputId });
+    setScheduledInputs(
+      sessionId,
+      getScheduledInputs(sessionId).filter(item => item.id !== inputId)
+    );
   }
 
   async function removeScheduledInput(sessionId: string, inputId: string) {
@@ -5232,6 +5306,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sendMessage,
     scheduleMessage,
     schedulePlanExecution,
+    updateScheduledInput,
+    dispatchScheduledInputNow,
     abortSession,
     approveSession,
     rejectSession,

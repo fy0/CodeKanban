@@ -345,6 +345,7 @@ type ScheduledInput struct {
 	AttachmentIDs []string             `json:"attachmentIds"`
 	ScheduledFor  time.Time            `json:"scheduledFor"`
 	Status        ScheduledInputStatus `json:"status"`
+	LastError     string               `json:"lastError,omitempty"`
 	CreatedAt     time.Time            `json:"createdAt"`
 	UpdatedAt     time.Time            `json:"updatedAt"`
 	SentAt        *time.Time           `json:"sentAt,omitempty"`

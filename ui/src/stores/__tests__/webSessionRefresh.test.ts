@@ -573,6 +573,7 @@ describe('webSession loading behavior', () => {
         targetId: '',
         mode: 'interrupt',
         status: 'scheduled',
+        lastError: '',
         text: 'Send later',
         attachmentIds: ['attachment-7'],
         scheduledFor: Date.parse('2026-04-09T10:05:00.000Z'),
@@ -1060,6 +1061,7 @@ describe('webSession loading behavior', () => {
         targetId: '',
         mode: 'interrupt',
         status: 'scheduled',
+        lastError: '',
         text: 'Later message',
         attachmentIds: [],
         scheduledFor: scheduledAt,
@@ -1147,6 +1149,128 @@ describe('webSession loading behavior', () => {
     });
   });
 
+  it('updates and immediately dispatches scheduled inputs through commands', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-scheduled-manage',
+      status: 'idle',
+      assistantState: null,
+    });
+    const originalAt = Date.parse('2026-04-09T10:20:00.000Z');
+    const updatedAt = Date.parse('2026-04-09T10:40:00.000Z');
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: { items: [], hasMore: false, total: 0 },
+      pendingInputs: [],
+      scheduledInputs: [
+        {
+          id: 'scheduled-manage-1',
+          action: 'message',
+          mode: 'send',
+          status: 'failed',
+          lastError: 'temporary failure',
+          text: 'Original text',
+          attachmentIds: ['attachment-1'],
+          scheduledFor: originalAt,
+          createdAt: originalAt - 60_000,
+          updatedAt: originalAt,
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    const updatePromise = store.updateScheduledInput(session.id, 'scheduled-manage-1', {
+      scheduledFor: updatedAt,
+      text: 'Updated text',
+      mode: 'queue',
+    });
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'scheduled_update',
+      p: {
+        id: 'scheduled-manage-1',
+        at: updatedAt,
+        txt: 'Updated text',
+        mode: 'queue',
+      },
+    });
+    const updateRequestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: updateRequestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'scheduled_update',
+      ok: 1,
+      p: {
+        id: 'scheduled-manage-1',
+        a: 'message',
+        m: 'queue',
+        st: 'scheduled',
+        txt: 'Updated text',
+        atts: ['attachment-1'],
+        sf: updatedAt,
+        ca: originalAt - 60_000,
+        ua: updatedAt - 60_000,
+      },
+    });
+
+    await expect(updatePromise).resolves.toMatchObject({
+      id: 'scheduled-manage-1',
+      status: 'scheduled',
+      lastError: '',
+      text: 'Updated text',
+      mode: 'queue',
+      scheduledFor: updatedAt,
+    });
+
+    const dispatchPromise = store.dispatchScheduledInputNow(session.id, 'scheduled-manage-1');
+    for (
+      let attempt = 0;
+      attempt < 5 &&
+      (commandSocket?.sent.at(-1) as { op?: string } | undefined)?.op !== 'scheduled_now';
+      attempt += 1
+    ) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'scheduled_now',
+      p: { id: 'scheduled-manage-1' },
+    });
+    const dispatchRequestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: dispatchRequestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'scheduled_now',
+      ok: 1,
+      p: { id: 'scheduled-manage-1' },
+    });
+
+    await dispatchPromise;
+    expect(store.getScheduledInputs(session.id)).toEqual([]);
+  });
+
   it('updates and removes scheduled inputs through scheduled events and commands', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
@@ -1175,6 +1299,7 @@ describe('webSession loading behavior', () => {
           tid: 'plan-item-expired',
           m: 'send',
           st: 'expired',
+          err: 'scheduled plan is no longer available',
           txt: 'Implement the plan.',
           atts: [],
           sf: Date.parse('2026-04-09T10:09:00.000Z'),
@@ -1191,6 +1316,7 @@ describe('webSession loading behavior', () => {
         targetId: 'plan-item-expired',
         mode: 'send',
         status: 'expired',
+        lastError: 'scheduled plan is no longer available',
         text: 'Implement the plan.',
         attachmentIds: [],
         scheduledFor: Date.parse('2026-04-09T10:09:00.000Z'),

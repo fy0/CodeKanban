@@ -200,6 +200,7 @@ type wireScheduledInput struct {
 	AttachmentIDs []string `json:"atts,omitempty"`
 	ScheduledFor  int64    `json:"sf"`
 	Status        string   `json:"st"`
+	LastError     string   `json:"err,omitempty"`
 	CreatedAt     int64    `json:"ca"`
 	UpdatedAt     int64    `json:"ua"`
 	SentAt        *int64   `json:"sa,omitempty"`
@@ -510,6 +511,7 @@ func mapWireScheduledInputs(items []ScheduledInput) []wireScheduledInput {
 			AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
 			ScheduledFor:  item.ScheduledFor.UnixMilli(),
 			Status:        string(item.Status),
+			LastError:     item.LastError,
 			CreatedAt:     item.CreatedAt.UnixMilli(),
 			UpdatedAt:     item.UpdatedAt.UnixMilli(),
 			SentAt:        sentAt,

@@ -69,7 +69,7 @@ CREATE INDEX "idx_web_sessions_project_id" ON "web_sessions"("project_id");
 CREATE INDEX "idx_web_sessions_deleted_at" ON "web_sessions"("deleted_at");
 
 
-CREATE TABLE "web_session_scheduled_inputs" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"action" text NOT NULL DEFAULT "message","target_id" text,"payload_json" text NOT NULL DEFAULT "{}","mode" text NOT NULL DEFAULT "send","text" text,"attachment_ids_json" text NOT NULL DEFAULT "[]","scheduled_for" datetime NOT NULL,"status" text NOT NULL DEFAULT "scheduled","sent_at" datetime,"canceled_at" datetime,PRIMARY KEY ("id"));
+CREATE TABLE "web_session_scheduled_inputs" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"action" text NOT NULL DEFAULT "message","target_id" text,"payload_json" text NOT NULL DEFAULT "{}","mode" text NOT NULL DEFAULT "send","text" text,"attachment_ids_json" text NOT NULL DEFAULT "[]","scheduled_for" datetime NOT NULL,"status" text NOT NULL DEFAULT "scheduled","last_error" text NOT NULL DEFAULT "","sent_at" datetime,"canceled_at" datetime,PRIMARY KEY ("id"));
 CREATE INDEX "idx_web_session_scheduled_inputs_status" ON "web_session_scheduled_inputs"("status");
 CREATE INDEX "idx_web_session_scheduled_inputs_scheduled_for" ON "web_session_scheduled_inputs"("scheduled_for");
 CREATE INDEX "idx_web_session_scheduled_inputs_mode" ON "web_session_scheduled_inputs"("mode");
