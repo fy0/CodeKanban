@@ -67,6 +67,10 @@ type Manager struct {
 	worktreeSvc  *service.WorktreeService
 	aiSessionSvc *service.AISessionService
 
+	eventStatesMu        sync.Mutex
+	eventStates          map[string]*sessionEventState
+	textDeltaFlushWindow time.Duration
+
 	mu                          sync.RWMutex
 	runs                        map[string]*activeRun
 	clients                     map[*client]struct{}
@@ -325,6 +329,8 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		pendingInputs:               make(map[string][]PendingInput),
 		pendingProcessing:           make(map[string]bool),
 		pendingDirty:                make(map[string]bool),
+		eventStates:                 make(map[string]*sessionEventState),
+		textDeltaFlushWindow:        defaultTextDeltaFlushWindow,
 	}
 	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
 		return nil, err
@@ -1939,26 +1945,50 @@ func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (Sessi
 }
 
 func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
-	_ = m.AbortSession(sessionID)
 	m.cancelAutoRetryTimer(sessionID)
 	m.clearPendingInputs(sessionID)
+	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
+		return err
+	}
+
+	eventState := m.sessionEventState(sessionID)
+	eventState.mu.Lock()
+	if err := m.flushPendingTextDeltaLocked(ctx, sessionID, eventState); err != nil {
+		eventState.mu.Unlock()
+		return err
+	}
+	eventState.closed = true
+	defer func() {
+		eventState.mu.Unlock()
+	}()
+
 	if err := m.deleteScheduledInputsForSession(ctx, sessionID); err != nil {
+		eventState.closed = false
 		return err
 	}
 	db := model.GetDB()
 	if db == nil {
+		eventState.closed = false
 		return model.ErrDBNotInitialized
 	}
 	if err := db.WithContext(ctx).Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionTurnTable{}).Error; err != nil {
+		eventState.closed = false
 		return err
 	}
 	if err := db.WithContext(ctx).Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
+		eventState.closed = false
 		return err
 	}
 	if err := model.GetDB().WithContext(ctx).Delete(&tables.WebSessionTable{}, "id = ?", sessionID).Error; err != nil {
+		eventState.closed = false
 		return err
 	}
-	return m.store.deleteSessionFiles(sessionID)
+	if err := m.store.deleteSessionFiles(sessionID); err != nil {
+		eventState.closed = false
+		return err
+	}
+	m.removeSessionEventState(sessionID, eventState)
+	return nil
 }
 
 func (m *Manager) cancelAutoRetryTimer(sessionID string) {
@@ -4094,6 +4124,19 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 }
 
 func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, record tables.WebSessionTable, event Event) (Event, error) {
+	eventState := m.sessionEventState(sessionID)
+	eventState.mu.Lock()
+	defer eventState.mu.Unlock()
+	if eventState.closed {
+		return Event{}, fmt.Errorf("web session %s is being deleted", sessionID)
+	}
+	if err := m.flushPendingTextDeltaLocked(ctx, sessionID, eventState); err != nil {
+		return Event{}, err
+	}
+	return m.appendAndBroadcastNow(ctx, sessionID, record, event)
+}
+
+func (m *Manager) appendAndBroadcastNow(ctx context.Context, sessionID string, record tables.WebSessionTable, event Event) (Event, error) {
 	seq, err := m.nextEventSeq(ctx, sessionID)
 	if err != nil {
 		return Event{}, err

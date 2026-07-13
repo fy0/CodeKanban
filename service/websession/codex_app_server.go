@@ -20,6 +20,8 @@ import (
 	"code-kanban/model/tables"
 	"code-kanban/utils"
 	"code-kanban/utils/process"
+
+	"go.uber.org/zap"
 )
 
 type codexAppServerIncoming struct {
@@ -1019,7 +1021,7 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 	}
 
 	run.markAssistantDeltaSeen(messageID)
-	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+	if err := m.enqueueTextDelta(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
 		Type:      "txt_d",
@@ -1030,7 +1032,15 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 			"mid": messageID,
 			"txt": stringValue(payload["delta"]),
 		},
-	})
+	}); err != nil && m.logger != nil {
+		m.logger.Error(
+			"failed to enqueue codex app-server text delta",
+			zap.String("sessionId", session.ID),
+			zap.String("runId", run.runID),
+			zap.String("messageId", messageID),
+			zap.Error(err),
+		)
+	}
 }
 
 func (m *Manager) handleCodexAppServerItemCompleted(
