@@ -381,6 +381,9 @@ func TestChangesSummarySkipsUntrackedInFastCountAndCompletesStats(t *testing.T) 
 	if fastSummary.Count != 1 {
 		t.Fatalf("fast summary count = %d, want %d", fastSummary.Count, 1)
 	}
+	if fastSummary.ChangeToken == "" {
+		t.Fatalf("fast summary should include a change token: %#v", fastSummary)
+	}
 	if fastSummary.Additions != nil || fastSummary.Deletions != nil {
 		t.Fatalf("fast summary should not include stats: %#v", fastSummary)
 	}
@@ -399,6 +402,9 @@ func TestChangesSummarySkipsUntrackedInFastCountAndCompletesStats(t *testing.T) 
 	if statsSummary.Count != 1 {
 		t.Fatalf("stats summary count = %d, want %d", statsSummary.Count, 1)
 	}
+	if statsSummary.ChangeToken != fastSummary.ChangeToken {
+		t.Fatalf("summary token changed without repository changes: fast=%q stats=%q", fastSummary.ChangeToken, statsSummary.ChangeToken)
+	}
 	if !statsSummary.StatsComplete || statsSummary.StatsTimedOut {
 		t.Fatalf("unexpected stats summary flags: %#v", statsSummary)
 	}
@@ -407,6 +413,48 @@ func TestChangesSummarySkipsUntrackedInFastCountAndCompletesStats(t *testing.T) 
 	}
 	if statsSummary.Deletions == nil || *statsSummary.Deletions != 0 {
 		t.Fatalf("stats summary deletions = %#v, want %d", statsSummary.Deletions, 0)
+	}
+}
+
+func TestStatusOnlyChangesRequestsDoNotRunDiffStats(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	installFailingNumstatGitWrapper(t)
+
+	service, err := NewService(Config{
+		DataDir: t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Repo\nupdated\n"), 0o644); err != nil {
+		t.Fatalf("rewrite README.md: %v", err)
+	}
+
+	changes, err := service.ListChanges(context.Background(), projectID, "", ListChangesOptions{
+		IncludeUntracked: boolRef(false),
+		WithStats:        boolRef(false),
+	})
+	if err != nil {
+		t.Fatalf("status-only ListChanges returned error: %v", err)
+	}
+	if changes.ChangeToken == "" || len(changes.Entries) != 1 || changes.StatsComplete {
+		t.Fatalf("unexpected status-only changes result: %#v", changes)
+	}
+
+	summary, err := service.ChangesSummary(context.Background(), projectID, "", ChangesSummaryOptions{
+		IncludeUntracked: false,
+		WithStats:        false,
+	})
+	if err != nil {
+		t.Fatalf("status-only ChangesSummary returned error: %v", err)
+	}
+	if summary.ChangeToken == "" || summary.Count != 1 || summary.StatsComplete {
+		t.Fatalf("unexpected status-only summary result: %#v", summary)
 	}
 }
 
@@ -856,6 +904,33 @@ func installSlowGitDiffWrapper(t *testing.T) {
 
 	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("CODEKANBAN_TEST_GIT_DIFF_SLEEP", "0.2")
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func installFailingNumstatGitWrapper(t *testing.T) {
+	t.Helper()
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("LookPath git: %v", err)
+	}
+
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	script := strings.Join([]string{
+		"#!/bin/sh",
+		"if [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--numstat\" ]; then",
+		"  echo 'unexpected numstat invocation' >&2",
+		"  exit 9",
+		"fi",
+		"exec \"$REAL_GIT\" \"$@\"",
+		"",
+	}, "\n")
+	if err := os.WriteFile(wrapperPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+
+	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 

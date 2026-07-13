@@ -10,6 +10,7 @@ import {
   GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT,
   GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
   orderGitChangesEntries,
+  shouldLoadGitChangesStats,
   shouldShowGitChangesBadge,
   summarizeGitChangesEntries,
 } from '@/components/changes/gitChangesSummary';
@@ -57,6 +58,7 @@ function makeChangesResult(
   return {
     scope: input.scope ?? makeScope({ id: 'project-1' }),
     entries,
+    changeToken: input.changeToken ?? 'token-1',
     truncated: input.truncated ?? false,
     statsComplete: input.statsComplete ?? true,
     statsTimedOut: input.statsTimedOut ?? false,
@@ -183,7 +185,9 @@ describe('gitChangesSummary', () => {
       count: 2,
       additions: 3,
       deletions: 5,
-      pending: false,
+      state: 'complete',
+      changeToken: 'token-1',
+      scopeId: 'project-1',
     });
   });
 
@@ -199,8 +203,19 @@ describe('gitChangesSummary', () => {
       count: 1,
       additions: null,
       deletions: null,
-      pending: false,
+      state: 'timedOut',
+      changeToken: 'token-1',
+      scopeId: 'project-1',
     });
+
+    expect(
+      buildGitChangesBadgeSummary(
+        makeChangesResult([makeChangeEntry('a.ts', 'modified', 3, 1)], {
+          statsComplete: false,
+          statsTimedOut: false,
+        })
+      )?.state
+    ).toBe('partial');
   });
 
   it('returns an empty badge summary from empty changes results', () => {
@@ -208,7 +223,9 @@ describe('gitChangesSummary', () => {
       count: 0,
       additions: 0,
       deletions: 0,
-      pending: false,
+      state: 'complete',
+      changeToken: 'token-1',
+      scopeId: 'project-1',
     });
     expect(buildGitChangesBadgeSummary(null)).toBeNull();
   });
@@ -232,7 +249,9 @@ describe('gitChangesSummary', () => {
         count: 0,
         additions: 0,
         deletions: 0,
-        pending: true,
+        state: 'loading',
+        changeToken: 'token-1',
+        scopeId: 'project-1',
       })
     ).toBe(false);
     expect(
@@ -240,7 +259,9 @@ describe('gitChangesSummary', () => {
         count: 1,
         additions: null,
         deletions: null,
-        pending: true,
+        state: 'loading',
+        changeToken: 'token-1',
+        scopeId: 'project-1',
       })
     ).toBe(true);
     expect(
@@ -248,8 +269,24 @@ describe('gitChangesSummary', () => {
         count: 0,
         additions: 0,
         deletions: 0,
-        pending: false,
+        state: 'complete',
+        changeToken: 'token-1',
+        scopeId: 'project-1',
       })
     ).toBe(false);
+  });
+
+  it('loads stats only for new scopes, new tokens, or interrupted loading states', () => {
+    const current = buildGitChangesBadgeSummary(
+      makeChangesResult([makeChangeEntry('a.ts', 'modified')])
+    )!;
+
+    expect(shouldLoadGitChangesStats(current, 'project-1', 'token-1')).toBe(false);
+    expect(shouldLoadGitChangesStats(current, 'project-1', 'token-2')).toBe(true);
+    expect(shouldLoadGitChangesStats(current, 'project-2', 'token-1')).toBe(true);
+    expect(
+      shouldLoadGitChangesStats({ ...current, state: 'loading' }, 'project-1', 'token-1')
+    ).toBe(true);
+    expect(shouldLoadGitChangesStats(null, 'project-1', 'token-1')).toBe(true);
   });
 });

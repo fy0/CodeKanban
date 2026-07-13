@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -40,9 +44,10 @@ type DiffStat struct {
 const emptyTreeObjectID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 type FileStatusResult struct {
-	Statuses   map[string]FileStatus
-	Truncated  bool
-	TotalCount int
+	Statuses    map[string]FileStatus
+	Truncated   bool
+	TotalCount  int
+	ChangeToken string
 }
 
 func ListFileStatuses(path string) (map[string]FileStatus, error) {
@@ -86,6 +91,7 @@ func ListFileStatusesLimitedContext(
 	readErr := parser.consume(stdout)
 	waitErr := cmd.Wait()
 	result := parser.result()
+	result.ChangeToken = buildFileStatusChangeToken(path, result.Statuses, parser.changeDigest())
 
 	if readErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -278,13 +284,19 @@ type gitPorcelainStatusStreamParser struct {
 	truncated     bool
 	totalCount    int
 	pendingRename *FileStatus
+	changeHash    hash.Hash
 }
 
 func newGitPorcelainStatusStreamParser(maxEntries int) *gitPorcelainStatusStreamParser {
 	return &gitPorcelainStatusStreamParser{
 		maxEntries: maxEntries,
 		statuses:   make(map[string]FileStatus),
+		changeHash: sha256.New(),
 	}
+}
+
+func (p *gitPorcelainStatusStreamParser) changeDigest() []byte {
+	return p.changeHash.Sum(nil)
 }
 
 func (p *gitPorcelainStatusStreamParser) result() FileStatusResult {
@@ -323,6 +335,7 @@ func (p *gitPorcelainStatusStreamParser) consume(reader io.Reader) error {
 }
 
 func (p *gitPorcelainStatusStreamParser) consumeRecord(record string) {
+	writeChangeTokenField(p.changeHash, record)
 	if p.pendingRename != nil {
 		p.pendingRename.PreviousPath = normalizeGitRelativePath(record)
 		p.storeStatus(*p.pendingRename)
@@ -386,6 +399,41 @@ func (p *gitPorcelainStatusStreamParser) consumeRecord(record string) {
 			Kind: FileChangeKindConflicted,
 		})
 	}
+}
+
+func buildFileStatusChangeToken(rootPath string, statuses map[string]FileStatus, statusDigest []byte) string {
+	hasher := sha256.New()
+	_, _ = hasher.Write(statusDigest)
+
+	paths := make([]string, 0, len(statuses))
+	for path := range statuses {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	for _, path := range paths {
+		status := statuses[path]
+		writeChangeTokenField(hasher, status.Path)
+		writeChangeTokenField(hasher, string(status.Kind))
+		writeChangeTokenField(hasher, status.PreviousPath)
+
+		info, err := os.Lstat(filepath.Join(rootPath, filepath.FromSlash(status.Path)))
+		if err != nil {
+			writeChangeTokenField(hasher, "missing")
+			continue
+		}
+		writeChangeTokenField(hasher, strconv.FormatInt(info.Size(), 10))
+		writeChangeTokenField(hasher, strconv.FormatUint(uint64(info.Mode()), 10))
+		writeChangeTokenField(hasher, strconv.FormatInt(info.ModTime().UnixNano(), 10))
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func writeChangeTokenField(writer io.Writer, value string) {
+	_, _ = io.WriteString(writer, strconv.Itoa(len(value)))
+	_, _ = io.WriteString(writer, ":")
+	_, _ = io.WriteString(writer, value)
 }
 
 func (p *gitPorcelainStatusStreamParser) storeStatus(status FileStatus) {

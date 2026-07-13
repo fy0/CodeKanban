@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildGitChangesProbeOptions,
   buildGitChangesRequestOptions,
   formatGitChangeStat,
   getGitChangesWarnings,
@@ -40,6 +41,7 @@ function makeChangesResult(
       rootPath: '/tmp/project',
     },
     entries: [makeChangeEntry('README.md')],
+    changeToken: 'token-1',
     truncated: false,
     statsComplete: true,
     statsTimedOut: false,
@@ -53,6 +55,15 @@ describe('gitChangesSupport', () => {
     expect(buildGitChangesRequestOptions(true)).toEqual({
       includeUntracked: false,
       withStats: true,
+      timeoutMs: GIT_CHANGES_REQUEST_TIMEOUT_MS,
+      maxEntries: GIT_CHANGES_MAX_ENTRIES,
+    });
+  });
+
+  it('builds status-only options for change polling', () => {
+    expect(buildGitChangesProbeOptions(true)).toEqual({
+      includeUntracked: false,
+      withStats: false,
       timeoutMs: GIT_CHANGES_REQUEST_TIMEOUT_MS,
       maxEntries: GIT_CHANGES_MAX_ENTRIES,
     });

@@ -19,6 +19,13 @@ export function buildGitChangesRequestOptions(ignoreUntracked: boolean) {
   };
 }
 
+export function buildGitChangesProbeOptions(ignoreUntracked: boolean) {
+  return {
+    ...buildGitChangesRequestOptions(ignoreUntracked),
+    withStats: false,
+  };
+}
+
 export function formatGitChangeCount(prefix: '+' | '-', value: number | null) {
   if (value == null) {
     return `${prefix}?`;

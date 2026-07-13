@@ -109,6 +109,7 @@ type ChangeEntry struct {
 type ChangesResult struct {
 	Scope             Scope         `json:"scope"`
 	Entries           []ChangeEntry `json:"entries"`
+	ChangeToken       string        `json:"changeToken"`
 	Truncated         bool          `json:"truncated"`
 	StatsComplete     bool          `json:"statsComplete"`
 	StatsTimedOut     bool          `json:"statsTimedOut"`
@@ -132,6 +133,7 @@ type ChangesSummaryOptions struct {
 type ChangesSummaryResult struct {
 	Scope         Scope  `json:"scope"`
 	Count         int64  `json:"count"`
+	ChangeToken   string `json:"changeToken"`
 	Additions     *int64 `json:"additions"`
 	Deletions     *int64 `json:"deletions"`
 	StatsComplete bool   `json:"statsComplete"`

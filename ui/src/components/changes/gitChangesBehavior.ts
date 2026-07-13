@@ -30,41 +30,8 @@ export function resolveGitChangeSelectionAfterLoad(
   };
 }
 
-export function buildGitChangesFingerprint(
-  entries: FileManagerChangeEntry[],
-  ignoreUntracked = false
-) {
-  const visibleEntries = ignoreUntracked
-    ? entries.filter(entry => entry.status.kind !== 'untracked')
-    : entries;
-  return JSON.stringify(
-    [...visibleEntries]
-      .sort((left, right) =>
-        left.path.localeCompare(right.path, undefined, {
-          sensitivity: 'base',
-        })
-      )
-      .map(entry => ({
-        path: entry.path,
-        status: entry.status.kind,
-        previousPath: entry.status.previousPath ?? '',
-        exists: entry.exists,
-        additions: Math.max(0, Math.trunc(entry.additions ?? 0)),
-        deletions: Math.max(0, Math.trunc(entry.deletions ?? 0)),
-        statsAvailable: entry.statsAvailable === true,
-      }))
-  );
-}
-
-export function hasPendingGitChangesUpdate(
-  currentEntries: FileManagerChangeEntry[],
-  nextEntries: FileManagerChangeEntry[],
-  ignoreUntracked = false
-) {
-  return (
-    buildGitChangesFingerprint(currentEntries, ignoreUntracked) !==
-    buildGitChangesFingerprint(nextEntries, ignoreUntracked)
-  );
+export function hasPendingGitChangesUpdate(currentChangeToken: string, nextChangeToken: string) {
+  return currentChangeToken !== nextChangeToken;
 }
 
 export function shouldLoadWorkspaceChangesSummary(

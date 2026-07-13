@@ -446,6 +446,7 @@ func (s *Service) ListChanges(
 		UntrackedIncluded: resolved.includeUntracked,
 	}
 	if !git.IsRepositoryPath(scope.RootPath) {
+		result.ChangeToken = "not-a-repository"
 		if resolved.withStats {
 			result.StatsComplete = true
 		}
@@ -461,6 +462,7 @@ func (s *Service) ListChanges(
 		resolved.includeUntracked,
 		resolved.maxEntries,
 	)
+	result.ChangeToken = statusResult.ChangeToken
 	if statusResult.Truncated {
 		result.Truncated = true
 		result.WarningReason = changesWarningReasonEntryLimitExceeded
@@ -548,6 +550,7 @@ func (s *Service) ChangesSummary(
 		Scope: scope,
 	}
 	if !git.IsRepositoryPath(scope.RootPath) {
+		result.ChangeToken = "not-a-repository"
 		if options.WithStats {
 			zero := int64(0)
 			result.Additions = &zero
@@ -564,7 +567,13 @@ func (s *Service) ChangesSummary(
 	statusCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	statuses, err := git.ListFileStatusesContext(statusCtx, scope.RootPath, options.IncludeUntracked)
+	statusResult, err := git.ListFileStatusesLimitedContext(
+		statusCtx,
+		scope.RootPath,
+		options.IncludeUntracked,
+		0,
+	)
+	result.ChangeToken = statusResult.ChangeToken
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			result.StatsTimedOut = true
@@ -572,6 +581,7 @@ func (s *Service) ChangesSummary(
 		}
 		return nil, err
 	}
+	statuses := statusResult.Statuses
 
 	result.Count = int64(len(statuses))
 	if !options.WithStats {

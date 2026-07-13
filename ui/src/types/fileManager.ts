@@ -87,6 +87,7 @@ export interface FileManagerChangeEntry {
 export interface FileManagerChangesResult {
   scope: FileManagerScope;
   entries: FileManagerChangeEntry[];
+  changeToken: string;
   truncated: boolean;
   statsComplete: boolean;
   statsTimedOut: boolean;
@@ -97,6 +98,7 @@ export interface FileManagerChangesResult {
 export interface FileManagerChangesSummaryResult {
   scope: FileManagerScope;
   count: number;
+  changeToken: string;
   additions: number | null;
   deletions: number | null;
   statsComplete: boolean;

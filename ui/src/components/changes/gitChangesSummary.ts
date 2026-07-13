@@ -13,11 +13,15 @@ export interface GitChangesSummary {
   deletions: number;
 }
 
+export type GitChangesBadgeState = 'loading' | 'complete' | 'partial' | 'timedOut';
+
 export interface GitChangesBadgeSummary {
   count: number;
   additions: number | null;
   deletions: number | null;
-  pending: boolean;
+  state: GitChangesBadgeState;
+  changeToken: string;
+  scopeId: string;
 }
 
 export function chooseGitChangesScope(
@@ -105,7 +109,9 @@ export function buildGitChangesBadgeSummary(
       count: 0,
       additions: 0,
       deletions: 0,
-      pending: false,
+      state: 'complete',
+      changeToken: result.changeToken,
+      scopeId: result.scope.id,
     };
   }
 
@@ -113,8 +119,21 @@ export function buildGitChangesBadgeSummary(
     count: summary.count,
     additions: result.statsComplete ? summary.additions : null,
     deletions: result.statsComplete ? summary.deletions : null,
-    pending: false,
+    state: result.statsComplete ? 'complete' : result.statsTimedOut ? 'timedOut' : 'partial',
+    changeToken: result.changeToken,
+    scopeId: result.scope.id,
   };
+}
+
+export function shouldLoadGitChangesStats(
+  current: GitChangesBadgeSummary | null,
+  scopeId: string,
+  changeToken: string
+) {
+  if (!current || current.state === 'loading') {
+    return true;
+  }
+  return current.scopeId !== scopeId || current.changeToken !== changeToken;
 }
 
 export function formatGitChangesSummary(summary: GitChangesSummary) {

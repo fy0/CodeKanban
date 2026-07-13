@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestListFileStatuses(t *testing.T) {
@@ -88,6 +89,50 @@ func TestListFileStatusesContextCanSkipUntracked(t *testing.T) {
 	}
 	if _, exists := statuses["scratch.txt"]; exists {
 		t.Fatalf("scratch.txt should be excluded when includeUntracked=false: %#v", statuses["scratch.txt"])
+	}
+}
+
+func TestListFileStatusesChangeTokenTracksContentWithinSameStatus(t *testing.T) {
+	repoDir := initTestRepo(t)
+	readmePath := filepath.Join(repoDir, "README.md")
+	firstModifiedAt := time.Now().Add(-2 * time.Second)
+
+	if err := os.WriteFile(readmePath, []byte("version-one\n"), 0o644); err != nil {
+		t.Fatalf("write first README version: %v", err)
+	}
+	if err := os.Chtimes(readmePath, firstModifiedAt, firstModifiedAt); err != nil {
+		t.Fatalf("set first README timestamp: %v", err)
+	}
+
+	first, err := ListFileStatusesLimitedContext(context.Background(), repoDir, false, 1000)
+	if err != nil {
+		t.Fatalf("first ListFileStatusesLimitedContext returned error: %v", err)
+	}
+	unchanged, err := ListFileStatusesLimitedContext(context.Background(), repoDir, false, 1000)
+	if err != nil {
+		t.Fatalf("unchanged ListFileStatusesLimitedContext returned error: %v", err)
+	}
+	if first.ChangeToken == "" || first.ChangeToken != unchanged.ChangeToken {
+		t.Fatalf("unchanged token mismatch: first=%q unchanged=%q", first.ChangeToken, unchanged.ChangeToken)
+	}
+
+	secondModifiedAt := firstModifiedAt.Add(time.Second)
+	if err := os.WriteFile(readmePath, []byte("version-two\n"), 0o644); err != nil {
+		t.Fatalf("write second README version: %v", err)
+	}
+	if err := os.Chtimes(readmePath, secondModifiedAt, secondModifiedAt); err != nil {
+		t.Fatalf("set second README timestamp: %v", err)
+	}
+
+	changed, err := ListFileStatusesLimitedContext(context.Background(), repoDir, false, 1000)
+	if err != nil {
+		t.Fatalf("changed ListFileStatusesLimitedContext returned error: %v", err)
+	}
+	if changed.Statuses["README.md"].Kind != FileChangeKindModified {
+		t.Fatalf("README status changed unexpectedly: %#v", changed.Statuses["README.md"])
+	}
+	if changed.ChangeToken == first.ChangeToken {
+		t.Fatalf("content change with the same git status did not update token: %q", changed.ChangeToken)
 	}
 }
 

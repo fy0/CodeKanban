@@ -185,6 +185,7 @@ export const fileManagerApi = {
     }
     return {
       ...item,
+      changeToken: item.changeToken ?? '',
       entries: (item.entries ?? []).map(entry => ({
         ...entry,
         additions: Math.max(0, Math.trunc(entry.additions ?? 0)),
@@ -206,6 +207,7 @@ export const fileManagerApi = {
       includeUntracked?: boolean;
       withStats?: boolean;
       timeoutMs?: number;
+      signal?: AbortSignal;
     }
   ): Promise<FileManagerChangesSummaryResult> {
     const params = new URLSearchParams();
@@ -219,20 +221,35 @@ export const fileManagerApi = {
     if (typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs)) {
       params.set('timeoutMs', String(Math.max(0, Math.trunc(options.timeoutMs))));
     }
-    const payload =
-      (await http
-        .Get<
-          ItemResponse<FileManagerChangesSummaryResult>
-        >(`/projects/${projectId}/files/changes-summary?${params.toString()}`)
-        .send(true)) ?? {};
+    const method = http.Get<ItemResponse<FileManagerChangesSummaryResult>>(
+      `/projects/${projectId}/files/changes-summary?${params.toString()}`
+    );
+    const abortHandler = () => {
+      method.abort();
+    };
+
+    if (options?.signal?.aborted) {
+      throw createAbortError('git changes summary load aborted');
+    }
+
+    options?.signal?.addEventListener('abort', abortHandler, { once: true });
+    let payload: ItemResponse<FileManagerChangesSummaryResult> = {};
+    try {
+      payload = (await method.send(true)) ?? {};
+    } finally {
+      options?.signal?.removeEventListener('abort', abortHandler);
+    }
     const item = extractItem<FileManagerChangesSummaryResult>(payload);
     if (!item) {
       throw new Error('failed to load git changes summary');
     }
     return {
       ...item,
+      changeToken: item.changeToken ?? '',
       additions: item.additions ?? null,
       deletions: item.deletions ?? null,
+      statsComplete: item.statsComplete === true,
+      statsTimedOut: item.statsTimedOut === true,
     };
   },
 

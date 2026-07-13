@@ -225,6 +225,7 @@ import {
   type GitChangesBadgeSummary,
 } from '@/components/changes/gitChangesSummary';
 import {
+  buildGitChangesProbeOptions,
   buildGitChangesRequestOptions,
   formatGitChangeCount,
   formatGitChangeStat,
@@ -551,16 +552,15 @@ async function checkForChangesUpdate() {
   const loadHandle = changesUpdateCheckController.begin();
   try {
     const result = await fileManagerApi.listChanges(props.projectId, activeScopeId.value, {
-      ...buildGitChangesRequestOptions(ignoreUntracked.value),
+      ...buildGitChangesProbeOptions(ignoreUntracked.value),
       signal: loadHandle.signal,
     });
     if (!changesUpdateCheckController.isCurrent(loadHandle)) {
       return;
     }
     pendingChangesUpdate.value = hasPendingGitChangesUpdate(
-      changesResult.value.entries,
-      result.entries,
-      ignoreUntracked.value
+      changesResult.value.changeToken,
+      result.changeToken
     );
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {

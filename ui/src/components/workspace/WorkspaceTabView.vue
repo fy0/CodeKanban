@@ -40,13 +40,28 @@
             <GitBranchOutline />
           </n-icon>
           <span class="tab-label">{{ t('nav.changes') }}</span>
-          <span v-if="showChangesSummaryBadge" class="tab-badge changes-summary-badge">
-            <span class="changes-summary-count">{{ changesSummaryDisplay.count }}</span>
-            <span class="changes-summary-separator">,</span>
-            <span class="changes-summary-add">{{ changesSummaryDisplay.additions }}</span>
-            <span class="changes-summary-separator">,</span>
-            <span class="changes-summary-del">{{ changesSummaryDisplay.deletions }}</span>
-          </span>
+          <n-tooltip v-if="showChangesSummaryBadge" :disabled="!changesSummaryIncomplete">
+            <template #trigger>
+              <span class="tab-badge changes-summary-badge">
+                <span class="changes-summary-count">{{ changesSummaryDisplay.count }}</span>
+                <template v-if="changesSummaryIncomplete">
+                  <n-icon :size="12" class="changes-summary-warning">
+                    <WarningOutline />
+                  </n-icon>
+                </template>
+                <template v-else>
+                  <span class="changes-summary-separator">,</span>
+                  <span class="changes-summary-add">{{ changesSummaryDisplay.additions }}</span>
+                  <span class="changes-summary-separator">,</span>
+                  <span class="changes-summary-del">{{ changesSummaryDisplay.deletions }}</span>
+                  <n-icon v-if="changesSummaryLoading" :size="11" class="changes-summary-loading">
+                    <SyncOutline />
+                  </n-icon>
+                </template>
+              </span>
+            </template>
+            {{ changesSummaryStatusText }}
+          </n-tooltip>
         </button>
         <button
           type="button"
@@ -182,7 +197,9 @@ import {
   ChatbubblesOutline,
   FolderOpenOutline,
   GitBranchOutline,
+  SyncOutline,
   TerminalOutline,
+  WarningOutline,
 } from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
@@ -200,6 +217,7 @@ import {
   formatGitChangesBadgeDelta,
   GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT,
   GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
+  shouldLoadGitChangesStats,
   shouldShowGitChangesBadge,
   type GitChangesBadgeSummary,
 } from '@/components/changes/gitChangesSummary';
@@ -208,6 +226,7 @@ import {
   shouldLoadWorkspaceChangesSummary,
 } from '@/components/changes/gitChangesBehavior';
 import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
+import { createGitChangesLoadController } from '@/components/changes/gitChangesLoadController';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import DockedNotificationSidebar from '@/components/workspace/DockedNotificationSidebar.vue';
@@ -269,10 +288,12 @@ const ignoreUntracked = useStorage<boolean>(
   GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT
 );
 const changesBadgeSummary = ref<GitChangesBadgeSummary | null>(null);
+const changesSummaryScopeId = ref('');
 let changesSummaryTimer: number | null = null;
-let changesSummaryRequestToken = 0;
-const canShowChangesSummaryBadge = computed(
-  () => canShowWorkspaceChangesSummary(props.projectId, changesTabDisabled.value)
+const changesSummaryScopeController = createGitChangesLoadController();
+const changesSummaryLoadController = createGitChangesLoadController();
+const canShowChangesSummaryBadge = computed(() =>
+  canShowWorkspaceChangesSummary(props.projectId, changesTabDisabled.value)
 );
 const shouldTrackChangesSummary = computed(() =>
   shouldLoadWorkspaceChangesSummary(props.projectId, changesTabDisabled.value, activeTab.value)
@@ -304,21 +325,31 @@ watch(
 );
 
 watch(
-  () =>
-    [props.projectId, projectStore.selectedWorktreeId, changesTabDisabled.value, activeTab.value] as const,
+  () => [props.projectId, projectStore.selectedWorktreeId, changesTabDisabled.value] as const,
   async () => {
     stopChangesSummaryTimer();
-    if (!canShowChangesSummaryBadge.value) {
-      clearChangesBadgeSummary();
+    changesSummaryScopeController.cancel();
+    changesSummaryLoadController.cancel();
+    changesSummaryScopeId.value = '';
+    clearChangesBadgeSummary();
+    if (!canShowChangesSummaryBadge.value || !shouldTrackChangesSummary.value) {
       return;
     }
-    if (!shouldTrackChangesSummary.value) {
-      return;
-    }
-    await loadChangesSummary({ resetBeforeLoad: true });
-    startChangesSummaryTimer();
+    await initializeChangesSummaryTracking();
   },
   { immediate: true }
+);
+
+watch(
+  () => activeTab.value,
+  async () => {
+    stopChangesSummaryTimer();
+    changesSummaryLoadController.cancel();
+    if (!canShowChangesSummaryBadge.value || !shouldTrackChangesSummary.value) {
+      return;
+    }
+    await initializeChangesSummaryTracking();
+  }
 );
 
 watch(
@@ -331,7 +362,8 @@ watch(
     if (!shouldTrackChangesSummary.value) {
       return;
     }
-    await loadChangesSummary({ resetBeforeLoad: true });
+    changesSummaryLoadController.cancel();
+    await loadChangesSummary();
   }
 );
 
@@ -381,7 +413,9 @@ const changesSummaryDisplay = computed(() => {
     count: 0,
     additions: 0,
     deletions: 0,
-    pending: false,
+    state: 'complete' as const,
+    changeToken: '',
+    scopeId: '',
   };
   return {
     count: summary.count,
@@ -389,6 +423,19 @@ const changesSummaryDisplay = computed(() => {
     deletions: formatGitChangesBadgeDelta('-', summary.deletions),
   };
 });
+const changesSummaryLoading = computed(() => changesBadgeSummary.value?.state === 'loading');
+const changesSummaryIncomplete = computed(
+  () =>
+    changesBadgeSummary.value?.state === 'partial' ||
+    changesBadgeSummary.value?.state === 'timedOut'
+);
+const changesSummaryStatusText = computed(() =>
+  t(
+    changesBadgeSummary.value?.state === 'timedOut'
+      ? 'gitChanges.statsTimedOut'
+      : 'gitChanges.statsPartial'
+  )
+);
 const showChangesSummaryBadge = computed(
   () => canShowChangesSummaryBadge.value && shouldShowGitChangesBadge(changesBadgeSummary.value)
 );
@@ -455,27 +502,51 @@ function stopChangesSummaryTimer() {
 }
 
 function clearChangesBadgeSummary() {
-  changesSummaryRequestToken += 1;
   changesBadgeSummary.value = null;
 }
 
-function setChangesBadgeLoading(resetBeforeLoad: boolean) {
-  if (resetBeforeLoad || !changesBadgeSummary.value) {
-    changesBadgeSummary.value = {
-      count: 0,
-      additions: 0,
-      deletions: 0,
-      pending: true,
-    };
-    return;
+async function resolveChangesSummaryScope() {
+  if (changesSummaryScopeId.value) {
+    return changesSummaryScopeId.value;
   }
-  changesBadgeSummary.value = {
-    ...changesBadgeSummary.value,
-    pending: true,
-  };
+
+  const loadHandle = changesSummaryScopeController.begin();
+  try {
+    const scopes = await fileManagerApi.listScopes(props.projectId, {
+      signal: loadHandle.signal,
+    });
+    if (!changesSummaryScopeController.isCurrent(loadHandle)) {
+      return '';
+    }
+    const scope = chooseGitChangesScope(scopes, {
+      preferredWorktreeId: projectStore.selectedWorktreeId,
+    });
+    changesSummaryScopeId.value = scope?.id ?? '';
+    return changesSummaryScopeId.value;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return '';
+    }
+    throw error;
+  } finally {
+    changesSummaryScopeController.release(loadHandle);
+  }
 }
 
-async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
+async function initializeChangesSummaryTracking() {
+  try {
+    const scopeId = await resolveChangesSummaryScope();
+    if (!scopeId || !shouldTrackChangesSummary.value) {
+      return;
+    }
+    await loadChangesSummary();
+    startChangesSummaryTimer();
+  } catch {
+    // Keep the last successful badge when scope discovery is temporarily unavailable.
+  }
+}
+
+async function loadChangesSummary() {
   if (!canShowChangesSummaryBadge.value) {
     clearChangesBadgeSummary();
     return;
@@ -484,27 +555,21 @@ async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
     return;
   }
 
-  const requestToken = ++changesSummaryRequestToken;
-  setChangesBadgeLoading(Boolean(options?.resetBeforeLoad));
+  const scopeId = await resolveChangesSummaryScope().catch(() => '');
+  if (!scopeId || !shouldTrackChangesSummary.value) {
+    return;
+  }
+
+  const loadHandle = changesSummaryLoadController.begin();
+  const previousSummary = changesBadgeSummary.value;
 
   try {
-    const scopes = await fileManagerApi.listScopes(props.projectId);
-    if (requestToken !== changesSummaryRequestToken) {
-      return;
-    }
-    const scope = chooseGitChangesScope(scopes, {
-      preferredWorktreeId: projectStore.selectedWorktreeId,
-    });
-    if (!scope) {
-      clearChangesBadgeSummary();
-      return;
-    }
-
-    const fastSummary = await fileManagerApi.changesSummary(props.projectId, scope.id, {
+    const fastSummary = await fileManagerApi.changesSummary(props.projectId, scopeId, {
       includeUntracked: !ignoreUntracked.value,
       withStats: false,
+      signal: loadHandle.signal,
     });
-    if (requestToken !== changesSummaryRequestToken) {
+    if (!changesSummaryLoadController.isCurrent(loadHandle)) {
       return;
     }
 
@@ -513,24 +578,37 @@ async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
         count: 0,
         additions: 0,
         deletions: 0,
-        pending: false,
+        state: 'complete',
+        changeToken: fastSummary.changeToken,
+        scopeId,
       };
       return;
     }
 
+    if (!shouldLoadGitChangesStats(previousSummary, scopeId, fastSummary.changeToken)) {
+      return;
+    }
+
+    const retainedSummary =
+      previousSummary?.scopeId === scopeId && previousSummary.state === 'complete'
+        ? previousSummary
+        : null;
     changesBadgeSummary.value = {
-      count: fastSummary.count,
-      additions: null,
-      deletions: null,
-      pending: true,
+      count: retainedSummary?.count ?? fastSummary.count,
+      additions: retainedSummary?.additions ?? null,
+      deletions: retainedSummary?.deletions ?? null,
+      state: 'loading',
+      changeToken: fastSummary.changeToken,
+      scopeId,
     };
 
-    const statsSummary = await fileManagerApi.changesSummary(props.projectId, scope.id, {
+    const statsSummary = await fileManagerApi.changesSummary(props.projectId, scopeId, {
       includeUntracked: !ignoreUntracked.value,
       withStats: true,
       timeoutMs: CHANGES_SUMMARY_STATS_TIMEOUT_MS,
+      signal: loadHandle.signal,
     });
-    if (requestToken !== changesSummaryRequestToken) {
+    if (!changesSummaryLoadController.isCurrent(loadHandle)) {
       return;
     }
 
@@ -538,18 +616,24 @@ async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
       count: statsSummary.count > 0 ? statsSummary.count : fastSummary.count,
       additions: statsSummary.statsComplete ? (statsSummary.additions ?? 0) : null,
       deletions: statsSummary.statsComplete ? (statsSummary.deletions ?? 0) : null,
-      pending: false,
+      state: statsSummary.statsComplete
+        ? 'complete'
+        : statsSummary.statsTimedOut
+          ? 'timedOut'
+          : 'partial',
+      changeToken: statsSummary.changeToken,
+      scopeId,
     };
-  } catch {
-    if (requestToken !== changesSummaryRequestToken) {
+  } catch (error) {
+    if (!changesSummaryLoadController.isCurrent(loadHandle)) {
       return;
     }
-    changesBadgeSummary.value = {
-      count: 0,
-      additions: 0,
-      deletions: 0,
-      pending: false,
-    };
+    if (error instanceof Error && error.name === 'AbortError') {
+      return;
+    }
+    changesBadgeSummary.value = previousSummary;
+  } finally {
+    changesSummaryLoadController.release(loadHandle);
   }
 }
 
@@ -562,6 +646,7 @@ function handleChangesPanelSummaryChange(summary: GitChangesBadgeSummary | null)
     return;
   }
   changesBadgeSummary.value = summary;
+  changesSummaryScopeId.value = summary?.scopeId ?? '';
 }
 
 function startChangesSummaryTimer() {
@@ -600,6 +685,8 @@ terminalStore.emitter.on('terminal:created', handleTerminalCreatedEvent);
 webSessionStore.emitter.on('web-session:created', handleWebSessionCreatedEvent);
 onBeforeUnmount(() => {
   stopChangesSummaryTimer();
+  changesSummaryScopeController.cancel();
+  changesSummaryLoadController.cancel();
   terminalStore.emitter.off('terminal:ensure-expanded', handleEnsureExpandedEvent);
   terminalStore.emitter.off('terminal:created', handleTerminalCreatedEvent);
   webSessionStore.emitter.off('web-session:created', handleWebSessionCreatedEvent);
@@ -711,6 +798,23 @@ if (typeof window !== 'undefined') {
   background: rgba(37, 90, 143, 0.12);
   color: var(--n-text-color);
   gap: 0;
+}
+
+.changes-summary-warning {
+  margin-left: 3px;
+  color: #b45309;
+}
+
+.changes-summary-loading {
+  margin-left: 3px;
+  color: var(--n-primary-color);
+  animation: changes-summary-spin 1s linear infinite;
+}
+
+@keyframes changes-summary-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .tab-item.active .changes-summary-badge {

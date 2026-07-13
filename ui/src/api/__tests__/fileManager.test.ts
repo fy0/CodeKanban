@@ -72,6 +72,7 @@ describe('fileManagerApi.listChanges', () => {
           rootPath: '/tmp/project',
         },
         entries: [],
+        changeToken: 'token-1',
         truncated: false,
         statsComplete: true,
         statsTimedOut: false,
@@ -81,7 +82,7 @@ describe('fileManagerApi.listChanges', () => {
   });
 
   it('passes backend guardrail params instead of relying on local filtering', async () => {
-    await fileManagerApi.listChanges('project-1', 'scope-1', {
+    const result = await fileManagerApi.listChanges('project-1', 'scope-1', {
       includeUntracked: false,
       withStats: true,
       timeoutMs: 5000,
@@ -91,6 +92,7 @@ describe('fileManagerApi.listChanges', () => {
     expect(getMethodMock).toHaveBeenCalledWith(
       '/projects/project-1/files/changes?scopeId=scope-1&includeUntracked=false&withStats=true&timeoutMs=5000&maxEntries=1000'
     );
+    expect(result.changeToken).toBe('token-1');
   });
 
   it('aborts the in-flight request when the caller aborts the signal', async () => {
@@ -109,6 +111,67 @@ describe('fileManagerApi.listChanges', () => {
     const controller = new AbortController();
 
     const request = fileManagerApi.listChanges('project-1', 'scope-1', {
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+  });
+});
+
+describe('fileManagerApi.changesSummary', () => {
+  beforeEach(() => {
+    getMethodMock.mockClear();
+    getSendMock.mockReset();
+    getAbortMock.mockReset();
+    getSendMock.mockResolvedValue({
+      item: {
+        scope: {
+          id: 'scope-1',
+          kind: 'project',
+          label: 'Project',
+          rootPath: '/tmp/project',
+        },
+        count: 1,
+        changeToken: 'token-1',
+        additions: null,
+        deletions: null,
+        statsComplete: false,
+        statsTimedOut: false,
+      },
+    });
+  });
+
+  it('loads a status-only summary token', async () => {
+    const result = await fileManagerApi.changesSummary('project-1', 'scope-1', {
+      includeUntracked: false,
+      withStats: false,
+    });
+
+    expect(getMethodMock).toHaveBeenCalledWith(
+      '/projects/project-1/files/changes-summary?scopeId=scope-1'
+    );
+    expect(result.changeToken).toBe('token-1');
+  });
+
+  it('aborts an in-flight summary request', async () => {
+    let rejectRequest: ((reason?: unknown) => void) | null = null;
+    getMethodMock.mockImplementationOnce(() => ({
+      send: vi.fn(
+        () =>
+          new Promise((_, reject) => {
+            rejectRequest = reject;
+          })
+      ),
+      abort: vi.fn(() => {
+        rejectRequest?.(new DOMException('git changes summary load aborted', 'AbortError'));
+      }),
+    }));
+    const controller = new AbortController();
+
+    const request = fileManagerApi.changesSummary('project-1', 'scope-1', {
       signal: controller.signal,
     });
     controller.abort();
