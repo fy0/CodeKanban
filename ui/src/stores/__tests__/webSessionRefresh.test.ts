@@ -2,15 +2,18 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WebSessionSummary } from '@/types/models';
-import { useWebSessionStore } from '@/stores/webSession';
+import { useWebSessionStore, webSessionRuntimePerformance } from '@/stores/webSession';
 
-const { listMock, queryArchivedMock, snapshotMock, historyMock, syncMock } = vi.hoisted(() => ({
-  listMock: vi.fn(),
-  queryArchivedMock: vi.fn(),
-  snapshotMock: vi.fn(),
-  historyMock: vi.fn(),
-  syncMock: vi.fn(),
-}));
+const { listMock, queryArchivedMock, snapshotMock, historyMock, syncMock, deleteMock } = vi.hoisted(
+  () => ({
+    listMock: vi.fn(),
+    queryArchivedMock: vi.fn(),
+    snapshotMock: vi.fn(),
+    historyMock: vi.fn(),
+    syncMock: vi.fn(),
+    deleteMock: vi.fn(),
+  })
+);
 
 vi.mock('@/api/webSession', () => ({
   webSessionApi: {
@@ -19,6 +22,7 @@ vi.mock('@/api/webSession', () => ({
     snapshot: snapshotMock,
     history: historyMock,
     sync: syncMock,
+    delete: deleteMock,
   },
 }));
 
@@ -158,6 +162,18 @@ function toWireSession(session: WebSessionSummary) {
   };
 }
 
+function makeWireHistoryItem(index: number, overrides: Record<string, unknown> = {}) {
+  return {
+    id: `history-${index}`,
+    oi: index,
+    kd: 'system',
+    tp: 'note',
+    txt: `history ${index}`,
+    ts2: Date.parse('2026-04-09T10:00:00.000Z') + index,
+    ...overrides,
+  };
+}
+
 class FakeWebSocket {
   static OPEN = 1;
   static instances: FakeWebSocket[] = [];
@@ -227,6 +243,8 @@ describe('webSession loading behavior', () => {
     snapshotMock.mockReset();
     historyMock.mockReset();
     syncMock.mockReset();
+    deleteMock.mockReset();
+    webSessionRuntimePerformance.reset();
   });
 
   afterEach(() => {
@@ -1339,6 +1357,8 @@ describe('webSession loading behavior', () => {
     await store.loadSessionSnapshot(inactive.projectId, inactive.id);
 
     expect(store.getBlocks(inactive.id)).toHaveLength(420);
+    store.getLiveState(inactive.id);
+    webSessionRuntimePerformance.reset();
 
     store.trimInactiveSessionEvents(active.id);
 
@@ -1349,6 +1369,32 @@ describe('webSession loading behavior', () => {
       hasMore: true,
       beforeCursor: '261',
     });
+    store.getPendingApproval(inactive.id);
+    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
+      fullDerivations: 1,
+      scannedBlocks: 160,
+    });
+
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: inactive.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: {
+        id: `${inactive.id}-420`,
+        oi: 420,
+        kd: 'assistant',
+        tp: 'message',
+        txt: 'updated after trim',
+        ts2: Date.parse('2026-04-09T10:00:00.000Z') + 419,
+      },
+    });
+    expect(store.getBlocks(inactive.id)).toHaveLength(160);
+    expect(store.getBlocks(inactive.id).at(-1)?.text).toBe('updated after trim');
+    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(0);
   });
 
   it('falls back to HTTP snapshots when a send only receives an ack', async () => {
@@ -2454,5 +2500,524 @@ describe('webSession loading behavior', () => {
       ok: 1,
     });
     await updatePromise;
+  });
+
+  it('shares one runtime projection across live, approval, and user-input reads', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-runtime-cache',
+      status: 'running',
+      assistantState: 'working',
+    });
+    listMock.mockResolvedValue([session]);
+
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    webSessionRuntimePerformance.reset();
+    store.getLiveState(session.id);
+    store.getPendingApproval(session.id);
+    store.getPendingUserInput(session.id);
+    store.getLiveState(session.id);
+    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
+      fullDerivations: 1,
+      scannedBlocks: 0,
+    });
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_page',
+      h: {
+        its: [makeWireHistoryItem(1)],
+        hm: false,
+        tot: 1,
+      },
+    });
+    store.getPendingApproval(session.id);
+    store.getLiveState(session.id);
+    store.getPendingUserInput(session.id);
+    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
+      fullDerivations: 2,
+      scannedBlocks: 1,
+    });
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession({
+        ...session,
+        title: 'Replaced summary object',
+        updatedAt: '2026-04-09T10:01:00.000Z',
+      }),
+    });
+    store.getLiveState(session.id);
+    store.getPendingApproval(session.id);
+    store.getPendingUserInput(session.id);
+    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
+      fullDerivations: 3,
+      scannedBlocks: 2,
+    });
+  });
+
+  it('uses the event index for realtime updates and only sorts unordered inputs', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-indexed-history',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 2,
+    });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          makeWireHistoryItem(1, {
+            id: 'user-1',
+            kd: 'user',
+            tp: 'user_message',
+            txt: 'start',
+          }),
+          makeWireHistoryItem(2, {
+            id: 'assistant-1',
+            kd: 'assistant',
+            tp: 'agent_message',
+            txt: 'draft',
+            dn: false,
+          }),
+        ],
+        hasMore: true,
+        beforeCursor: '1',
+        total: 2,
+      },
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    store.getLiveState(session.id);
+    const previousBlocks = store.getBlocks(session.id);
+    const unchangedUserBlock = previousBlocks[0];
+
+    webSessionRuntimePerformance.reset();
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: makeWireHistoryItem(2, {
+        id: 'assistant-1',
+        kd: 'assistant',
+        tp: 'agent_message',
+        txt: 'draft completed',
+        obs: Date.parse('2026-04-09T10:01:00.000Z'),
+        dn: false,
+      }),
+    });
+
+    const updatedBlocks = store.getBlocks(session.id);
+    expect(updatedBlocks).not.toBe(previousBlocks);
+    expect(updatedBlocks[0]).toBe(unchangedUserBlock);
+    expect(updatedBlocks.map(block => block.id)).toEqual(['user-1', 'assistant-1']);
+    expect(updatedBlocks[1]?.text).toBe('draft completed');
+    expect(webSessionRuntimePerformance.snapshot()).toEqual({
+      fullDerivations: 0,
+      incrementalDerivations: 1,
+      scannedBlocks: 1,
+      eventSorts: 0,
+    });
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: makeWireHistoryItem(3, {
+        id: 'assistant-2',
+        kd: 'assistant',
+        tp: 'agent_message',
+        txt: 'monotonic append',
+        dn: true,
+      }),
+    });
+    expect(store.getBlocks(session.id).map(block => block.orderIndex)).toEqual([1, 2, 3]);
+    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(0);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: makeWireHistoryItem(1.5, {
+        id: 'system-out-of-order',
+        txt: 'inserted out of order',
+      }),
+    });
+    expect(store.getBlocks(session.id).map(block => block.orderIndex)).toEqual([1, 1.5, 2, 3]);
+    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(1);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: makeWireHistoryItem(3, {
+        id: 'assistant-2',
+        kd: 'assistant',
+        tp: 'agent_message',
+        txt: 'updated after index rebuild',
+        dn: true,
+      }),
+    });
+    expect(store.getBlocks(session.id).filter(block => block.id === 'assistant-2')).toHaveLength(1);
+    expect(store.getBlocks(session.id).at(-1)?.text).toBe('updated after index rebuild');
+    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(1);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_page',
+      h: {
+        its: [makeWireHistoryItem(0, { id: 'historical-0' })],
+        hm: false,
+        tot: 5,
+      },
+    });
+    expect(store.getBlocks(session.id).map(block => block.orderIndex)).toEqual([0, 1, 1.5, 2, 3]);
+    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(2);
+  });
+
+  it('invalidates runtime caches and event indexes across snapshots, archive moves, and delete', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-runtime-reset',
+      status: 'running',
+      assistantState: 'working',
+    });
+    listMock.mockResolvedValue([session]);
+    snapshotMock
+      .mockResolvedValueOnce({
+        session,
+        history: {
+          items: [makeWireHistoryItem(1, { id: 'old-item' })],
+          hasMore: false,
+          total: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        session: { ...session, updatedAt: '2026-04-09T10:02:00.000Z' },
+        history: {
+          items: [
+            makeWireHistoryItem(2, {
+              id: 'new-item',
+              kd: 'assistant',
+              tp: 'agent_message',
+              txt: 'snapshot replacement',
+            }),
+          ],
+          hasMore: false,
+          total: 1,
+        },
+      });
+    deleteMock.mockResolvedValue(undefined);
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    store.getLiveState(session.id);
+    webSessionRuntimePerformance.reset();
+
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    expect(store.getBlocks(session.id).map(block => block.id)).toEqual(['new-item']);
+    store.getPendingApproval(session.id);
+    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
+      fullDerivations: 1,
+      scannedBlocks: 1,
+      eventSorts: 1,
+    });
+
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession({
+        ...session,
+        archivedAt: '2026-04-09T10:03:00.000Z',
+        updatedAt: '2026-04-09T10:03:00.000Z',
+      }),
+    });
+    expect(webSessionRuntimePerformance.snapshot().fullDerivations).toBe(2);
+
+    await store.deleteSession(session.projectId, session.id);
+    expect(store.getBlocks(session.id)).toEqual([]);
+    store.getLiveState(session.id);
+    store.getPendingApproval(session.id);
+    expect(webSessionRuntimePerformance.snapshot().fullDerivations).toBe(4);
+
+    listMock.mockResolvedValue([{ ...session, updatedAt: '2026-04-09T10:04:00.000Z' }]);
+    await store.loadSessions(session.projectId, true);
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: makeWireHistoryItem(1, {
+        id: 'new-item',
+        kd: 'assistant',
+        tp: 'agent_message',
+        txt: 'fresh after delete',
+      }),
+    });
+    expect(store.getBlocks(session.id)).toHaveLength(1);
+    expect(store.getBlocks(session.id)[0]?.text).toBe('fresh after delete');
+  });
+
+  it('preserves pending recovery and run failure semantics in the unified projection', async () => {
+    const store = useWebSessionStore();
+    const approvalSession = makeSession({
+      id: 'session-approval-recovery',
+      status: 'running',
+      assistantState: 'waiting_approval',
+    });
+    const inputSession = makeSession({
+      id: 'session-input-recovery',
+      status: 'running',
+      assistantState: 'waiting_input',
+    });
+    listMock.mockResolvedValue([approvalSession, inputSession]);
+    snapshotMock.mockImplementation(async (_projectId: string, sessionId: string) => ({
+      session: sessionId === approvalSession.id ? approvalSession : inputSession,
+      history: {
+        items:
+          sessionId === approvalSession.id
+            ? [
+                makeWireHistoryItem(1, {
+                  id: 'approval-request',
+                  tp: 'approval_req',
+                  dt: { type: 'approval_request', prompt: 'Allow command?' },
+                }),
+                makeWireHistoryItem(2, {
+                  id: 'approval-restart',
+                  tp: 'run_abort',
+                  pl: { reason: 'process_restart', msg: 'Restarted while waiting' },
+                }),
+              ]
+            : [
+                makeWireHistoryItem(1, {
+                  id: 'input-request',
+                  siid: 'input-source-id',
+                  tp: 'user_input_request',
+                  dt: {
+                    type: 'user_input_request',
+                    prompt: 'Choose a target',
+                    questions: [],
+                  },
+                }),
+                makeWireHistoryItem(2, {
+                  id: 'input-restart',
+                  tp: 'run_abort',
+                  pl: { reason: 'process_restart', msg: 'Restarted before input' },
+                }),
+              ],
+        hasMore: false,
+        total: 2,
+      },
+    }));
+
+    await store.loadSessions(approvalSession.projectId);
+    await store.loadSessionSnapshot(approvalSession.projectId, approvalSession.id);
+    await store.loadSessionSnapshot(inputSession.projectId, inputSession.id);
+
+    expect(store.getPendingApproval(approvalSession.id)).toMatchObject({
+      id: 'approval-request',
+      stale: true,
+      recoveryReason: 'process_restart',
+      recoveryMessage: 'Restarted while waiting',
+    });
+    expect(store.getLiveState(approvalSession.id)).toMatchObject({
+      phase: 'waiting_approval',
+      approval: { id: 'approval-request', stale: true },
+    });
+    expect(store.getPendingUserInput(inputSession.id)).toMatchObject({
+      id: 'input-request',
+      itemId: 'input-source-id',
+      stale: true,
+      recoveryReason: 'process_restart',
+      recoveryMessage: 'Restarted before input',
+    });
+
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    const failedSession = {
+      ...inputSession,
+      status: 'err' as const,
+      assistantState: null,
+      updatedAt: '2026-04-09T10:05:00.000Z',
+    };
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: inputSession.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      s: toWireSession(failedSession),
+      i: makeWireHistoryItem(3, {
+        id: 'run-failure',
+        tp: 'run_fail',
+        txt: 'Runtime failed',
+      }),
+    });
+    expect(store.getPendingUserInput(inputSession.id)).toBeNull();
+    expect(store.getLiveState(inputSession.id)).toMatchObject({
+      phase: 'error',
+      running: false,
+      errorMessage: 'Runtime failed',
+    });
+  });
+
+  it('derives one next projection per history frame without repeating approval notifications', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-single-next-projection',
+      status: 'running',
+      assistantState: 'waiting_approval',
+    });
+    const handleApproval = vi.fn();
+    listMock.mockResolvedValue([session]);
+
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    store.getLiveState(session.id);
+    store.emitter.on('ai:approval-needed', handleApproval);
+    webSessionRuntimePerformance.reset();
+
+    const approvalItem = makeWireHistoryItem(1, {
+      id: 'approval-single-frame',
+      tp: 'approval_req',
+      dt: { type: 'approval_request', prompt: 'Allow this operation?' },
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: approvalItem,
+    });
+    expect(webSessionRuntimePerformance.snapshot()).toEqual({
+      fullDerivations: 0,
+      incrementalDerivations: 1,
+      scannedBlocks: 1,
+      eventSorts: 0,
+    });
+    expect(handleApproval).toHaveBeenCalledTimes(1);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: approvalItem,
+    });
+    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
+      fullDerivations: 0,
+      incrementalDerivations: 2,
+      scannedBlocks: 2,
+      eventSorts: 0,
+    });
+    expect(handleApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates a 500-block assistant tail 1000 times without full rescans or event sorts', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-runtime-performance',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 500,
+    });
+    const historyItems = Array.from({ length: 499 }, (_, index) => makeWireHistoryItem(index + 1));
+    historyItems.push(
+      makeWireHistoryItem(500, {
+        id: 'assistant-stream',
+        kd: 'assistant',
+        tp: 'agent_message',
+        txt: 'chunk 0',
+        dn: false,
+      })
+    );
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: historyItems,
+        hasMore: false,
+        total: 500,
+      },
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    const handleWorking = vi.fn();
+    const handleApproval = vi.fn();
+    const handleCompleted = vi.fn();
+    store.emitter.on('ai:working', handleWorking);
+    store.emitter.on('ai:approval-needed', handleApproval);
+    store.emitter.on('ai:completed', handleCompleted);
+    store.getLiveState(session.id);
+    webSessionRuntimePerformance.reset();
+
+    for (let index = 0; index < 1000; index += 1) {
+      eventSocket?.dispatch({
+        v: 1,
+        k: 'evt',
+        sid: session.id,
+        ts: Date.now(),
+        op: 'hist_item',
+        i: makeWireHistoryItem(500, {
+          id: 'assistant-stream',
+          kd: 'assistant',
+          tp: 'agent_message',
+          txt: `chunk ${index + 1}`,
+          obs: Date.parse('2026-04-09T10:01:00.000Z') + index,
+          dn: false,
+        }),
+      });
+    }
+
+    expect(store.getBlocks(session.id)).toHaveLength(500);
+    expect(store.getBlocks(session.id).at(-1)?.text).toBe('chunk 1000');
+    expect(webSessionRuntimePerformance.snapshot()).toEqual({
+      fullDerivations: 0,
+      incrementalDerivations: 1000,
+      scannedBlocks: 1000,
+      eventSorts: 0,
+    });
+    expect(handleWorking).not.toHaveBeenCalled();
+    expect(handleApproval).not.toHaveBeenCalled();
+    expect(handleCompleted).not.toHaveBeenCalled();
   });
 });

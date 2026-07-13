@@ -369,6 +369,59 @@ export interface WebSessionLiveState {
   };
 }
 
+type RuntimeProjection = {
+  liveState: WebSessionLiveState;
+  pendingApproval: WebSessionApprovalState | null;
+  pendingUserInput: WebSessionUserInputState | null;
+};
+
+type RuntimeRetryState = NonNullable<WebSessionLiveState['retry']> & {
+  updatedAt: number;
+};
+
+type RuntimeAccumulator = {
+  pendingApproval: WebSessionApprovalState | null;
+  pendingUserInput: WebSessionUserInputState | null;
+  activeTool: WebSessionLiveState['tool'];
+  activeSubAgents: Map<string, WebSessionLiveSubAgent>;
+  knownSubAgents: Map<string, WebSessionLiveSubAgent>;
+  sawAssistantOutput: boolean;
+  assistantDone: boolean;
+  firstAssistantOutputAt?: number;
+  errorMessage: string;
+  updatedAt: number;
+  runStartedAt?: number;
+  retryState?: RuntimeRetryState;
+  latestProgressTimestamp?: number;
+};
+
+type RuntimeProjectionCacheEntry = {
+  blocks: WebSessionBlock[];
+  session: WebSessionSummary;
+  projection: RuntimeProjection;
+  accumulator: RuntimeAccumulator;
+  beforeLastAccumulator: RuntimeAccumulator;
+};
+
+const webSessionRuntimePerformanceCounters = {
+  fullDerivations: 0,
+  incrementalDerivations: 0,
+  scannedBlocks: 0,
+  eventSorts: 0,
+};
+
+export const webSessionRuntimePerformance = {
+  reset() {
+    webSessionRuntimePerformanceCounters.fullDerivations = 0;
+    webSessionRuntimePerformanceCounters.incrementalDerivations = 0;
+    webSessionRuntimePerformanceCounters.scannedBlocks = 0;
+    webSessionRuntimePerformanceCounters.eventSorts = 0;
+  },
+  snapshot() {
+    return { ...webSessionRuntimePerformanceCounters };
+  },
+};
+
 export interface WebSessionPendingInput {
   id: string;
   mode: 'redirect' | 'queue';
@@ -1482,6 +1535,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
   const completedTransitionVersionBySession = new Map<string, number>();
   const currentSessionProjectById = new Map<string, string>();
+  const runtimeProjectionCacheBySession = new Map<string, RuntimeProjectionCacheEntry>();
+  const eventIndexBySession = new Map<string, Map<string, number>>();
+  const emptySessionBlocks: WebSessionBlock[] = [];
   let draftAttachmentUploadSeed = 0;
 
   const allSessionIds = computed(() => {
@@ -2789,6 +2845,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     appliedSnapshotVersionBySession.delete(sessionId);
     pendingAutoRetryOverrides.delete(sessionId);
     pendingActiveCallTimeoutOverrides.delete(sessionId);
+    runtimeProjectionCacheBySession.delete(sessionId);
+    eventIndexBySession.delete(sessionId);
     const nextPendingInputs = { ...pendingInputsBySession.value };
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
@@ -2832,12 +2890,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
       const wasCurrentSession = Boolean(
         (sessionsByProject.value[summary.projectId] ?? []).some(item => item.id === summary.id)
       );
+      if (wasCurrentSession) {
+        invalidateRuntimeProjection(summary.id);
+      }
       removeCurrentSessionRecord(summary.projectId, summary.id);
       upsertArchivedSession(summary, {
         includeInMatchingScopes: wasCurrentSession,
         preserveScopeOrder: options?.preserveArchivedPosition === true,
       });
       return;
+    }
+    if (archivedSessionsById.value[summary.id]) {
+      invalidateRuntimeProjection(summary.id);
     }
     removeArchivedSessionRecord(summary.id);
     upsertCurrentSession(summary);
@@ -2880,29 +2944,119 @@ export const useWebSessionStore = defineStore('web-session', () => {
     scheduledInputsBySession.value = nextScheduledInputs;
   }
 
-  function mergeEvents(sessionId: string, incoming: WebSessionBlock[]) {
-    const merged = [...(eventsBySession.value[sessionId] ?? [])];
-    const indexById = new Map(merged.map((item, index) => [item.id, index]));
+  function invalidateRuntimeProjection(sessionId: string) {
+    runtimeProjectionCacheBySession.delete(sessionId);
+  }
+
+  function sortEventBlocks(items: WebSessionBlock[]) {
+    webSessionRuntimePerformanceCounters.eventSorts += 1;
+    return [...items].sort((left, right) => left.orderIndex - right.orderIndex);
+  }
+
+  function rebuildEventIndex(sessionId: string, items: WebSessionBlock[]) {
+    eventIndexBySession.set(sessionId, new Map(items.map((item, index) => [item.id, index])));
+  }
+
+  function getEventIndex(sessionId: string, items: WebSessionBlock[]) {
+    const existing = eventIndexBySession.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+    rebuildEventIndex(sessionId, items);
+    return eventIndexBySession.get(sessionId)!;
+  }
+
+  function replaceSessionEvents(sessionId: string, events: WebSessionBlock[]) {
+    eventsBySession.value = {
+      ...eventsBySession.value,
+      [sessionId]: events,
+    };
+    return eventsBySession.value[sessionId] ?? [];
+  }
+
+  function mergeHistoricalEvents(sessionId: string, incoming: WebSessionBlock[]) {
+    if (incoming.length === 0) {
+      return;
+    }
+    const current = eventsBySession.value[sessionId] ?? emptySessionBlocks;
+    const indexById = getEventIndex(sessionId, current);
+    const merged = [...current];
     incoming.forEach(item => {
-      if (!item || !item.id) {
+      if (!item?.id) {
         return;
       }
       const existingIndex = indexById.get(item.id);
       if (existingIndex == null) {
+        indexById.set(item.id, merged.length);
         merged.push(item);
-        indexById.set(item.id, merged.length - 1);
         return;
       }
-      merged.splice(existingIndex, 1, {
+      merged[existingIndex] = {
         ...merged[existingIndex],
         ...item,
-      });
+      };
     });
-    merged.sort((left, right) => left.orderIndex - right.orderIndex);
-    eventsBySession.value = {
-      ...eventsBySession.value,
-      [sessionId]: merged,
-    };
+    const storedEvents = replaceSessionEvents(sessionId, sortEventBlocks(merged));
+    rebuildEventIndex(sessionId, storedEvents);
+    invalidateRuntimeProjection(sessionId);
+  }
+
+  function mergeRealtimeEvent(sessionId: string, item: WebSessionBlock) {
+    if (!item?.id) {
+      return;
+    }
+    const current = eventsBySession.value[sessionId] ?? emptySessionBlocks;
+    const indexById = getEventIndex(sessionId, current);
+    const existingIndex = indexById.get(item.id);
+    const previousCache = runtimeProjectionCacheBySession.get(sessionId);
+    let nextEvents: WebSessionBlock[];
+    let incrementalSeed: RuntimeAccumulator | null = null;
+    let incrementalStartIndex = -1;
+
+    if (existingIndex != null) {
+      nextEvents = [...current];
+      nextEvents[existingIndex] = {
+        ...current[existingIndex],
+        ...item,
+      };
+      if (existingIndex === current.length - 1) {
+        incrementalSeed = previousCache?.beforeLastAccumulator ?? null;
+        incrementalStartIndex = existingIndex;
+      }
+    } else {
+      const lastOrderIndex = current[current.length - 1]?.orderIndex ?? Number.NEGATIVE_INFINITY;
+      if (item.orderIndex >= lastOrderIndex) {
+        nextEvents = [...current, item];
+        indexById.set(item.id, nextEvents.length - 1);
+        incrementalSeed = previousCache?.accumulator ?? null;
+        incrementalStartIndex = nextEvents.length - 1;
+      } else {
+        nextEvents = sortEventBlocks([...current, item]);
+      }
+    }
+
+    const storedEvents = replaceSessionEvents(sessionId, nextEvents);
+    if (existingIndex == null && incrementalStartIndex < 0) {
+      rebuildEventIndex(sessionId, storedEvents);
+    }
+
+    const session = findSessionById(sessionId);
+    if (
+      session &&
+      incrementalSeed &&
+      previousCache?.blocks === current &&
+      previousCache.session === session
+    ) {
+      cacheIncrementalRuntimeProjection(
+        sessionId,
+        session,
+        storedEvents,
+        incrementalSeed,
+        incrementalStartIndex
+      );
+      return;
+    }
+    invalidateRuntimeProjection(sessionId);
   }
 
   function trimInactiveSessionEvents(activeSessionId = '') {
@@ -2913,6 +3067,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
         return;
       }
       nextEvents[sessionId] = items.slice(-WEB_SESSION_MIN_RETAINED_BLOCKS);
+      rebuildEventIndex(sessionId, nextEvents[sessionId]);
+      invalidateRuntimeProjection(sessionId);
       const nextMeta = getHistoryMeta(sessionId);
       historyBySession.value = {
         ...historyBySession.value,
@@ -2933,326 +3089,390 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function resetSessionEvents(sessionId: string, events: WebSessionBlock[]) {
-    eventsBySession.value = {
-      ...eventsBySession.value,
-      [sessionId]: [...events].sort((left, right) => left.orderIndex - right.orderIndex),
-    };
+    const storedEvents = replaceSessionEvents(sessionId, sortEventBlocks(events));
+    rebuildEventIndex(sessionId, storedEvents);
+    invalidateRuntimeProjection(sessionId);
   }
 
   function buildBlocks(sessionId: string): WebSessionBlock[] {
-    return eventsBySession.value[sessionId] ?? [];
+    return eventsBySession.value[sessionId] ?? emptySessionBlocks;
   }
 
   const getBlocks = (sessionId: string) => buildBlocks(sessionId);
 
-  function getPendingApproval(sessionId: string): WebSessionApprovalState | null {
-    const blocks = buildBlocks(sessionId);
-    let pending: WebSessionApprovalState | null = null;
-    for (const block of blocks) {
-      if (block.detail?.type === 'approval_request') {
-        pending = {
-          id: block.id,
-          prompt: block.detail.prompt ?? block.text,
-          requestedAt: block.timestamp,
-          stale: false,
-        };
-        continue;
-      }
-      if (block.detail?.type === 'approval_response' || block.kind === 'user') {
-        pending = null;
-        continue;
-      }
-      if (
-        block.itemType === 'run_abort' &&
-        pending &&
-        isProcessRestartPayload(block.payload ?? undefined)
-      ) {
-        pending = {
-          ...pending,
-          stale: true,
-          recoveryReason: String(block.payload?.reason ?? ''),
-          recoveryMessage: getRecoveryMessage(block.payload ?? undefined),
-        };
-        continue;
-      }
-      if (block.itemType === 'run_abort' || block.itemType === 'run_fail') {
-        pending = null;
-      }
-    }
-    return pending;
+  function createRuntimeAccumulator(session: WebSessionSummary | null): RuntimeAccumulator {
+    return {
+      pendingApproval: null,
+      pendingUserInput: null,
+      activeTool: undefined,
+      activeSubAgents: new Map(),
+      knownSubAgents: new Map(),
+      sawAssistantOutput: false,
+      assistantDone: false,
+      errorMessage: '',
+      updatedAt: session ? Date.parse(session.updatedAt) || Date.now() : Date.now(),
+    };
   }
 
-  function getPendingUserInput(sessionId: string): WebSessionUserInputState | null {
-    const blocks = buildBlocks(sessionId);
-    let pending: WebSessionUserInputState | null = null;
-    for (const block of blocks) {
-      if (block.detail?.type === 'user_input_request') {
-        pending = {
-          id: block.id,
-          itemId: block.sourceItemId || block.id,
-          prompt: block.detail.prompt ?? block.text,
-          questions: block.detail.questions ?? [],
-          requestedAt: block.timestamp,
-          stale: false,
-        };
-        continue;
-      }
-      if (block.detail?.type === 'user_input_response' || block.kind === 'user') {
-        pending = null;
-        continue;
-      }
-      if (
-        block.itemType === 'run_abort' &&
-        pending &&
-        isProcessRestartPayload(block.payload ?? undefined)
-      ) {
-        pending = {
-          ...pending,
-          stale: true,
-          recoveryReason: String(block.payload?.reason ?? ''),
-          recoveryMessage: getRecoveryMessage(block.payload ?? undefined),
-        };
-        continue;
-      }
-      if (block.itemType === 'run_abort' || block.itemType === 'run_fail') {
-        pending = null;
-      }
-    }
-    return pending;
+  function cloneRuntimeAccumulator(accumulator: RuntimeAccumulator): RuntimeAccumulator {
+    return {
+      ...accumulator,
+      activeSubAgents: new Map(accumulator.activeSubAgents),
+      knownSubAgents: new Map(accumulator.knownSubAgents),
+    };
   }
 
-  function getLiveState(sessionId: string): WebSessionLiveState {
-    const session = findSessionById(sessionId);
-    const approval = getPendingApproval(sessionId);
-    const userInput = getPendingUserInput(sessionId);
+  function applyRuntimeBlock(accumulator: RuntimeAccumulator, block: WebSessionBlock) {
+    if (block.detail?.type === 'approval_request') {
+      accumulator.pendingApproval = {
+        id: block.id,
+        prompt: block.detail.prompt ?? block.text,
+        requestedAt: block.timestamp,
+        stale: false,
+      };
+    } else if (block.detail?.type === 'approval_response' || block.kind === 'user') {
+      accumulator.pendingApproval = null;
+    } else if (
+      block.itemType === 'run_abort' &&
+      accumulator.pendingApproval &&
+      isProcessRestartPayload(block.payload ?? undefined)
+    ) {
+      accumulator.pendingApproval = {
+        ...accumulator.pendingApproval,
+        stale: true,
+        recoveryReason: String(block.payload?.reason ?? ''),
+        recoveryMessage: getRecoveryMessage(block.payload ?? undefined),
+      };
+    } else if (block.itemType === 'run_abort' || block.itemType === 'run_fail') {
+      accumulator.pendingApproval = null;
+    }
+
+    if (block.detail?.type === 'user_input_request') {
+      accumulator.pendingUserInput = {
+        id: block.id,
+        itemId: block.sourceItemId || block.id,
+        prompt: block.detail.prompt ?? block.text,
+        questions: block.detail.questions ?? [],
+        requestedAt: block.timestamp,
+        stale: false,
+      };
+    } else if (block.detail?.type === 'user_input_response' || block.kind === 'user') {
+      accumulator.pendingUserInput = null;
+    } else if (
+      block.itemType === 'run_abort' &&
+      accumulator.pendingUserInput &&
+      isProcessRestartPayload(block.payload ?? undefined)
+    ) {
+      accumulator.pendingUserInput = {
+        ...accumulator.pendingUserInput,
+        stale: true,
+        recoveryReason: String(block.payload?.reason ?? ''),
+        recoveryMessage: getRecoveryMessage(block.payload ?? undefined),
+      };
+    } else if (block.itemType === 'run_abort' || block.itemType === 'run_fail') {
+      accumulator.pendingUserInput = null;
+    }
+
+    accumulator.updatedAt = block.observedAt || block.timestamp || accumulator.updatedAt;
+    if (block.kind === 'assistant') {
+      accumulator.sawAssistantOutput = true;
+      accumulator.assistantDone = block.done === true;
+      accumulator.retryState = undefined;
+      if (!accumulator.firstAssistantOutputAt && block.timestamp > 0) {
+        accumulator.firstAssistantOutputAt = block.timestamp;
+      }
+      applyAssistantNamedSubAgents(
+        block.text,
+        accumulator.knownSubAgents,
+        accumulator.activeSubAgents
+      );
+    }
+    if (block.kind === 'user' && block.timestamp > 0) {
+      accumulator.runStartedAt = block.timestamp;
+      accumulator.sawAssistantOutput = false;
+      accumulator.assistantDone = false;
+      accumulator.firstAssistantOutputAt = undefined;
+      accumulator.activeTool = undefined;
+      accumulator.activeSubAgents = new Map();
+      accumulator.knownSubAgents = new Map();
+      accumulator.errorMessage = '';
+    }
+    const retryPayload = getTransportRetryPayload(block.payload);
+    const progressTimestamp = getRetryClearingProgressTimestamp(block, retryPayload);
+    if (progressTimestamp != null) {
+      accumulator.latestProgressTimestamp = Math.max(
+        accumulator.latestProgressTimestamp ?? 0,
+        progressTimestamp
+      );
+    }
+    if (block.itemType === 'note' && retryPayload) {
+      accumulator.retryState = {
+        ...retryPayload,
+        updatedAt: block.observedAt || block.timestamp || accumulator.updatedAt,
+      };
+    }
+    if (block.kind === 'tool' && block.tool) {
+      const normalizedToolKind = normalizeToolKindValue(
+        block.tool.kind || String(block.tool.meta?.kind ?? '')
+      );
+      if (normalizedToolKind === 'reasoning') {
+        return;
+      }
+      if (normalizedToolKind === 'sub_agent_tool_call') {
+        rememberKnownSubAgents(block, accumulator.knownSubAgents);
+        syncActiveSubAgentLifecycle(block, accumulator.knownSubAgents, accumulator.activeSubAgents);
+        accumulator.retryState = undefined;
+        return;
+      }
+      if (block.tool.status === 'running') {
+        accumulator.activeTool = normalizeActiveTool(block);
+        accumulator.retryState = undefined;
+      } else if (accumulator.activeTool?.id === block.tool.id) {
+        accumulator.activeTool = undefined;
+        accumulator.retryState = undefined;
+      }
+    }
+    if (block.itemType === 'run_fail') {
+      accumulator.errorMessage = block.text || 'Run failed';
+      accumulator.activeTool = undefined;
+      accumulator.activeSubAgents = new Map();
+      accumulator.retryState = undefined;
+    }
+    if (block.itemType === 'run_abort') {
+      accumulator.activeTool = undefined;
+      accumulator.activeSubAgents = new Map();
+    }
+  }
+
+  function finalizeRuntimeProjection(
+    session: WebSessionSummary | null,
+    accumulator: RuntimeAccumulator
+  ): RuntimeProjection {
+    const approval = accumulator.pendingApproval;
+    const userInput = accumulator.pendingUserInput;
     const assistantState = getSessionAssistantStateValue(session);
-    let activeTool:
-      | {
-          id: string;
-          name: string;
-          kind?: string;
-          summary?: string;
-          count?: number;
-          groupId?: string;
-          startedAt?: number;
-        }
-      | undefined;
-    let activeSubAgents = new Map<string, WebSessionLiveSubAgent>();
-    let knownSubAgents = new Map<string, WebSessionLiveSubAgent>();
-    let sawAssistantOutput = false;
-    let assistantDone = false;
-    let firstAssistantOutputAt: number | undefined;
-    let errorMessage = '';
-    let updatedAt = session ? Date.parse(session.updatedAt) || Date.now() : Date.now();
     const assistantStateUpdatedAt = getAssistantStateUpdatedAt(session);
-    let runStartedAt: number | undefined;
-    let retryState:
-      | {
-          code: string;
-          message: string;
-          remoteUrl?: string;
-          attempt?: number;
-          maxAttempts?: number;
-          updatedAt: number;
-        }
-      | undefined;
-    let latestProgressTimestamp: number | undefined;
-
-    for (const block of buildBlocks(sessionId)) {
-      updatedAt = block.observedAt || block.timestamp || updatedAt;
-      if (block.kind === 'assistant') {
-        sawAssistantOutput = true;
-        assistantDone = block.done === true;
-        retryState = undefined;
-        if (!firstAssistantOutputAt && block.timestamp > 0) {
-          firstAssistantOutputAt = block.timestamp;
-        }
-        applyAssistantNamedSubAgents(block.text, knownSubAgents, activeSubAgents);
-      }
-      if (block.kind === 'user' && block.timestamp > 0) {
-        runStartedAt = block.timestamp;
-        sawAssistantOutput = false;
-        assistantDone = false;
-        firstAssistantOutputAt = undefined;
-        activeTool = undefined;
-        activeSubAgents = new Map();
-        knownSubAgents = new Map();
-        errorMessage = '';
-      }
-      const retryPayload = getTransportRetryPayload(block.payload);
-      const progressTimestamp = getRetryClearingProgressTimestamp(block, retryPayload);
-      if (progressTimestamp != null) {
-        latestProgressTimestamp = Math.max(latestProgressTimestamp ?? 0, progressTimestamp);
-      }
-      if (block.itemType === 'note' && retryPayload) {
-        retryState = {
-          ...retryPayload,
-          updatedAt: block.observedAt || block.timestamp || updatedAt,
-        };
-      }
-      if (block.kind === 'tool' && block.tool) {
-        const normalizedToolKind = normalizeToolKindValue(
-          block.tool.kind || String(block.tool.meta?.kind ?? '')
-        );
-        if (normalizedToolKind === 'reasoning') {
-          continue;
-        }
-        if (normalizedToolKind === 'sub_agent_tool_call') {
-          rememberKnownSubAgents(block, knownSubAgents);
-          syncActiveSubAgentLifecycle(block, knownSubAgents, activeSubAgents);
-          retryState = undefined;
-          continue;
-        }
-        if (block.tool.status === 'running') {
-          activeTool = normalizeActiveTool(block);
-          retryState = undefined;
-        } else if (activeTool?.id === block.tool.id) {
-          activeTool = undefined;
-          retryState = undefined;
-        }
-      }
-      if (block.itemType === 'run_fail') {
-        errorMessage = block.text || 'Run failed';
-        activeTool = undefined;
-        activeSubAgents = new Map();
-        retryState = undefined;
-      }
-      if (block.itemType === 'run_abort') {
-        activeTool = undefined;
-        activeSubAgents = new Map();
-      }
-    }
-
+    let liveState: WebSessionLiveState;
     if (assistantState === 'waiting_approval') {
-      return withActiveSubAgents(
+      liveState = withActiveSubAgents(
         {
           phase: 'waiting_approval',
           running: session?.status === 'running',
-          updatedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
-          startedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? runStartedAt,
+          updatedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? accumulator.updatedAt,
+          startedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? accumulator.runStartedAt,
           approval,
-          tool: activeTool,
+          tool: accumulator.activeTool,
         },
-        [...activeSubAgents.values()]
+        [...accumulator.activeSubAgents.values()]
       );
-    }
-
-    if (assistantState === 'waiting_plan_approval') {
-      return withActiveSubAgents(
+    } else if (assistantState === 'waiting_plan_approval') {
+      liveState = withActiveSubAgents(
         {
           phase: 'waiting_plan_approval',
           running: false,
-          updatedAt: assistantStateUpdatedAt || updatedAt,
-          startedAt: assistantStateUpdatedAt ?? runStartedAt,
+          updatedAt: assistantStateUpdatedAt || accumulator.updatedAt,
+          startedAt: assistantStateUpdatedAt ?? accumulator.runStartedAt,
         },
-        [...activeSubAgents.values()]
+        [...accumulator.activeSubAgents.values()]
       );
-    }
-
-    if (assistantState === 'waiting_input') {
-      return withActiveSubAgents(
+    } else if (assistantState === 'waiting_input') {
+      liveState = withActiveSubAgents(
         {
           phase: 'waiting_input',
           running: session?.status === 'running',
-          updatedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
-          startedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? runStartedAt,
-          tool: activeTool,
+          updatedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? accumulator.updatedAt,
+          startedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? accumulator.runStartedAt,
+          tool: accumulator.activeTool,
           userInput,
         },
-        [...activeSubAgents.values()]
+        [...accumulator.activeSubAgents.values()]
       );
-    }
-
-    if (session?.status === 'running') {
+    } else if (session?.status === 'running') {
       const hasRecoveredFromRetry =
-        retryState != null &&
-        latestProgressTimestamp != null &&
-        latestProgressTimestamp > retryState.updatedAt;
+        accumulator.retryState != null &&
+        accumulator.latestProgressTimestamp != null &&
+        accumulator.latestProgressTimestamp > accumulator.retryState.updatedAt;
       const hasNewerWorkingSummary =
-        retryState != null &&
+        accumulator.retryState != null &&
         assistantState === 'working' &&
         assistantStateUpdatedAt != null &&
-        assistantStateUpdatedAt > retryState.updatedAt;
-      if (retryState && !hasRecoveredFromRetry && !hasNewerWorkingSummary) {
-        return withActiveSubAgents(
+        assistantStateUpdatedAt > accumulator.retryState.updatedAt;
+      if (accumulator.retryState && !hasRecoveredFromRetry && !hasNewerWorkingSummary) {
+        liveState = withActiveSubAgents(
           {
             phase: 'retrying',
             running: true,
-            updatedAt: retryState.updatedAt,
-            startedAt: runStartedAt,
+            updatedAt: accumulator.retryState.updatedAt,
+            startedAt: accumulator.runStartedAt,
             retry: {
-              code: retryState.code,
-              message: retryState.message,
-              remoteUrl: retryState.remoteUrl,
-              attempt: retryState.attempt,
-              maxAttempts: retryState.maxAttempts,
+              code: accumulator.retryState.code,
+              message: accumulator.retryState.message,
+              remoteUrl: accumulator.retryState.remoteUrl,
+              attempt: accumulator.retryState.attempt,
+              maxAttempts: accumulator.retryState.maxAttempts,
             },
           },
-          [...activeSubAgents.values()]
+          [...accumulator.activeSubAgents.values()]
         );
-      }
-      if (activeTool) {
-        return withActiveSubAgents(
+      } else if (accumulator.activeTool) {
+        liveState = withActiveSubAgents(
           {
             phase: 'tool',
             running: true,
-            updatedAt,
-            startedAt: activeTool.startedAt ?? assistantStateUpdatedAt ?? runStartedAt,
-            tool: activeTool,
+            updatedAt: accumulator.updatedAt,
+            startedAt:
+              accumulator.activeTool.startedAt ??
+              assistantStateUpdatedAt ??
+              accumulator.runStartedAt,
+            tool: accumulator.activeTool,
           },
-          [...activeSubAgents.values()]
+          [...accumulator.activeSubAgents.values()]
         );
-      }
-      if (sawAssistantOutput && !assistantDone) {
-        return withActiveSubAgents(
+      } else if (accumulator.sawAssistantOutput && !accumulator.assistantDone) {
+        liveState = withActiveSubAgents(
           {
             phase: 'thinking',
             running: true,
-            updatedAt,
-            startedAt: firstAssistantOutputAt ?? assistantStateUpdatedAt ?? runStartedAt,
+            updatedAt: accumulator.updatedAt,
+            startedAt:
+              accumulator.firstAssistantOutputAt ??
+              assistantStateUpdatedAt ??
+              accumulator.runStartedAt,
           },
-          [...activeSubAgents.values()]
+          [...accumulator.activeSubAgents.values()]
+        );
+      } else {
+        liveState = withActiveSubAgents(
+          {
+            phase: 'starting',
+            running: true,
+            updatedAt: accumulator.updatedAt,
+            startedAt: assistantStateUpdatedAt ?? accumulator.runStartedAt,
+          },
+          [...accumulator.activeSubAgents.values()]
         );
       }
-      return withActiveSubAgents(
-        {
-          phase: 'starting',
-          running: true,
-          updatedAt,
-          startedAt: assistantStateUpdatedAt ?? runStartedAt,
-        },
-        [...activeSubAgents.values()]
-      );
-    }
-
-    if (session?.status === 'done') {
-      return {
+    } else if (session?.status === 'done') {
+      liveState = {
         phase: 'done',
         running: false,
-        updatedAt,
-        startedAt: runStartedAt,
+        updatedAt: accumulator.updatedAt,
+        startedAt: accumulator.runStartedAt,
       };
-    }
-
-    if (session?.status === 'err') {
-      return {
+    } else if (session?.status === 'err') {
+      liveState = {
         phase: 'error',
         running: false,
-        updatedAt,
-        startedAt: runStartedAt,
-        errorMessage,
+        updatedAt: accumulator.updatedAt,
+        startedAt: accumulator.runStartedAt,
+        errorMessage: accumulator.errorMessage,
+      };
+    } else {
+      liveState = {
+        phase: 'idle',
+        running: false,
+        updatedAt: accumulator.updatedAt,
       };
     }
 
     return {
-      phase: 'idle',
-      running: false,
-      updatedAt,
+      liveState,
+      pendingApproval: approval,
+      pendingUserInput: userInput,
     };
   }
 
+  function deriveRuntimeProjection(
+    session: WebSessionSummary | null,
+    blocks: WebSessionBlock[],
+    capture?: {
+      accumulator?: RuntimeAccumulator;
+      beforeLastAccumulator?: RuntimeAccumulator;
+    }
+  ): RuntimeProjection {
+    webSessionRuntimePerformanceCounters.fullDerivations += 1;
+    webSessionRuntimePerformanceCounters.scannedBlocks += blocks.length;
+    const accumulator = createRuntimeAccumulator(session);
+    let beforeLastAccumulator = cloneRuntimeAccumulator(accumulator);
+    blocks.forEach((block, index) => {
+      if (index === blocks.length - 1) {
+        beforeLastAccumulator = cloneRuntimeAccumulator(accumulator);
+      }
+      applyRuntimeBlock(accumulator, block);
+    });
+    if (capture) {
+      capture.accumulator = accumulator;
+      capture.beforeLastAccumulator = beforeLastAccumulator;
+    }
+    return finalizeRuntimeProjection(session, accumulator);
+  }
+
+  function cacheIncrementalRuntimeProjection(
+    sessionId: string,
+    session: WebSessionSummary,
+    blocks: WebSessionBlock[],
+    seed: RuntimeAccumulator,
+    startIndex: number
+  ) {
+    webSessionRuntimePerformanceCounters.incrementalDerivations += 1;
+    webSessionRuntimePerformanceCounters.scannedBlocks += blocks.length - startIndex;
+    const accumulator = cloneRuntimeAccumulator(seed);
+    let beforeLastAccumulator = cloneRuntimeAccumulator(accumulator);
+    for (let index = startIndex; index < blocks.length; index += 1) {
+      if (index === blocks.length - 1) {
+        beforeLastAccumulator = cloneRuntimeAccumulator(accumulator);
+      }
+      applyRuntimeBlock(accumulator, blocks[index]!);
+    }
+    runtimeProjectionCacheBySession.set(sessionId, {
+      blocks,
+      session,
+      projection: finalizeRuntimeProjection(session, accumulator),
+      accumulator,
+      beforeLastAccumulator,
+    });
+  }
+
+  function getRuntimeProjection(sessionId: string): RuntimeProjection {
+    const session = findSessionById(sessionId);
+    const blocks = buildBlocks(sessionId);
+    if (session) {
+      const cached = runtimeProjectionCacheBySession.get(sessionId);
+      if (cached?.blocks === blocks && cached.session === session) {
+        return cached.projection;
+      }
+      const capture: {
+        accumulator?: RuntimeAccumulator;
+        beforeLastAccumulator?: RuntimeAccumulator;
+      } = {};
+      const projection = deriveRuntimeProjection(session, blocks, capture);
+      runtimeProjectionCacheBySession.set(sessionId, {
+        blocks,
+        session,
+        projection,
+        accumulator: capture.accumulator!,
+        beforeLastAccumulator: capture.beforeLastAccumulator!,
+      });
+      return projection;
+    }
+    return deriveRuntimeProjection(null, blocks);
+  }
+
+  function getPendingApproval(sessionId: string): WebSessionApprovalState | null {
+    return getRuntimeProjection(sessionId).pendingApproval;
+  }
+
+  function getPendingUserInput(sessionId: string): WebSessionUserInputState | null {
+    return getRuntimeProjection(sessionId).pendingUserInput;
+  }
+
+  function getLiveState(sessionId: string): WebSessionLiveState {
+    return getRuntimeProjection(sessionId).liveState;
+  }
+
   function snapshotRuntimeMutationState(sessionId: string): RuntimeMutationStateSnapshot {
-    const liveState = getLiveState(sessionId);
+    const projection = getRuntimeProjection(sessionId);
+    const liveState = projection.liveState;
     return {
       blockCount: buildBlocks(sessionId).length,
       historyTotal: getHistoryMeta(sessionId).total,
@@ -3260,8 +3480,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
       livePhase: liveState.phase,
       liveRunning: liveState.running,
       liveUpdatedAt: liveState.updatedAt,
-      approvalId: getPendingApproval(sessionId)?.id ?? '',
-      userInputId: getPendingUserInput(sessionId)?.itemId ?? '',
+      approvalId: projection.pendingApproval?.id ?? '',
+      userInputId: projection.pendingUserInput?.itemId ?? '',
     };
   }
 
@@ -3406,16 +3626,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function emitStateTransition(
     sessionId: string,
-    previousState: WebSessionLiveState,
-    previousApproval: WebSessionApprovalState | null
+    previousProjection: RuntimeProjection,
+    nextProjection: RuntimeProjection
   ) {
     const session = findSessionById(sessionId);
     if (!session) {
       return;
     }
 
-    const nextState = getLiveState(sessionId);
-    const nextApproval = getPendingApproval(sessionId);
+    const previousState = previousProjection.liveState;
+    const previousApproval = previousProjection.pendingApproval;
+    const nextState = nextProjection.liveState;
+    const nextApproval = nextProjection.pendingApproval;
     const hasPendingInputs = getPendingInputs(sessionId).length > 0;
     const approvalForNotification =
       nextApproval ??
@@ -3575,8 +3797,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (frame.k === 'evt' && frame.sid) {
-      const previousState = getLiveState(frame.sid);
-      const previousApproval = getPendingApproval(frame.sid);
+      const shouldEmitTransition = frame.op !== 'hist_page';
+      const previousProjection = shouldEmitTransition ? getRuntimeProjection(frame.sid) : null;
       if (frame.s) {
         upsertSession(normalizeSession(frame.s));
       }
@@ -3597,7 +3819,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 .filter((item): item is WebSessionPendingInput => item != null)
             : []
         );
-        emitStateTransition(frame.sid, previousState, previousApproval);
+        emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
         return;
       }
 
@@ -3625,7 +3847,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 .filter((item): item is WebSessionScheduledInput => item != null)
             : []
         );
-        emitStateTransition(frame.sid, previousState, previousApproval);
+        emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
         return;
       }
 
@@ -3633,7 +3855,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         const historicalItems = Array.isArray(frame.h.its)
           ? frame.h.its.map(item => normalizeHistoryItem(item))
           : [];
-        mergeEvents(frame.sid, historicalItems);
+        mergeHistoricalEvents(frame.sid, historicalItems);
         historyBySession.value = {
           ...historyBySession.value,
           [frame.sid]: {
@@ -3648,10 +3870,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
       if (frame.op === 'hist_item' && frame.i) {
         const item = normalizeHistoryItem(frame.i);
-        mergeEvents(frame.sid, [item]);
+        mergeRealtimeEvent(frame.sid, item);
       }
 
-      emitStateTransition(frame.sid, previousState, previousApproval);
+      emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
     }
   }
 
@@ -4143,6 +4365,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   async function archiveSession(projectId: string, sessionId: string) {
     const summary = await webSessionApi.archive(projectId, sessionId);
+    invalidateRuntimeProjection(sessionId);
     removeCurrentSessionRecord(projectId, sessionId);
     setPendingInputs(sessionId, []);
     setScheduledInputs(sessionId, []);
@@ -4152,6 +4375,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   async function unarchiveSession(projectId: string, sessionId: string) {
     const summary = await webSessionApi.unarchive(projectId, sessionId);
+    invalidateRuntimeProjection(sessionId);
     removeArchivedSessionRecord(sessionId);
     upsertCurrentSession(summary);
     return summary;
@@ -4627,7 +4851,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       const historicalItems = Array.isArray(history.items)
         ? history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
         : [];
-      mergeEvents(sessionId, historicalItems);
+      mergeHistoricalEvents(sessionId, historicalItems);
       historyBySession.value = {
         ...historyBySession.value,
         [sessionId]: {
