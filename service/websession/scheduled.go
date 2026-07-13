@@ -15,9 +15,29 @@ import (
 )
 
 var (
-	errInvalidScheduledInputMode = errors.New("invalid scheduled input mode")
-	errScheduledInputNotFound    = errors.New("scheduled input not found")
+	errInvalidScheduledInputAction = errors.New("invalid scheduled input action")
+	errInvalidScheduledInputMode   = errors.New("invalid scheduled input mode")
+	errScheduledInputNotFound      = errors.New("scheduled input not found")
+	errScheduledPlanExpired        = errors.New("scheduled plan is no longer available")
+	errScheduledPlanDuplicate      = errors.New("scheduled plan already exists")
 )
+
+type scheduledPlanExecutionPayload struct {
+	PendingItemID      string `json:"pendingItemId,omitempty"`
+	QuestionID         string `json:"questionId,omitempty"`
+	ExecuteOptionLabel string `json:"executeOptionLabel,omitempty"`
+}
+
+func normalizeScheduledInputAction(action ScheduledInputAction) ScheduledInputAction {
+	switch strings.ToLower(strings.TrimSpace(string(action))) {
+	case "", string(ScheduledInputActionMessage):
+		return ScheduledInputActionMessage
+	case string(ScheduledInputActionExecutePlan):
+		return ScheduledInputActionExecutePlan
+	default:
+		return ""
+	}
+}
 
 func normalizeScheduledInputMode(mode ScheduledInputMode) ScheduledInputMode {
 	switch strings.ToLower(strings.TrimSpace(string(mode))) {
@@ -42,6 +62,8 @@ func normalizeScheduledInputStatus(status ScheduledInputStatus) ScheduledInputSt
 		return ScheduledInputStatusCanceled
 	case string(ScheduledInputStatusFailed):
 		return ScheduledInputStatusFailed
+	case string(ScheduledInputStatusExpired):
+		return ScheduledInputStatusExpired
 	default:
 		return ""
 	}
@@ -51,7 +73,29 @@ func activeScheduledInputStatuses() []string {
 	return []string{
 		string(ScheduledInputStatusScheduled),
 		string(ScheduledInputStatusFailed),
+		string(ScheduledInputStatusExpired),
 	}
+}
+
+func parseScheduledPlanExecutionPayload(raw string) (scheduledPlanExecutionPayload, error) {
+	var payload scheduledPlanExecutionPayload
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			return scheduledPlanExecutionPayload{}, err
+		}
+	}
+	payload.PendingItemID = strings.TrimSpace(payload.PendingItemID)
+	payload.QuestionID = strings.TrimSpace(payload.QuestionID)
+	payload.ExecuteOptionLabel = strings.TrimSpace(payload.ExecuteOptionLabel)
+	return payload, nil
+}
+
+func marshalScheduledPlanExecutionPayload(payload scheduledPlanExecutionPayload) string {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
 }
 
 func parseScheduledInputAttachmentIDs(raw string) []string {
@@ -76,6 +120,8 @@ func marshalScheduledInputAttachmentIDs(attachmentIDs []string) string {
 func mapScheduledInputRecord(record tables.WebSessionScheduledInputTable) ScheduledInput {
 	return ScheduledInput{
 		ID:            strings.TrimSpace(record.ID),
+		Action:        normalizeScheduledInputAction(ScheduledInputAction(record.Action)),
+		TargetID:      strings.TrimSpace(record.TargetID),
 		Mode:          normalizeScheduledInputMode(ScheduledInputMode(record.Mode)),
 		Text:          record.Text,
 		AttachmentIDs: parseScheduledInputAttachmentIDs(record.AttachmentIDsJSON),
@@ -161,6 +207,8 @@ func (m *Manager) ScheduleInput(
 
 	item := tables.WebSessionScheduledInputTable{
 		WebSessionID:      record.ID,
+		Action:            string(ScheduledInputActionMessage),
+		PayloadJSON:       "{}",
 		Mode:              string(normalizedMode),
 		Text:              normalizedText,
 		AttachmentIDsJSON: marshalScheduledInputAttachmentIDs(sanitizedAttachmentIDs),
@@ -175,6 +223,230 @@ func (m *Manager) ScheduleInput(
 	created := mapScheduledInputRecord(item)
 	m.setScheduledInputTimer(created.ID, record.ID, created.ScheduledFor)
 	m.broadcastScheduledInputs(record.ID)
+	return created, nil
+}
+
+func normalizeScheduledPlanExecutionPayload(payload scheduledPlanExecutionPayload) (scheduledPlanExecutionPayload, error) {
+	payload.PendingItemID = strings.TrimSpace(payload.PendingItemID)
+	payload.QuestionID = strings.TrimSpace(payload.QuestionID)
+	payload.ExecuteOptionLabel = strings.TrimSpace(payload.ExecuteOptionLabel)
+	populated := 0
+	for _, value := range []string{payload.PendingItemID, payload.QuestionID, payload.ExecuteOptionLabel} {
+		if value != "" {
+			populated++
+		}
+	}
+	if populated != 0 && populated != 3 {
+		return scheduledPlanExecutionPayload{}, fmt.Errorf("incomplete scheduled plan approval target")
+	}
+	return payload, nil
+}
+
+func (m *Manager) validateScheduledPlanHistory(ctx context.Context, sessionID, targetID string) error {
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return fmt.Errorf("plan target is required")
+	}
+
+	var latestPlan tables.WebSessionItemTable
+	if err := db.WithContext(ctx).
+		Where("web_session_id = ? AND item_type = ?", sessionID, "plan").
+		Order("order_index DESC").
+		First(&latestPlan).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errScheduledPlanExpired
+		}
+		return err
+	}
+	if strings.TrimSpace(latestPlan.ID) != targetID {
+		return errScheduledPlanExpired
+	}
+
+	var userMessageCount int64
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionItemTable{}).
+		Where("web_session_id = ? AND order_index > ? AND item_kind = ?", sessionID, latestPlan.OrderIndex, "user").
+		Count(&userMessageCount).Error; err != nil {
+		return err
+	}
+	if userMessageCount > 0 {
+		return errScheduledPlanExpired
+	}
+	return nil
+}
+
+func (m *Manager) validateScheduledPlanApproval(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	payload scheduledPlanExecutionPayload,
+) error {
+	if payload.PendingItemID == "" {
+		if m.hasActiveRun(session.ID) {
+			return errScheduledPlanExpired
+		}
+		return nil
+	}
+
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	var row tables.WebSessionItemTable
+	if err := db.WithContext(ctx).
+		Where(
+			"web_session_id = ? AND item_type = ? AND (id = ? OR source_item_id = ?)",
+			session.ID,
+			"user_input_request",
+			payload.PendingItemID,
+			payload.PendingItemID,
+		).
+		Order("order_index DESC").
+		First(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errScheduledPlanExpired
+		}
+		return err
+	}
+
+	item := mapHistoryItemRowWithSession(row, session.ID)
+	if item.Detail == nil {
+		return errScheduledPlanExpired
+	}
+	matchedOption := false
+	for _, question := range item.Detail.Questions {
+		if strings.TrimSpace(question.ID) != payload.QuestionID {
+			continue
+		}
+		for _, option := range question.Options {
+			if strings.TrimSpace(option.Label) == payload.ExecuteOptionLabel {
+				matchedOption = true
+				break
+			}
+		}
+	}
+	if !matchedOption {
+		return errScheduledPlanExpired
+	}
+
+	var responseCount int64
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionItemTable{}).
+		Where(
+			"web_session_id = ? AND order_index > ? AND item_type = ?",
+			session.ID,
+			row.OrderIndex,
+			"user_input_response",
+		).
+		Count(&responseCount).Error; err != nil {
+		return err
+	}
+	if responseCount > 0 || effectiveAssistantState(session) != AssistantStateWaitingInput {
+		return errScheduledPlanExpired
+	}
+
+	if normalizeAgent(Agent(session.Agent)) == AgentCodex {
+		m.mu.RLock()
+		run := m.runs[session.ID]
+		m.mu.RUnlock()
+		if run == nil {
+			return errScheduledPlanExpired
+		}
+		pending, ok := run.pendingUserInputRequest()
+		if !ok || strings.TrimSpace(pending.ItemID) != payload.PendingItemID {
+			return errScheduledPlanExpired
+		}
+	}
+	return nil
+}
+
+func (m *Manager) validateScheduledPlanExecution(
+	ctx context.Context,
+	sessionID string,
+	targetID string,
+	payload scheduledPlanExecutionPayload,
+) (tables.WebSessionTable, error) {
+	session, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return tables.WebSessionTable{}, err
+	}
+	if session.ArchivedAt != nil {
+		return tables.WebSessionTable{}, errScheduledPlanExpired
+	}
+	if err := m.ensureSessionMessagingAvailable(session); err != nil {
+		return tables.WebSessionTable{}, err
+	}
+	if err := m.validateScheduledPlanHistory(ctx, session.ID, targetID); err != nil {
+		return tables.WebSessionTable{}, err
+	}
+	if err := m.validateScheduledPlanApproval(ctx, session, payload); err != nil {
+		return tables.WebSessionTable{}, err
+	}
+	return session, nil
+}
+
+func (m *Manager) SchedulePlanExecution(
+	ctx context.Context,
+	sessionID string,
+	targetID string,
+	payload scheduledPlanExecutionPayload,
+	scheduledFor time.Time,
+) (ScheduledInput, error) {
+	payload, err := normalizeScheduledPlanExecutionPayload(payload)
+	if err != nil {
+		return ScheduledInput{}, err
+	}
+	if scheduledFor.IsZero() || !scheduledFor.After(time.Now()) {
+		return ScheduledInput{}, fmt.Errorf("scheduled time must be in the future")
+	}
+	session, err := m.validateScheduledPlanExecution(ctx, sessionID, targetID, payload)
+	if err != nil {
+		return ScheduledInput{}, err
+	}
+
+	db := model.GetDB()
+	if db == nil {
+		return ScheduledInput{}, model.ErrDBNotInitialized
+	}
+	var duplicateCount int64
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionScheduledInputTable{}).
+		Where(
+			"web_session_id = ? AND action = ? AND target_id = ? AND status = ?",
+			session.ID,
+			string(ScheduledInputActionExecutePlan),
+			strings.TrimSpace(targetID),
+			string(ScheduledInputStatusScheduled),
+		).
+		Count(&duplicateCount).Error; err != nil {
+		return ScheduledInput{}, err
+	}
+	if duplicateCount > 0 {
+		return ScheduledInput{}, errScheduledPlanDuplicate
+	}
+
+	item := tables.WebSessionScheduledInputTable{
+		WebSessionID:      session.ID,
+		Action:            string(ScheduledInputActionExecutePlan),
+		TargetID:          strings.TrimSpace(targetID),
+		PayloadJSON:       marshalScheduledPlanExecutionPayload(payload),
+		Mode:              string(ScheduledInputModeSend),
+		Text:              "Implement the plan.",
+		AttachmentIDsJSON: "[]",
+		ScheduledFor:      scheduledFor,
+		Status:            string(ScheduledInputStatusScheduled),
+	}
+	item.Init()
+	if err := db.WithContext(ctx).Create(&item).Error; err != nil {
+		return ScheduledInput{}, err
+	}
+
+	created := mapScheduledInputRecord(item)
+	m.setScheduledInputTimer(created.ID, session.ID, created.ScheduledFor)
+	m.broadcastScheduledInputs(session.ID)
 	return created, nil
 }
 
@@ -353,16 +625,31 @@ func (m *Manager) executeScheduledInput(inputID string) {
 		_ = m.deleteScheduledInputByID(ctx, record.ID)
 		return
 	}
+	action := normalizeScheduledInputAction(ScheduledInputAction(record.Action))
 	if session.ArchivedAt != nil {
-		_ = m.cancelScheduledInputByID(ctx, record.ID)
+		if action == ScheduledInputActionExecutePlan {
+			_ = m.expireScheduledInputByID(ctx, record.ID)
+		} else {
+			_ = m.cancelScheduledInputByID(ctx, record.ID)
+		}
+		m.broadcastScheduledInputs(record.WebSessionID)
 		return
 	}
 
-	attachmentIDs := parseScheduledInputAttachmentIDs(record.AttachmentIDsJSON)
-	mode := normalizeScheduledInputMode(ScheduledInputMode(record.Mode))
-	err = m.dispatchScheduledInput(ctx, record.WebSessionID, mode, record.Text, attachmentIDs)
+	switch action {
+	case ScheduledInputActionExecutePlan:
+		err = m.dispatchScheduledPlanExecution(ctx, record)
+	case ScheduledInputActionMessage:
+		attachmentIDs := parseScheduledInputAttachmentIDs(record.AttachmentIDsJSON)
+		mode := normalizeScheduledInputMode(ScheduledInputMode(record.Mode))
+		err = m.dispatchScheduledInput(ctx, record.WebSessionID, mode, record.Text, attachmentIDs)
+	default:
+		err = errInvalidScheduledInputAction
+	}
 	if err != nil {
-		if shouldCancelScheduledInputDispatchError(err) {
+		if action == ScheduledInputActionExecutePlan && shouldExpireScheduledPlanExecution(err) {
+			_ = m.expireScheduledInputByID(ctx, record.ID)
+		} else if shouldCancelScheduledInputDispatchError(err) {
 			_ = m.cancelScheduledInputByID(ctx, record.ID)
 		} else {
 			_ = m.failScheduledInputByID(ctx, record.ID)
@@ -373,6 +660,58 @@ func (m *Manager) executeScheduledInput(inputID string) {
 
 	_ = m.markScheduledInputDispatched(ctx, record.ID)
 	m.broadcastScheduledInputs(record.WebSessionID)
+}
+
+func shouldExpireScheduledPlanExecution(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errScheduledPlanExpired) || errors.Is(err, gorm.ErrRecordNotFound) {
+		return true
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	for _, fragment := range []string{
+		"session is archived",
+		"session is not running",
+		"session is already running",
+		"no pending user input request",
+		"does not match the active prompt",
+	} {
+		if strings.Contains(message, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) dispatchScheduledPlanExecution(
+	ctx context.Context,
+	record tables.WebSessionScheduledInputTable,
+) error {
+	parsedPayload, err := parseScheduledPlanExecutionPayload(record.PayloadJSON)
+	if err != nil {
+		return errScheduledPlanExpired
+	}
+	payload, err := normalizeScheduledPlanExecutionPayload(parsedPayload)
+	if err != nil {
+		return errScheduledPlanExpired
+	}
+	session, err := m.validateScheduledPlanExecution(ctx, record.WebSessionID, record.TargetID, payload)
+	if err != nil {
+		return err
+	}
+	if effectiveWorkflowMode(session) == WorkflowModePlan {
+		if _, err := m.UpdateWorkflowMode(ctx, session.ID, WorkflowModeDefault); err != nil {
+			return err
+		}
+		m.broadcastSessionSummary(ctx, session.ID)
+	}
+	if payload.PendingItemID != "" {
+		return m.respondToUserInput(session.ID, payload.PendingItemID, map[string][]string{
+			payload.QuestionID: {payload.ExecuteOptionLabel},
+		})
+	}
+	return m.sendMessageInternal(ctx, session.ID, "Implement the plan.", nil, false)
 }
 
 func shouldCancelScheduledInputDispatchError(err error) bool {
@@ -447,6 +786,13 @@ func (m *Manager) failScheduledInputByID(ctx context.Context, inputID string) er
 	})
 }
 
+func (m *Manager) expireScheduledInputByID(ctx context.Context, inputID string) error {
+	return m.updateScheduledInputStatus(ctx, inputID, map[string]any{
+		"status":     string(ScheduledInputStatusExpired),
+		"updated_at": time.Now(),
+	})
+}
+
 func (m *Manager) cancelScheduledInputByID(ctx context.Context, inputID string) error {
 	now := time.Now()
 	return m.updateScheduledInputStatus(ctx, inputID, map[string]any{
@@ -496,6 +842,34 @@ func (m *Manager) handleScheduleSendCommand(ctx context.Context, client *client,
 		payload.Text,
 		payload.Attachments,
 		ScheduledInputMode(payload.Mode),
+		time.UnixMilli(payload.At),
+	)
+	if err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
+	}
+	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, mapWireScheduledInputs([]ScheduledInput{created})[0]))
+}
+
+func (m *Manager) handleSchedulePlanCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	var payload struct {
+		PlanItemID         string `json:"pid"`
+		PendingItemID      string `json:"iid"`
+		QuestionID         string `json:"qid"`
+		ExecuteOptionLabel string `json:"opt"`
+		At                 int64  `json:"at"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid scheduled plan payload", false))
+	}
+	created, err := m.SchedulePlanExecution(
+		ctx,
+		frame.SessionID,
+		payload.PlanItemID,
+		scheduledPlanExecutionPayload{
+			PendingItemID:      payload.PendingItemID,
+			QuestionID:         payload.QuestionID,
+			ExecuteOptionLabel: payload.ExecuteOptionLabel,
+		},
 		time.UnixMilli(payload.At),
 	)
 	if err != nil {

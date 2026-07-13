@@ -10,6 +10,9 @@ type WebSessionScheduledInputTable struct {
 	model_base.StringPKBaseModel
 
 	WebSessionID      string     `gorm:"type:text;not null;index" json:"webSessionId"`
+	Action            string     `gorm:"type:text;not null;default:message;index" json:"action"`
+	TargetID          string     `gorm:"type:text;index" json:"targetId"`
+	PayloadJSON       string     `gorm:"column:payload_json;type:text;not null;default:'{}'" json:"payloadJson"`
 	Mode              string     `gorm:"type:text;not null;default:send;index" json:"mode"`
 	Text              string     `gorm:"type:text" json:"text"`
 	AttachmentIDsJSON string     `gorm:"column:attachment_ids_json;type:text;not null;default:'[]'" json:"attachmentIdsJson"`

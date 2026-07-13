@@ -99,14 +99,14 @@ type wireSess struct {
 }
 
 type wireGoal struct {
-	ThreadID        string  `json:"tid"`
-	Objective       string  `json:"obj"`
-	Status          string  `json:"st"`
-	TokenBudget     *int64  `json:"tb,omitempty"`
-	TokensUsed      int64   `json:"tu"`
-	TimeUsedSeconds int64   `json:"tsu"`
-	CreatedAt       int64   `json:"ca"`
-	UpdatedAt       int64   `json:"ua"`
+	ThreadID        string `json:"tid"`
+	Objective       string `json:"obj"`
+	Status          string `json:"st"`
+	TokenBudget     *int64 `json:"tb,omitempty"`
+	TokensUsed      int64  `json:"tu"`
+	TimeUsedSeconds int64  `json:"tsu"`
+	CreatedAt       int64  `json:"ca"`
+	UpdatedAt       int64  `json:"ua"`
 }
 
 type wireUsage struct {
@@ -193,6 +193,8 @@ type wirePendingInput struct {
 
 type wireScheduledInput struct {
 	ID            string   `json:"id"`
+	Action        string   `json:"a,omitempty"`
+	TargetID      string   `json:"tid,omitempty"`
 	Mode          string   `json:"m"`
 	Text          string   `json:"txt,omitempty"`
 	AttachmentIDs []string `json:"atts,omitempty"`
@@ -501,6 +503,8 @@ func mapWireScheduledInputs(items []ScheduledInput) []wireScheduledInput {
 		}
 		wireItems = append(wireItems, wireScheduledInput{
 			ID:            item.ID,
+			Action:        string(item.Action),
+			TargetID:      item.TargetID,
 			Mode:          string(item.Mode),
 			Text:          item.Text,
 			AttachmentIDs: append([]string(nil), item.AttachmentIDs...),

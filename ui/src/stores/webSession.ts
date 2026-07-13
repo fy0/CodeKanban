@@ -118,8 +118,10 @@ type WirePendingInput = {
 
 type WireScheduledInput = {
   id?: string;
+  a?: 'message' | 'execute_plan' | string;
+  tid?: string;
   m?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
-  st?: 'scheduled' | 'failed' | 'dispatched' | 'canceled' | string;
+  st?: 'scheduled' | 'failed' | 'expired' | 'dispatched' | 'canceled' | string;
   txt?: string;
   atts?: string[];
   sf?: number | null;
@@ -379,8 +381,10 @@ type WebSessionPendingInputMode = WebSessionPendingInput['mode'];
 
 export interface WebSessionScheduledInput {
   id: string;
+  action: 'message' | 'execute_plan';
+  targetId: string;
   mode: 'send' | 'interrupt' | 'queue';
-  status: 'scheduled' | 'failed';
+  status: 'scheduled' | 'failed' | 'expired';
   text: string;
   attachmentIds: string[];
   scheduledFor: number;
@@ -388,6 +392,13 @@ export interface WebSessionScheduledInput {
   updatedAt: number;
   sentAt: number | null;
   canceledAt: number | null;
+}
+
+export interface WebSessionPlanExecutionTarget {
+  planItemId: string;
+  pendingItemId?: string;
+  questionId?: string;
+  executeOptionLabel?: string;
 }
 
 type RuntimeMutationStateSnapshot = {
@@ -2298,8 +2309,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function normalizeScheduledInput(item: {
     id?: string;
+    action?: 'message' | 'execute_plan' | string;
+    targetId?: string;
     mode?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
-    status?: 'scheduled' | 'failed' | 'dispatched' | 'canceled' | string;
+    status?: 'scheduled' | 'failed' | 'expired' | 'dispatched' | 'canceled' | string;
     text?: string;
     attachmentIds?: string[];
     scheduledFor?: string | number | null;
@@ -2312,6 +2325,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!id) {
       return null;
     }
+    const action = item.action === 'execute_plan' ? 'execute_plan' : 'message';
     const mode =
       item.mode === 'send'
         ? 'send'
@@ -2321,7 +2335,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
             ? 'queue'
             : '';
     const status =
-      item.status === 'failed' ? 'failed' : item.status === 'scheduled' ? 'scheduled' : '';
+      item.status === 'failed'
+        ? 'failed'
+        : item.status === 'expired'
+          ? 'expired'
+          : item.status === 'scheduled'
+            ? 'scheduled'
+            : '';
     if (!mode || !status) {
       return null;
     }
@@ -2350,6 +2370,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
         : Date.parse(typeof item.canceledAt === 'string' ? item.canceledAt : '');
     return {
       id,
+      action,
+      targetId: typeof item.targetId === 'string' ? item.targetId.trim() : '',
       mode,
       status,
       text: typeof item.text === 'string' ? item.text : '',
@@ -3528,6 +3550,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
               .map(item =>
                 normalizeScheduledInput({
                   id: item.id,
+                  action: item.a,
+                  targetId: item.tid,
                   mode: item.m,
                   status: item.st,
                   text: item.txt,
@@ -3585,6 +3609,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 .map(item =>
                   normalizeScheduledInput({
                     id: item.id,
+                    action: item.a,
+                    targetId: item.tid,
                     mode: item.m,
                     status: item.st,
                     text: item.txt,
@@ -4394,12 +4420,63 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const payload = asRecord(frame.p);
     const created = normalizeScheduledInput({
       id: typeof payload?.id === 'string' ? payload.id : '',
+      action: typeof payload?.a === 'string' ? payload.a : 'message',
+      targetId: typeof payload?.tid === 'string' ? payload.tid : '',
       mode: typeof payload?.m === 'string' ? payload.m : '',
       status: typeof payload?.st === 'string' ? payload.st : '',
       text: typeof payload?.txt === 'string' ? payload.txt : text,
       attachmentIds: Array.isArray(payload?.atts)
         ? payload.atts.filter((value): value is string => typeof value === 'string')
         : attachmentIds,
+      scheduledFor: typeof payload?.sf === 'number' ? payload.sf : scheduledFor,
+      createdAt:
+        typeof payload?.ca === 'number' || typeof payload?.ca === 'string' ? payload.ca : null,
+      updatedAt:
+        typeof payload?.ua === 'number' || typeof payload?.ua === 'string' ? payload.ua : null,
+      sentAt:
+        typeof payload?.sa === 'number' || typeof payload?.sa === 'string' ? payload.sa : null,
+      canceledAt:
+        typeof payload?.xa === 'number' || typeof payload?.xa === 'string' ? payload.xa : null,
+    });
+    if (created) {
+      setScheduledInputs(
+        sessionId,
+        sortScheduledInputs([
+          ...getScheduledInputs(sessionId).filter(item => item.id !== created.id),
+          created,
+        ])
+      );
+    }
+    return created;
+  }
+
+  async function schedulePlanExecution(
+    sessionId: string,
+    scheduledFor: number,
+    target: WebSessionPlanExecutionTarget
+  ) {
+    const session = findSessionById(sessionId);
+    if (session?.archivedAt) {
+      throw new Error('session is archived');
+    }
+    const frame = await sendCommand('schedule_plan', sessionId, {
+      pid: target.planItemId,
+      iid: target.pendingItemId ?? '',
+      qid: target.questionId ?? '',
+      opt: target.executeOptionLabel ?? '',
+      at: scheduledFor,
+    });
+    const payload = asRecord(frame.p);
+    const created = normalizeScheduledInput({
+      id: typeof payload?.id === 'string' ? payload.id : '',
+      action: typeof payload?.a === 'string' ? payload.a : 'execute_plan',
+      targetId: typeof payload?.tid === 'string' ? payload.tid : target.planItemId,
+      mode: typeof payload?.m === 'string' ? payload.m : 'send',
+      status: typeof payload?.st === 'string' ? payload.st : '',
+      text: typeof payload?.txt === 'string' ? payload.txt : 'Implement the plan.',
+      attachmentIds: Array.isArray(payload?.atts)
+        ? payload.atts.filter((value): value is string => typeof value === 'string')
+        : [],
       scheduledFor: typeof payload?.sf === 'number' ? payload.sf : scheduledFor,
       createdAt:
         typeof payload?.ca === 'number' || typeof payload?.ca === 'string' ? payload.ca : null,
@@ -4930,6 +5007,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     deleteSession,
     sendMessage,
     scheduleMessage,
+    schedulePlanExecution,
     abortSession,
     approveSession,
     rejectSession,

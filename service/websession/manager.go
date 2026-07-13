@@ -2225,6 +2225,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handlePendingClearCommand(client, frame)
 	case "schedule_send":
 		return m.handleScheduleSendCommand(ctx, client, frame)
+	case "schedule_plan":
+		return m.handleSchedulePlanCommand(ctx, client, frame)
 	case "scheduled_del":
 		return m.handleScheduledDeleteCommand(ctx, client, frame)
 	case "del":

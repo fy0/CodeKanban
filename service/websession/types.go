@@ -166,6 +166,13 @@ const (
 	ScheduledInputModeQueue     ScheduledInputMode = "queue"
 )
 
+type ScheduledInputAction string
+
+const (
+	ScheduledInputActionMessage     ScheduledInputAction = "message"
+	ScheduledInputActionExecutePlan ScheduledInputAction = "execute_plan"
+)
+
 type ScheduledInputStatus string
 
 const (
@@ -173,6 +180,7 @@ const (
 	ScheduledInputStatusDispatched ScheduledInputStatus = "dispatched"
 	ScheduledInputStatusCanceled   ScheduledInputStatus = "canceled"
 	ScheduledInputStatusFailed     ScheduledInputStatus = "failed"
+	ScheduledInputStatusExpired    ScheduledInputStatus = "expired"
 )
 
 type SessionSummary struct {
@@ -330,6 +338,8 @@ type PendingInput struct {
 
 type ScheduledInput struct {
 	ID            string               `json:"id"`
+	Action        ScheduledInputAction `json:"action"`
+	TargetID      string               `json:"targetId,omitempty"`
 	Mode          ScheduledInputMode   `json:"mode"`
 	Text          string               `json:"text"`
 	AttachmentIDs []string             `json:"attachmentIds"`

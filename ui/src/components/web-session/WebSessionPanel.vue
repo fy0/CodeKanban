@@ -307,16 +307,39 @@
                         </div>
                         <div v-if="showPlanActions(item.tool.id)" class="plan-tool-actions">
                           <div class="plan-tool-action-row">
-                            <n-button
-                              size="small"
-                              type="primary"
-                              class="plan-tool-action-primary"
-                              :loading="isSubmittingPlanExecution"
-                              :disabled="isSubmittingMessage"
-                              @click="handlePlanCardImplement"
-                            >
-                              {{ t('webSession.planActionImplement') }}
-                            </n-button>
+                            <n-dropdown
+                              trigger="manual"
+                              placement="bottom-end"
+                              :show="showPlanQuickActions"
+                              :options="planQuickActionOptions"
+                              :x="planQuickActionsX"
+                              :y="planQuickActionsY"
+                              @select="handlePlanQuickActionSelect"
+                              @clickoutside="closePlanQuickActions"
+                            />
+                            <div class="plan-tool-action-split">
+                              <n-button
+                                size="small"
+                                type="primary"
+                                class="plan-tool-action-primary"
+                                :loading="isSubmittingPlanExecution"
+                                :disabled="isSubmittingMessage"
+                                @click="handlePlanCardImplement"
+                              >
+                                {{ t('webSession.planActionImplement') }}
+                              </n-button>
+                              <button
+                                type="button"
+                                class="plan-tool-action-menu-btn"
+                                :title="t('webSession.planActionMenu')"
+                                :aria-label="t('webSession.planActionMenu')"
+                                :aria-expanded="showPlanQuickActions"
+                                :disabled="isSubmittingMessage"
+                                @click="handlePlanQuickActionTriggerClick"
+                              >
+                                <n-icon size="14"><ChevronDownOutline /></n-icon>
+                              </button>
+                            </div>
                             <n-button
                               size="small"
                               secondary
@@ -1501,13 +1524,19 @@
                 >
                   <span class="scheduled-input-badge" :class="`state-${item.status}`">
                     {{
-                      item.status === 'failed'
-                        ? t('webSession.scheduledFailedBadge')
-                        : t('webSession.scheduledBadge')
+                      item.status === 'expired'
+                        ? t('webSession.scheduledExpiredBadge')
+                        : item.status === 'failed'
+                          ? t('webSession.scheduledFailedBadge')
+                          : t('webSession.scheduledBadge')
                     }}
                   </span>
                   <span class="scheduled-input-mode">
-                    {{ scheduledModeLabel(item.mode) }}
+                    {{
+                      item.action === 'execute_plan'
+                        ? t('webSession.scheduledPlanMode')
+                        : scheduledModeLabel(item.mode)
+                    }}
                   </span>
                   <span class="scheduled-input-time" :title="formatDateTime(item.scheduledFor)">
                     {{ formatTime(item.scheduledFor) }}
@@ -1936,7 +1965,7 @@
       :show="showScheduledSendDialog"
       preset="card"
       class="scheduled-send-modal"
-      :title="t('webSession.scheduleSend')"
+      :title="scheduledDialogTitle"
       :bordered="false"
       :segmented="{ content: false, footer: false }"
       :mask-closable="!scheduledSendSubmitting"
@@ -1974,11 +2003,11 @@
             style="width: 100%"
           />
           <div v-if="scheduledSendSelectedTimeLabel" class="scheduled-send-selected">
-            {{ t('webSession.scheduleSendSelectedTime', { time: scheduledSendSelectedTimeLabel }) }}
+            {{ scheduledDialogSelectedTimeLabel }}
           </div>
         </div>
 
-        <div class="scheduled-send-section">
+        <div v-if="scheduledSendPurpose === 'message'" class="scheduled-send-section">
           <div class="scheduled-send-section-label">
             {{ t('webSession.scheduleSendModeTitle') }}
           </div>
@@ -2006,7 +2035,7 @@
           <n-button
             secondary
             :disabled="scheduledSendSubmitting"
-            @click="showScheduledSendDialog = false"
+            @click="handleScheduledSendDialogVisibilityChange(false)"
           >
             {{ t('common.cancel') }}
           </n-button>
@@ -2016,7 +2045,7 @@
             :disabled="!canConfirmScheduledSend"
             @click="handleConfirmScheduledSend"
           >
-            {{ t('webSession.scheduleSendConfirm') }}
+            {{ scheduledDialogConfirmLabel }}
           </n-button>
         </div>
       </template>
@@ -2536,11 +2565,20 @@ type CommandExecutionDetail = {
 type ImageViewPreviewState = 'loading' | 'ready' | 'error';
 
 type ScheduledSendMode = 'send' | 'interrupt' | 'queue';
+type ScheduledSendPurpose = 'message' | 'execute_plan';
 
 type ScheduledSendPresetOption = {
   key: string;
   label: string;
   timestamp: number;
+};
+
+type ScheduledPlanDialogTarget = {
+  sessionId: string;
+  planItemId: string;
+  pendingItemId?: string;
+  questionId?: string;
+  executeOptionLabel?: string;
 };
 
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
@@ -2709,7 +2747,13 @@ const showSendQuickActions = ref(false);
 const sendQuickActionsX = ref(0);
 const sendQuickActionsY = ref(0);
 const sendQuickActionAnchor = shallowRef<HTMLElement | null>(null);
+const showPlanQuickActions = ref(false);
+const planQuickActionsX = ref(0);
+const planQuickActionsY = ref(0);
+const planQuickActionAnchor = shallowRef<HTMLElement | null>(null);
 const showScheduledSendDialog = ref(false);
+const scheduledSendPurpose = ref<ScheduledSendPurpose>('message');
+const scheduledPlanDialogTarget = ref<ScheduledPlanDialogTarget | null>(null);
 const scheduledSendAt = ref<number | null>(null);
 const scheduledSendMode = ref<ScheduledSendMode>('send');
 const scheduledSendPresetOptions = ref<ScheduledSendPresetOption[]>([]);
@@ -3635,15 +3679,17 @@ const visibleRawTimelineBlockKeys = computed(() => {
   });
   return keys;
 });
-const latestPlanToolId = computed(() => {
+const latestPlanBlock = computed(() => {
   for (let index = blocks.value.length - 1; index >= 0; index -= 1) {
     const block = blocks.value[index];
     if (block?.kind === 'tool' && block.tool && isPlanTool(block.tool)) {
-      return block.tool.id;
+      return block;
     }
   }
-  return '';
+  return null;
 });
+const latestPlanToolId = computed(() => latestPlanBlock.value?.tool?.id ?? '');
+const latestPlanItemId = computed(() => latestPlanBlock.value?.id ?? '');
 const hasUserMessageAfterLatestPlan = computed(() => {
   const planToolId = latestPlanToolId.value;
   if (!planToolId) {
@@ -3920,6 +3966,34 @@ const pendingEditCanSave = computed(() => pendingEditText.value.trim().length > 
 const scheduledInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getScheduledInputs(currentRealSession.value.id) : []
 );
+const activeScheduledPlanTargetIds = computed(
+  () =>
+    new Set(
+      scheduledInputs.value
+        .filter(item => item.action === 'execute_plan' && item.status === 'scheduled')
+        .map(item => item.targetId)
+        .filter(Boolean)
+    )
+);
+const currentScheduledPlanTarget = computed<ScheduledPlanDialogTarget | null>(() => {
+  const sessionId = currentRealSession.value?.id ?? '';
+  const planItemId = latestPlanItemId.value;
+  if (!sessionId || !planItemId) {
+    return null;
+  }
+  const executeOption = inlinePlanChoice.value?.options.find(option => option.isExecute);
+  return {
+    sessionId,
+    planItemId,
+    ...(inlinePlanChoice.value?.questionId && executeOption
+      ? {
+          pendingItemId: pendingUserInput.value?.itemId,
+          questionId: inlinePlanChoice.value.questionId,
+          executeOptionLabel: executeOption.label,
+        }
+      : {}),
+  };
+});
 const currentSessionLatestEventSeq = computed(() =>
   currentRealSession.value ? webSessionStore.getLatestEventSeq(currentRealSession.value.id) : 0
 );
@@ -4001,6 +4075,26 @@ const sendQuickActionOptions = computed<DropdownOption[]>(() => {
   });
   return options;
 });
+const planQuickActionOptions = computed<DropdownOption[]>(() => [
+  {
+    key: 'implement',
+    label: t('webSession.planActionImplement'),
+  },
+  {
+    key: 'schedule-plan',
+    label: t('webSession.planActionSchedule'),
+  },
+]);
+const scheduledDialogTitle = computed(() =>
+  scheduledSendPurpose.value === 'execute_plan'
+    ? t('webSession.planScheduleTitle')
+    : t('webSession.scheduleSend')
+);
+const scheduledDialogConfirmLabel = computed(() =>
+  scheduledSendPurpose.value === 'execute_plan'
+    ? t('webSession.planScheduleConfirm')
+    : t('webSession.scheduleSendConfirm')
+);
 const selectedScheduledSendPresetKey = computed(
   () =>
     scheduledSendPresetOptions.value.find(option => option.timestamp === scheduledSendAt.value)
@@ -4009,15 +4103,31 @@ const selectedScheduledSendPresetKey = computed(
 const scheduledSendSelectedTimeLabel = computed(() =>
   scheduledSendAt.value ? formatWebSessionDateTime(scheduledSendAt.value, locale.value) : ''
 );
-const canConfirmScheduledSend = computed(
-  () =>
-    !isMessageCapabilityBlocked.value &&
-    Number.isFinite(scheduledSendAt.value) &&
-    Number(scheduledSendAt.value) > Date.now() &&
-    hasDraftContent.value &&
-    !isDraftAttachmentUploading.value &&
-    !scheduledSendSubmitting.value
+const scheduledDialogSelectedTimeLabel = computed(() =>
+  scheduledSendPurpose.value === 'execute_plan'
+    ? t('webSession.planScheduleSelectedTime', { time: scheduledSendSelectedTimeLabel.value })
+    : t('webSession.scheduleSendSelectedTime', { time: scheduledSendSelectedTimeLabel.value })
 );
+const canConfirmScheduledSend = computed(() => {
+  if (
+    isMessageCapabilityBlocked.value ||
+    !Number.isFinite(scheduledSendAt.value) ||
+    Number(scheduledSendAt.value) <= Date.now() ||
+    scheduledSendSubmitting.value
+  ) {
+    return false;
+  }
+  if (scheduledSendPurpose.value === 'execute_plan') {
+    const target = scheduledPlanDialogTarget.value;
+    return Boolean(
+      target &&
+        target.sessionId === currentRealSession.value?.id &&
+        target.planItemId === latestPlanItemId.value &&
+        !activeScheduledPlanTargetIds.value.has(target.planItemId)
+    );
+  }
+  return hasDraftContent.value && !isDraftAttachmentUploading.value;
+});
 const composerMinRows = computed(() => (isMobile.value ? 1 : 3));
 const composerMaxRows = computed(() => (isMobile.value ? 8 : 10));
 const composerPlaceholder = computed(() =>
@@ -4552,6 +4662,11 @@ function closeSendQuickActions() {
   sendQuickActionAnchor.value = null;
 }
 
+function closePlanQuickActions() {
+  showPlanQuickActions.value = false;
+  planQuickActionAnchor.value = null;
+}
+
 function openSendQuickActionsFromElement(anchorEl: HTMLElement) {
   if (!canOpenSendQuickActions.value) {
     return;
@@ -4588,8 +4703,13 @@ function buildScheduledSendPresetOptions(now = Date.now()): ScheduledSendPresetO
   ];
 }
 
-function openScheduledSendDialog() {
+function openScheduledSendDialog(
+  purpose: ScheduledSendPurpose = 'message',
+  planTarget: ScheduledPlanDialogTarget | null = null
+) {
   const presets = buildScheduledSendPresetOptions();
+  scheduledSendPurpose.value = purpose;
+  scheduledPlanDialogTarget.value = purpose === 'execute_plan' ? planTarget : null;
   scheduledSendPresetOptions.value = presets;
   scheduledSendAt.value =
     presets.find(option => option.key === '5m')?.timestamp ??
@@ -4599,12 +4719,15 @@ function openScheduledSendDialog() {
   scheduledSendSubmitting.value = false;
   showScheduledSendDialog.value = true;
   closeSendQuickActions();
+  closePlanQuickActions();
 }
 
 function handleScheduledSendDialogVisibilityChange(show: boolean) {
   showScheduledSendDialog.value = show;
   if (!show) {
     scheduledSendSubmitting.value = false;
+    scheduledSendPurpose.value = 'message';
+    scheduledPlanDialogTarget.value = null;
   }
 }
 
@@ -4657,6 +4780,37 @@ function handleSendQuickActionTriggerClick(event: MouseEvent) {
     return;
   }
   openSendQuickActionsFromElement(anchorEl);
+}
+
+function handlePlanQuickActionTriggerClick(event: MouseEvent) {
+  const anchorEl = event.currentTarget as HTMLElement | null;
+  if (!anchorEl || isSubmittingMessage.value) {
+    return;
+  }
+  if (showPlanQuickActions.value && planQuickActionAnchor.value === anchorEl) {
+    closePlanQuickActions();
+    return;
+  }
+  const rect = anchorEl.getBoundingClientRect();
+  planQuickActionAnchor.value = anchorEl;
+  planQuickActionsX.value = Math.round(rect.right);
+  planQuickActionsY.value = Math.round(rect.bottom);
+  showPlanQuickActions.value = true;
+}
+
+async function handlePlanQuickActionSelect(key: string | number) {
+  const action = String(key || '').trim();
+  closePlanQuickActions();
+  if (action === 'implement') {
+    await handlePlanCardImplement();
+    return;
+  }
+  if (action === 'schedule-plan') {
+    const target = currentScheduledPlanTarget.value;
+    if (target && !activeScheduledPlanTargetIds.value.has(target.planItemId)) {
+      openScheduledSendDialog('execute_plan', target);
+    }
+  }
 }
 
 async function handlePrimarySendButtonClick() {
@@ -7955,6 +8109,7 @@ function showPlanActions(toolId: string) {
   return Boolean(
     currentRealSession.value &&
       latestPlanToolId.value === toolId &&
+      !activeScheduledPlanTargetIds.value.has(latestPlanItemId.value) &&
       (!liveState.value.running || inlinePlanChoice.value) &&
       !dismissedPlanActions.value[toolId] &&
       !hasUserMessageAfterLatestPlan.value
@@ -9127,6 +9282,10 @@ async function handleSubmit() {
 }
 
 async function handleConfirmScheduledSend() {
+  if (scheduledSendPurpose.value === 'execute_plan') {
+    await handleConfirmScheduledPlanExecution();
+    return;
+  }
   const initialSubmitOwnerId = currentDraftSessionId.value;
   const executeAt = Number(scheduledSendAt.value);
   if (
@@ -9171,8 +9330,52 @@ async function handleConfirmScheduledSend() {
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, session.id));
     }
     isMobileComposerSettingsExpanded.value = false;
-    showScheduledSendDialog.value = false;
+    handleScheduledSendDialogVisibilityChange(false);
     message.success(t('webSession.scheduleSendCreated'));
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    scheduledSendSubmitting.value = false;
+  }
+}
+
+async function handleConfirmScheduledPlanExecution() {
+  const target = scheduledPlanDialogTarget.value;
+  const executeAt = Number(scheduledSendAt.value);
+  if (
+    !target ||
+    target.sessionId !== currentRealSession.value?.id ||
+    target.planItemId !== latestPlanItemId.value ||
+    activeScheduledPlanTargetIds.value.has(target.planItemId) ||
+    scheduledSendSubmitting.value ||
+    !Number.isFinite(executeAt) ||
+    executeAt <= Date.now()
+  ) {
+    return;
+  }
+
+  scheduledSendSubmitting.value = true;
+  try {
+    const current = currentRealSession.value;
+    if (!current || !(await ensureMessageCapabilityAvailable(current.agent))) {
+      return;
+    }
+    const prepared = await prepareSessionForSend(current);
+    if (prepared.session.id !== target.sessionId) {
+      return;
+    }
+    await webSessionStore.schedulePlanExecution(prepared.session.id, executeAt, {
+      planItemId: target.planItemId,
+      pendingItemId: target.pendingItemId,
+      questionId: target.questionId,
+      executeOptionLabel: target.executeOptionLabel,
+    });
+    if (prepared.navigateProjectId) {
+      projectStore.addRecentProject(prepared.navigateProjectId);
+      await router.push(buildProjectRouteLocation(prepared.navigateProjectId, prepared.session.id));
+    }
+    handleScheduledSendDialogVisibilityChange(false);
+    message.success(t('webSession.planScheduleCreated'));
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
@@ -9445,6 +9648,9 @@ function scheduledModeLabel(mode: WebSessionScheduledInput['mode']) {
 }
 
 function scheduledInputPreview(item: WebSessionScheduledInput) {
+  if (item.action === 'execute_plan') {
+    return t('webSession.planActionImplement');
+  }
   const text = item.text.trim();
   if (text) {
     return text.length > 72 ? `${text.slice(0, 72)}...` : text;
@@ -9616,6 +9822,7 @@ async function answerInlinePlanChoice(mode: 'execute' | 'plan') {
 }
 
 async function handlePlanCardImplement() {
+  closePlanQuickActions();
   if (!currentRealSession.value || isSubmittingMessage.value) {
     return;
   }
@@ -9660,6 +9867,7 @@ async function handlePlanCardImplement() {
 }
 
 async function handlePlanCardCancel() {
+  closePlanQuickActions();
   const toolId = latestPlanToolId.value;
   setPlanActionsDismissed(toolId, true);
   focusComposer();
@@ -10639,6 +10847,24 @@ watch([canOpenSendQuickActions, isRunActive, () => currentRealSession.value?.id 
     closeSendQuickActions();
   }
 });
+
+watch(
+  [isSubmittingMessage, () => currentRealSession.value?.id ?? '', latestPlanItemId],
+  ([submitting, sessionId, planItemId]) => {
+    if (showPlanQuickActions.value && (submitting || !showPlanActions(latestPlanToolId.value))) {
+      closePlanQuickActions();
+    }
+    const target = scheduledPlanDialogTarget.value;
+    if (
+      showScheduledSendDialog.value &&
+      scheduledSendPurpose.value === 'execute_plan' &&
+      target &&
+      (target.sessionId !== sessionId || target.planItemId !== planItemId)
+    ) {
+      handleScheduledSendDialogVisibilityChange(false);
+    }
+  }
+);
 
 watch(
   () => sessions.value.map(session => session.id).join('|'),
@@ -13268,6 +13494,55 @@ defineExpose({
   min-width: 148px;
 }
 
+.plan-tool-action-split {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 148px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.plan-tool-action-split :deep(.n-button) {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.plan-tool-action-menu-btn {
+  width: 30px;
+  flex: 0 0 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, rgba(255, 255, 255, 0.3) 70%, transparent);
+  border-radius: 0 6px 6px 0;
+  background: var(--n-primary-color);
+  color: var(--n-button-text-color, #fff);
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.plan-tool-action-menu-btn:hover {
+  background: var(--n-primary-color-hover, var(--n-primary-color));
+}
+
+.plan-tool-action-menu-btn:active {
+  background: var(--n-primary-color-pressed, var(--n-primary-color-hover, var(--n-primary-color)));
+}
+
+.plan-tool-action-menu-btn:focus-visible {
+  outline: 2px solid var(--n-primary-color-hover, var(--n-primary-color));
+  outline-offset: 2px;
+}
+
+.plan-tool-action-menu-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .runtime-strip {
   margin-top: 18px;
   display: flex;
@@ -15139,6 +15414,10 @@ defineExpose({
   background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, rgba(239, 68, 68, 0.06));
 }
 
+.scheduled-input-item.state-expired {
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, rgba(100, 116, 139, 0.07));
+}
+
 .scheduled-input-badge,
 .scheduled-input-mode {
   display: inline-flex;
@@ -15158,6 +15437,11 @@ defineExpose({
 .scheduled-input-badge.state-failed {
   background: rgba(239, 68, 68, 0.12);
   color: #b91c1c;
+}
+
+.scheduled-input-badge.state-expired {
+  background: rgba(100, 116, 139, 0.16);
+  color: var(--n-text-color-2);
 }
 
 .scheduled-input-mode {
@@ -15387,6 +15671,11 @@ defineExpose({
 
   .plan-tool-action-primary,
   .plan-tool-action-secondary {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .plan-tool-action-split {
     width: 100%;
     min-width: 0;
   }

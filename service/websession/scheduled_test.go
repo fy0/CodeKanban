@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"code-kanban/model"
 	"code-kanban/model/tables"
+	"code-kanban/utils"
 
 	"go.uber.org/zap"
 )
@@ -117,6 +119,256 @@ func TestScheduledInputDispatchesAtDueTime(t *testing.T) {
 	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "Run this later" {
 		t.Fatalf("expected scheduled message to dispatch once, got %#v", got)
 	}
+}
+
+func TestSchedulePlanExecutionIncludesTargetAndRejectsDuplicate(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Implement delayed plan")
+	scheduledFor := time.Now().Add(30 * time.Minute)
+	item, err := manager.SchedulePlanExecution(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+		scheduledFor,
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecution returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.cancelScheduledInputTimersForSession(created.ID)
+	})
+
+	if item.Action != ScheduledInputActionExecutePlan || item.TargetID != plan.ID {
+		t.Fatalf("expected scheduled plan target %q, got %#v", plan.ID, item)
+	}
+	if _, err := manager.SchedulePlanExecution(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+		scheduledFor.Add(time.Minute),
+	); !errors.Is(err, errScheduledPlanDuplicate) {
+		t.Fatalf("expected duplicate error, got %v", err)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if len(snapshot.ScheduledInputs) != 1 || snapshot.ScheduledInputs[0].Action != ScheduledInputActionExecutePlan {
+		t.Fatalf("expected scheduled plan in snapshot, got %#v", snapshot.ScheduledInputs)
+	}
+}
+
+func TestScheduledPlanExecutionDispatchesOriginalPlan(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Implement later")
+	if _, err := manager.SchedulePlanExecution(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+		time.Now().Add(60*time.Millisecond),
+	); err != nil {
+		t.Fatalf("SchedulePlanExecution returned error: %v", err)
+	}
+
+	waitForUserMessageCount(t, manager, created.ID, 1)
+	waitForSessionToSettle(t, manager, created.ID)
+	waitForScheduledInputCount(t, manager, created.ID, 0)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "Implement the plan." {
+		t.Fatalf("expected plan implementation prompt, got %q", got)
+	}
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if effectiveWorkflowMode(record) != WorkflowModeDefault {
+		t.Fatalf("expected workflow mode %q, got %q", WorkflowModeDefault, record.WorkflowMode)
+	}
+}
+
+func TestScheduledPlanExecutionAnswersStructuredPlanChoice(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "user_input"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "prepare a plan", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestUserInput)
+	if request == nil {
+		t.Fatal("expected pending user input")
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Structured plan")
+	if _, err := manager.SchedulePlanExecution(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{
+			PendingItemID:      request.ItemID,
+			QuestionID:         "scope",
+			ExecuteOptionLabel: "full migration",
+		},
+		time.Now().Add(60*time.Millisecond),
+	); err != nil {
+		t.Fatalf("SchedulePlanExecution returned error: %v", err)
+	}
+
+	waitForScheduledInputCount(t, manager, created.ID, 0)
+	waitForSessionToSettle(t, manager, created.ID)
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if !historyHasEvent(rawEvents, "user_input_res") {
+		t.Fatalf("expected structured plan response, got %#v", rawEvents)
+	}
+	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "prepare a plan" {
+		t.Fatalf("expected no follow-up implementation message, got %q", got)
+	}
+}
+
+func TestScheduledPlanExecutionExpiresWhenPlanIsNoLongerCurrent(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Original plan")
+	item, err := manager.SchedulePlanExecution(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+		time.Now().Add(80*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecution returned error: %v", err)
+	}
+	if _, err := manager.appendHistoryItem(context.Background(), created.ID, HistoryItem{
+		Kind:     "user",
+		ItemType: "message",
+		Text:     "Change the plan first",
+	}); err != nil {
+		t.Fatalf("insertHistoryItem returned error: %v", err)
+	}
+
+	waitForScheduledInputStatus(t, item.ID, ScheduledInputStatusExpired)
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if len(snapshot.ScheduledInputs) != 1 || snapshot.ScheduledInputs[0].Status != ScheduledInputStatusExpired {
+		t.Fatalf("expected expired scheduled plan, got %#v", snapshot.ScheduledInputs)
+	}
+	if err := manager.RemoveScheduledInput(context.Background(), created.ID, item.ID); err != nil {
+		t.Fatalf("RemoveScheduledInput returned error for expired plan: %v", err)
+	}
+}
+
+func insertScheduledPlanHistoryItem(
+	t *testing.T,
+	manager *Manager,
+	sessionID string,
+	text string,
+) HistoryItem {
+	t.Helper()
+	item, err := manager.appendHistoryItem(context.Background(), sessionID, HistoryItem{
+		Kind:     "tool",
+		ItemType: "plan",
+		Text:     text,
+		Tool: &HistoryTool{
+			ID:     "plan-" + utils.NewID(),
+			Name:   "Plan",
+			Kind:   "plan",
+			Output: text,
+			Status: "done",
+		},
+	})
+	if err != nil {
+		t.Fatalf("insertHistoryItem returned error: %v", err)
+	}
+	return item
+}
+
+func waitForScheduledInputStatus(t *testing.T, inputID string, status ScheduledInputStatus) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var record tables.WebSessionScheduledInputTable
+		if err := model.GetDB().First(&record, "id = ?", inputID).Error; err == nil &&
+			normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)) == status {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("scheduled input %q did not reach status %q", inputID, status)
 }
 
 func TestScheduledSendFollowsNormalSendBehaviorWhenRunActive(t *testing.T) {

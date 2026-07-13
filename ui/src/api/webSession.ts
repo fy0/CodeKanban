@@ -55,8 +55,10 @@ export type WebSessionPendingInputRecord = {
 
 export type WebSessionScheduledInputRecord = {
   id?: string;
+  action?: 'message' | 'execute_plan' | string;
+  targetId?: string;
   mode?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
-  status?: 'scheduled' | 'failed' | 'dispatched' | 'canceled' | string;
+  status?: 'scheduled' | 'failed' | 'expired' | 'dispatched' | 'canceled' | string;
   text?: string;
   attachmentIds?: string[];
   scheduledFor?: string | number | null;

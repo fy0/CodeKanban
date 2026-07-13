@@ -551,6 +551,8 @@ describe('webSession loading behavior', () => {
     expect(store.getScheduledInputs(session.id)).toEqual([
       {
         id: 'scheduled-1',
+        action: 'message',
+        targetId: '',
         mode: 'interrupt',
         status: 'scheduled',
         text: 'Send later',
@@ -1028,12 +1030,16 @@ describe('webSession loading behavior', () => {
     const created = await schedulePromise;
     expect(created).toMatchObject({
       id: 'scheduled-ack-1',
+      action: 'message',
+      targetId: '',
       mode: 'interrupt',
       status: 'scheduled',
     });
     expect(store.getScheduledInputs(session.id)).toEqual([
       {
         id: 'scheduled-ack-1',
+        action: 'message',
+        targetId: '',
         mode: 'interrupt',
         status: 'scheduled',
         text: 'Later message',
@@ -1045,6 +1051,82 @@ describe('webSession loading behavior', () => {
         canceledAt: null,
       },
     ]);
+  });
+
+  it('stores scheduled plan executions with their bound plan target', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-schedule-plan-command',
+      status: 'done',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const scheduledAt = Date.parse('2026-04-09T10:18:00.000Z');
+    const schedulePromise = store.schedulePlanExecution(session.id, scheduledAt, {
+      planItemId: 'plan-item-1',
+      pendingItemId: 'plan-choice-1',
+      questionId: 'direction',
+      executeOptionLabel: 'Implement plan',
+    });
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'schedule_plan',
+      p: {
+        pid: 'plan-item-1',
+        iid: 'plan-choice-1',
+        qid: 'direction',
+        opt: 'Implement plan',
+        at: scheduledAt,
+      },
+    });
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'schedule_plan',
+      ok: 1,
+      p: {
+        id: 'scheduled-plan-1',
+        a: 'execute_plan',
+        tid: 'plan-item-1',
+        m: 'send',
+        st: 'scheduled',
+        txt: 'Implement the plan.',
+        sf: scheduledAt,
+        ca: scheduledAt - 60_000,
+        ua: scheduledAt - 60_000,
+      },
+    });
+
+    await expect(schedulePromise).resolves.toMatchObject({
+      id: 'scheduled-plan-1',
+      action: 'execute_plan',
+      targetId: 'plan-item-1',
+      status: 'scheduled',
+    });
+    expect(store.getScheduledInputs(session.id)[0]).toMatchObject({
+      action: 'execute_plan',
+      targetId: 'plan-item-1',
+      text: 'Implement the plan.',
+    });
   });
 
   it('updates and removes scheduled inputs through scheduled events and commands', async () => {
@@ -1071,9 +1153,11 @@ describe('webSession loading behavior', () => {
       si: [
         {
           id: 'scheduled-evt-1',
-          m: 'queue',
-          st: 'failed',
-          txt: 'Retry me later',
+          a: 'execute_plan',
+          tid: 'plan-item-expired',
+          m: 'send',
+          st: 'expired',
+          txt: 'Implement the plan.',
           atts: [],
           sf: Date.parse('2026-04-09T10:09:00.000Z'),
           ca: Date.parse('2026-04-09T10:01:00.000Z'),
@@ -1085,9 +1169,11 @@ describe('webSession loading behavior', () => {
     expect(store.getScheduledInputs(session.id)).toEqual([
       {
         id: 'scheduled-evt-1',
-        mode: 'queue',
-        status: 'failed',
-        text: 'Retry me later',
+        action: 'execute_plan',
+        targetId: 'plan-item-expired',
+        mode: 'send',
+        status: 'expired',
+        text: 'Implement the plan.',
         attachmentIds: [],
         scheduledFor: Date.parse('2026-04-09T10:09:00.000Z'),
         createdAt: Date.parse('2026-04-09T10:01:00.000Z'),
