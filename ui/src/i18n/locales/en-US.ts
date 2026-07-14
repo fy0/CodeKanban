@@ -1205,6 +1205,12 @@ export default {
     worktreeGlobalDirNamePattern: 'Global directory naming pattern',
     worktreeGlobalDirNamePatternTip:
       'Placeholders: {projectName}, {projectId}, {branch}. Default: {projectName}-{branch}. Recommend including {projectId} to avoid collisions.',
+    pageTitle: 'Page Title',
+    pageTitlePlaceholder: 'Code Kanban',
+    pageTitleTip:
+      'Only changes the application name in browser tab titles. In-page Code Kanban text stays unchanged. Save an empty value to restore the default; maximum 64 characters.',
+    pageTitleTooLongError: 'Page title cannot exceed {max} characters',
+    pageTitleControlCharacterError: 'Page title cannot contain control characters',
     recentProjectsLimit: 'Recent Projects Limit',
     recentProjectsLimitTip: 'Control the number of recent projects displayed',
     terminalLimit: 'Terminal Limit Per Project',

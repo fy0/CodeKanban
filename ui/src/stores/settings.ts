@@ -28,6 +28,7 @@ import {
 } from '@/constants/webSessionActivityDisplayMode';
 import dayjs from 'dayjs';
 import i18n from '@/i18n';
+import { APP_NAME } from '@/constants/app';
 import {
   APP_LOCALE_STORAGE_KEY,
   SETTINGS_STORAGE_KEY,
@@ -216,6 +217,10 @@ export type WebSessionAutoContinuePreset = 'gentle_stop' | 'aggressive_stop' | '
 export type WebSessionStreamingMarkdownThrottleMode = 'default' | 'custom';
 export type FollowSystemThemeSetting = -1 | 0 | 1;
 
+export interface PageTitleSettings {
+  title: string;
+}
+
 interface GeneralSettings {
   theme: ThemeSettings;
   currentPresetId: string;
@@ -250,7 +255,9 @@ type PersistedGeneralSettings = Omit<GeneralSettings, 'followSystemThemeSetting'
   followSystemTheme: FollowSystemThemeSetting;
 };
 
-type ParsedGeneralSettingsInput = Partial<Omit<PersistedGeneralSettings, 'webSessionQuickInput'>> & {
+type ParsedGeneralSettingsInput = Partial<
+  Omit<PersistedGeneralSettings, 'webSessionQuickInput'>
+> & {
   webSessionQuickInput?: Partial<WebSessionQuickInputSettings>;
   panelShortcut?: PanelShortcutSetting;
   followSystemTheme?: unknown;
@@ -368,6 +375,10 @@ const defaultSettings: GeneralSettings = {
 export const useSettingsStore = defineStore('settings', () => {
   const loadedSettings = loadSettings();
   const settings = ref<GeneralSettings>(loadedSettings.settings);
+  const pageTitle = ref(APP_NAME);
+  const pageTitleSettingsLoaded = ref(false);
+  const pageTitleSettingsSaving = ref(false);
+  let pageTitleSettingsLoadTask: Promise<void> | null = null;
   const dailyTipEnabled = ref(DEFAULT_DAILY_TIP_SETTINGS.enabled);
   const dailyTipSettingsLoaded = ref(false);
   const dailyTipSettingsSaving = ref(false);
@@ -509,6 +520,47 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function updateMaxTerminalsPerProject(limit: number) {
     settings.value.maxTerminalsPerProject = sanitizeTerminalLimit(limit);
+  }
+
+  async function loadPageTitleSettings(force = false) {
+    if (!force && pageTitleSettingsLoaded.value) {
+      return;
+    }
+    if (!force && pageTitleSettingsLoadTask) {
+      return pageTitleSettingsLoadTask;
+    }
+
+    const task = http
+      .Get<ItemResponse<PageTitleSettings>>('/system/page-title-settings')
+      .send()
+      .then(response => {
+        pageTitle.value = sanitizePageTitle(response?.item?.title);
+        pageTitleSettingsLoaded.value = true;
+      })
+      .catch(error => {
+        console.warn('Failed to load page title settings.', error);
+      })
+      .finally(() => {
+        pageTitleSettingsLoadTask = null;
+      });
+
+    pageTitleSettingsLoadTask = task;
+    return task;
+  }
+
+  async function updatePageTitle(title: string) {
+    pageTitleSettingsSaving.value = true;
+    try {
+      const response = await http
+        .Post<ItemResponse<PageTitleSettings>>('/system/page-title-settings/update', { title })
+        .send();
+      const next = sanitizePageTitle(response?.item?.title);
+      pageTitle.value = next;
+      pageTitleSettingsLoaded.value = true;
+      return next;
+    } finally {
+      pageTitleSettingsSaving.value = false;
+    }
   }
 
   function queueDailyTipSettingsSync(payload: DailyTipSettings) {
@@ -896,6 +948,9 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   return {
+    pageTitle,
+    pageTitleSettingsLoaded,
+    pageTitleSettingsSaving,
     theme,
     currentPresetId,
     followSystemThemeSetting,
@@ -936,6 +991,8 @@ export const useSettingsStore = defineStore('settings', () => {
     resetTheme,
     updateRecentProjectsLimit,
     updateMaxTerminalsPerProject,
+    loadPageTitleSettings,
+    updatePageTitle,
     loadDailyTipSettings,
     updateDailyTipEnabled,
     updatePanelShortcuts,
@@ -976,6 +1033,13 @@ export const useSettingsStore = defineStore('settings', () => {
     importClientBackup,
   };
 });
+
+function sanitizePageTitle(value: unknown) {
+  if (typeof value !== 'string') {
+    return APP_NAME;
+  }
+  return value.trim() || APP_NAME;
+}
 
 function loadSettings(): LoadSettingsResult {
   try {

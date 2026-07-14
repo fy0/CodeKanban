@@ -41,6 +41,16 @@ describe('formatBrowserTabTitle', () => {
     ).toBe('[0/1/0] - 标准版 - Code Kanban');
   });
 
+  it('replaces only the app name suffix with a custom instance title', () => {
+    expect(
+      formatBrowserTabTitle({
+        summary: { working: 0, blocking: 1, unreadCompleted: 0 },
+        appName: 'Staging Board',
+        projectName: 'test1',
+      })
+    ).toBe('[0/1/0] - test1 - Staging Board');
+  });
+
   it('ignores blank project names', () => {
     expect(
       formatBrowserTabTitle({

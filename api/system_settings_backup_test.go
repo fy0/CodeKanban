@@ -59,6 +59,7 @@ func (s *settingsBackupWebSessionManagerStub) RefreshDeveloperConfig() {
 func TestSystemSettingsBackupExportReturnsServerPayload(t *testing.T) {
 	cfg, _ := loadSystemSettingsBackupTestConfig(t, `
 ui:
+  pageTitle: Staging Board
   dailyTipEnabled: false
   webSessionQuickInput:
     pinned: ["Ship"]
@@ -99,6 +100,9 @@ terminal:
 	}
 	if item.Payload.Server.DailyTip == nil || item.Payload.Server.DailyTip.Enabled {
 		t.Fatal("expected exported daily tip to be false")
+	}
+	if item.Payload.Server.PageTitle == nil || *item.Payload.Server.PageTitle != "Staging Board" {
+		t.Fatalf("expected exported page title, got %#v", item.Payload.Server.PageTitle)
 	}
 	if item.Payload.Server.TerminalShell == nil {
 		t.Fatal("expected terminal shell payload")
@@ -231,9 +235,51 @@ func TestSystemSettingsBackupPreviewRejectsInvalidShell(t *testing.T) {
 	}
 }
 
+func TestSystemSettingsBackupPreviewRejectsInvalidPageTitle(t *testing.T) {
+	cfg, _ := loadSystemSettingsBackupTestConfig(t, "")
+	app := newSystemSettingsBackupTestApp(t, cfg, nil, nil)
+	backup := utils.SettingsBackupFile{
+		BackupSchemaVersion: utils.SettingsBackupSchemaVersion,
+		BackupKind:          utils.SettingsBackupKind,
+		SourceApp:           utils.SettingsBackupSourceApp{Name: "Code Kanban", Version: "1.0.0", Channel: "stable"},
+		Payload: utils.SettingsBackupPayload{
+			Server: &utils.SettingsBackupServerPayload{
+				PageTitle: loPtr(strings.Repeat("界", utils.MaxPageTitleRunes+1)),
+			},
+		},
+	}
+
+	body, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("marshal backup failed: %v", err)
+	}
+	resp := mustSystemSettingsBackupRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/api/v1/system/settings-backup/preview",
+		bytes.NewBuffer(body),
+	)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var payload settingsBackupResponseEnvelope[utils.SettingsBackupPreviewResult]
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if payload.Item.CanImport {
+		t.Fatal("expected invalid page title to block import")
+	}
+	if len(payload.Item.Errors) != 1 || payload.Item.Errors[0].Code != "invalid_page_title" {
+		t.Fatalf("expected invalid_page_title error, got %#v", payload.Item.Errors)
+	}
+}
+
 func TestSystemSettingsBackupImportAppliesConfigAndHotReloads(t *testing.T) {
 	cfg, configPath := loadSystemSettingsBackupTestConfig(t, `
 ui:
+  pageTitle: Original
   dailyTipEnabled: true
   webSessionQuickInput:
     pinned: ["continue"]
@@ -256,6 +302,7 @@ terminal:
 		SourceApp:           utils.SettingsBackupSourceApp{Name: "Code Kanban", Version: "1.0.0", Channel: "stable"},
 		Payload: utils.SettingsBackupPayload{
 			Server: &utils.SettingsBackupServerPayload{
+				PageTitle: loPtr("Imported Board"),
 				AIAssistantStatus: loPtr(utils.AIAssistantStatusConfig{
 					ClaudeCode: false,
 					Codex:      false,
@@ -324,6 +371,9 @@ terminal:
 	if cfg.UI.DailyTipEnabled {
 		t.Fatal("expected daily tip to be disabled after import")
 	}
+	if got := cfg.UI.PageTitle; got != "Imported Board" {
+		t.Fatalf("page title = %q, want Imported Board", got)
+	}
 	if !cfg.Developer.EnableTerminalScrollback || !cfg.Developer.RenameSessionTitleEachCommand {
 		t.Fatalf("developer config not applied: %#v", cfg.Developer)
 	}
@@ -347,6 +397,11 @@ terminal:
 	content := string(rewritten)
 	if !strings.Contains(content, "dailyTipEnabled: false") {
 		t.Fatalf("expected config file rewrite, got:\n%s", content)
+	}
+	if !strings.Contains(content, "pageTitle: Imported Board") &&
+		!strings.Contains(content, "pageTitle: 'Imported Board'") &&
+		!strings.Contains(content, `pageTitle: "Imported Board"`) {
+		t.Fatalf("expected imported page title in config, got:\n%s", content)
 	}
 	if !strings.Contains(content, "globalDirNamePattern: '{projectName}-custom'") &&
 		!strings.Contains(content, "globalDirNamePattern: \"{projectName}-custom\"") &&
@@ -387,6 +442,7 @@ func TestSystemSettingsBackupPreviewRejectsLegacySchemaV1(t *testing.T) {
 func TestSystemSettingsBackupImportAppliesOnlySelectedServerSections(t *testing.T) {
 	cfg, _ := loadSystemSettingsBackupTestConfig(t, `
 ui:
+  pageTitle: Original
   dailyTipEnabled: true
   webSessionQuickInput:
     pinned: ["continue"]
@@ -436,6 +492,9 @@ terminal:
 
 	if cfg.UI.DailyTipEnabled {
 		t.Fatal("expected daily tip to be updated")
+	}
+	if got := cfg.UI.PageTitle; got != "Original" {
+		t.Fatalf("page title should remain unchanged, got %q", got)
 	}
 	if got := cfg.UI.WebSessionQuickInput.Pinned; len(got) != 1 || got[0] != "Plan" {
 		t.Fatalf("unexpected pinned quick input: %#v", got)

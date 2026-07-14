@@ -72,6 +72,30 @@
                 :label-placement="standardFormLabelPlacement"
                 :label-width="standardFormLabelWidth"
               >
+                <n-form-item :label="t('settings.pageTitle')" data-search-key="pageTitle">
+                  <n-space vertical size="small" style="width: 100%">
+                    <n-space :wrap="false" align="start">
+                      <n-input
+                        v-model:value="pageTitleInput"
+                        clearable
+                        :disabled="!pageTitleSettingsLoaded || pageTitleSettingsSaving"
+                        :placeholder="t('settings.pageTitlePlaceholder')"
+                        :status="pageTitleError ? 'error' : undefined"
+                      />
+                      <n-button
+                        type="primary"
+                        :loading="pageTitleSettingsSaving"
+                        :disabled="!pageTitleSettingsLoaded || !pageTitleDirty || !!pageTitleError"
+                        @click="handleSavePageTitle"
+                      >
+                        {{ t('common.save') }}
+                      </n-button>
+                    </n-space>
+                    <span :class="pageTitleError ? 'form-error' : 'form-tip'">
+                      {{ pageTitleError || t('settings.pageTitleTip') }}
+                    </span>
+                  </n-space>
+                </n-form-item>
                 <n-form-item
                   :label="t('settings.recentProjectsLimit')"
                   data-search-key="recentProjectsLimit"
@@ -2041,6 +2065,9 @@ const dialog = useDialog();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const {
+  pageTitle,
+  pageTitleSettingsLoaded,
+  pageTitleSettingsSaving,
   theme,
   currentPresetId,
   followSystemThemeSetting,
@@ -2780,6 +2807,7 @@ useInit(() => {
   loadWorktreeSettings();
   loadShellsConfig();
   loadAuthAccessConfig();
+  void settingsStore.loadPageTitleSettings();
   void settingsStore.loadDailyTipSettings();
   void settingsStore.loadWebSessionQuickInput();
 });
@@ -3153,6 +3181,9 @@ async function refreshSettingsAfterBackupImport(importedBackup: SettingsBackupFi
   if (server?.dailyTip) {
     tasks.push(settingsStore.loadDailyTipSettings(true));
   }
+  if (typeof server?.pageTitle === 'string') {
+    tasks.push(settingsStore.loadPageTitleSettings(true));
+  }
   if (server?.webSessionQuickInput?.pinned || server?.webSessionQuickInput?.recent) {
     tasks.push(settingsStore.loadWebSessionQuickInput(true));
   }
@@ -3437,6 +3468,41 @@ const terminalLimitValue = computed({
 });
 
 const dailyTipEnabledValue = computed(() => dailyTipEnabled.value);
+const pageTitleInput = ref(pageTitle.value);
+const pageTitleOriginal = ref(pageTitle.value);
+const pageTitleError = computed(() => {
+  const value = pageTitleInput.value.trim();
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(value)) {
+    return t('settings.pageTitleControlCharacterError');
+  }
+  if (Array.from(value).length > 64) {
+    return t('settings.pageTitleTooLongError', { max: 64 });
+  }
+  return '';
+});
+const pageTitleDirty = computed(() => pageTitleInput.value !== pageTitleOriginal.value);
+
+watch(pageTitle, next => {
+  if (!pageTitleDirty.value) {
+    pageTitleInput.value = next;
+  }
+  pageTitleOriginal.value = next;
+});
+
+async function handleSavePageTitle() {
+  if (!pageTitleDirty.value || pageTitleError.value) {
+    return;
+  }
+  try {
+    const savedTitle = await settingsStore.updatePageTitle(pageTitleInput.value);
+    pageTitleInput.value = savedTitle;
+    pageTitleOriginal.value = savedTitle;
+    message.success(t('common.saveSuccess'));
+  } catch (error) {
+    console.error('Failed to save page title settings:', error);
+    message.error(t('common.saveFailed'));
+  }
+}
 
 async function handleDailyTipEnabledChange(value: boolean) {
   try {
@@ -3856,7 +3922,10 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
       id: 'project-workspace',
       title: t('settings.projectWorkspaceSettings'),
       description: t('settings.defaultEditor'),
+      dirty: pageTitleDirty.value,
       searchTerms: [
+        t('settings.pageTitle'),
+        t('settings.pageTitleTip'),
         t('settings.recentProjectsLimit'),
         t('settings.dailyTipEnabled'),
         t('settings.terminalShortcut'),
@@ -4441,6 +4510,13 @@ function formatShortcutLabel(event: KeyboardEvent) {
 .form-tip {
   font-size: 13px;
   color: var(--n-text-color-3);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.form-error {
+  font-size: 13px;
+  color: var(--n-error-color, #d03050);
   margin-top: 6px;
   line-height: 1.5;
 }

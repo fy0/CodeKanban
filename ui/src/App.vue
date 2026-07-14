@@ -23,7 +23,12 @@ const settingsStore = useSettingsStore();
 const authStore = useAuthStore();
 const projectStore = useProjectStore();
 const reminderStore = useTerminalReminderStore();
-const { activeTheme: theme, followSystemTheme, currentPresetId } = storeToRefs(settingsStore);
+const {
+  activeTheme: theme,
+  followSystemTheme,
+  currentPresetId,
+  pageTitle,
+} = storeToRefs(settingsStore);
 const { totalSummary } = useAiStatusSummary();
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
 const { isMobile } = useResponsive();
@@ -48,7 +53,7 @@ const workspaceProjectName = computed(() => {
 const browserTabTitle = computed(() =>
   formatBrowserTabTitle({
     summary: totalSummary.value,
-    appName: APP_NAME,
+    appName: pageTitle.value || APP_NAME,
     projectName: workspaceProjectName.value,
   })
 );

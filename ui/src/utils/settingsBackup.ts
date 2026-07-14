@@ -45,6 +45,7 @@ export interface SettingsBackupQuickInputSection {
 export interface SettingsBackupServerPayload {
   aiAssistantStatus?: AIAssistantStatusConfig;
   developer?: DeveloperConfig;
+  pageTitle?: string;
   dailyTip?: {
     enabled: boolean;
   };
@@ -289,6 +290,9 @@ export function buildImportableSettingsBackup(
     if (!selectedKeys.has('server.developer')) {
       delete server.developer;
     }
+    if (!selectedKeys.has('server.pageTitle')) {
+      delete server.pageTitle;
+    }
     if (!selectedKeys.has('server.dailyTip')) {
       delete server.dailyTip;
     }
@@ -402,6 +406,7 @@ function hasServerPayloadContent(payload: SettingsBackupServerPayload | undefine
   return Boolean(
     payload.aiAssistantStatus ||
       payload.developer ||
+      typeof payload.pageTitle === 'string' ||
       payload.dailyTip ||
       hasQuickInputSectionContent(payload.webSessionQuickInput) ||
       payload.worktree ||

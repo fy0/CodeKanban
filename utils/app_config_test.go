@@ -10,6 +10,48 @@ import (
 	"github.com/knadh/koanf/v2"
 )
 
+func TestNormalizePageTitle(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "default for empty", input: "", want: DefaultPageTitle},
+		{name: "default for blank", input: "   ", want: DefaultPageTitle},
+		{name: "trim custom title", input: "  工作实例 🚀  ", want: "工作实例 🚀"},
+		{name: "allow max length", input: strings.Repeat("界", MaxPageTitleRunes), want: strings.Repeat("界", MaxPageTitleRunes)},
+		{name: "reject over max length", input: strings.Repeat("界", MaxPageTitleRunes+1), wantErr: true},
+		{name: "reject control characters", input: "Bad\nTitle", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NormalizePageTitle(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("NormalizePageTitle(%q) expected an error", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NormalizePageTitle(%q) error = %v", tt.input, err)
+			}
+			if got != tt.want {
+				t.Fatalf("NormalizePageTitle(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadConfigDefaultsPageTitleWhenMissing(t *testing.T) {
+	content := "ui: {}\n"
+	config, _ := readDailyTipTestConfig(t, &content)
+	if got := config.UI.PageTitle; got != DefaultPageTitle {
+		t.Fatalf("ui.pageTitle = %q, want %q", got, DefaultPageTitle)
+	}
+}
+
 func TestNormalizeWebSessionQuickInputConfig(t *testing.T) {
 	input := WebSessionQuickInputConfig{
 		Pinned: []string{"  Alpha  ", "", "Beta", "Alpha"},

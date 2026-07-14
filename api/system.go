@@ -62,6 +62,10 @@ type dailyTipSettings struct {
 	Enabled bool `json:"enabled" doc:"是否启用每日小技巧"`
 }
 
+type pageTitleSettings struct {
+	Title string `json:"title" doc:"浏览器标签页使用的应用标题"`
+}
+
 func registerSystemRoutes(
 	group *huma.Group,
 	cfg *utils.AppConfig,
@@ -270,6 +274,42 @@ func registerSystemRoutes(
 		op.OperationID = "system-daily-tip-settings-get"
 		op.Summary = "获取每日小技巧设置"
 		op.Description = "返回每日小技巧的服务端全局启用状态"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Get(group, "/system/page-title-settings", func(ctx context.Context, input *struct{}) (*h.ItemResponse[pageTitleSettings], error) {
+		resp := h.NewItemResponse(pageTitleSettings{
+			Title: cfg.UI.PageTitle,
+		})
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-page-title-settings-get"
+		op.Summary = "获取网页标题设置"
+		op.Description = "返回服务端实例级浏览器标签页标题，未登录时也可读取"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/page-title-settings/update", func(ctx context.Context, input *struct {
+		Body pageTitleSettings `json:"body"`
+	}) (*h.ItemResponse[pageTitleSettings], error) {
+		title, err := utils.NormalizePageTitle(input.Body.Title)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			c.UI.PageTitle = title
+		}); err != nil {
+			return nil, huma.Error500InternalServerError("failed to save configuration")
+		}
+
+		resp := h.NewItemResponse(pageTitleSettings{Title: title})
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-page-title-settings-update"
+		op.Summary = "更新网页标题设置"
+		op.Description = "更新实例级浏览器标签页标题，并持久化到配置文件"
 		op.Tags = []string{systemTag}
 	})
 

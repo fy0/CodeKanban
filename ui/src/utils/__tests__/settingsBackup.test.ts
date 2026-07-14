@@ -65,6 +65,7 @@ describe('settingsBackup helpers', () => {
                 },
               },
             },
+            pageTitle: 'Staging Board',
             dailyTip: { enabled: true },
             webSessionQuickInput: { pinned: ['continue'], recent: [] },
             worktree: { globalBaseDir: '', globalDirNamePattern: '{projectName}-{branch}' },
@@ -144,6 +145,7 @@ describe('settingsBackup helpers', () => {
     expect(backup.backupKind).toBe(SETTINGS_BACKUP_KIND);
     expect(backup.sourceApp.version).toBe('1.2.3');
     expect(backup.payload.server?.terminalShell.shell).toBe('/bin/bash');
+    expect(backup.payload.server?.pageTitle).toBe('Staging Board');
     expect(backup.payload.server?.authAccess).toBeUndefined();
     expect(backup.payload.server?.webSessionQuickInput?.recent).toBeUndefined();
     expect(backup.payload.client?.locale).toBe('zh-CN');
@@ -179,6 +181,7 @@ describe('settingsBackup helpers', () => {
         sourceApp: { name: 'Code Kanban', version: '1.2.3', channel: 'stable' },
         payload: {
           server: {
+            pageTitle: 'Staging Board',
             dailyTip: { enabled: false },
             webSessionQuickInput: {
               pinned: ['continue'],
@@ -239,9 +242,15 @@ describe('settingsBackup helpers', () => {
           },
         },
       },
-      ['server.dailyTip', 'server.webSessionQuickInput.pinned', 'client.settings']
+      [
+        'server.pageTitle',
+        'server.dailyTip',
+        'server.webSessionQuickInput.pinned',
+        'client.settings',
+      ]
     );
 
+    expect(filtered.payload.server?.pageTitle).toBe('Staging Board');
     expect(filtered.payload.server?.dailyTip?.enabled).toBe(false);
     expect(filtered.payload.server?.webSessionQuickInput?.pinned).toEqual(['continue']);
     expect(filtered.payload.server?.webSessionQuickInput?.recent).toBeUndefined();

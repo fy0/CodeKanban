@@ -203,6 +203,11 @@ func addPayloadSections(result *utils.SettingsBackupPreviewResult, backup utils.
 				ChangedKeys: []string{"enableTerminalScrollback", "renameSessionTitleEachCommand", "enableTerminalStateSnapshot", "webSessionCodexDefaultSyncMode", "webSessionActiveCallTimeout"},
 			})
 		}
+		if server.PageTitle != nil {
+			result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
+				Key: "server.pageTitle", Label: "Page title", Action: "replace", Target: "server", ChangedKeys: []string{"pageTitle"},
+			})
+		}
 		if server.DailyTip != nil {
 			result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
 				Key: "server.dailyTip", Label: "Daily tip", Action: "replace", Target: "server", ChangedKeys: []string{"enabled"},
@@ -259,6 +264,16 @@ func validateServerPayload(result *utils.SettingsBackupPreviewResult, payload *u
 	if payload.AuthAccess != nil {
 		sanitized := utils.SanitizeAuthAccessConfig(*payload.AuthAccess)
 		payload.AuthAccess = &sanitized
+	}
+	if payload.PageTitle != nil {
+		pageTitle, err := utils.NormalizePageTitle(*payload.PageTitle)
+		if err != nil {
+			result.Errors = append(result.Errors, utils.SettingsBackupPreviewIssue{
+				Code: "invalid_page_title", Level: "error", Message: err.Error(),
+			})
+		} else {
+			payload.PageTitle = &pageTitle
+		}
 	}
 
 	if payload.TerminalShell != nil &&
@@ -335,6 +350,13 @@ func applySettingsBackup(
 		developer := utils.NormalizeDeveloperConfig(*server.Developer)
 		server.Developer = &developer
 	}
+	if server.PageTitle != nil {
+		pageTitle, err := utils.NormalizePageTitle(*server.PageTitle)
+		if err != nil {
+			return err
+		}
+		server.PageTitle = &pageTitle
+	}
 	server.WebSessionQuickInput = utils.NormalizeSettingsBackupQuickInputSection(server.WebSessionQuickInput)
 	if server.AuthAccess != nil {
 		authAccess, err := utils.NormalizeAuthAccessConfig(*server.AuthAccess)
@@ -350,6 +372,9 @@ func applySettingsBackup(
 		}
 		if server.Developer != nil {
 			c.Developer = *server.Developer
+		}
+		if server.PageTitle != nil {
+			c.UI.PageTitle = *server.PageTitle
 		}
 		if server.DailyTip != nil {
 			c.UI.DailyTipEnabled = server.DailyTip.Enabled

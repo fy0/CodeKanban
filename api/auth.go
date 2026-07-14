@@ -394,7 +394,8 @@ func isAnonymousPath(path string, cfg *utils.AppConfig) bool {
 		"/api/v1/auth/status",
 		"/api/v1/auth/login",
 		"/api/v1/auth/logout",
-		"/api/v1/auth/password/enable":
+		"/api/v1/auth/password/enable",
+		"/api/v1/system/page-title-settings":
 		return true
 	default:
 		return false

@@ -1153,6 +1153,12 @@ export default {
     worktreeGlobalDirNamePattern: '全局目录命名规则',
     worktreeGlobalDirNamePatternTip:
       '支持占位符：{projectName}、{projectId}、{branch}。默认：{projectName}-{branch}；建议包含 {projectId} 以避免冲突。',
+    pageTitle: '网页标题',
+    pageTitlePlaceholder: 'Code Kanban',
+    pageTitleTip:
+      '只修改浏览器标签页中的应用标题，不影响页面内的 Code Kanban 文案。留空保存可恢复默认值，最多 64 个字符。',
+    pageTitleTooLongError: '网页标题不能超过 {max} 个字符',
+    pageTitleControlCharacterError: '网页标题不能包含控制字符',
     recentProjectsLimit: '最近项目数量',
     recentProjectsLimitTip: '控制"最近项目"列表展示的数量',
     terminalLimit: '单项目终端上限',

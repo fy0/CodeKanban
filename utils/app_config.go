@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -107,11 +109,16 @@ type WebSessionQuickInputConfig struct {
 }
 
 type UIConfig struct {
+	PageTitle            string                     `json:"pageTitle" yaml:"pageTitle"`
 	DailyTipEnabled      bool                       `json:"dailyTipEnabled" yaml:"dailyTipEnabled"`
 	WebSessionQuickInput WebSessionQuickInputConfig `json:"webSessionQuickInput" yaml:"webSessionQuickInput"`
 }
 
-const WebSessionQuickInputRecentLimit = 6
+const (
+	DefaultPageTitle                = "Code Kanban"
+	MaxPageTitleRunes               = 64
+	WebSessionQuickInputRecentLimit = 6
+)
 
 var defaultWebSessionQuickInputConfig = WebSessionQuickInputConfig{
 	Pinned: []string{"continue"},
@@ -324,6 +331,7 @@ func ReadConfig() *AppConfig {
 			WebSessionActiveCallTimeout:    NormalizeWebSessionActiveCallTimeoutConfig(defaultWebSessionActiveCallTimeoutConfig),
 		},
 		UI: UIConfig{
+			PageTitle:            DefaultPageTitle,
 			DailyTipEnabled:      false,
 			WebSessionQuickInput: NormalizeWebSessionQuickInputConfig(defaultWebSessionQuickInputConfig),
 		},
@@ -363,6 +371,12 @@ func ReadConfig() *AppConfig {
 	config.Auth = SanitizeAuthConfig(config.Auth)
 	_ = config.Auth.SessionDuration()
 	_ = config.Terminal.IdleDuration()
+	pageTitle, err := NormalizePageTitle(config.UI.PageTitle)
+	if err != nil {
+		fmt.Printf("Invalid ui.pageTitle, falling back to %q: %v\n", DefaultPageTitle, err)
+		pageTitle = DefaultPageTitle
+	}
+	config.UI.PageTitle = pageTitle
 	config.UI.WebSessionQuickInput = NormalizeWebSessionQuickInputConfig(config.UI.WebSessionQuickInput)
 	config.Developer = NormalizeDeveloperConfig(config.Developer)
 	if webSessionActiveCallTimeoutConfigNeedsRewrite(fileConfigStore) {
@@ -376,6 +390,22 @@ func ReadConfig() *AppConfig {
 	}
 
 	return &config
+}
+
+func NormalizePageTitle(value string) (string, error) {
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return "", fmt.Errorf("page title cannot contain control characters")
+		}
+	}
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return DefaultPageTitle, nil
+	}
+	if utf8.RuneCountInString(normalized) > MaxPageTitleRunes {
+		return "", fmt.Errorf("page title cannot exceed %d characters", MaxPageTitleRunes)
+	}
+	return normalized, nil
 }
 
 func NormalizeWebSessionQuickInputConfig(config WebSessionQuickInputConfig) WebSessionQuickInputConfig {

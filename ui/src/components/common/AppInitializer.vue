@@ -65,9 +65,13 @@ async function ensureSettingsLoaded() {
   ]);
 }
 
+async function ensurePageTitleLoaded() {
+  await settingsStore.loadPageTitleSettings();
+}
+
 useInit(async () => {
   try {
-    await authStore.ensureLoaded();
+    await Promise.all([authStore.ensureLoaded(), ensurePageTitleLoaded()]);
     await Promise.all([ensureAppInfoLoaded(), ensureSettingsLoaded()]);
   } catch (error) {
     console.error('Failed to initialize auth status:', error);
