@@ -275,14 +275,14 @@ describe('settings theme storage', () => {
       JSON.stringify({
         version: 3,
         currentPresetId: 'light',
-        dailyTipEnabled: false,
+        dailyTipEnabled: true,
       })
     );
 
     const store = useSettingsStore();
     const { dailyTipEnabled } = storeToRefs(store);
 
-    expect(dailyTipEnabled.value).toBe(true);
+    expect(dailyTipEnabled.value).toBe(false);
 
     const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
       version?: number;

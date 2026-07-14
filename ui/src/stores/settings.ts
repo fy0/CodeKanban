@@ -303,7 +303,7 @@ const DEFAULT_WEB_SESSION_QUICK_INPUT: WebSessionQuickInputSettings = {
 };
 const DEFAULT_WEB_SESSION_QUICK_INPUT_DIRECT_SEND = false;
 const DEFAULT_DAILY_TIP_SETTINGS: DailyTipSettings = {
-  enabled: true,
+  enabled: false,
 };
 
 export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
@@ -1227,7 +1227,7 @@ function sanitizeTerminalLimit(value: number | undefined) {
 
 function sanitizeDailyTipSettings(value?: Partial<DailyTipSettings> | null): DailyTipSettings {
   return {
-    enabled: value?.enabled !== false,
+    enabled: value?.enabled === true,
   };
 }
 

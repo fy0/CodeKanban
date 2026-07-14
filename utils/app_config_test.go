@@ -229,11 +229,48 @@ developer:
 	}
 }
 
-func TestReadConfigDefaultsDailyTipEnabledWhenMissing(t *testing.T) {
+func TestReadConfigDefaultsDailyTipDisabledOnFirstStart(t *testing.T) {
+	config, configPath := readDailyTipTestConfig(t, nil)
+	if config.UI.DailyTipEnabled {
+		t.Fatal("expected ui.dailyTipEnabled to default to false on first start")
+	}
+
+	rewritten, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read generated config failed: %v", err)
+	}
+	if !strings.Contains(string(rewritten), "dailyTipEnabled: false") {
+		t.Fatalf("expected generated config to persist dailyTipEnabled=false, got:\n%s", rewritten)
+	}
+}
+
+func TestReadConfigDefaultsDailyTipDisabledWhenMissing(t *testing.T) {
+	content := "ui: {}\n"
+	config, _ := readDailyTipTestConfig(t, &content)
+	if config.UI.DailyTipEnabled {
+		t.Fatal("expected ui.dailyTipEnabled to default to false when config key is missing")
+	}
+}
+
+func TestReadConfigPreservesExplicitDailyTipEnabled(t *testing.T) {
+	content := "ui:\n  dailyTipEnabled: true\n"
+	config, _ := readDailyTipTestConfig(t, &content)
+	if !config.UI.DailyTipEnabled {
+		t.Fatal("expected explicit ui.dailyTipEnabled=true to be preserved")
+	}
+}
+
+func readDailyTipTestConfig(t *testing.T, content *string) (*AppConfig, string) {
+	t.Helper()
+
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("ui: {}\n"), 0o644); err != nil {
-		t.Fatalf("write config failed: %v", err)
+	if content != nil {
+		if err := os.WriteFile(configPath, []byte(*content), 0o644); err != nil {
+			t.Fatalf("write config failed: %v", err)
+		}
+	} else {
+		configPath = filepath.Join(tempDir, "data", "config.yaml")
 	}
 
 	oldWD, err := os.Getwd()
@@ -259,10 +296,7 @@ func TestReadConfigDefaultsDailyTipEnabledWhenMissing(t *testing.T) {
 		useHomeData = oldUseHomeData
 	})
 
-	config := ReadConfig()
-	if !config.UI.DailyTipEnabled {
-		t.Fatal("expected ui.dailyTipEnabled to default to true when config key is missing")
-	}
+	return ReadConfig(), configPath
 }
 
 func TestUpdateConfigDropsLegacyAutoCreateTaskOnStartWorkField(t *testing.T) {

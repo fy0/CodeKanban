@@ -324,7 +324,7 @@ func ReadConfig() *AppConfig {
 			WebSessionActiveCallTimeout:    NormalizeWebSessionActiveCallTimeoutConfig(defaultWebSessionActiveCallTimeoutConfig),
 		},
 		UI: UIConfig{
-			DailyTipEnabled:      true,
+			DailyTipEnabled:      false,
 			WebSessionQuickInput: NormalizeWebSessionQuickInputConfig(defaultWebSessionQuickInputConfig),
 		},
 		Worktree: WorktreeConfig{

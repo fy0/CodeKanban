@@ -62,28 +62,43 @@ describe('settings daily tip', () => {
     const store = useSettingsStore();
     const { dailyTipEnabled, dailyTipSettingsLoaded } = storeToRefs(store);
 
-    expect(dailyTipEnabled.value).toBe(true);
+    expect(dailyTipEnabled.value).toBe(false);
     expect(dailyTipSettingsLoaded.value).toBe(false);
+    getSendMock.mockResolvedValue({
+      item: {
+        enabled: true,
+      },
+    });
 
     await store.loadDailyTipSettings();
 
     expect(getMethodMock).toHaveBeenCalledWith('/system/daily-tip-settings');
-    expect(dailyTipEnabled.value).toBe(false);
+    expect(dailyTipEnabled.value).toBe(true);
     expect(dailyTipSettingsLoaded.value).toBe(true);
+  });
+
+  it('keeps daily tips disabled when the server response omits the setting', async () => {
+    getSendMock.mockResolvedValue({});
+    const store = useSettingsStore();
+
+    await store.loadDailyTipSettings();
+
+    expect(store.dailyTipEnabled).toBe(false);
+    expect(store.dailyTipSettingsLoaded).toBe(true);
   });
 
   it('ignores the legacy local daily tip value before the server setting is loaded', () => {
     localStorage.setItem(
       'general_settings',
       JSON.stringify({
-        dailyTipEnabled: false,
+        dailyTipEnabled: true,
       })
     );
 
     const store = useSettingsStore();
     const { dailyTipEnabled, dailyTipSettingsLoaded } = storeToRefs(store);
 
-    expect(dailyTipEnabled.value).toBe(true);
+    expect(dailyTipEnabled.value).toBe(false);
     expect(dailyTipSettingsLoaded.value).toBe(false);
   });
 
