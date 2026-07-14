@@ -97,16 +97,22 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 	huma.Get(group, "/projects/{projectId}/web-sessions/{sessionId}/snapshot", func(
 		ctx context.Context,
 		input *struct {
-			ProjectID string `path:"projectId"`
-			SessionID string `path:"sessionId"`
-			Limit     int    `query:"limit" default:"80"`
+			ProjectID     string `path:"projectId"`
+			SessionID     string `path:"sessionId"`
+			Limit         int    `query:"limit" default:"80"`
+			KnownRevision string `query:"knownRevision"`
 		},
-	) (*h.ItemResponse[websession.SessionSnapshot], error) {
+	) (*h.ItemResponse[websession.SessionSnapshotResponse], error) {
 		record, err := c.manager.GetSession(ctx, input.SessionID)
 		if err != nil || record.ProjectID != input.ProjectID {
 			return nil, huma.Error404NotFound("session not found")
 		}
-		item, err := c.manager.SnapshotWithAutoSync(ctx, input.SessionID, input.Limit)
+		item, err := c.manager.SnapshotWithAutoSyncIfChanged(
+			ctx,
+			input.SessionID,
+			input.Limit,
+			input.KnownRevision,
+		)
 		if err != nil {
 			if errors.Is(err, websession.ErrSessionHistoryUnavailable) {
 				return nil, huma.Error404NotFound("session history not found")

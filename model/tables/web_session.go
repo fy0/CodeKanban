@@ -50,8 +50,9 @@ type WebSessionTable struct {
 	TurnCount               int        `gorm:"type:integer;not null;default:0" json:"turnCount"`
 	ItemCount               int        `gorm:"type:integer;not null;default:0" json:"itemCount"`
 
-	LastMessageAt *time.Time `gorm:"type:datetime" json:"lastMessageAt"`
-	LastEventSeq  int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`
+	LastMessageAt    *time.Time `gorm:"type:datetime" json:"lastMessageAt"`
+	LastEventSeq     int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`
+	SnapshotRevision int64      `gorm:"type:integer;not null;default:1" json:"snapshotRevision"`
 
 	GoalObjective       *string    `gorm:"type:text" json:"goalObjective"`
 	GoalStatus          *string    `gorm:"type:text" json:"goalStatus"`

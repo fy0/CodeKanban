@@ -376,6 +376,7 @@ export interface CodexSkillSummary {
 
 export interface WebSessionSummary {
   id: string;
+  revision?: string;
   projectId: string;
   worktreeId?: string | null;
   orderIndex: number;

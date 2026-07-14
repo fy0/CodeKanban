@@ -784,7 +784,9 @@ func (m *Manager) broadcastScheduledInputs(sessionID string) {
 	if err != nil {
 		return
 	}
-	m.broadcast(newScheduledFrame(sessionID, items))
+	_ = m.broadcastNextRevision(context.Background(), sessionID, func() (wireFrame, bool) {
+		return newScheduledFrame(sessionID, items), true
+	})
 }
 
 func (m *Manager) recoverPendingScheduledInputs(ctx context.Context) error {
@@ -1068,7 +1070,12 @@ func (m *Manager) handleScheduleSendCommand(ctx context.Context, client *client,
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, mapWireScheduledInputs([]ScheduledInput{created})[0]))
+	return m.sendMutationAck(
+		ctx,
+		client,
+		frame,
+		mapWireScheduledInputs([]ScheduledInput{created})[0],
+	)
 }
 
 func (m *Manager) handleSchedulePlanCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1096,7 +1103,12 @@ func (m *Manager) handleSchedulePlanCommand(ctx context.Context, client *client,
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, mapWireScheduledInputs([]ScheduledInput{created})[0]))
+	return m.sendMutationAck(
+		ctx,
+		client,
+		frame,
+		mapWireScheduledInputs([]ScheduledInput{created})[0],
+	)
 }
 
 func (m *Manager) handleScheduledDeleteCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1109,9 +1121,9 @@ func (m *Manager) handleScheduledDeleteCommand(ctx context.Context, client *clie
 	if err := m.RemoveScheduledInput(ctx, frame.SessionID, payload.ID); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, map[string]any{
+	return m.sendMutationAck(ctx, client, frame, map[string]any{
 		"id": strings.TrimSpace(payload.ID),
-	}))
+	})
 }
 
 func (m *Manager) handleScheduledUpdateCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1137,12 +1149,12 @@ func (m *Manager) handleScheduledUpdateCommand(ctx context.Context, client *clie
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return client.send(newAckFrame(
-		frame.RequestID,
-		frame.Operation,
-		frame.SessionID,
+	return m.sendMutationAck(
+		ctx,
+		client,
+		frame,
 		mapWireScheduledInputs([]ScheduledInput{updated})[0],
-	))
+	)
 }
 
 func (m *Manager) handleScheduledNowCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1155,7 +1167,7 @@ func (m *Manager) handleScheduledNowCommand(ctx context.Context, client *client,
 	if err := m.DispatchScheduledInputNow(ctx, frame.SessionID, payload.ID); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, map[string]any{
+	return m.sendMutationAck(ctx, client, frame, map[string]any{
 		"id": strings.TrimSpace(payload.ID),
-	}))
+	})
 }

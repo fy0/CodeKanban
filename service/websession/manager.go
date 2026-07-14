@@ -78,6 +78,7 @@ type Manager struct {
 	scheduledInputTimers        map[string]*time.Timer
 	scheduledInputTimerSessions map[string]string
 	scheduledInputLocks         [64]sync.Mutex
+	revisionBroadcastLocks      [64]sync.Mutex
 	pendingInputs               map[string][]PendingInput
 	pendingProcessing           map[string]bool
 	pendingDirty                map[string]bool
@@ -1338,6 +1339,34 @@ func (m *Manager) SnapshotWithAutoSync(ctx context.Context, sessionID string, li
 	return snapshot, nil
 }
 
+func (m *Manager) SnapshotWithAutoSyncIfChanged(
+	ctx context.Context,
+	sessionID string,
+	limit int,
+	knownRevision string,
+) (SessionSnapshotResponse, error) {
+	known, err := parseSnapshotRevision(knownRevision)
+	if err != nil {
+		return SessionSnapshotResponse{}, err
+	}
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSnapshotResponse{}, err
+	}
+	current := normalizeSnapshotRevision(record.SnapshotRevision)
+	if known > 0 && known == current && !record.HasUnread && !shouldAutoSyncSnapshot(record, record.ItemCount) {
+		return SessionSnapshotResponse{
+			Revision:  formatSnapshotRevision(current),
+			Unchanged: true,
+		}, nil
+	}
+	snapshot, err := m.SnapshotWithAutoSync(ctx, sessionID, limit)
+	if err != nil {
+		return SessionSnapshotResponse{}, err
+	}
+	return NewSessionSnapshotResponse(snapshot), nil
+}
+
 func shouldAutoSyncSnapshot(record tables.WebSessionTable, historyTotal int) bool {
 	if historyTotal > 0 {
 		return false
@@ -1369,8 +1398,12 @@ func (m *Manager) loadSnapshotLocal(
 		record.HasUnread = false
 		if err := model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
 			Where("id = ?", record.ID).
-			Update("has_unread", false).Error; err != nil {
+			Updates(withSnapshotRevisionIncrement(map[string]any{
+				"has_unread": false,
+			})).Error; err != nil {
 			m.logger.Warn("failed to clear unread flag", zap.String("sessionId", record.ID), zap.Error(err))
+		} else if refreshed, refreshErr := m.GetSession(ctx, record.ID); refreshErr == nil {
+			record = refreshed
 		}
 	}
 
@@ -1383,6 +1416,7 @@ func (m *Manager) loadSnapshotLocal(
 		return SessionSnapshot{}, err
 	}
 	return SessionSnapshot{
+		Revision:         summary.Revision,
 		Session:          summary,
 		History:          history,
 		PendingInputs:    m.pendingInputsSnapshot(record.ID),
@@ -1417,11 +1451,11 @@ func (m *Manager) RenameSession(ctx context.Context, sessionID, title string) (S
 	}
 	if err := model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
 		Where("id = ?", sessionID).
-		Updates(map[string]any{
+		Updates(withSnapshotRevisionIncrement(map[string]any{
 			"title":      normalized,
 			"title_auto": false,
 			"updated_at": time.Now(),
-		}).Error; err != nil {
+		})).Error; err != nil {
 		return SessionSummary{}, err
 	}
 	record, err := m.GetSession(ctx, sessionID)
@@ -2400,7 +2434,7 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, "", "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, summary.ID, nil)); err != nil {
+	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, summary.ID, nil, summary.Revision)); err != nil {
 		return err
 	}
 	snap, err := m.Snapshot(ctx, summary.ID, DefaultHistoryWindow)
@@ -2415,7 +2449,7 @@ func (m *Manager) handleConnectCommand(ctx context.Context, client *client, fram
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
+	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil, snap.Revision)); err != nil {
 		return err
 	}
 	return client.send(newSnapshotFrame(frame.SessionID, snap))
@@ -2426,9 +2460,6 @@ func (m *Manager) sendAckWithSnapshot(
 	client *client,
 	frame wireCommandFrame,
 ) error {
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
 	snap, err := m.Snapshot(ctx, frame.SessionID, DefaultHistoryWindow)
 	if err != nil {
 		if m.logger != nil {
@@ -2440,7 +2471,32 @@ func (m *Manager) sendAckWithSnapshot(
 		}
 		return nil
 	}
+	if err := client.send(newAckFrame(
+		frame.RequestID,
+		frame.Operation,
+		frame.SessionID,
+		nil,
+		snap.Revision,
+	)); err != nil {
+		return err
+	}
 	return client.send(newSnapshotFrame(frame.SessionID, snap))
+}
+
+func (m *Manager) sendMutationAck(
+	ctx context.Context,
+	client *client,
+	frame wireCommandFrame,
+	payload any,
+) error {
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return client.send(newAckFrame(
+		frame.RequestID,
+		frame.Operation,
+		frame.SessionID,
+		payload,
+		m.currentSessionRevision(ctx, frame.SessionID),
+	))
 }
 
 func (m *Manager) handleHistoryCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2458,7 +2514,13 @@ func (m *Manager) handleHistoryCommand(ctx context.Context, client *client, fram
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
+	if err := client.send(newAckFrame(
+		frame.RequestID,
+		frame.Operation,
+		frame.SessionID,
+		nil,
+		m.currentSessionRevision(ctx, frame.SessionID),
+	)); err != nil {
 		return err
 	}
 	return client.send(newHistoryPageFrame(frame.SessionID, window))
@@ -2468,14 +2530,14 @@ func (m *Manager) handleAbortCommand(_ context.Context, client *client, frame wi
 	if err := m.AbortSession(frame.SessionID); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
+	return m.sendMutationAck(context.Background(), client, frame, nil)
 }
 
 func (m *Manager) handleApprovalCommand(client *client, frame wireCommandFrame, action string) error {
 	if err := m.respondToApproval(frame.SessionID, action); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(context.Background(), client, frame)
+	return m.sendMutationAck(context.Background(), client, frame, nil)
 }
 
 func (m *Manager) handleUserInputCommand(client *client, frame wireCommandFrame) error {
@@ -2489,7 +2551,7 @@ func (m *Manager) handleUserInputCommand(client *client, frame wireCommandFrame)
 	if err := m.respondToUserInput(frame.SessionID, payload.ItemID, payload.Answers); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(context.Background(), client, frame)
+	return m.sendMutationAck(context.Background(), client, frame, nil)
 }
 
 func (m *Manager) handlePendingDeleteCommand(client *client, frame wireCommandFrame) error {
@@ -2505,7 +2567,7 @@ func (m *Manager) handlePendingDeleteCommand(client *client, frame wireCommandFr
 	if !m.removePendingInput(frame.SessionID, payload.PendingID) {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", "pending input not found", false))
 	}
-	return m.sendAckWithSnapshot(context.Background(), client, frame)
+	return m.sendMutationAck(context.Background(), client, frame, nil)
 }
 
 func (m *Manager) handlePendingUpdateCommand(client *client, frame wireCommandFrame) error {
@@ -2526,7 +2588,8 @@ func (m *Manager) handlePendingUpdateCommand(client *client, frame wireCommandFr
 		}
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, code, err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(context.Background(), client, frame)
+	m.broadcastPendingInputs(frame.SessionID)
+	return m.sendMutationAck(context.Background(), client, frame, nil)
 }
 
 func (m *Manager) handlePendingReorderCommand(client *client, frame wireCommandFrame) error {
@@ -2551,12 +2614,13 @@ func (m *Manager) handlePendingReorderCommand(client *client, frame wireCommandF
 		}
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, code, err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(context.Background(), client, frame)
+	m.broadcastPendingInputs(frame.SessionID)
+	return m.sendMutationAck(context.Background(), client, frame, nil)
 }
 
 func (m *Manager) handlePendingClearCommand(client *client, frame wireCommandFrame) error {
 	m.clearPendingInputsForSession(frame.SessionID)
-	return m.sendAckWithSnapshot(context.Background(), client, frame)
+	return m.sendMutationAck(context.Background(), client, frame, nil)
 }
 
 func (m *Manager) handleRenameCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2566,15 +2630,11 @@ func (m *Manager) handleRenameCommand(ctx context.Context, client *client, frame
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid rename payload", false))
 	}
-	summary, err := m.RenameSession(ctx, frame.SessionID, payload.Title)
+	_, err := m.RenameSession(ctx, frame.SessionID, payload.Title)
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, summary.ID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleSetModelCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2587,11 +2647,7 @@ func (m *Manager) handleSetModelCommand(ctx context.Context, client *client, fra
 	if _, err := m.UpdateModel(ctx, frame.SessionID, payload.Model); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleSetClaudeRuntimeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2604,11 +2660,7 @@ func (m *Manager) handleSetClaudeRuntimeCommand(ctx context.Context, client *cli
 	if _, err := m.UpdateClaudeRuntime(ctx, frame.SessionID, ClaudeRuntime(payload.ClaudeRuntime)); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleSetReasoningEffortCommand(
@@ -2625,11 +2677,7 @@ func (m *Manager) handleSetReasoningEffortCommand(
 	if _, err := m.UpdateReasoningEffort(ctx, frame.SessionID, ReasoningEffort(payload.ReasoningEffort)); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleSetWorkflowModeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2642,11 +2690,7 @@ func (m *Manager) handleSetWorkflowModeCommand(ctx context.Context, client *clie
 	if _, err := m.UpdateWorkflowMode(ctx, frame.SessionID, WorkflowMode(payload.WorkflowMode)); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleGoalGetCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2667,7 +2711,7 @@ func (m *Manager) handleGoalSetCommand(ctx context.Context, client *client, fram
 	if _, err := m.SetSessionGoal(ctx, frame.SessionID, payload.Objective, GoalStatus(payload.Status)); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(ctx, client, frame)
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleGoalBootstrapCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2681,7 +2725,7 @@ func (m *Manager) handleGoalBootstrapCommand(ctx context.Context, client *client
 	if err := m.BootstrapSessionGoal(ctx, frame.SessionID, payload.Objective, GoalStatus(payload.Status)); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(ctx, client, frame)
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleGoalStatusCommand(
@@ -2693,14 +2737,14 @@ func (m *Manager) handleGoalStatusCommand(
 	if _, err := m.UpdateSessionGoalStatus(ctx, frame.SessionID, status); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(ctx, client, frame)
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleGoalClearCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	if _, err := m.ClearSessionGoal(ctx, frame.SessionID); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(ctx, client, frame)
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleSetPermissionLevelCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2713,11 +2757,7 @@ func (m *Manager) handleSetPermissionLevelCommand(ctx context.Context, client *c
 	if _, err := m.UpdatePermissionLevel(ctx, frame.SessionID, PermissionLevel(payload.PermissionLevel)); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleSetActiveCallTimeoutCommand(
@@ -2734,11 +2774,7 @@ func (m *Manager) handleSetActiveCallTimeoutCommand(
 	if _, err := m.UpdateActiveCallTimeout(ctx, frame.SessionID, payload.Enabled); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleSetAutoRetryCommand(
@@ -2763,11 +2799,7 @@ func (m *Manager) handleSetAutoRetryCommand(
 	); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleLegacySetModeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2784,11 +2816,7 @@ func (m *Manager) handleLegacySetModeCommand(ctx context.Context, client *client
 	if _, err := m.UpdatePermissionLevel(ctx, frame.SessionID, permissionLevel); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleSetAgentCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2801,11 +2829,7 @@ func (m *Manager) handleSetAgentCommand(ctx context.Context, client *client, fra
 	if _, err := m.UpdateAgent(ctx, frame.SessionID, Agent(payload.Agent)); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return nil
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) handleMoveCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2820,11 +2844,14 @@ func (m *Manager) handleMoveCommand(ctx context.Context, client *client, frame w
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
 	m.broadcastProjectSessionSummaries(ctx, summary.ProjectID)
-	return nil
+	return client.send(newAckFrame(
+		frame.RequestID,
+		frame.Operation,
+		frame.SessionID,
+		nil,
+		m.currentSessionRevision(ctx, frame.SessionID),
+	))
 }
 
 func (m *Manager) handleDeleteCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2879,7 +2906,7 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 	); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(ctx, client, frame)
+	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attachmentIDs []string) error {
@@ -4180,7 +4207,7 @@ func (m *Manager) appendAndBroadcastNow(ctx context.Context, sessionID string, r
 		return Event{}, cacheErr
 	}
 	if cachedItem != nil {
-		m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, nil))
+		m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, m.summaryForBroadcast(ctx, sessionID)))
 	}
 	if event.Type == "tool_end" {
 		m.maybeInterruptForRedirect(sessionID)
@@ -4369,7 +4396,7 @@ func (m *Manager) updateRuntimeState(ctx context.Context, sessionID string, upda
 	}
 	return model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
 		Where("id = ?", sessionID).
-		Updates(updates).Error
+		Updates(withSnapshotRevisionIncrement(updates)).Error
 }
 
 func (m *Manager) completedRunState(ctx context.Context, session tables.WebSessionTable, run *activeRun) (Status, AssistantState) {
@@ -4390,7 +4417,7 @@ func (m *Manager) completedRunState(ctx context.Context, session tables.WebSessi
 func (m *Manager) updateFields(ctx context.Context, sessionID string, updates map[string]any) (SessionSummary, error) {
 	if err := model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
 		Where("id = ?", sessionID).
-		Updates(updates).Error; err != nil {
+		Updates(withSnapshotRevisionIncrement(updates)).Error; err != nil {
 		return SessionSummary{}, err
 	}
 	record, err := m.GetSession(ctx, sessionID)
@@ -4922,6 +4949,51 @@ func (m *Manager) releaseActiveRun(sessionID string, run *activeRun) bool {
 }
 
 func (m *Manager) broadcast(frame wireFrame) {
+	if frame.SessionID != "" && (frame.Kind == "evt" || frame.Kind == "snap") {
+		lock := &m.revisionBroadcastLocks[sessionRevisionLockIndex(frame.SessionID)]
+		lock.Lock()
+		if revision := m.currentSessionRevision(context.Background(), frame.SessionID); revision != "" {
+			applyWireFrameRevision(&frame, revision)
+		}
+		m.broadcastFrame(frame)
+		lock.Unlock()
+		return
+	}
+	m.broadcastFrame(frame)
+}
+
+func applyWireFrameRevision(frame *wireFrame, revision string) {
+	if frame == nil {
+		return
+	}
+	frame.Revision = revision
+	if frame.Session != nil {
+		frame.Session.Revision = revision
+	}
+}
+
+func (m *Manager) broadcastNextRevision(
+	ctx context.Context,
+	sessionID string,
+	build func() (wireFrame, bool),
+) error {
+	lock := &m.revisionBroadcastLocks[sessionRevisionLockIndex(sessionID)]
+	lock.Lock()
+	defer lock.Unlock()
+	revision, err := m.advanceSessionRevision(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	frame, ok := build()
+	if !ok {
+		return nil
+	}
+	applyWireFrameRevision(&frame, formatSnapshotRevision(revision))
+	m.broadcastFrame(frame)
+	return nil
+}
+
+func (m *Manager) broadcastFrame(frame wireFrame) {
 	m.mu.RLock()
 	clients := make([]*client, 0, len(m.clients))
 	for client := range m.clients {
@@ -4974,16 +5046,19 @@ func (m *Manager) broadcastSnapshot(ctx context.Context, sessionID string) error
 	if err != nil {
 		return err
 	}
-	m.broadcast(newSnapshotFrame(sessionID, snap))
-	return nil
+	return m.broadcastNextRevision(ctx, sessionID, func() (wireFrame, bool) {
+		return newSnapshotFrame(sessionID, snap), true
+	})
 }
 
 func (m *Manager) broadcastSessionSummary(ctx context.Context, sessionID string) {
-	summary := m.summaryForBroadcast(ctx, sessionID)
-	if summary == nil {
-		return
-	}
-	m.broadcast(newSessionFrame(sessionID, *summary))
+	_ = m.broadcastNextRevision(ctx, sessionID, func() (wireFrame, bool) {
+		summary := m.summaryForBroadcast(ctx, sessionID)
+		if summary == nil {
+			return wireFrame{}, false
+		}
+		return newSessionFrame(sessionID, *summary), true
+	})
 }
 
 func (m *Manager) broadcastProjectSessionSummaries(ctx context.Context, projectID string) {
@@ -4995,7 +5070,7 @@ func (m *Manager) broadcastProjectSessionSummaries(ctx context.Context, projectI
 		return
 	}
 	for _, item := range items {
-		m.broadcast(newSessionFrame(item.ID, item))
+		m.broadcastSessionSummary(ctx, item.ID)
 	}
 }
 
@@ -5017,6 +5092,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 	contextEstimate, contextEstimateMode := buildContextEstimate(record)
 	return SessionSummary{
 		ID:                       record.ID,
+		Revision:                 formatSnapshotRevision(record.SnapshotRevision),
 		ProjectID:                record.ProjectID,
 		WorktreeID:               record.WorktreeID,
 		OrderIndex:               record.OrderIndex,

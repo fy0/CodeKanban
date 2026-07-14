@@ -5,6 +5,7 @@ import {
   webSessionApi,
   type WebSessionAttachmentUploadProgress,
   type WebSessionImportResult,
+  type WebSessionSnapshot,
 } from '@/api/webSession';
 import type {
   WebSessionAttachment,
@@ -22,6 +23,10 @@ import {
   type WebSessionSnapshotVersionInput,
 } from '@/stores/webSessionSnapshotVersion';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
+import {
+  compareWebSessionRevisions,
+  normalizeWebSessionRevision,
+} from '@/utils/webSessionRevision';
 import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 
@@ -37,6 +42,7 @@ type SessionAssistantState =
 
 type WireSession = {
   id: string;
+  rev?: string;
   pid: string;
   wid?: string | null;
   oi?: number;
@@ -184,6 +190,7 @@ type WireFrame = {
   rid?: string;
   sid?: string;
   ts: number;
+  rev?: string;
   op?: string;
   p?: unknown;
   ok?: number;
@@ -317,8 +324,7 @@ function normalizeGoal(goal: WireSession['goal']): WebSessionGoal | null {
     threadId,
     objective,
     status,
-    tokenBudget:
-      typeof goal.tb === 'number' && Number.isFinite(goal.tb) ? Number(goal.tb) : null,
+    tokenBudget: typeof goal.tb === 'number' && Number.isFinite(goal.tb) ? Number(goal.tb) : null,
     tokensUsed: Number(goal.tu ?? 0),
     timeUsedSeconds: Number(goal.tsu ?? 0),
     createdAt:
@@ -471,7 +477,6 @@ type RuntimeMutationHydrationOptions = {
   label: string;
   timeoutMs?: number;
   passiveWaitMs?: number;
-  snapshotPollMs?: number;
   predicate: () => boolean;
 };
 
@@ -553,6 +558,9 @@ type LoadSessionSnapshotOptions = {
   rememberActive?: boolean;
   signal?: AbortSignal;
   preserveArchivedPosition?: boolean;
+  conditional?: boolean;
+  limit?: number;
+  skipTrailing?: boolean;
 };
 
 type PendingAutoRetryOverride = {
@@ -579,9 +587,8 @@ const WEB_SESSION_SOCKET_WATCHDOG_INTERVAL_MS = 5000;
 const WEB_SESSION_EVENT_RECONNECT_BASE_DELAY_MS = 1200;
 const WEB_SESSION_EVENT_RECONNECT_MAX_DELAY_MS = 15000;
 const WEB_SESSION_AUTO_RETRY_OPTIMISTIC_TTL_MS = 5000;
-const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_WAIT_MS = 120;
+const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_WAIT_MS = 150;
 const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_POLL_MS = 16;
-const WEB_SESSION_RUNTIME_MUTATION_SNAPSHOT_POLL_MS = 180;
 const WEB_SESSION_RUNTIME_MUTATION_TIMEOUT_MS = 2500;
 const WEB_SESSION_RUNTIME_ABORT_TIMEOUT_MS = 5000;
 const WEB_SESSION_MAX_RETAINED_BLOCKS = 400;
@@ -1535,6 +1542,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
     new Map<string, PendingActiveCallTimeoutOverride>()
   );
   const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
+  const appliedRevisionBySession = new Map<string, string>();
+  const observedRevisionBySession = new Map<string, string>();
+  const fullSnapshotBaselineSessions = new Set<string>();
+  const inFlightSessionLists = new Map<string, Promise<WebSessionSummary[]>>();
+  const inFlightSnapshots = new Map<
+    string,
+    {
+      promise: Promise<WebSessionSnapshot>;
+      controller: AbortController;
+      consumers: Set<symbol>;
+    }
+  >();
   const completedTransitionVersionBySession = new Map<string, number>();
   const currentSessionProjectById = new Map<string, string>();
   const runtimeProjectionCacheBySession = new Map<string, RuntimeProjectionCacheEntry>();
@@ -1793,6 +1812,58 @@ export const useWebSessionStore = defineStore('web-session', () => {
     };
   }
 
+  function observeSessionRevision(sessionId: string, value: unknown) {
+    const revision = normalizeWebSessionRevision(value);
+    if (!revision) {
+      return '';
+    }
+    const current = observedRevisionBySession.get(sessionId) ?? '';
+    if (!current || compareWebSessionRevisions(revision, current) === 1) {
+      observedRevisionBySession.set(sessionId, revision);
+    }
+    return revision;
+  }
+
+  function rememberAppliedRevision(sessionId: string, value: unknown, fullSnapshot = false) {
+    const revision = observeSessionRevision(sessionId, value);
+    if (!revision) {
+      return;
+    }
+    const current = appliedRevisionBySession.get(sessionId) ?? '';
+    if (!current || compareWebSessionRevisions(revision, current) !== -1) {
+      appliedRevisionBySession.set(sessionId, revision);
+    }
+    if (fullSnapshot) {
+      fullSnapshotBaselineSessions.add(sessionId);
+    }
+  }
+
+  function getAppliedRevision(sessionId: string) {
+    return appliedRevisionBySession.get(sessionId) ?? '';
+  }
+
+  function isSessionSnapshotCurrent(sessionId: string, serverRevision?: string | null) {
+    if (!fullSnapshotBaselineSessions.has(sessionId)) {
+      return false;
+    }
+    const normalizedServerRevision = normalizeWebSessionRevision(serverRevision);
+    const appliedRevision = getAppliedRevision(sessionId);
+    return Boolean(
+      normalizedServerRevision &&
+        appliedRevision &&
+        compareWebSessionRevisions(appliedRevision, normalizedServerRevision) !== -1
+    );
+  }
+
+  function shouldApplyRevision(sessionId: string, value: unknown) {
+    const revision = normalizeWebSessionRevision(value);
+    const appliedRevision = getAppliedRevision(sessionId);
+    if (!revision || !appliedRevision) {
+      return true;
+    }
+    return compareWebSessionRevisions(revision, appliedRevision) !== -1;
+  }
+
   function rememberAppliedSnapshotVersion(
     sessionId: string,
     snapshot: WebSessionSnapshotVersionInput
@@ -1937,6 +2008,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       session: summary,
       historyTotal: history.total,
     });
+    rememberAppliedRevision(sessionId, summary.revision, true);
     if (summary.status === 'done') {
       completedTransitionVersionBySession.set(
         sessionId,
@@ -2242,6 +2314,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         : new Date(session.lu).toISOString();
     return {
       id: session.id,
+      revision: normalizeWebSessionRevision(session.rev),
       projectId: session.pid,
       worktreeId: session.wid ?? null,
       orderIndex: Number(session.oi ?? 0),
@@ -2847,6 +2920,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     delete nextHistory[sessionId];
     historyBySession.value = nextHistory;
     appliedSnapshotVersionBySession.delete(sessionId);
+    appliedRevisionBySession.delete(sessionId);
+    observedRevisionBySession.delete(sessionId);
+    fullSnapshotBaselineSessions.delete(sessionId);
     pendingAutoRetryOverrides.delete(sessionId);
     pendingActiveCallTimeoutOverrides.delete(sessionId);
     runtimeProjectionCacheBySession.delete(sessionId);
@@ -3513,7 +3589,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   async function hydrateRuntimeMutation(
     sessionId: string,
-    options: RuntimeMutationHydrationOptions
+    options: RuntimeMutationHydrationOptions,
+    acknowledgedRevision: string
   ) {
     if (options.predicate()) {
       return true;
@@ -3539,44 +3616,45 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return options.predicate();
     }
 
-    const deadline =
-      Date.now() + Math.max(0, options.timeoutMs ?? WEB_SESSION_RUNTIME_MUTATION_TIMEOUT_MS);
-    const snapshotPollMs = Math.max(
-      1,
-      options.snapshotPollMs ?? WEB_SESSION_RUNTIME_MUTATION_SNAPSHOT_POLL_MS
-    );
-    let lastSnapshotError: unknown = null;
-
-    while (Date.now() < deadline) {
-      if (options.predicate()) {
-        return true;
-      }
-
+    let snapshotError: unknown = null;
+    if (!isSessionSnapshotCurrent(sessionId, acknowledgedRevision)) {
       try {
         await loadSessionSnapshot(session.projectId, sessionId, {
           rememberActive: false,
+          conditional: true,
         });
-        lastSnapshotError = null;
       } catch (error) {
-        lastSnapshotError = error;
+        snapshotError = error;
       }
-
-      if (options.predicate()) {
-        return true;
-      }
-
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) {
-        break;
-      }
-      await delayRuntimeMutation(Math.min(snapshotPollMs, remainingMs));
+    }
+    if (options.predicate()) {
+      return true;
     }
 
-    if (lastSnapshotError) {
+    const timeoutMs = Math.max(0, options.timeoutMs ?? WEB_SESSION_RUNTIME_MUTATION_TIMEOUT_MS);
+    const settledFromEvents = await waitForRuntimeMutationPredicate(
+      options.predicate,
+      timeoutMs,
+      WEB_SESSION_RUNTIME_MUTATION_PASSIVE_POLL_MS
+    );
+    if (settledFromEvents) {
+      return true;
+    }
+
+    try {
+      await loadSessionSnapshot(session.projectId, sessionId, {
+        rememberActive: false,
+        conditional: true,
+      });
+      snapshotError = null;
+    } catch (error) {
+      snapshotError = error;
+    }
+    if (snapshotError) {
       console.warn('[Web Session] Runtime mutation hydration did not settle cleanly', {
         sessionId,
         label: options.label,
-        error: lastSnapshotError,
+        error: snapshotError,
       });
     }
     return options.predicate();
@@ -3714,6 +3792,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (frame.k === 'ack') {
+      if (frame.sid) {
+        observeSessionRevision(frame.sid, frame.rev);
+      }
       if (frame.op === 'set_ar' && frame.sid) {
         acknowledgePendingAutoRetryOverride(frame.sid, Date.now());
       }
@@ -3725,7 +3806,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (frame.k === 'snap' && frame.sid && frame.s) {
-      const summary = normalizeSession(frame.s);
+      const summary = {
+        ...normalizeSession(frame.s),
+        revision: normalizeWebSessionRevision(frame.rev ?? frame.s.rev),
+      };
+      if (!shouldApplyRevision(frame.sid, summary.revision)) {
+        setHistoryLoading(frame.sid, false);
+        return;
+      }
       const historyTotal = Number(frame.h?.tot ?? frame.h?.its?.length ?? 0);
       const snapshotInput = currentSnapshotVersionInput(frame.sid);
       const appliedVersion = appliedSnapshotVersionBySession.get(frame.sid) ?? null;
@@ -3802,10 +3890,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (frame.k === 'evt' && frame.sid) {
+      observeSessionRevision(frame.sid, frame.rev);
+      if (!shouldApplyRevision(frame.sid, frame.rev)) {
+        return;
+      }
       const shouldEmitTransition = frame.op !== 'hist_page';
       const previousProjection = shouldEmitTransition ? getRuntimeProjection(frame.sid) : null;
       if (frame.s) {
-        upsertSession(normalizeSession(frame.s));
+        upsertSession({
+          ...normalizeSession(frame.s),
+          revision: normalizeWebSessionRevision(frame.rev ?? frame.s.rev),
+        });
       }
       if (frame.op === 'pending') {
         setPendingInputs(
@@ -3825,6 +3920,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
             : []
         );
         emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
+        rememberAppliedRevision(frame.sid, frame.rev);
         return;
       }
 
@@ -3854,6 +3950,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
             : []
         );
         emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
+        rememberAppliedRevision(frame.sid, frame.rev);
         return;
       }
 
@@ -3880,6 +3977,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
 
       emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
+      rememberAppliedRevision(frame.sid, frame.rev);
     }
   }
 
@@ -4179,8 +4277,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
     payload: Record<string, unknown>,
     hydration: RuntimeMutationHydrationOptions
   ) {
-    await sendCommand(op, sessionId, payload);
-    await hydrateRuntimeMutation(sessionId, hydration);
+    const acknowledgement = await sendCommand(op, sessionId, payload);
+    const revision = normalizeWebSessionRevision(acknowledgement.rev);
+    if (!revision) {
+      throw new Error(`websocket command ${op} returned no snapshot revision`);
+    }
+    await hydrateRuntimeMutation(sessionId, hydration, revision);
   }
 
   async function loadSessions(projectId: string, force = false) {
@@ -4190,19 +4292,47 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!force && loadedProjects.value[projectId]) {
       return sessionsByProject.value[projectId] ?? [];
     }
-    const sessions = (await webSessionApi.list(projectId)).map(session =>
-      applyPendingActiveCallTimeoutOverride(applyPendingAutoRetryOverride(session))
-    );
-    replaceProjectSessions(projectId, sortSessions(sessions));
-    syncSessionCount(projectId);
-    loadedProjects.value = {
-      ...loadedProjects.value,
-      [projectId]: true,
-    };
-    if (!hasStoredActiveSession(projectId) && sessions[0]?.id) {
-      rememberActiveSession(projectId, sessions[0].id);
+    const existingRequest = inFlightSessionLists.get(projectId);
+    if (existingRequest) {
+      return existingRequest;
     }
-    return sessions;
+    const request = webSessionApi.list(projectId).then(items => {
+      const currentById = new Map(
+        (sessionsByProject.value[projectId] ?? []).map(session => [session.id, session])
+      );
+      const sessions = items.map(item => {
+        observeSessionRevision(item.id, item.revision);
+        const session = applyPendingActiveCallTimeoutOverride(applyPendingAutoRetryOverride(item));
+        const current = currentById.get(session.id);
+        return current && compareWebSessionRevisions(current.revision, session.revision) === 1
+          ? current
+          : session;
+      });
+      replaceProjectSessions(projectId, sortSessions(sessions));
+      syncSessionCount(projectId);
+      loadedProjects.value = {
+        ...loadedProjects.value,
+        [projectId]: true,
+      };
+      if (!hasStoredActiveSession(projectId) && sessions[0]?.id) {
+        rememberActiveSession(projectId, sessions[0].id);
+      }
+      return sessions;
+    });
+    inFlightSessionLists.set(projectId, request);
+    void request.then(
+      () => {
+        if (inFlightSessionLists.get(projectId) === request) {
+          inFlightSessionLists.delete(projectId);
+        }
+      },
+      () => {
+        if (inFlightSessionLists.get(projectId) === request) {
+          inFlightSessionLists.delete(projectId);
+        }
+      }
+    );
+    return request;
   }
 
   async function loadSessionCounts() {
@@ -4314,21 +4444,112 @@ export const useWebSessionStore = defineStore('web-session', () => {
     projectId: string,
     sessionId: string,
     options?: LoadSessionSnapshotOptions
-  ) {
+  ): Promise<WebSessionSnapshot | null> {
     if (!projectId || !sessionId) {
       return null;
     }
     setHistoryLoading(sessionId, true);
     try {
-      const snapshot = options?.signal
-        ? await webSessionApi.snapshot(projectId, sessionId, {
-            signal: options.signal,
-          })
-        : await webSessionApi.snapshot(projectId, sessionId);
-      if (snapshot?.session) {
+      const limit = Math.max(1, Math.trunc(options?.limit ?? 80));
+      const key = `${projectId}:${sessionId}:${limit}`;
+      let flight = inFlightSnapshots.get(key);
+      if (!flight) {
+        const controller = new AbortController();
+        const knownRevision =
+          options?.conditional && fullSnapshotBaselineSessions.has(sessionId)
+            ? getAppliedRevision(sessionId)
+            : '';
+        const promise = webSessionApi.snapshot(projectId, sessionId, {
+          limit,
+          signal: controller.signal,
+          ...(knownRevision ? { knownRevision } : {}),
+        });
+        flight = {
+          promise,
+          controller,
+          consumers: new Set<symbol>(),
+        };
+        inFlightSnapshots.set(key, flight);
+        const activeFlight = flight;
+        void promise.then(
+          () => {
+            if (inFlightSnapshots.get(key) === activeFlight) {
+              inFlightSnapshots.delete(key);
+            }
+          },
+          () => {
+            if (inFlightSnapshots.get(key) === activeFlight) {
+              inFlightSnapshots.delete(key);
+            }
+          }
+        );
+      }
+
+      const consumer = Symbol(sessionId);
+      flight.consumers.add(consumer);
+      let abortHandler: (() => void) | null = null;
+      const snapshot = await new Promise<WebSessionSnapshot>((resolve, reject) => {
+        const release = () => {
+          options?.signal?.removeEventListener('abort', abortHandler!);
+          flight?.consumers.delete(consumer);
+          if (flight && flight.consumers.size === 0 && inFlightSnapshots.get(key) === flight) {
+            flight.controller.abort();
+          }
+        };
+        abortHandler = () => {
+          release();
+          const error = new Error('The operation was aborted.');
+          error.name = 'AbortError';
+          reject(error);
+        };
+        if (options?.signal?.aborted) {
+          abortHandler();
+          return;
+        }
+        options?.signal?.addEventListener('abort', abortHandler, { once: true });
+        flight!.promise.then(
+          value => {
+            release();
+            resolve(value);
+          },
+          error => {
+            release();
+            reject(error);
+          }
+        );
+      });
+      const responseRevision = normalizeWebSessionRevision(
+        snapshot.revision ?? snapshot.session?.revision
+      );
+      observeSessionRevision(sessionId, responseRevision);
+      if (snapshot.unchanged) {
+        setHistoryLoading(sessionId, false);
+      } else if (snapshot.session && snapshot.history) {
+        const summary = {
+          ...snapshot.session,
+          revision: responseRevision || snapshot.session.revision,
+        };
+        if (!shouldApplyRevision(sessionId, responseRevision)) {
+          setHistoryLoading(sessionId, false);
+          const observedRevision = observedRevisionBySession.get(sessionId) ?? '';
+          if (
+            options?.conditional &&
+            !options.skipTrailing &&
+            compareWebSessionRevisions(responseRevision, observedRevision) === -1
+          ) {
+            return loadSessionSnapshot(projectId, sessionId, {
+              ...options,
+              skipTrailing: true,
+            });
+          }
+          return {
+            revision: getAppliedRevision(sessionId),
+            unchanged: true,
+          };
+        }
         applySessionSnapshot(
           sessionId,
-          snapshot.session,
+          summary,
           Array.isArray(snapshot.history?.items)
             ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
             : [],
@@ -4356,6 +4577,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
       if (options?.rememberActive !== false) {
         rememberActiveSession(projectId, sessionId);
+      }
+      const observedRevision = observedRevisionBySession.get(sessionId) ?? '';
+      if (
+        options?.conditional &&
+        !options.skipTrailing &&
+        compareWebSessionRevisions(responseRevision, observedRevision) === -1
+      ) {
+        return loadSessionSnapshot(projectId, sessionId, {
+          ...options,
+          skipTrailing: true,
+        });
       }
       return snapshot;
     } catch (error) {
@@ -4990,19 +5222,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   async function refreshGoal(sessionId: string) {
     const beforeUpdatedAt = findSessionById(sessionId)?.goal?.updatedAt ?? '';
-    await runRuntimeMutationCommand(sessionId, 'goal_get', {}, {
-      label: 'goal_get',
-      predicate: () => {
-        const session = findSessionById(sessionId);
-        if (!session) {
-          return false;
-        }
-        if (!session.goal) {
-          return true;
-        }
-        return session.goal.updatedAt !== beforeUpdatedAt;
-      },
-    });
+    await runRuntimeMutationCommand(
+      sessionId,
+      'goal_get',
+      {},
+      {
+        label: 'goal_get',
+        predicate: () => {
+          const session = findSessionById(sessionId);
+          if (!session) {
+            return false;
+          }
+          if (!session.goal) {
+            return true;
+          }
+          return session.goal.updatedAt !== beforeUpdatedAt;
+        },
+      }
+    );
   }
 
   async function setGoal(
@@ -5048,24 +5285,39 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   async function pauseGoal(sessionId: string) {
-    await runRuntimeMutationCommand(sessionId, 'goal_pause', {}, {
-      label: 'goal_pause',
-      predicate: () => findSessionById(sessionId)?.goal?.status === 'paused',
-    });
+    await runRuntimeMutationCommand(
+      sessionId,
+      'goal_pause',
+      {},
+      {
+        label: 'goal_pause',
+        predicate: () => findSessionById(sessionId)?.goal?.status === 'paused',
+      }
+    );
   }
 
   async function resumeGoal(sessionId: string) {
-    await runRuntimeMutationCommand(sessionId, 'goal_resume', {}, {
-      label: 'goal_resume',
-      predicate: () => findSessionById(sessionId)?.goal?.status === 'active',
-    });
+    await runRuntimeMutationCommand(
+      sessionId,
+      'goal_resume',
+      {},
+      {
+        label: 'goal_resume',
+        predicate: () => findSessionById(sessionId)?.goal?.status === 'active',
+      }
+    );
   }
 
   async function clearGoal(sessionId: string) {
-    await runRuntimeMutationCommand(sessionId, 'goal_clear', {}, {
-      label: 'goal_clear',
-      predicate: () => !findSessionById(sessionId)?.goal,
-    });
+    await runRuntimeMutationCommand(
+      sessionId,
+      'goal_clear',
+      {},
+      {
+        label: 'goal_clear',
+        predicate: () => !findSessionById(sessionId)?.goal,
+      }
+    );
   }
 
   async function updatePermissionLevel(
@@ -5288,6 +5540,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getPendingInputs,
     getScheduledInputs,
     getHistoryMeta,
+    getAppliedRevision,
+    isSessionSnapshotCurrent,
     getBlocks,
     getLatestEventSeq,
     loadSessions,

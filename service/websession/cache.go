@@ -416,7 +416,7 @@ func (m *Manager) replaceSessionHistoryCache(
 		if len(updates) > 0 {
 			if err := tx.Model(&tables.WebSessionTable{}).
 				Where("id = ?", session.ID).
-				Updates(updates).Error; err != nil {
+				Updates(withSnapshotRevisionIncrement(updates)).Error; err != nil {
 				return err
 			}
 		}

@@ -976,7 +976,6 @@
                 </div>
               </div>
             </div>
-
           </div>
 
           <div v-else-if="!currentSession" class="empty-state">
@@ -996,7 +995,12 @@
                 </span>
               </div>
               <div class="goal-card-actions">
-                <n-button size="small" tertiary :disabled="isCurrentSessionGoalModeBlocked" @click="handleGoalCompose">
+                <n-button
+                  size="small"
+                  tertiary
+                  :disabled="isCurrentSessionGoalModeBlocked"
+                  @click="handleGoalCompose"
+                >
                   Edit
                 </n-button>
                 <n-button
@@ -2524,6 +2528,7 @@ import {
 } from '@/components/web-session/webSessionSidebarVirtualList';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
+import { createWebSessionCatchUpScheduler } from '@/components/web-session/webSessionCatchUpScheduler';
 import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
 import { buildWorkspaceRouteQuery, inferWorkspaceRouteTab } from '@/utils/workspaceRoute';
 import {
@@ -2545,6 +2550,7 @@ const MIN_SESSION_SIDEBAR_WIDTH = 200;
 const MAX_SESSION_SIDEBAR_WIDTH = 400;
 const DEFAULT_SESSION_SIDEBAR_WIDTH = 240;
 const MIN_SESSION_MAIN_WIDTH = 420;
+const WEB_SESSION_CATCH_UP_DEBOUNCE_MS = 150;
 const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
 const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
 const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
@@ -2951,6 +2957,9 @@ const tabDragSortable = shallowRef<Sortable | null>(null);
 let composerDragDepth = 0;
 let webSessionCatchUpTimer: number | null = null;
 let webSessionCatchUpToken = 0;
+const webSessionCatchUpScheduler = createWebSessionCatchUpScheduler(reason => {
+  void refreshWebSessionCatchUp(reason);
+}, WEB_SESSION_CATCH_UP_DEBOUNCE_MS);
 let sendConfirmationTimer: number | null = null;
 let lastEmittedMobileComposerChromeHidden = false;
 let mobileTimelineTouchY: number | null = null;
@@ -3078,7 +3087,9 @@ const isCurrentDraftCodexSession = computed(() => {
 });
 const isGoalCardVisible = computed(() => {
   const session = currentSession.value;
-  return Boolean(session && session.agent === 'codex' && !isDraftSession(session) && showGoalCard.value);
+  return Boolean(
+    session && session.agent === 'codex' && !isDraftSession(session) && showGoalCard.value
+  );
 });
 const showGoalCard = ref(false);
 
@@ -3340,6 +3351,7 @@ function clearWebSessionCatchUpTimer() {
 
 function stopWebSessionCatchUp(reason: string) {
   clearWebSessionCatchUpTimer();
+  webSessionCatchUpScheduler.cancel();
   if (!webSessionCatchUpActive.value && !frozenBlocks.value) {
     return;
   }
@@ -3383,13 +3395,20 @@ async function refreshWebSessionCatchUp(reason: string) {
   const token = ++webSessionCatchUpToken;
 
   try {
+    let serverRevision = session.revision;
     if (session?.projectId && !session.archivedAt) {
-      await webSessionStore.loadSessions(session.projectId, true);
+      const loadedSessions = await webSessionStore.loadSessions(session.projectId, true);
+      serverRevision =
+        loadedSessions.find(item => item.id === sessionId)?.revision ?? serverRevision;
     }
-    const snapshot = await webSessionStore.loadSessionSnapshot(session.projectId, sessionId, {
-      rememberActive: !isArchivedPreviewSession(currentSession.value),
-      preserveArchivedPosition: isArchivedPreviewSession(currentSession.value),
-    });
+    let snapshot = null;
+    if (!webSessionStore.isSessionSnapshotCurrent(sessionId, serverRevision)) {
+      snapshot = await webSessionStore.loadSessionSnapshot(session.projectId, sessionId, {
+        rememberActive: !isArchivedPreviewSession(currentSession.value),
+        preserveArchivedPosition: isArchivedPreviewSession(currentSession.value),
+        conditional: true,
+      });
+    }
     if (isArchivedPreviewSession(currentSession.value) && snapshot?.session) {
       archivedPreviewSession.value = {
         ...snapshot.session,
@@ -3430,6 +3449,15 @@ async function refreshWebSessionCatchUp(reason: string) {
   }, WEB_SESSION_CATCH_UP_SETTLE_MS);
 }
 
+function scheduleWebSessionCatchUp(reason: string) {
+  if (!currentRealSession.value?.id) {
+    stopWebSessionCatchUp(`${reason}-no-session`);
+    return;
+  }
+  beginWebSessionCatchUp(reason);
+  webSessionCatchUpScheduler.schedule(reason);
+}
+
 function handleWebSessionDocumentVisibilityChange() {
   if (!isDocumentVisible()) {
     beginWebSessionCatchUp('document-hidden');
@@ -3437,7 +3465,7 @@ function handleWebSessionDocumentVisibilityChange() {
   }
   refreshTabHeaderLayout();
   void loadCodexRuntimeConfig();
-  void refreshWebSessionCatchUp('document-visible');
+  scheduleWebSessionCatchUp('document-visible');
 }
 
 function handleWebSessionWindowFocus() {
@@ -3446,7 +3474,7 @@ function handleWebSessionWindowFocus() {
   }
   refreshTabHeaderLayout();
   void loadCodexRuntimeConfig();
-  void refreshWebSessionCatchUp('window-focus');
+  scheduleWebSessionCatchUp('window-focus');
 }
 
 function handleWebSessionWindowPageShow() {
@@ -3455,7 +3483,7 @@ function handleWebSessionWindowPageShow() {
   }
   refreshTabHeaderLayout();
   void loadCodexRuntimeConfig();
-  void refreshWebSessionCatchUp('window-pageshow');
+  scheduleWebSessionCatchUp('window-pageshow');
 }
 
 function isReasoningBlock(block: WebSessionBlock) {
@@ -4303,11 +4331,7 @@ const composerHint = computed(() => {
   if (codexRuntimeConfig.value && selectedAgent.value === 'codex' && !runtimeHasCodex.value) {
     return t('webSession.composerHintCodexMissing');
   }
-  if (
-    codexRuntimeConfig.value &&
-    selectedAgent.value === 'claude' &&
-    !runtimeHasClaudeCode.value
-  ) {
+  if (codexRuntimeConfig.value && selectedAgent.value === 'claude' && !runtimeHasClaudeCode.value) {
     return t('webSession.composerHintClaudeMissing');
   }
   if (isDraftAttachmentUploading.value) {
@@ -7232,9 +7256,7 @@ function resolveModelSelectWidth(label: string) {
   return clamp(MODEL_SELECT_MIN_WIDTH, width, MODEL_SELECT_MAX_WIDTH);
 }
 
-function defaultReasoningEffortForAgent(
-  agent: 'claude' | 'codex'
-): WebSessionReasoningEffort {
+function defaultReasoningEffortForAgent(agent: 'claude' | 'codex'): WebSessionReasoningEffort {
   return agent === 'codex' ? 'xhigh' : 'default';
 }
 
@@ -11600,7 +11622,7 @@ watch(
     if (!isDocumentVisible() || !currentRealSession.value?.id) {
       return;
     }
-    void refreshWebSessionCatchUp('panel-active');
+    scheduleWebSessionCatchUp('panel-active');
   }
 );
 
@@ -11610,7 +11632,7 @@ watch(
     if (version <= 0 || !props.isActive || !isDocumentVisible()) {
       return;
     }
-    void refreshWebSessionCatchUp('event-stream-recovered');
+    scheduleWebSessionCatchUp('event-stream-recovered');
   }
 );
 
@@ -14392,7 +14414,11 @@ defineExpose({
   border-radius: 14px;
   background:
     radial-gradient(circle at top right, rgba(14, 165, 233, 0.08) 0%, transparent 42%),
-    linear-gradient(145deg, color-mix(in srgb, var(--app-surface-color, #fff) 92%, #e0f2fe) 0%, var(--app-surface-color, #fff) 100%);
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--app-surface-color, #fff) 92%, #e0f2fe) 0%,
+      var(--app-surface-color, #fff) 100%
+    );
 }
 
 .goal-card.status-empty {
@@ -15253,7 +15279,6 @@ defineExpose({
 .composer-settings-trigger:active {
   transform: translateY(1px);
 }
-
 
 .composer-settings-popover-card {
   width: min(300px, 74vw);

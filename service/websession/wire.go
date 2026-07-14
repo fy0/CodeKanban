@@ -34,6 +34,7 @@ type wireFrame struct {
 	RequestID        string                `json:"rid,omitempty"`
 	SessionID        string                `json:"sid,omitempty"`
 	Timestamp        int64                 `json:"ts"`
+	Revision         string                `json:"rev,omitempty"`
 	Operation        string                `json:"op,omitempty"`
 	Payload          any                   `json:"p,omitempty"`
 	OK               *int                  `json:"ok,omitempty"`
@@ -50,6 +51,7 @@ type wireFrame struct {
 
 type wireSess struct {
 	ID                       string      `json:"id"`
+	Revision                 string      `json:"rev,omitempty"`
 	ProjectID                string      `json:"pid"`
 	WorktreeID               *string     `json:"wid,omitempty"`
 	OrderIndex               float64     `json:"oi"`
@@ -214,9 +216,9 @@ type wirePendingUserInput struct {
 	RequestedAt *int64                `json:"ra,omitempty"`
 }
 
-func newAckFrame(requestID, op, sessionID string, payload any) wireFrame {
+func newAckFrame(requestID, op, sessionID string, payload any, revision ...string) wireFrame {
 	ok := 1
-	return wireFrame{
+	frame := wireFrame{
 		Version:   protocolVersion,
 		Kind:      "ack",
 		RequestID: requestID,
@@ -226,6 +228,10 @@ func newAckFrame(requestID, op, sessionID string, payload any) wireFrame {
 		Payload:   payload,
 		OK:        &ok,
 	}
+	if len(revision) > 0 {
+		frame.Revision = revision[0]
+	}
+	return frame
 }
 
 func newErrorFrame(requestID, sessionID, code, message string, retry bool) wireFrame {
@@ -260,6 +266,7 @@ func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
 		Kind:      "snap",
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
+		Revision:  snap.Revision,
 		Session:   mapWireSession(snap.Session),
 		History: &wireHist{
 			Items:        wireHistory,
@@ -384,6 +391,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 	}
 	wireSession := &wireSess{
 		ID:                       session.ID,
+		Revision:                 session.Revision,
 		ProjectID:                session.ProjectID,
 		WorktreeID:               session.WorktreeID,
 		OrderIndex:               session.OrderIndex,

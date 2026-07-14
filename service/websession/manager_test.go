@@ -514,7 +514,7 @@ func TestManagerHandleHeartbeatPayloadRepliesToPing(t *testing.T) {
 	}
 }
 
-func TestHandleSendCommandRepliesWithAckAndSnapshot(t *testing.T) {
+func TestHandleSendCommandRepliesWithRevisionAck(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -547,20 +547,14 @@ func TestHandleSendCommandRepliesWithAckAndSnapshot(t *testing.T) {
 		t.Fatalf("HandleCommand returned error: %v", err)
 	}
 
-	if len(conn.frames) != 2 {
-		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected one ack frame, got %#v", conn.frames)
 	}
 	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "send" {
 		t.Fatalf("expected first frame to be send ack, got %#v", conn.frames[0])
 	}
-	if conn.frames[1].Kind != "snap" || conn.frames[1].SessionID != created.ID {
-		t.Fatalf("expected second frame to be session snapshot, got %#v", conn.frames[1])
-	}
-	if conn.frames[1].History == nil || conn.frames[1].History.Total < 1 {
-		t.Fatalf("expected snapshot history to contain the new message, got %#v", conn.frames[1].History)
-	}
-	if conn.frames[1].Session == nil || conn.frames[1].Session.Status == "" {
-		t.Fatalf("expected snapshot to include session summary, got %#v", conn.frames[1].Session)
+	if conn.frames[0].Revision == "" {
+		t.Fatalf("expected send ack to include revision, got %#v", conn.frames[0])
 	}
 
 	waitForSessionToSettle(t, manager, created.ID)
@@ -610,7 +604,7 @@ func TestHandleSendCommandRejectsMissingCodexBinary(t *testing.T) {
 	}
 }
 
-func TestHandlePendingUpdateCommandRepliesWithAckAndSnapshot(t *testing.T) {
+func TestHandlePendingUpdateCommandRepliesWithRevisionAck(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -650,17 +644,17 @@ func TestHandlePendingUpdateCommandRepliesWithAckAndSnapshot(t *testing.T) {
 		t.Fatalf("HandleCommand returned error: %v", err)
 	}
 
-	if len(conn.frames) != 2 {
-		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected one ack frame, got %#v", conn.frames)
 	}
 	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "pending_update" {
 		t.Fatalf("expected first frame to be pending_update ack, got %#v", conn.frames[0])
 	}
-	if conn.frames[1].Kind != "snap" || conn.frames[1].SessionID != created.ID {
-		t.Fatalf("expected second frame to be session snapshot, got %#v", conn.frames[1])
+	if conn.frames[0].Revision == "" {
+		t.Fatalf("expected pending update ack revision, got %#v", conn.frames[0])
 	}
-	if len(conn.frames[1].Pending) != 1 || conn.frames[1].Pending[0].Text != "updated draft" {
-		t.Fatalf("expected snapshot pending input to be updated, got %#v", conn.frames[1].Pending)
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 1 || pending[0].Text != "updated draft" {
+		t.Fatalf("expected pending input to be updated, got %#v", pending)
 	}
 }
 
@@ -702,18 +696,21 @@ func TestHandlePendingReorderCommandMovesAcrossPartitions(t *testing.T) {
 		t.Fatalf("HandleCommand returned error: %v", err)
 	}
 
-	if len(conn.frames) != 2 {
-		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected one ack frame, got %#v", conn.frames)
 	}
 	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "pending_reorder" {
 		t.Fatalf("expected first frame to be pending_reorder ack, got %#v", conn.frames[0])
 	}
-	if got := conn.frames[1].Pending; len(got) != 3 || got[0].ID != "queue-2" || got[0].Mode != "redirect" || got[1].ID != "redirect-1" || got[2].ID != "queue-1" {
-		t.Fatalf("expected reordered pending inputs in snapshot, got %#v", got)
+	if conn.frames[0].Revision == "" {
+		t.Fatalf("expected pending reorder ack revision, got %#v", conn.frames[0])
+	}
+	if got := manager.pendingInputsSnapshot(created.ID); len(got) != 3 || got[0].ID != "queue-2" || got[0].Mode != "redirect" || got[1].ID != "redirect-1" || got[2].ID != "queue-1" {
+		t.Fatalf("expected reordered pending inputs, got %#v", got)
 	}
 }
 
-func TestHandlePendingClearCommandClearsSnapshot(t *testing.T) {
+func TestHandlePendingClearCommandRepliesWithRevisionAck(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -749,14 +746,17 @@ func TestHandlePendingClearCommandClearsSnapshot(t *testing.T) {
 		t.Fatalf("HandleCommand returned error: %v", err)
 	}
 
-	if len(conn.frames) != 2 {
-		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected one ack frame, got %#v", conn.frames)
 	}
 	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "pending_clear" {
 		t.Fatalf("expected first frame to be pending_clear ack, got %#v", conn.frames[0])
 	}
-	if len(conn.frames[1].Pending) != 0 {
-		t.Fatalf("expected cleared pending inputs in snapshot, got %#v", conn.frames[1].Pending)
+	if conn.frames[0].Revision == "" {
+		t.Fatalf("expected pending clear ack revision, got %#v", conn.frames[0])
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected cleared pending inputs, got %#v", pending)
 	}
 }
 
@@ -847,24 +847,27 @@ func TestHandleGoalBootstrapCommandStartsHiddenCodexRun(t *testing.T) {
 
 	waitForSessionToSettle(t, manager, created.ID)
 
-	if len(conn.frames) < 2 {
-		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected one ack frame, got %#v", conn.frames)
 	}
 	if conn.frames[0].Kind != "ack" {
 		t.Fatalf("expected first frame to be ack, got %#v", conn.frames[0])
 	}
-	last := conn.frames[len(conn.frames)-1]
-	if last.Kind != "snap" || last.Session == nil {
-		t.Fatalf("expected final frame to be snapshot, got %#v", last)
+	if conn.frames[0].Revision == "" {
+		t.Fatalf("expected goal bootstrap ack revision, got %#v", conn.frames[0])
 	}
-	if last.Session.Goal == nil {
-		t.Fatalf("expected snapshot to include goal, got %#v", last.Session)
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
 	}
-	if last.Session.Goal.Objective != "Generate a first draft immediately" {
-		t.Fatalf("expected snapshot goal objective to be hydrated, got %#v", last.Session.Goal)
+	if snapshot.Session.Goal == nil {
+		t.Fatalf("expected session to include goal, got %#v", snapshot.Session)
 	}
-	if last.Session.NativeSessionID == nil || strings.TrimSpace(*last.Session.NativeSessionID) == "" {
-		t.Fatalf("expected snapshot to include native session id, got %#v", last.Session)
+	if snapshot.Session.Goal.Objective != "Generate a first draft immediately" {
+		t.Fatalf("expected goal objective to be hydrated, got %#v", snapshot.Session.Goal)
+	}
+	if snapshot.Session.NativeSessionID == nil || strings.TrimSpace(*snapshot.Session.NativeSessionID) == "" {
+		t.Fatalf("expected session to include native session id, got %#v", snapshot.Session)
 	}
 }
 
@@ -973,7 +976,7 @@ func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
 	}
 }
 
-func TestHandleApprovalCommandRepliesWithAckAndSnapshot(t *testing.T) {
+func TestHandleApprovalCommandRepliesWithRevisionAck(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -1014,17 +1017,14 @@ func TestHandleApprovalCommandRepliesWithAckAndSnapshot(t *testing.T) {
 		t.Fatalf("HandleCommand returned error: %v", err)
 	}
 
-	if len(conn.frames) != 2 {
-		t.Fatalf("expected approve ack and snapshot frames, got %#v", conn.frames)
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected one approve ack frame, got %#v", conn.frames)
 	}
 	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "approve" {
 		t.Fatalf("expected first frame to be approve ack, got %#v", conn.frames[0])
 	}
-	if conn.frames[1].Kind != "snap" || conn.frames[1].SessionID != created.ID {
-		t.Fatalf("expected second frame to be approval snapshot, got %#v", conn.frames[1])
-	}
-	if conn.frames[1].Session == nil {
-		t.Fatalf("expected snapshot summary after approval, got %#v", conn.frames[1])
+	if conn.frames[0].Revision == "" {
+		t.Fatalf("expected approval ack revision, got %#v", conn.frames[0])
 	}
 
 	waitForSessionToSettle(t, manager, created.ID)

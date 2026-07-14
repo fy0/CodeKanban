@@ -70,13 +70,20 @@ export type WebSessionScheduledInputRecord = {
 };
 
 export type WebSessionSnapshot = {
-  session: WebSessionSummary;
-  history: WebSessionHistoryWindow;
+  revision?: string;
+  unchanged?: boolean;
+  session?: WebSessionSummary;
+  history?: WebSessionHistoryWindow;
   pendingInputs?: WebSessionPendingInputRecord[];
   scheduledInputs?: WebSessionScheduledInputRecord[];
 };
 
-export type WebSessionImportResult = WebSessionSnapshot & {
+export type WebSessionImportResult = Omit<
+  WebSessionSnapshot,
+  'session' | 'history' | 'unchanged'
+> & {
+  session: WebSessionSummary;
+  history: WebSessionHistoryWindow;
   created: boolean;
   reused: boolean;
   synced: boolean;
@@ -206,12 +213,17 @@ export const webSessionApi = {
     options?: {
       limit?: number;
       signal?: AbortSignal;
+      knownRevision?: string;
     }
   ): Promise<WebSessionSnapshot> {
     const limit =
       typeof options?.limit === 'number' && Number.isFinite(options.limit) ? options.limit : 80;
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (options?.knownRevision) {
+      query.set('knownRevision', options.knownRevision);
+    }
     const method = http.Get<ItemResponse<WebSessionSnapshot>>(
-      `/projects/${projectId}/web-sessions/${sessionId}/snapshot?limit=${limit}`
+      `/projects/${projectId}/web-sessions/${sessionId}/snapshot?${query.toString()}`
     );
     const abortHandler = () => {
       method.abort();

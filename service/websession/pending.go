@@ -411,7 +411,9 @@ func (m *Manager) broadcastPendingInputs(sessionID string) {
 	if err != nil || record.ArchivedAt != nil {
 		return
 	}
-	m.broadcast(newPendingFrame(sessionID, m.pendingInputsSnapshot(sessionID)))
+	_ = m.broadcastNextRevision(context.Background(), sessionID, func() (wireFrame, bool) {
+		return newPendingFrame(sessionID, m.pendingInputsSnapshot(sessionID)), true
+	})
 }
 
 func (m *Manager) finishPendingProcessing(sessionID string) {

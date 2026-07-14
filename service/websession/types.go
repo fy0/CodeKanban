@@ -185,6 +185,7 @@ const (
 
 type SessionSummary struct {
 	ID                       string              `json:"id"`
+	Revision                 string              `json:"revision"`
 	ProjectID                string              `json:"projectId"`
 	WorktreeID               *string             `json:"worktreeId,omitempty"`
 	OrderIndex               float64             `json:"orderIndex"`
@@ -360,11 +361,33 @@ type PendingUserInput struct {
 }
 
 type SessionSnapshot struct {
+	Revision         string            `json:"revision"`
 	Session          SessionSummary    `json:"session"`
 	History          HistoryWindow     `json:"history"`
 	PendingInputs    []PendingInput    `json:"pendingInputs"`
 	ScheduledInputs  []ScheduledInput  `json:"scheduledInputs"`
 	PendingUserInput *PendingUserInput `json:"pendingUserInput,omitempty"`
+}
+
+type SessionSnapshotResponse struct {
+	Revision         string            `json:"revision"`
+	Unchanged        bool              `json:"unchanged"`
+	Session          *SessionSummary   `json:"session,omitempty"`
+	History          *HistoryWindow    `json:"history,omitempty"`
+	PendingInputs    []PendingInput    `json:"pendingInputs,omitempty"`
+	ScheduledInputs  []ScheduledInput  `json:"scheduledInputs,omitempty"`
+	PendingUserInput *PendingUserInput `json:"pendingUserInput,omitempty"`
+}
+
+func NewSessionSnapshotResponse(snapshot SessionSnapshot) SessionSnapshotResponse {
+	return SessionSnapshotResponse{
+		Revision:         snapshot.Revision,
+		Session:          &snapshot.Session,
+		History:          &snapshot.History,
+		PendingInputs:    snapshot.PendingInputs,
+		ScheduledInputs:  snapshot.ScheduledInputs,
+		PendingUserInput: snapshot.PendingUserInput,
+	}
 }
 
 type ImportResult struct {

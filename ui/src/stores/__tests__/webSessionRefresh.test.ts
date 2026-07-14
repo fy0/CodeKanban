@@ -51,6 +51,7 @@ function createStorageMock() {
 function makeSession(overrides: Partial<WebSessionSummary> = {}): WebSessionSummary {
   return {
     id: 'session-1',
+    revision: '1',
     projectId: 'project-1',
     worktreeId: null,
     orderIndex: 1000,
@@ -111,6 +112,7 @@ function toMillis(value?: string | null) {
 function toWireSession(session: WebSessionSummary) {
   return {
     id: session.id,
+    rev: session.revision,
     pid: session.projectId,
     wid: session.worktreeId,
     oi: session.orderIndex,
@@ -177,6 +179,7 @@ function makeWireHistoryItem(index: number, overrides: Record<string, unknown> =
 class FakeWebSocket {
   static OPEN = 1;
   static instances: FakeWebSocket[] = [];
+  static revision = 1;
 
   url: string;
   readyState = 0;
@@ -200,8 +203,16 @@ class FakeWebSocket {
   }
 
   dispatch(frame: unknown) {
+    const record = frame && typeof frame === 'object' ? (frame as Record<string, unknown>) : null;
+    const revisionedFrame =
+      record && record.k !== 'hb' && record.k !== 'err'
+        ? {
+            ...record,
+            rev: record.rev ?? String(++FakeWebSocket.revision),
+          }
+        : frame;
     this.onmessage?.({
-      data: JSON.stringify(frame),
+      data: JSON.stringify(revisionedFrame),
     });
   }
 
@@ -238,6 +249,7 @@ describe('webSession loading behavior', () => {
     });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     FakeWebSocket.instances = [];
+    FakeWebSocket.revision = 1;
     listMock.mockReset();
     queryArchivedMock.mockReset();
     snapshotMock.mockReset();
@@ -250,6 +262,132 @@ describe('webSession loading behavior', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('singleflights concurrent forced lists and session snapshots', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-singleflight', revision: '2' });
+    let resolveList!: (sessions: WebSessionSummary[]) => void;
+    const listPromise = new Promise<WebSessionSummary[]>(resolve => {
+      resolveList = resolve;
+    });
+    listMock.mockReturnValue(listPromise);
+
+    const firstList = store.loadSessions(session.projectId, true);
+    const secondList = store.loadSessions(session.projectId, true);
+    expect(listMock).toHaveBeenCalledTimes(1);
+    resolveList([session]);
+    await Promise.all([firstList, secondList]);
+
+    let resolveSnapshot!: (snapshot: {
+      revision: string;
+      session: WebSessionSummary;
+      history: { items: unknown[]; hasMore: boolean; total: number };
+    }) => void;
+    const snapshotPromise = new Promise<{
+      revision: string;
+      session: WebSessionSummary;
+      history: { items: unknown[]; hasMore: boolean; total: number };
+    }>(resolve => {
+      resolveSnapshot = resolve;
+    });
+    snapshotMock.mockReturnValue(snapshotPromise);
+
+    const firstSnapshot = store.loadSessionSnapshot(session.projectId, session.id);
+    const secondSnapshot = store.loadSessionSnapshot(session.projectId, session.id);
+    expect(snapshotMock).toHaveBeenCalledTimes(1);
+    resolveSnapshot({
+      revision: '2',
+      session,
+      history: { items: [], hasMore: false, total: 0 },
+    });
+    await Promise.all([firstSnapshot, secondSnapshot]);
+  });
+
+  it('rejects stale HTTP snapshots and uses knownRevision for unchanged probes', async () => {
+    const store = useWebSessionStore();
+    const newest = makeSession({ id: 'session-revision-guard', revision: '5', itemCount: 1 });
+    const stale = makeSession({
+      ...newest,
+      revision: '4',
+      itemCount: 0,
+      updatedAt: '2026-04-09T09:00:00.000Z',
+    });
+    listMock.mockResolvedValue([newest]);
+    snapshotMock
+      .mockResolvedValueOnce({
+        revision: '5',
+        session: newest,
+        history: {
+          items: [makeWireHistoryItem(1, { txt: 'newest state' })],
+          hasMore: false,
+          total: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        revision: '4',
+        session: stale,
+        history: { items: [], hasMore: false, total: 0 },
+      })
+      .mockResolvedValueOnce({
+        revision: '5',
+        unchanged: true,
+      });
+
+    await store.loadSessions(newest.projectId);
+    await store.loadSessionSnapshot(newest.projectId, newest.id);
+    await store.loadSessionSnapshot(newest.projectId, newest.id);
+    expect(store.getBlocks(newest.id).map(block => block.text)).toEqual(['newest state']);
+
+    await store.loadSessionSnapshot(newest.projectId, newest.id, { conditional: true });
+    expect(snapshotMock).toHaveBeenLastCalledWith(
+      newest.projectId,
+      newest.id,
+      expect.objectContaining({ knownRevision: '5' })
+    );
+    expect(store.isSessionSnapshotCurrent(newest.id, '5')).toBe(true);
+  });
+
+  it('drops websocket events older than the applied session revision', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-stale-event', revision: '5', itemCount: 1 });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      revision: '5',
+      session,
+      history: {
+        items: [makeWireHistoryItem(1, { txt: 'baseline' })],
+        hasMore: false,
+        total: 1,
+      },
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      rev: '6',
+      ts: Date.now(),
+      op: 'hist_item',
+      i: makeWireHistoryItem(2, { txt: 'new event' }),
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      rev: '5',
+      ts: Date.now(),
+      op: 'hist_item',
+      i: makeWireHistoryItem(3, { txt: 'stale event' }),
+    });
+
+    expect(store.getBlocks(session.id).map(block => block.text)).toEqual(['baseline', 'new event']);
   });
 
   it('loads archived session snapshots over HTTP without replacing the active session', async () => {
@@ -303,7 +441,14 @@ describe('webSession loading behavior', () => {
       rememberActive: false,
     });
 
-    expect(snapshotMock).toHaveBeenCalledWith(archivedSession.projectId, archivedSession.id);
+    expect(snapshotMock).toHaveBeenCalledWith(
+      archivedSession.projectId,
+      archivedSession.id,
+      expect.objectContaining({
+        limit: 80,
+        signal: expect.any(AbortSignal),
+      })
+    );
     expect(store.getActiveSessionId(currentSession.projectId)).toBe(currentSession.id);
     expect(store.getBlocks(archivedSession.id)).toHaveLength(1);
   });
@@ -417,9 +562,14 @@ describe('webSession loading behavior', () => {
       signal: controller.signal,
     });
 
-    expect(snapshotMock).toHaveBeenCalledWith(session.projectId, session.id, {
-      signal: controller.signal,
-    });
+    expect(snapshotMock).toHaveBeenCalledWith(
+      session.projectId,
+      session.id,
+      expect.objectContaining({
+        limit: 80,
+        signal: expect.any(AbortSignal),
+      })
+    );
   });
 
   it('loads older history pages over HTTP and merges them into the session timeline', async () => {
@@ -1598,12 +1748,19 @@ describe('webSession loading behavior', () => {
     await vi.advanceTimersByTimeAsync(500);
     await sendPromise;
 
-    expect(snapshotMock).toHaveBeenCalledWith(session.projectId, session.id);
+    expect(snapshotMock).toHaveBeenCalledWith(
+      session.projectId,
+      session.id,
+      expect.objectContaining({
+        limit: 80,
+        signal: expect.any(AbortSignal),
+      })
+    );
     expect(store.getBlocks(session.id)).toHaveLength(1);
     expect(store.getBlocks(session.id)[0]?.text).toBe('hello from snapshot');
   });
 
-  it('keeps abort pending until snapshot hydration observes the session stop', async () => {
+  it('keeps abort pending until a revisioned event observes the session stop', async () => {
     vi.useFakeTimers();
     window.setTimeout = setTimeout;
     window.clearTimeout = clearTimeout;
@@ -1627,25 +1784,15 @@ describe('webSession loading behavior', () => {
     });
 
     listMock.mockResolvedValue([runningSession]);
-    snapshotMock
-      .mockResolvedValueOnce({
-        session: runningSession,
-        history: {
-          items: [],
-          hasMore: false,
-          total: 0,
-        },
-        pendingInputs: [],
-      })
-      .mockResolvedValueOnce({
-        session: stoppedSession,
-        history: {
-          items: [],
-          hasMore: false,
-          total: 0,
-        },
-        pendingInputs: [],
-      });
+    snapshotMock.mockResolvedValue({
+      session: runningSession,
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [],
+    });
 
     await store.loadSessions(runningSession.projectId);
 
@@ -1672,10 +1819,19 @@ describe('webSession loading behavior', () => {
       ok: 1,
     });
 
-    await vi.advanceTimersByTimeAsync(900);
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: runningSession.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession(stoppedSession),
+    });
+
+    await vi.advanceTimersByTimeAsync(200);
     await abortPromise;
 
-    expect(snapshotMock).toHaveBeenCalledTimes(2);
+    expect(snapshotMock).not.toHaveBeenCalled();
     expect(store.getLiveState(runningSession.id)).toMatchObject({
       running: false,
       phase: 'idle',
