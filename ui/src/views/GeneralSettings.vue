@@ -4564,15 +4564,10 @@ function formatShortcutLabel(event: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--n-border-color);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--app-surface-color, var(--n-card-color)) 90%, transparent);
 }
 
 .settings-backup-subgroup {
-  padding: 12px;
-  background: color-mix(in srgb, var(--n-card-color) 92%, transparent);
+  padding: 4px 0 0 12px;
 }
 
 .settings-backup-group__title,
