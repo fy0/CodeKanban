@@ -2241,6 +2241,8 @@ func TestCodexAppServerAutoContinuesIncompleteGPT56Turn(t *testing.T) {
 		workflowMode WorkflowMode
 	}{
 		{name: "plan commentary only", mode: "incomplete_commentary_then_success", workflowMode: WorkflowModePlan},
+		{name: "commentary phase inherited", mode: "incomplete_inherited_commentary_then_success", workflowMode: WorkflowModeDefault},
+		{name: "empty unknown phase", mode: "incomplete_empty_unknown_then_success", workflowMode: WorkflowModeDefault},
 		{name: "default tool only", mode: "incomplete_tool_then_success", workflowMode: WorkflowModeDefault},
 	}
 
@@ -2310,6 +2312,67 @@ func TestCodexAppServerAutoContinuesIncompleteGPT56Turn(t *testing.T) {
 			}
 			if !sawFinalAnswer {
 				t.Fatal("expected final answer from the continued turn")
+			}
+		})
+	}
+}
+
+func TestCodexAppServerAcceptsCompletedGPT56ResponseWithoutStablePhase(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string
+	}{
+		{name: "phase missing", mode: "completed_without_phase"},
+		{name: "started final phase inherited", mode: "completed_with_inherited_final_phase"},
+		{name: "unknown future phase", mode: "completed_with_unknown_phase"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cleanup := initTestDB(t)
+			defer cleanup()
+
+			project := seedProject(t)
+			manager, err := NewManager(Config{
+				DataDir:   t.TempDir(),
+				CodexPath: writeFakeCodexAppServerCLI(t, test.mode),
+			}, zap.NewNop())
+			if err != nil {
+				t.Fatalf("NewManager returned error: %v", err)
+			}
+
+			created, err := manager.CreateSession(context.Background(), CreateParams{
+				ProjectID: project.ID,
+				Agent:     AgentCodex,
+				Model:     "gpt-5.6-sol",
+			})
+			if err != nil {
+				t.Fatalf("CreateSession returned error: %v", err)
+			}
+			if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+				t.Fatalf("SendMessage returned error: %v", err)
+			}
+			waitForSessionToSettle(t, manager, created.ID)
+
+			record, err := manager.GetSession(context.Background(), created.ID)
+			if err != nil {
+				t.Fatalf("GetSession returned error: %v", err)
+			}
+			if record.Status != string(StatusDone) {
+				t.Fatalf("expected compatible response to complete, got status %q", record.Status)
+			}
+
+			events, err := manager.store.readEvents(created.ID)
+			if err != nil {
+				t.Fatalf("readEvents returned error: %v", err)
+			}
+			if countEventsByType(events, "run_done") != 1 || countEventsByType(events, "run_fail") != 0 {
+				t.Fatalf("expected one successful run, got %#v", events)
+			}
+			for _, event := range events {
+				if event.Type == "note" && stringValue(event.Payload["code"]) == "incomplete_turn_auto_continue" {
+					t.Fatalf("expected no automatic continuation, got %#v", event)
+				}
 			}
 		})
 	}
@@ -5954,7 +6017,7 @@ function startTimedOutTurn(kind) {
   }
 }
 
-function finishTurn(text) {
+function finishTurn(text, startedPhase = 'final_answer', completedPhase = 'final_answer') {
   emitReasoning();
   if (mode === 'plan') {
     emitPlan();
@@ -5962,7 +6025,7 @@ function finishTurn(text) {
   send({
     method: 'item/started',
     params: {
-      item: { type: 'agentMessage', id: 'msg_test', text: '', phase: 'final_answer', memoryCitation: null },
+      item: { type: 'agentMessage', id: 'msg_test', text: '', phase: startedPhase, memoryCitation: null },
       threadId: activeThreadId,
       turnId,
     },
@@ -5974,7 +6037,7 @@ function finishTurn(text) {
   send({
     method: 'item/completed',
     params: {
-      item: { type: 'agentMessage', id: 'msg_test', text, phase: 'final_answer', memoryCitation: null },
+      item: { type: 'agentMessage', id: 'msg_test', text, phase: completedPhase, memoryCitation: null },
       threadId: activeThreadId,
       turnId,
     },
@@ -6431,6 +6494,24 @@ rl.on('line', line => {
       return;
     }
 
+    if (mode === 'incomplete_inherited_commentary_then_success') {
+      if (startedTurns === 1) {
+        finishTurn('Still working.', 'commentary', null);
+        return;
+      }
+      finishTurn('continued-final');
+      return;
+    }
+
+    if (mode === 'incomplete_empty_unknown_then_success') {
+      if (startedTurns === 1) {
+        finishTurn('', null, null);
+        return;
+      }
+      finishTurn('continued-final');
+      return;
+    }
+
     if (mode === 'incomplete_tool_then_success') {
       if (startedTurns === 1) {
         finishIncompleteToolOnly();
@@ -6442,6 +6523,21 @@ rl.on('line', line => {
 
     if (mode === 'incomplete_twice') {
       finishIncompleteCommentary('Still working.');
+      return;
+    }
+
+    if (mode === 'completed_without_phase') {
+      finishTurn('compatible-final', null, null);
+      return;
+    }
+
+    if (mode === 'completed_with_inherited_final_phase') {
+      finishTurn('compatible-final', 'final_answer', null);
+      return;
+    }
+
+    if (mode === 'completed_with_unknown_phase') {
+      finishTurn('compatible-final', 'future_phase', 'future_phase');
       return;
     }
 

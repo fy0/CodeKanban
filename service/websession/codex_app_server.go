@@ -1141,7 +1141,7 @@ func shouldContinueIncompleteCodexTurn(session tables.WebSessionTable, run *acti
 	if run == nil || !isGPT56CodexModel(session.Model) {
 		return false
 	}
-	if run.completedFinalAnswerSeen() || run.completedPlanToolSeen() || run.hasPendingServerRequest() {
+	if run.completedReplySeen() || run.completedPlanToolSeen() || run.hasPendingServerRequest() {
 		return false
 	}
 	return true

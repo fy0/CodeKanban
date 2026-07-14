@@ -150,7 +150,7 @@ type activeRun struct {
 	assistantDeltaSeen     map[string]bool
 	assistantMessagePhases map[string]string
 	assistantMessageText   map[string]bool
-	completedFinalAnswer   bool
+	completedReply         bool
 	claudeResumeOnly       bool
 	deferredUserInput      bool
 	completedPlanTool      bool
@@ -5968,15 +5968,15 @@ func (r *activeRun) recordAssistantMessageCompleted(messageID string, phase stri
 		r.assistantMessagePhases[messageID] = normalizedPhase
 	}
 	hasText := strings.TrimSpace(text) != "" || r.assistantMessageText[messageID]
-	if normalizedPhase == "final_answer" && hasText {
-		r.completedFinalAnswer = true
+	if normalizedPhase != "commentary" && hasText {
+		r.completedReply = true
 	}
 }
 
-func (r *activeRun) completedFinalAnswerSeen() bool {
+func (r *activeRun) completedReplySeen() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.completedFinalAnswer
+	return r.completedReply
 }
 
 func (r *activeRun) resetCodexTurnCompletionEvidence() {
@@ -5986,7 +5986,7 @@ func (r *activeRun) resetCodexTurnCompletionEvidence() {
 	r.assistantDeltaSeen = nil
 	r.assistantMessagePhases = nil
 	r.assistantMessageText = nil
-	r.completedFinalAnswer = false
+	r.completedReply = false
 }
 
 func (r *activeRun) markAssistantDeltaSeen(messageID string) {
