@@ -231,10 +231,53 @@
                 <div
                   v-for="item in visibleBlocks"
                   :key="item.key"
+                  :ref="element => setTimelineUserMessageRef(element, item)"
                   class="timeline-item"
                   :class="`kind-${item.kind}`"
                 >
                   <div v-if="!shouldHideTimelineMeta(item)" class="item-meta">
+                    <span v-if="item.kind === 'user'" class="user-message-navigation">
+                      <n-tooltip trigger="hover" placement="top" :delay="100">
+                        <template #trigger>
+                          <n-button
+                            quaternary
+                            circle
+                            size="small"
+                            class="user-message-navigation-button"
+                            :loading="isTimelineUserMessageNavigationLoading(item, 'previous')"
+                            :disabled="!canNavigateTimelineUserMessage(item, 'previous')"
+                            :title="t('terminal.prevUserMessage')"
+                            :aria-label="t('terminal.prevUserMessage')"
+                            @click.stop="navigateTimelineUserMessage(item, 'previous')"
+                          >
+                            <template #icon>
+                              <n-icon><ChevronUpOutline /></n-icon>
+                            </template>
+                          </n-button>
+                        </template>
+                        {{ t('terminal.prevUserMessage') }}
+                      </n-tooltip>
+                      <n-tooltip trigger="hover" placement="top" :delay="100">
+                        <template #trigger>
+                          <n-button
+                            quaternary
+                            circle
+                            size="small"
+                            class="user-message-navigation-button"
+                            :loading="isTimelineUserMessageNavigationLoading(item, 'next')"
+                            :disabled="!canNavigateTimelineUserMessage(item, 'next')"
+                            :title="t('terminal.nextUserMessage')"
+                            :aria-label="t('terminal.nextUserMessage')"
+                            @click.stop="navigateTimelineUserMessage(item, 'next')"
+                          >
+                            <template #icon>
+                              <n-icon><ChevronDownOutline /></n-icon>
+                            </template>
+                          </n-button>
+                        </template>
+                        {{ t('terminal.nextUserMessage') }}
+                      </n-tooltip>
+                    </span>
                     <span class="item-role">{{ timelineRoleLabel(item) }}</span>
                     <span class="item-time" :title="formatDateTime(item.timestamp)">{{
                       formatTime(item.timestamp)
@@ -2371,6 +2414,7 @@ import {
   AddOutline,
   ArchiveOutline,
   ChevronDownOutline,
+  ChevronUpOutline,
   CreateOutline,
   FlashOutline,
   FunnelOutline,
@@ -2492,6 +2536,11 @@ import {
   type WebSessionMobileComposerScrollState,
   type WebSessionTimelineScrollMetrics,
 } from '@/components/web-session/webSessionTimelineScroll';
+import {
+  canNavigateWebSessionUserMessage,
+  resolveWebSessionUserMessageTarget,
+  type WebSessionUserMessageNavigationDirection,
+} from '@/components/web-session/webSessionUserMessageNavigation';
 import {
   getWebSessionSidebarTone,
   getWebSessionTabTone,
@@ -2935,6 +2984,11 @@ const tabsContainerRef = ref<HTMLElement | null>(null);
 const mobileTabTriggerRef = ref<HTMLButtonElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const timelineListRef = ref<HTMLDivElement | null>(null);
+const timelineUserMessageElements = new Map<string, HTMLElement>();
+const userMessageNavigationPending = ref<{
+  key: string;
+  direction: WebSessionUserMessageNavigationDirection;
+} | null>(null);
 const mobileComposerScrollState = ref<WebSessionMobileComposerScrollState | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const composerInputRef = ref<WebSessionComposerEditorExposed | null>(null);
@@ -4124,6 +4178,127 @@ const historyMeta = computed(() =>
     ? webSessionStore.getHistoryMeta(currentRealSession.value.id)
     : { hasMore: false, beforeCursor: '', total: 0, loading: false }
 );
+
+function setTimelineUserMessageRef(element: unknown, block: WebSessionBlock) {
+  if (block.kind !== 'user') {
+    return;
+  }
+  if (element instanceof HTMLElement) {
+    timelineUserMessageElements.set(block.key, element);
+    return;
+  }
+  timelineUserMessageElements.delete(block.key);
+}
+
+function canLoadEarlierUserMessageHistory() {
+  return Boolean(
+    currentRealSession.value &&
+      historyMeta.value.hasMore &&
+      historyMeta.value.beforeCursor &&
+      !historyMeta.value.loading &&
+      !pendingHistoryAnchor.value
+  );
+}
+
+function isTimelineUserMessageNavigationLoading(
+  block: WebSessionBlock,
+  direction: WebSessionUserMessageNavigationDirection
+) {
+  return (
+    userMessageNavigationPending.value?.key === block.key &&
+    userMessageNavigationPending.value.direction === direction
+  );
+}
+
+function canNavigateTimelineUserMessage(
+  block: WebSessionBlock,
+  direction: WebSessionUserMessageNavigationDirection
+) {
+  if (userMessageNavigationPending.value || historyMeta.value.loading) {
+    return false;
+  }
+  return canNavigateWebSessionUserMessage({
+    blocks: visibleBlocks.value,
+    currentKey: block.key,
+    direction,
+    canLoadEarlier: canLoadEarlierUserMessageHistory(),
+  });
+}
+
+function getUserMessageHistoryLoadStateKey() {
+  const firstBlockKey = blocks.value[0]?.key ?? '';
+  return [
+    historyMeta.value.beforeCursor,
+    historyMeta.value.hasMore ? 'more' : 'end',
+    blocks.value.length,
+    firstBlockKey,
+  ].join(':');
+}
+
+async function loadEarlierHistoryForUserMessageNavigation() {
+  const session = currentRealSession.value;
+  const container = timelineScrollRef.value;
+  if (!session || !container) {
+    return;
+  }
+  pendingHistoryAnchor.value = {
+    sessionId: session.id,
+    previousHeight: container.scrollHeight,
+    previousTop: container.scrollTop,
+  };
+  await webSessionStore.loadMoreHistory(session.id);
+  await nextTick();
+  restoreHistoryAnchor();
+}
+
+function scrollToTimelineUserMessage(targetKey: string) {
+  const container = timelineScrollRef.value;
+  const element = timelineUserMessageElements.get(targetKey);
+  if (!container || !element) {
+    return;
+  }
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const targetTop = container.scrollTop + (elementRect.top - containerRect.top);
+  autoFollowBottom.value = false;
+  showJumpToBottom.value = true;
+  lastTimelineScrollTop.value = container.scrollTop;
+  container.scrollTo({
+    top: Math.max(0, targetTop),
+    behavior: 'smooth',
+  });
+}
+
+async function navigateTimelineUserMessage(
+  block: WebSessionBlock,
+  direction: WebSessionUserMessageNavigationDirection
+) {
+  if (!canNavigateTimelineUserMessage(block, direction)) {
+    return;
+  }
+  userMessageNavigationPending.value = { key: block.key, direction };
+  try {
+    const targetKey = await resolveWebSessionUserMessageTarget({
+      currentKey: block.key,
+      direction,
+      getBlocks: () => visibleBlocks.value,
+      canLoadEarlier: canLoadEarlierUserMessageHistory,
+      getLoadStateKey: getUserMessageHistoryLoadStateKey,
+      loadEarlier: loadEarlierHistoryForUserMessageNavigation,
+    });
+    if (!targetKey) {
+      return;
+    }
+    await nextTick();
+    scrollToTimelineUserMessage(targetKey);
+  } catch (error) {
+    pendingHistoryAnchor.value = null;
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    userMessageNavigationPending.value = null;
+  }
+}
+
 const draftAttachments = computed(() =>
   webSessionStore.getDraftAttachments(props.projectId, currentDraftSessionId.value)
 );
@@ -11803,6 +11978,8 @@ watch(
     stopWebSessionCatchUp('session-change');
     streamingMarkdownController.clear();
     pendingHistoryAnchor.value = null;
+    userMessageNavigationPending.value = null;
+    timelineUserMessageElements.clear();
     handleCommandExecutionDetailVisibilityChange(false);
     rawTimelineBlocks.value = {};
     activeRawTimelineBlockKey.value = '';
@@ -12178,6 +12355,8 @@ onBeforeUnmount(() => {
   persistActiveUserInputDraft();
   realSessionSnapshotLoadController.cancel();
   streamingMarkdownController.clear();
+  timelineUserMessageElements.clear();
+  userMessageNavigationPending.value = null;
   if (liveStateClockTimer != null) {
     window.clearInterval(liveStateClockTimer);
     liveStateClockTimer = null;
@@ -13602,8 +13781,47 @@ defineExpose({
   color: var(--n-text-color-3);
 }
 
+.user-message-navigation {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.user-message-navigation-button {
+  --n-height: 20px !important;
+  width: 20px !important;
+  min-width: 20px !important;
+  height: 20px !important;
+  padding: 0;
+  color: var(--n-text-color-2);
+  opacity: 0.78;
+  transition:
+    color 0.15s ease,
+    opacity 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.user-message-navigation-button :deep(.n-icon) {
+  font-size: 11px;
+}
+
+.user-message-navigation-button:not(:disabled):hover,
+.user-message-navigation-button:not(:disabled):focus-visible {
+  color: var(--n-text-color-1);
+  opacity: 1;
+}
+
+.user-message-navigation-button:disabled:not(.n-button--loading) {
+  color: var(--n-text-color-disabled, #c0c4d8) !important;
+  opacity: 0.18 !important;
+  cursor: default;
+}
+
 .timeline-item.kind-user .item-meta {
   justify-content: flex-end;
+  gap: 6px;
 }
 
 .item-bubble {
