@@ -602,6 +602,7 @@ func (m *Manager) CountSessionsByProject(ctx context.Context) (map[string]int, e
 func (m *Manager) ListArchivedSessions(
 	ctx context.Context,
 	projectIDs []string,
+	searchQuery string,
 	limit int,
 	offset int,
 ) (ArchivedQueryResult, error) {
@@ -639,6 +640,13 @@ func (m *Manager) ListArchivedSessions(
 		Where("archived_at IS NOT NULL")
 	if len(normalizedProjectIDs) > 0 {
 		query = query.Where("project_id IN ?", normalizedProjectIDs)
+	}
+	if normalizedSearchQuery := strings.ToLower(strings.TrimSpace(searchQuery)); normalizedSearchQuery != "" {
+		query = query.Where(
+			"instr(lower(title), ?) > 0 OR instr(lower(coalesce(thread_preview, '')), ?) > 0",
+			normalizedSearchQuery,
+			normalizedSearchQuery,
+		)
 	}
 
 	var total int64

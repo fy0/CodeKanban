@@ -27,7 +27,7 @@ export type WebSessionAttachmentUploadProgress = {
   percent: number | null;
 };
 
-type ArchivedQueryResult = {
+export type ArchivedQueryResult = {
   items: WebSessionSummary[];
   total: number;
   hasMore: boolean;
@@ -302,6 +302,7 @@ export const webSessionApi = {
 
   async queryArchived(data: {
     projectIds: string[];
+    query?: string;
     offset?: number;
     limit?: number;
   }): Promise<ArchivedQueryResult> {
@@ -309,6 +310,7 @@ export const webSessionApi = {
       (await http
         .Post<ItemResponse<ArchivedQueryResult>>('/web-sessions/archived/query', {
           projectIds: data.projectIds,
+          query: data.query?.trim() || undefined,
           offset: data.offset ?? 0,
           limit: data.limit ?? 20,
         })

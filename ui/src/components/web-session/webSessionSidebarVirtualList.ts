@@ -66,6 +66,7 @@ export type WebSessionSidebarVirtualItem<T> =
 
 type BuildWebSessionSidebarVirtualItemsOptions<T> = {
   currentSections: WebSessionSidebarSection<T>[];
+  showArchived?: boolean;
   archived: WebSessionSidebarSessionEntry<T>[];
   archivedLabel: string;
   archivedEmptyLabel: string;
@@ -124,6 +125,7 @@ export function groupWebSessionSidebarEntriesByDate<T>({
 
 export function buildWebSessionSidebarVirtualItems<T>({
   currentSections,
+  showArchived = true,
   archived,
   archivedLabel,
   archivedEmptyLabel,
@@ -152,6 +154,10 @@ export function buildWebSessionSidebarVirtualItems<T>({
       });
     });
   });
+
+  if (!showArchived) {
+    return items;
+  }
 
   items.push({
     key: 'section:archived',

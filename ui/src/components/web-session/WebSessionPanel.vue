@@ -2010,13 +2010,52 @@
                   </template>
                 </SplitDropdownControl>
               </div>
-              <span class="session-sidebar-count">{{
-                crossProjectSessions.length + archivedSidebarMeta.total
-              }}</span>
+              <span class="session-sidebar-count">{{ sidebarVisibleSessionCount }}</span>
+            </div>
+
+            <div class="session-sidebar-search-row">
+              <n-input
+                v-model:value="sidebarSearchQuery"
+                class="session-sidebar-search-input"
+                size="small"
+                clearable
+                :placeholder="t('webSession.sidebarSearchPlaceholder')"
+                :aria-label="t('webSession.sidebarSearchPlaceholder')"
+              >
+                <template #prefix>
+                  <n-icon size="15" aria-hidden="true"><SearchOutline /></n-icon>
+                </template>
+              </n-input>
+              <n-popover trigger="click" placement="bottom-end" :show-arrow="false">
+                <template #trigger>
+                  <n-button
+                    secondary
+                    size="small"
+                    class="session-sidebar-filter-button"
+                    :class="{ 'is-active': sidebarSearchArchived }"
+                    :title="t('webSession.sidebarSearchFilter')"
+                    :aria-label="t('webSession.sidebarSearchFilter')"
+                    :aria-pressed="sidebarSearchArchived"
+                  >
+                    <template #icon>
+                      <n-icon size="16"><FunnelOutline /></n-icon>
+                    </template>
+                  </n-button>
+                </template>
+                <div class="session-sidebar-filter-popover">
+                  <n-checkbox v-model:checked="sidebarSearchArchived">
+                    {{ t('webSession.sidebarSearchArchived') }}
+                  </n-checkbox>
+                </div>
+              </n-popover>
             </div>
 
             <div v-if="sidebarIsEmpty" class="session-sidebar-empty">
               {{ t('webSession.emptyTitle') }}
+            </div>
+
+            <div v-else-if="sidebarHasNoSearchResults" class="session-sidebar-empty">
+              {{ t('webSession.sidebarSearchNoResults') }}
             </div>
 
             <n-virtual-list
@@ -2334,11 +2373,13 @@ import {
   ChevronDownOutline,
   CreateOutline,
   FlashOutline,
+  FunnelOutline,
   ImageOutline,
   RadioOutline,
   RefreshCircleOutline,
   RefreshOutline,
   SettingsOutline,
+  SearchOutline,
   SparklesOutline,
   TimeOutline,
   TrashOutline,
@@ -2402,7 +2443,7 @@ import {
 } from '@/utils/webSessionImages';
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
-import { webSessionApi } from '@/api/webSession';
+import { webSessionApi, type ArchivedQueryResult } from '@/api/webSession';
 import { createLongPressTracker } from '@/utils/longPress';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
@@ -2536,6 +2577,11 @@ import {
   type WebSessionSidebarSessionEntry,
   type WebSessionSidebarVirtualItem,
 } from '@/components/web-session/webSessionSidebarVirtualList';
+import {
+  matchesWebSessionSidebarSearch,
+  mergeWebSessionSidebarSearchPage,
+  normalizeWebSessionSidebarSearchQuery,
+} from '@/components/web-session/webSessionSidebarSearch';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
 import { createWebSessionCatchUpScheduler } from '@/components/web-session/webSessionCatchUpScheduler';
@@ -2567,6 +2613,7 @@ const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
 const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
 const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
+const SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY = 'workspace-web-session-sidebar-search-archived';
 const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS = 120;
@@ -2614,6 +2661,26 @@ type SessionTab =
   | (WebSessionSummary & { isDraft?: false; isArchivedPreview?: false })
   | DraftSessionTab
   | ArchivedPreviewSessionTab;
+
+type ArchivedSidebarSearchState = {
+  items: WebSessionSummary[];
+  total: number;
+  offset: number;
+  hasMore: boolean;
+  loading: boolean;
+  error: boolean;
+};
+
+function createArchivedSidebarSearchState(): ArchivedSidebarSearchState {
+  return {
+    items: [],
+    total: 0,
+    offset: 0,
+    hasMore: false,
+    loading: false,
+    error: false,
+  };
+}
 
 type ItemResponse<T> = {
   item?: T;
@@ -2993,6 +3060,12 @@ const sidebarWidthPx = useStorage<number>(
   DEFAULT_SESSION_SIDEBAR_WIDTH
 );
 const persistedSidebarScope = useStorage<string>(SIDEBAR_SCOPE_STORAGE_KEY, 'all');
+const sidebarSearchQuery = ref('');
+const sidebarSearchArchived = useStorage<boolean>(SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY, false);
+const archivedSidebarSearchState = ref<ArchivedSidebarSearchState>(
+  createArchivedSidebarSearchState()
+);
+let archivedSidebarSearchRequestVersion = 0;
 let sidebarResizeObserver: ResizeObserver | null = null;
 const composerTransferErrorMessage = ref('');
 const composerTransferErrorDetail = ref('');
@@ -5271,6 +5344,12 @@ const sidebarScope = computed<WebSessionSidebarScope>({
   },
 });
 const showCrossProjectSidebar = computed(() => !isMobile.value && props.showSidebar);
+const normalizedSidebarSearchQuery = computed(() =>
+  normalizeWebSessionSidebarSearchQuery(sidebarSearchQuery.value)
+);
+const archivedSidebarSearchActive = computed(
+  () => sidebarSearchArchived.value && normalizedSidebarSearchQuery.value.length > 0
+);
 const sidebarScopeOptions = computed<DropdownOption[]>(() => [
   {
     key: 'all',
@@ -5318,9 +5397,9 @@ const mobileCurrentSessions = computed<SessionTab[]>(() => {
 });
 const mobileArchivedProjectIds = computed(() => sidebarVisibleProjectIds.value);
 const mobileArchivedScopeKey = computed(() => mobileArchivedProjectIds.value.join('|'));
-const mobileArchivedMeta = computed(() => archivedSidebarMeta.value);
+const mobileArchivedMeta = computed(() => baseArchivedSidebarMeta.value);
 const mobileArchivedSessions = computed<SessionTab[]>(() =>
-  crossProjectArchivedSessions.value.map(item => item.session as SessionTab)
+  baseCrossProjectArchivedSessions.value.map(item => item.session as SessionTab)
 );
 const mobileVisibleSessions = computed<SessionTab[]>(() =>
   mobileSessionCategory.value === 'archived'
@@ -7074,7 +7153,17 @@ const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
   return withProjectBadges(sorted, projectIds);
 });
 
-const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
+const filteredCrossProjectSessions = computed(() => {
+  const query = normalizedSidebarSearchQuery.value;
+  if (!query) {
+    return crossProjectSessions.value;
+  }
+  return crossProjectSessions.value.filter(item =>
+    matchesWebSessionSidebarSearch(item.session, query)
+  );
+});
+
+const baseCrossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
   const items = webSessionStore
     .getArchivedSessions(sidebarVisibleProjectIds.value)
     .map(session => ({
@@ -7086,9 +7175,131 @@ const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
   return withProjectBadges(items);
 });
 
-const archivedSidebarMeta = computed(() =>
+const searchedCrossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
+  const items = archivedSidebarSearchState.value.items.map(session => ({
+    session,
+    projectId: session.projectId,
+    projectName: getProjectName(session.projectId),
+    isCurrent: activeArchivedPreviewId.value === session.id,
+  }));
+  return withProjectBadges(items);
+});
+
+const showArchivedSidebarSection = computed(
+  () => normalizedSidebarSearchQuery.value.length === 0 || sidebarSearchArchived.value
+);
+
+const crossProjectArchivedSessions = computed(() =>
+  !showArchivedSidebarSection.value
+    ? []
+    : archivedSidebarSearchActive.value
+      ? searchedCrossProjectArchivedSessions.value
+      : baseCrossProjectArchivedSessions.value
+);
+
+const baseArchivedSidebarMeta = computed(() =>
   webSessionStore.getArchivedMeta(sidebarVisibleProjectIds.value)
 );
+
+const archivedSidebarMeta = computed(() => {
+  if (!showArchivedSidebarSection.value) {
+    return {
+      scopeKey: '',
+      total: 0,
+      offset: 0,
+      hasMore: false,
+      loading: false,
+    };
+  }
+  if (!archivedSidebarSearchActive.value) {
+    return baseArchivedSidebarMeta.value;
+  }
+  const state = archivedSidebarSearchState.value;
+  return {
+    scopeKey: 'sidebar-search',
+    total: state.total,
+    offset: state.offset,
+    hasMore: state.hasMore,
+    loading: state.loading,
+  };
+});
+
+function clearArchivedSidebarSearchState() {
+  archivedSidebarSearchRequestVersion += 1;
+  archivedSidebarSearchState.value = createArchivedSidebarSearchState();
+}
+
+async function loadArchivedSidebarSearch(reset = false) {
+  if (!archivedSidebarSearchActive.value) {
+    clearArchivedSidebarSearchState();
+    return;
+  }
+
+  const query = normalizedSidebarSearchQuery.value;
+  const projectIds = [...sidebarVisibleProjectIds.value];
+  if (!query || projectIds.length === 0) {
+    clearArchivedSidebarSearchState();
+    return;
+  }
+
+  const scopeKey = projectIds.join('|');
+  const requestVersion = ++archivedSidebarSearchRequestVersion;
+  const previous = archivedSidebarSearchState.value;
+  const offset = reset ? 0 : previous.offset;
+  archivedSidebarSearchState.value = reset
+    ? {
+        ...createArchivedSidebarSearchState(),
+        loading: true,
+      }
+    : {
+        ...previous,
+        loading: true,
+        error: false,
+      };
+
+  try {
+    const result: ArchivedQueryResult = await webSessionApi.queryArchived({
+      projectIds,
+      query,
+      offset,
+      limit: 20,
+    });
+    if (
+      requestVersion !== archivedSidebarSearchRequestVersion ||
+      query !== normalizedSidebarSearchQuery.value ||
+      scopeKey !== sidebarVisibleProjectIds.value.join('|') ||
+      !archivedSidebarSearchActive.value
+    ) {
+      return;
+    }
+
+    archivedSidebarSearchState.value = {
+      items: reset
+        ? mergeWebSessionSidebarSearchPage([], result.items)
+        : mergeWebSessionSidebarSearchPage(previous.items, result.items),
+      total: result.total,
+      offset: result.nextOffset,
+      hasMore: result.hasMore,
+      loading: false,
+      error: false,
+    };
+  } catch (error) {
+    if (requestVersion !== archivedSidebarSearchRequestVersion) {
+      return;
+    }
+    archivedSidebarSearchState.value = {
+      ...archivedSidebarSearchState.value,
+      loading: false,
+      hasMore: false,
+      error: true,
+    };
+    console.error('[Web Session] Failed to search archived sidebar sessions', error);
+  }
+}
+
+const scheduleArchivedSidebarSearch = useDebounceFn(() => {
+  void loadArchivedSidebarSearch(true);
+}, 300);
 
 async function ensureArchivedScopeLoaded(projectIds: string[], limit = 20) {
   if (!projectIds.length || webSessionStore.hasArchivedScope(projectIds)) {
@@ -7140,7 +7351,7 @@ const showSidebarStatusText = computed(
 );
 const currentSidebarEntries = computed<WebSessionSidebarSessionEntry<CrossProjectSessionItem>[]>(
   () =>
-    crossProjectSessions.value.map(item => ({
+    filteredCrossProjectSessions.value.map(item => ({
       source: item,
       row: buildSidebarSessionRow(item, false),
     }))
@@ -7167,17 +7378,39 @@ const currentSidebarSections = computed(() =>
 );
 const sidebarIsEmpty = computed(
   () =>
+    normalizedSidebarSearchQuery.value.length === 0 &&
     crossProjectSessions.value.length === 0 &&
+    baseCrossProjectArchivedSessions.value.length === 0 &&
+    baseArchivedSidebarMeta.value.total === 0 &&
+    !baseArchivedSidebarMeta.value.loading
+);
+const sidebarHasNoSearchResults = computed(
+  () =>
+    normalizedSidebarSearchQuery.value.length > 0 &&
+    filteredCrossProjectSessions.value.length === 0 &&
     crossProjectArchivedSessions.value.length === 0 &&
     archivedSidebarMeta.value.total === 0 &&
-    !archivedSidebarMeta.value.loading
+    !archivedSidebarMeta.value.loading &&
+    !(archivedSidebarSearchActive.value && archivedSidebarSearchState.value.error)
 );
+const sidebarVisibleSessionCount = computed(
+  () => filteredCrossProjectSessions.value.length + archivedSidebarMeta.value.total
+);
+const archivedSidebarEmptyLabel = computed(() => {
+  if (!archivedSidebarSearchActive.value) {
+    return t('webSession.archivedSessionsEmpty');
+  }
+  return archivedSidebarSearchState.value.error
+    ? t('webSession.sidebarArchivedSearchFailed')
+    : t('webSession.sidebarArchivedSearchNoResults');
+});
 const sidebarVirtualItems = computed<WebSessionSidebarVirtualItem<CrossProjectSessionItem>[]>(() =>
   buildWebSessionSidebarVirtualItems({
     currentSections: currentSidebarSections.value,
+    showArchived: showArchivedSidebarSection.value,
     archived: archivedSidebarEntries.value,
     archivedLabel: t('webSession.sessionGroupArchived'),
-    archivedEmptyLabel: t('webSession.archivedSessionsEmpty'),
+    archivedEmptyLabel: archivedSidebarEmptyLabel.value,
     archivedLoadingLabel: t('common.loading'),
     archivedTotal: archivedSidebarMeta.value.total,
     archivedLoading: archivedSidebarMeta.value.loading,
@@ -8752,6 +8985,10 @@ async function handleSidebarVirtualSessionSelect(
 
 async function handleLoadMoreArchived() {
   try {
+    if (archivedSidebarSearchActive.value) {
+      await loadArchivedSidebarSearch();
+      return;
+    }
     await webSessionStore.loadArchivedSessions(sidebarVisibleProjectIds.value, {
       limit: 20,
     });
@@ -9166,6 +9403,9 @@ function openSessionRenameDialog(session: WebSessionSummary | SessionTab) {
             title: nextTitle,
           };
         }
+        if (session.archivedAt) {
+          await refreshArchivedSidebar();
+        }
         message.success(t('webSession.renameSuccess'));
         return true;
       } catch (error) {
@@ -9181,6 +9421,9 @@ async function refreshArchivedSidebar() {
     reset: true,
     limit: 20,
   });
+  if (archivedSidebarSearchActive.value) {
+    await loadArchivedSidebarSearch(true);
+  }
 }
 
 function handleArchiveSession(sessionId: string) {
@@ -11509,6 +11752,20 @@ watch(
 );
 
 watch(
+  [
+    normalizedSidebarSearchQuery,
+    sidebarSearchArchived,
+    () => sidebarVisibleProjectIds.value.join('|'),
+  ],
+  () => {
+    clearArchivedSidebarSearchState();
+    if (archivedSidebarSearchActive.value) {
+      scheduleArchivedSidebarSearch();
+    }
+  }
+);
+
+watch(
   sidebarVisibleProjectIds,
   projectIds => {
     void ensureArchivedScopeLoaded(projectIds, 20).catch(error => {
@@ -11925,6 +12182,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  archivedSidebarSearchRequestVersion += 1;
   persistActiveUserInputDraft();
   realSessionSnapshotLoadController.cancel();
   streamingMarkdownController.clear();
@@ -12964,6 +13222,56 @@ defineExpose({
   padding: 4px 6px 8px;
   display: flex;
   flex-direction: column;
+}
+
+.session-sidebar-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 6px;
+}
+
+.session-sidebar-search-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  --n-height: var(--session-sidebar-control-height);
+}
+
+.session-sidebar-search-input:deep(.n-input) {
+  border-radius: 6px;
+}
+
+.session-sidebar-search-input:deep(.n-input__prefix) {
+  color: var(--n-text-color-3);
+}
+
+.session-sidebar-filter-button {
+  width: var(--session-sidebar-control-height);
+  min-width: var(--session-sidebar-control-height);
+  height: var(--session-sidebar-control-height);
+  padding: 0;
+  flex: 0 0 var(--session-sidebar-control-height);
+  border: 1px solid var(--n-border-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--n-text-color-2);
+}
+
+.session-sidebar-filter-button:hover,
+.session-sidebar-filter-button:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 55%, var(--n-border-color));
+  color: var(--n-primary-color);
+}
+
+.session-sidebar-filter-button.is-active {
+  border-color: color-mix(in srgb, var(--n-primary-color) 72%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+  color: var(--n-primary-color);
+}
+
+.session-sidebar-filter-popover {
+  padding: 2px 0;
+  white-space: nowrap;
 }
 
 .session-sidebar-header {

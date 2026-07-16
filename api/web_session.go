@@ -482,6 +482,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		input *struct {
 			Body struct {
 				ProjectIDs []string `json:"projectIds"`
+				Query      string   `json:"query,omitempty"`
 				Offset     int      `json:"offset"`
 				Limit      int      `json:"limit"`
 			}
@@ -490,6 +491,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		item, err := c.manager.ListArchivedSessions(
 			ctx,
 			input.Body.ProjectIDs,
+			input.Body.Query,
 			input.Body.Limit,
 			input.Body.Offset,
 		)

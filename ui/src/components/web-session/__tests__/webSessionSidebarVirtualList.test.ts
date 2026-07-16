@@ -41,10 +41,11 @@ function makeEntry(
 function buildItems(
   current: WebSessionSidebarSessionEntry<TestSource>[],
   archived: WebSessionSidebarSessionEntry<TestSource>[] = [],
-  options: { loading?: boolean; hasMore?: boolean; total?: number } = {}
+  options: { loading?: boolean; hasMore?: boolean; total?: number; showArchived?: boolean } = {}
 ) {
   return buildWebSessionSidebarVirtualItems({
     currentSections: [{ key: 'today', label: 'Today', entries: current }],
+    showArchived: options.showArchived,
     archived,
     archivedLabel: 'Archived',
     archivedEmptyLabel: 'No archived sessions',
@@ -93,6 +94,16 @@ describe('webSession sidebar virtual list', () => {
         type: 'action',
         disabled: true,
       }),
+    ]);
+  });
+
+  it('omits the archived section when archived search is disabled', () => {
+    const current = makeEntry('current');
+    const archived = makeEntry('archived', true);
+
+    expect(buildItems([current], [archived], { showArchived: false })).toEqual([
+      expect.objectContaining({ key: 'section:today', type: 'section' }),
+      expect.objectContaining({ key: current.row.key, type: 'session' }),
     ]);
   });
 

@@ -1661,7 +1661,7 @@ func TestManagerArchiveSessionKeepsHistoryAndMovesSessionOutOfCurrentList(t *tes
 		t.Fatalf("expected archived session to be removed from current list, got %d items", len(current))
 	}
 
-	archivedResult, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, 20, 0)
+	archivedResult, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, "", 20, 0)
 	if err != nil {
 		t.Fatalf("ListArchivedSessions returned error: %v", err)
 	}
@@ -1728,20 +1728,25 @@ func TestManagerListArchivedSessionsPaginatesByActivityDescending(t *testing.T) 
 	project := seedProject(t)
 	now := time.Now()
 	sessionA := seedWebSession(t, project.ID, "A", 1000)
-	sessionB := seedWebSession(t, project.ID, "B", 2000)
+	sessionB := seedWebSession(t, project.ID, "Needle title", 2000)
 	sessionC := seedWebSession(t, project.ID, "C", 3000)
+	seedWebSession(t, project.ID, "Needle current session", 4000)
 	for id, activityAt := range map[string]time.Time{
 		sessionA.ID: now.Add(-3 * time.Hour),
 		sessionB.ID: now.Add(-1 * time.Hour),
 		sessionC.ID: now.Add(-2 * time.Hour),
 	} {
+		updates := map[string]any{
+			"archived_at": now,
+			"activity_at": activityAt,
+			"updated_at":  now,
+		}
+		if id == sessionC.ID {
+			updates["thread_preview"] = "Needle in preview"
+		}
 		if err := model.GetDB().Model(&tables.WebSessionTable{}).
 			Where("id = ?", id).
-			Updates(map[string]any{
-				"archived_at": now,
-				"activity_at": activityAt,
-				"updated_at":  now,
-			}).Error; err != nil {
+			Updates(updates).Error; err != nil {
 			t.Fatalf("failed to update archived seed %s: %v", id, err)
 		}
 	}
@@ -1751,7 +1756,7 @@ func TestManagerListArchivedSessionsPaginatesByActivityDescending(t *testing.T) 
 		t.Fatalf("NewManager returned error: %v", err)
 	}
 
-	pageOne, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, 2, 0)
+	pageOne, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, "", 2, 0)
 	if err != nil {
 		t.Fatalf("ListArchivedSessions page one returned error: %v", err)
 	}
@@ -1762,7 +1767,7 @@ func TestManagerListArchivedSessionsPaginatesByActivityDescending(t *testing.T) 
 		t.Fatalf("unexpected first archived page order: %#v", pageOne.Items)
 	}
 
-	pageTwo, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, 2, pageOne.NextOffset)
+	pageTwo, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, "", 2, pageOne.NextOffset)
 	if err != nil {
 		t.Fatalf("ListArchivedSessions page two returned error: %v", err)
 	}
@@ -1771,6 +1776,34 @@ func TestManagerListArchivedSessionsPaginatesByActivityDescending(t *testing.T) 
 	}
 	if len(pageTwo.Items) != 1 || pageTwo.Items[0].ID != sessionA.ID {
 		t.Fatalf("unexpected second archived page order: %#v", pageTwo.Items)
+	}
+
+	searchPageOne, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, "  NEEDLE ", 1, 0)
+	if err != nil {
+		t.Fatalf("ListArchivedSessions filtered page one returned error: %v", err)
+	}
+	if searchPageOne.Total != 2 || !searchPageOne.HasMore || searchPageOne.NextOffset != 1 {
+		t.Fatalf("unexpected filtered first page metadata: %+v", searchPageOne)
+	}
+	if len(searchPageOne.Items) != 1 || searchPageOne.Items[0].ID != sessionB.ID {
+		t.Fatalf("expected title match first, got %#v", searchPageOne.Items)
+	}
+
+	searchPageTwo, err := manager.ListArchivedSessions(
+		context.Background(),
+		[]string{project.ID},
+		"needle",
+		1,
+		searchPageOne.NextOffset,
+	)
+	if err != nil {
+		t.Fatalf("ListArchivedSessions filtered page two returned error: %v", err)
+	}
+	if searchPageTwo.Total != 2 || searchPageTwo.HasMore || searchPageTwo.NextOffset != 2 {
+		t.Fatalf("unexpected filtered second page metadata: %+v", searchPageTwo)
+	}
+	if len(searchPageTwo.Items) != 1 || searchPageTwo.Items[0].ID != sessionC.ID {
+		t.Fatalf("expected preview match second, got %#v", searchPageTwo.Items)
 	}
 }
 
