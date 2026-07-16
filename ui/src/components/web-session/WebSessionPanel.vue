@@ -4319,10 +4319,6 @@ const sendQuickActionOptions = computed<DropdownOption[]>(() => {
 });
 const planQuickActionOptions = computed<DropdownOption[]>(() => [
   {
-    key: 'implement',
-    label: t('webSession.planActionImplement'),
-  },
-  {
     key: 'schedule-plan',
     label: t('webSession.planActionSchedule'),
   },
@@ -5114,13 +5110,9 @@ function handlePlanQuickActionTriggerClick(event: MouseEvent) {
   showPlanQuickActions.value = true;
 }
 
-async function handlePlanQuickActionSelect(key: string | number) {
+function handlePlanQuickActionSelect(key: string | number) {
   const action = String(key || '').trim();
   closePlanQuickActions();
-  if (action === 'implement') {
-    await handlePlanCardImplement();
-    return;
-  }
   if (action === 'schedule-plan') {
     const target = currentScheduledPlanTarget.value;
     if (target && !activeScheduledPlanTargetIds.value.has(target.planItemId)) {
@@ -13203,7 +13195,7 @@ defineExpose({
 
 .session-sidebar {
   --session-sidebar-control-height: 30px;
-  --session-sidebar-count-height: 26px;
+  --session-sidebar-count-height: 22px;
   --session-sidebar-row-height: 34px;
   --session-sidebar-virtual-row-height: 38px;
   --session-sidebar-section-height: 30px;
@@ -13322,16 +13314,17 @@ defineExpose({
 }
 
 .session-sidebar-count {
-  min-width: 26px;
+  width: 22px;
+  min-width: 22px;
   height: var(--session-sidebar-count-height);
-  padding: 0 7px;
-  border-radius: 999px;
+  padding: 0;
+  border-radius: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--n-primary-color) 9%, var(--app-surface-color, #fff));
   color: color-mix(in srgb, var(--n-primary-color) 58%, var(--n-text-color-2));
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }

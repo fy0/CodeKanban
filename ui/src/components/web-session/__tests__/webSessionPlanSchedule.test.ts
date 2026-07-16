@@ -7,9 +7,11 @@ const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', impo
 const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
 
 describe('webSession plan scheduling', () => {
-  it('uses an accessible split action for immediate and delayed implementation', () => {
+  it('keeps immediate implementation on the primary button and only delays in the menu', () => {
     expect(webSessionPanelSource).toContain('class="plan-tool-action-split"');
     expect(webSessionPanelSource).toContain(':aria-expanded="showPlanQuickActions"');
+    expect(webSessionPanelSource).toContain('@click="handlePlanCardImplement"');
+    expect(webSessionPanelSource).not.toContain("key: 'implement'");
     expect(webSessionPanelSource).toContain("key: 'schedule-plan'");
     expect(webSessionPanelSource).toContain("t('webSession.planActionSchedule')");
   });
