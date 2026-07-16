@@ -14077,6 +14077,10 @@ defineExpose({
   max-width: 100%;
 }
 
+.timeline-tool-shell.plan-tool-shell {
+  width: min(860px, 100%);
+}
+
 .timeline-activity-display-shell {
   width: min(860px, 84%);
   max-width: 100%;
@@ -16904,10 +16908,6 @@ defineExpose({
 }
 
 @media (max-width: 767px) {
-  .timeline-tool-shell.plan-tool-shell {
-    width: 100%;
-  }
-
   .plan-tool-body {
     padding: 14px 14px 16px;
     gap: 14px;
