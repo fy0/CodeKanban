@@ -13362,6 +13362,7 @@ defineExpose({
   align-items: center;
   gap: 8px;
   padding: 8px 0 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--n-primary-color) 8%, var(--n-border-color));
 }
 
 .session-sidebar-search-input {
@@ -13412,8 +13413,7 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 0 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--n-primary-color) 8%, var(--n-border-color));
+  padding: 2px 0;
   background: transparent;
 }
 
