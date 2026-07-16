@@ -55,11 +55,14 @@
                       {{ activeSessionStatusLabel }}
                     </span>
                   </span>
-                  <span
+                  <n-icon
                     v-if="activeSessionHasWorkflowPlanBadge"
                     class="mobile-tab-trigger-plan-badge"
+                    size="12"
                     aria-hidden="true"
-                  ></span>
+                  >
+                    <FlagIcon />
+                  </n-icon>
                 </span>
                 <n-icon class="mobile-tab-arrow" :class="{ 'is-open': showMobileTabSelector }">
                   <ChevronDownOutline />
@@ -86,6 +89,14 @@
                 >
                   <template #tab>
                     <span class="tab-label" :title="session.title">
+                      <n-icon
+                        v-if="shouldShowSessionWorkflowPlanBadge(session)"
+                        class="tab-workflow-plan-flag"
+                        size="12"
+                        aria-hidden="true"
+                      >
+                        <FlagIcon />
+                      </n-icon>
                       <span
                         v-if="shouldShowSessionStatusDot(session)"
                         class="status-dot"
@@ -2417,6 +2428,7 @@ import {
   ChevronUpOutline,
   CreateOutline,
   FlashOutline,
+  Flag as FlagIcon,
   FunnelOutline,
   ImageOutline,
   RadioOutline,
@@ -5920,10 +5932,15 @@ function renderMobileTabOptionLabel(option: DropdownOption) {
           })
         : null,
       shouldShowSessionWorkflowPlanBadge(mobileOption.session)
-        ? h('span', {
-            class: 'mobile-tab-option-plan-badge',
-            'aria-hidden': 'true',
-          })
+        ? h(
+            NIcon,
+            {
+              class: 'mobile-tab-option-plan-badge',
+              size: 9,
+              'aria-hidden': 'true',
+            },
+            { default: () => h(FlagIcon) }
+          )
         : null,
     ]),
     h(
@@ -12518,32 +12535,17 @@ defineExpose({
   overflow: visible;
 }
 
-.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-workflow-plan-badge)::before {
-  content: '';
+.tab-workflow-plan-flag {
   position: absolute;
-  top: 8px;
-  left: -1px;
+  top: 1px;
+  left: 0;
   z-index: 2;
-  width: 14px;
-  height: 2px;
-  background: #0ea5e9;
-  transform: rotate(54deg);
-  transform-origin: center center;
+  color: #6366f1;
   pointer-events: none;
 }
 
-.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-workflow-plan-badge)::after {
-  content: '';
-  position: absolute;
-  top: 8px;
-  left: -1px;
-  z-index: 2;
-  width: 14px;
-  height: 2px;
-  background: #0ea5e9;
-  transform: rotate(-54deg);
-  transform-origin: center center;
-  pointer-events: none;
+.tab-workflow-plan-flag :deep(svg) {
+  display: block;
 }
 
 .panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.n-tabs-tab--active) {
@@ -12863,31 +12865,8 @@ defineExpose({
 }
 
 .mobile-tab-trigger-plan-badge {
-  position: relative;
   flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-}
-
-.mobile-tab-trigger-plan-badge::before,
-.mobile-tab-trigger-plan-badge::after {
-  content: '';
-  position: absolute;
-  top: 5px;
-  left: -1px;
-  width: 14px;
-  height: 2px;
-  background: #0ea5e9;
-  border-radius: 999px;
-  transform-origin: center center;
-}
-
-.mobile-tab-trigger-plan-badge::before {
-  transform: rotate(54deg);
-}
-
-.mobile-tab-trigger-plan-badge::after {
-  transform: rotate(-54deg);
+  color: #6366f1;
 }
 
 .mobile-tab-arrow {
@@ -13236,32 +13215,15 @@ defineExpose({
 
 :global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge) {
   position: absolute;
-  left: -3px;
-  bottom: -1px;
-  width: 12px;
-  height: 12px;
+  left: -4px;
+  bottom: -3px;
+  z-index: 2;
+  color: #6366f1;
   pointer-events: none;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge::before),
-:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge::after) {
-  content: '';
-  position: absolute;
-  top: 5px;
-  left: -1px;
-  width: 14px;
-  height: 2px;
-  background: #0ea5e9;
-  border-radius: 999px;
-  transform-origin: center center;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge::before) {
-  transform: rotate(54deg);
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge::after) {
-  transform: rotate(-54deg);
+:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge svg) {
+  display: block;
 }
 
 :global(
