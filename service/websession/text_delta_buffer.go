@@ -54,6 +54,25 @@ func (m *Manager) removeSessionEventState(sessionID string, state *sessionEventS
 	}
 }
 
+func (m *Manager) clearSessionEventState(sessionID string) {
+	m.eventStatesMu.Lock()
+	state := m.eventStates[sessionID]
+	delete(m.eventStates, sessionID)
+	m.eventStatesMu.Unlock()
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	if state.timer != nil {
+		state.timer.Stop()
+	}
+	state.pending = nil
+	state.timer = nil
+	state.timerGeneration++
+	state.closed = false
+	state.mu.Unlock()
+}
+
 func (m *Manager) enqueueTextDelta(
 	ctx context.Context,
 	sessionID string,

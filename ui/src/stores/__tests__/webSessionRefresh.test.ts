@@ -348,6 +348,46 @@ describe('webSession loading behavior', () => {
     expect(store.isSessionSnapshotCurrent(newest.id, '5')).toBe(true);
   });
 
+  it('invalidates cleaned histories without removing session summaries', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-history-cleanup',
+      revision: '8',
+      status: 'done',
+      assistantState: null,
+      itemCount: 1,
+      turnCount: 1,
+    });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      revision: '8',
+      session,
+      history: {
+        items: [makeWireHistoryItem(1, { txt: 'cached history' })],
+        hasMore: false,
+        total: 1,
+      },
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    expect(store.getBlocks(session.id)).toHaveLength(1);
+
+    store.invalidateCleanedHistories([session.id]);
+
+    expect(store.getBlocks(session.id)).toEqual([]);
+    expect(store.getSessions(session.projectId)).toHaveLength(1);
+    expect(store.getSessions(session.projectId)[0]).toMatchObject({
+      id: session.id,
+      revision: undefined,
+      syncState: 'missing',
+      lastSyncMode: null,
+      lastSyncedAt: null,
+      itemCount: 0,
+      turnCount: 0,
+    });
+  });
+
   it('drops websocket events older than the applied session revision', async () => {
     const store = useWebSessionStore();
     const session = makeSession({ id: 'session-stale-event', revision: '5', itemCount: 1 });

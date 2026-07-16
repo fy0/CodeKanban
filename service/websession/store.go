@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type store struct {
@@ -149,4 +150,24 @@ func (s *store) deleteSessionFiles(sessionID string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *store) deleteSessionHistory(sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	if err := os.Remove(s.historyPath(sessionID)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (s *store) hasSessionHistory(sessionID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	_, err := os.Stat(s.historyPath(sessionID))
+	return err == nil
 }

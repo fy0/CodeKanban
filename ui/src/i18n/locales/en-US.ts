@@ -1426,6 +1426,40 @@ export default {
     shellSaveSuccess: 'Terminal settings saved. New terminals will use the selected shell.',
     customShellPlaceholder: 'Enter custom shell command, e.g.: pwsh.exe -NoLogo',
     currentPlatform: 'Current platform',
+    dataMaintenanceTitle: 'Data Maintenance',
+    historyCleanupTitle: 'Session Chat Cache',
+    historyCleanupDescription:
+      'Reclaim database space used by chat caches based on age and per-project retention.',
+    historyCleanupAction: 'Clean Chat History',
+    historyCleanupDialogTitle: 'Clean Session Chat Cache',
+    historyCleanupScope: 'Cleanup Scope',
+    historyCleanupScopeAll: 'All Projects',
+    historyCleanupScopeProjects: 'Selected Projects',
+    historyCleanupProjects: 'Projects',
+    historyCleanupProjectsPlaceholder: 'Select one or more projects',
+    historyCleanupProjectsFailed: 'Failed to load projects',
+    historyCleanupOlderThanDays: 'Clean records older than',
+    historyCleanupRetainPerProject: 'Keep at least per project',
+    historyCleanupFullWarning:
+      'With both values set to 0, all chat caches for non-busy sessions in scope will be cleaned.',
+    historyCleanupPreviewAction: 'Preview Cleanup',
+    historyCleanupRunAction: 'Permanently Delete Chat History',
+    historyCleanupSessions: 'Sessions to clean',
+    historyCleanupRows: 'Rows to delete',
+    historyCleanupObsoleteRows: 'Invisible old versions',
+    historyCleanupReusableSpace: 'Currently reusable space',
+    historyCleanupSkippedBusy:
+      'Skipped {count} running session(s) or session(s) with pending input.',
+    historyCleanupNonSyncable:
+      '{count} session(s) have no available sync source, so their chat history cannot be restored.',
+    historyCleanupPreviewFailed: 'Failed to preview cleanup',
+    historyCleanupConfirmTitle: 'Permanently Delete Chat History',
+    historyCleanupConfirmContent:
+      'Clean {sessions} session(s) and permanently delete {rows} chat data row(s). Sessions will remain.',
+    historyCleanupSuccess: 'Cleaned {sessions} session(s) and deleted {rows} chat data row(s)',
+    historyCleanupFileFailures:
+      '{count} internal history file(s) could not be removed. You can retry later.',
+    historyCleanupFailed: 'Failed to clean chat cache',
     backupTitle: 'Backup & Restore',
     backupDescription:
       'Export the current instance settings as JSON or import a previously exported backup. Imports are validated first and show version compatibility warnings plus affected sections.',

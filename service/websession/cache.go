@@ -377,7 +377,7 @@ func (m *Manager) ensureCompactGroupHistorySourceKey(
 			deleteIDs = append(deleteIDs, candidate.row.ID)
 		}
 		if len(deleteIDs) > 0 {
-			if err := tx.Where("id IN ?", deleteIDs).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
+			if err := tx.Unscoped().Where("id IN ?", deleteIDs).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
 				return err
 			}
 		}
@@ -397,10 +397,10 @@ func (m *Manager) replaceSessionHistoryCache(
 		return model.ErrDBNotInitialized
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("web_session_id = ?", session.ID).Delete(&tables.WebSessionTurnTable{}).Error; err != nil {
+		if err := tx.Unscoped().Where("web_session_id = ?", session.ID).Delete(&tables.WebSessionTurnTable{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("web_session_id = ?", session.ID).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
+		if err := tx.Unscoped().Where("web_session_id = ?", session.ID).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
 			return err
 		}
 		if len(turns) > 0 {

@@ -10,6 +10,7 @@ describe('settingsUi store', () => {
 
   it('sanitizes invalid section ids to the default section', () => {
     expect(sanitizeSettingsSectionId('theme')).toBe('theme');
+    expect(sanitizeSettingsSectionId('maintenance')).toBe('maintenance');
     expect(sanitizeSettingsSectionId('project-terminal')).toBe('project-workspace');
     expect(sanitizeSettingsSectionId('unknown-section')).toBe('project-workspace');
     expect(sanitizeSettingsSectionId(undefined)).toBe('project-workspace');

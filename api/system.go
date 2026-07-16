@@ -73,6 +73,7 @@ func registerSystemRoutes(
 	webSessionManager *websession.Manager,
 ) {
 	registerSystemSettingsBackupRoutes(group, cfg, terminalManager, webSessionManager)
+	registerSystemHistoryCleanupRoutes(group, webSessionManager)
 
 	huma.Get(group, "/system/version", func(ctx context.Context, input *struct{}) (*versionResponse, error) {
 		resp := &versionResponse{}

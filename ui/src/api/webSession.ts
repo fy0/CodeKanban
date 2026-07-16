@@ -42,6 +42,38 @@ export type SessionSearchChunkResult = {
   total: number;
 };
 
+export type WebSessionHistoryCleanupParams = {
+  scope: 'all' | 'projects';
+  projectIds: string[];
+  olderThanDays: number;
+  retainPerProject: number;
+};
+
+export type WebSessionHistoryCleanupStorageStats = {
+  pageSizeBytes: number;
+  pageCount: number;
+  freePageCount: number;
+  reusableBytes: number;
+};
+
+export type WebSessionHistoryCleanupStats = {
+  scopedProjectCount: number;
+  scopedSessionCount: number;
+  historySessionCount: number;
+  skippedBusySessionCount: number;
+  nonSyncableSessionCount: number;
+  itemRowCount: number;
+  turnRowCount: number;
+  obsoleteItemRowCount: number;
+  obsoleteTurnRowCount: number;
+  storage: WebSessionHistoryCleanupStorageStats;
+};
+
+export type WebSessionHistoryCleanupResult = WebSessionHistoryCleanupStats & {
+  clearedSessionIds: string[];
+  historyFileFailureCount: number;
+};
+
 type CountsResponse = {
   counts?: Record<string, number>;
 };
@@ -306,6 +338,36 @@ export const webSessionApi = {
 
   async delete(projectId: string, sessionId: string): Promise<void> {
     await http.Delete(`/projects/${projectId}/web-sessions/${sessionId}`).send();
+  },
+
+  async previewHistoryCleanup(
+    data: WebSessionHistoryCleanupParams
+  ): Promise<WebSessionHistoryCleanupStats> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionHistoryCleanupStats>
+        >('/system/web-session-history-cleanup/preview', data)
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to preview web session history cleanup');
+    }
+    return body.item;
+  },
+
+  async runHistoryCleanup(
+    data: WebSessionHistoryCleanupParams
+  ): Promise<WebSessionHistoryCleanupResult> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionHistoryCleanupResult>
+        >('/system/web-session-history-cleanup/run', data)
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to run web session history cleanup');
+    }
+    return body.item;
   },
 
   async queryArchived(data: {

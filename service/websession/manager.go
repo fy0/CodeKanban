@@ -93,6 +93,7 @@ type Manager struct {
 	ccrHookReady                bool
 	ccrHookErr                  error
 	ccrHookClaudePath           string
+	historyCleanupMu            sync.Mutex
 }
 
 type clientKind string
@@ -2014,11 +2015,11 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 		eventState.closed = false
 		return model.ErrDBNotInitialized
 	}
-	if err := db.WithContext(ctx).Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionTurnTable{}).Error; err != nil {
+	if err := db.WithContext(ctx).Unscoped().Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionTurnTable{}).Error; err != nil {
 		eventState.closed = false
 		return err
 	}
-	if err := db.WithContext(ctx).Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
+	if err := db.WithContext(ctx).Unscoped().Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
 		eventState.closed = false
 		return err
 	}

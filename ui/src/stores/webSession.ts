@@ -3004,6 +3004,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
+  function invalidateCleanedHistories(sessionIds: string[]) {
+    const ids = Array.from(new Set(sessionIds.map(id => String(id || '').trim()).filter(Boolean)));
+    ids.forEach(sessionId => {
+      clearSessionRuntimeState(sessionId);
+      updateSessionStatus(sessionId, current => ({
+        ...current,
+        revision: undefined,
+        hasUnread: false,
+        syncState: 'missing',
+        syncError: null,
+        lastSyncMode: null,
+        lastSyncedAt: null,
+        turnCount: 0,
+        itemCount: 0,
+      }));
+    });
+  }
+
   function setPendingInputs(sessionId: string, items: WebSessionPendingInput[]) {
     const nextPendingInputs = { ...pendingInputsBySession.value };
     if (items.length === 0) {
@@ -5569,6 +5587,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     unarchiveSession,
     syncSession,
     deleteSession,
+    invalidateCleanedHistories,
     sendMessage,
     scheduleMessage,
     schedulePlanExecution,

@@ -1595,6 +1595,17 @@
           </section>
 
           <section
+            v-show="isSettingsSectionVisible('maintenance')"
+            :ref="el => registerSettingsSectionRef('maintenance', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('maintenance')"
+          >
+            <n-card :title="t('settings.dataMaintenanceTitle')" size="huge">
+              <WebSessionHistoryCleanup />
+            </n-card>
+          </section>
+
+          <section
             v-show="isSettingsSectionVisible('backup')"
             :ref="el => registerSettingsSectionRef('backup', el as HTMLElement | null)"
             class="settings-card-shell"
@@ -1981,6 +1992,7 @@ import Apis from '@/api';
 import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
 import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
+import WebSessionHistoryCleanup from '@/components/settings/WebSessionHistoryCleanup.vue';
 import type {
   AIAssistantStatusConfig,
   DeveloperConfig,
@@ -4047,6 +4059,16 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
         t('settings.realtimePreview'),
         t('settings.previewTheme'),
         t('settings.sampleCard'),
+      ],
+    },
+    {
+      id: 'maintenance',
+      title: t('settings.dataMaintenanceTitle'),
+      description: t('settings.historyCleanupDescription'),
+      searchTerms: [
+        t('settings.historyCleanupTitle'),
+        t('settings.historyCleanupAction'),
+        t('settings.historyCleanupScopeProjects'),
       ],
     },
     {
