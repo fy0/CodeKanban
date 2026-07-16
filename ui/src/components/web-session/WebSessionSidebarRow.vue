@@ -1,6 +1,5 @@
 <template>
-  <button
-    type="button"
+  <div
     class="session-sidebar-item session-sidebar-row"
     :class="[
       row.toneClass,
@@ -13,15 +12,24 @@
     ]"
     :style="{ '--session-sidebar-accent': row.accentColor }"
     :title="row.tooltip"
-    @click="emit('select')"
+    @click="handleRowClick"
+    @contextmenu.prevent.stop="handleContextMenu"
+    @pointerdown="handlePointerDown"
+    @pointermove="handlePointerMove"
+    @pointerup="cancelLongPress"
+    @pointercancel="cancelLongPress"
   >
-    <div class="session-sidebar-main">
-      <div class="session-sidebar-title-line">
+    <button type="button" class="session-sidebar-main">
+      <span class="session-sidebar-agent-wrap" aria-hidden="true">
         <span class="session-sidebar-agent-icon" v-html="row.iconHtml"></span>
+        <n-icon v-if="row.hasWorkflowPlanBadge" class="session-sidebar-plan-flag" size="9">
+          <FlagIcon />
+        </n-icon>
+      </span>
+      <span class="session-sidebar-title-line">
         <span class="session-sidebar-item-title">{{ row.title }}</span>
-        <span v-if="row.subtitle" class="session-sidebar-state-text"> · {{ row.subtitle }} </span>
-      </div>
-    </div>
+      </span>
+    </button>
 
     <div class="session-sidebar-actions">
       <span v-if="row.archiving" class="session-sidebar-spinner" aria-hidden="true"></span>
@@ -33,151 +41,257 @@
       >
         {{ row.projectBadge.label }}
       </span>
-      <span v-if="row.archived" class="session-archived-pill">{{ row.archivedLabel }}</span>
-      <span
-        v-else
-        class="session-current-indicator"
-        :class="{ 'is-hidden': !row.active }"
-        :title="row.currentIndicatorTitle"
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+      <span class="session-sidebar-trailing-slot">
+        <span class="session-sidebar-activity-time" :title="row.activityTimeTitle">
+          {{ row.activityTimeLabel }}
+        </span>
+        <button
+          type="button"
+          class="session-sidebar-menu-button"
+          :title="row.moreActionsLabel"
+          :aria-label="row.moreActionsLabel"
+          @click.stop="handleMenuButtonClick"
         >
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-          <circle cx="12" cy="12" r="3"></circle>
-        </svg>
+          <n-icon size="14">
+            <EllipsisHorizontal />
+          </n-icon>
+        </button>
       </span>
     </div>
-  </button>
+
+    <n-dropdown
+      v-model:show="menuVisible"
+      trigger="manual"
+      placement="bottom-end"
+      :x="menuX"
+      :y="menuY"
+      :options="actionOptions"
+      @clickoutside="closeMenu"
+      @select="handleMenuSelect"
+    />
+  </div>
 </template>
 
 <script setup lang="ts">
+import { nextTick, onBeforeUnmount, ref } from 'vue';
+import { NDropdown, NIcon, type DropdownOption } from 'naive-ui';
+import { EllipsisHorizontal, Flag as FlagIcon } from '@vicons/ionicons5';
 import type { WebSessionSidebarRowView } from './webSessionSidebarVirtualList';
 
 defineProps<{
   row: WebSessionSidebarRowView;
+  actionOptions: DropdownOption[];
 }>();
 
 const emit = defineEmits<{
   (event: 'select'): void;
+  (event: 'action', key: string | number): void;
 }>();
+
+const LONG_PRESS_DELAY_MS = 500;
+const LONG_PRESS_MOVE_THRESHOLD_PX = 8;
+const menuVisible = ref(false);
+const menuX = ref(0);
+const menuY = ref(0);
+let longPressTimer: number | null = null;
+let longPressPointerId: number | null = null;
+let longPressStartX = 0;
+let longPressStartY = 0;
+let suppressSelectUntil = 0;
+
+function openMenuAt(x: number, y: number) {
+  menuVisible.value = false;
+  void nextTick(() => {
+    menuX.value = x;
+    menuY.value = y;
+    menuVisible.value = true;
+  });
+}
+
+function closeMenu() {
+  menuVisible.value = false;
+}
+
+function handleMenuButtonClick(event: MouseEvent) {
+  const button = event.currentTarget as HTMLButtonElement;
+  const rect = button.getBoundingClientRect();
+  openMenuAt(rect.right, rect.bottom);
+}
+
+function handleContextMenu(event: MouseEvent) {
+  suppressSelectUntil = Date.now() + 800;
+  openMenuAt(event.clientX, event.clientY);
+}
+
+function handleMenuSelect(key: string | number) {
+  closeMenu();
+  emit('action', key);
+}
+
+function handleRowClick() {
+  if (Date.now() < suppressSelectUntil) {
+    return;
+  }
+  emit('select');
+}
+
+function clearLongPressTimer() {
+  if (longPressTimer !== null) {
+    window.clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  longPressPointerId = null;
+}
+
+function handlePointerDown(event: PointerEvent) {
+  if (event.pointerType === 'mouse' || event.button !== 0 || !event.isPrimary) {
+    return;
+  }
+  const target = event.target;
+  if (target instanceof Element && target.closest('.session-sidebar-menu-button')) {
+    return;
+  }
+
+  clearLongPressTimer();
+  longPressPointerId = event.pointerId;
+  longPressStartX = event.clientX;
+  longPressStartY = event.clientY;
+  longPressTimer = window.setTimeout(() => {
+    longPressTimer = null;
+    longPressPointerId = null;
+    suppressSelectUntil = Date.now() + 800;
+    openMenuAt(longPressStartX, longPressStartY);
+  }, LONG_PRESS_DELAY_MS);
+}
+
+function handlePointerMove(event: PointerEvent) {
+  if (event.pointerId !== longPressPointerId) {
+    return;
+  }
+  if (
+    Math.hypot(event.clientX - longPressStartX, event.clientY - longPressStartY) >
+    LONG_PRESS_MOVE_THRESHOLD_PX
+  ) {
+    clearLongPressTimer();
+  }
+}
+
+function cancelLongPress(event: PointerEvent) {
+  if (event.pointerId === longPressPointerId) {
+    clearLongPressTimer();
+  }
+}
+
+onBeforeUnmount(clearLongPressTimer);
 </script>
 
 <style scoped>
 .session-sidebar-item {
+  --session-sidebar-outline: #4f8ff7;
+  box-sizing: border-box;
   width: 100%;
-  min-height: 34px;
+  min-height: var(--session-sidebar-row-height, 34px);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 12%, var(--n-border-color));
-  border-left: 4px solid var(--session-sidebar-accent, rgba(15, 23, 42, 0.08));
+  gap: 3px;
+  padding: 0 4px 0 0;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 48%, transparent);
+  border-radius: 6px;
   background: var(--app-surface-color, #fff);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
   text-align: left;
+  position: relative;
   cursor: pointer;
+  -webkit-touch-callout: none;
   transition:
-    border-color 0.18s ease,
     background-color 0.18s ease,
+    border-color 0.18s ease,
     box-shadow 0.18s ease;
 }
 
-.session-sidebar-item.has-workflow-plan-badge {
-  position: relative;
-  overflow: visible;
-}
-
-.session-sidebar-item.has-workflow-plan-badge::before,
-.session-sidebar-item.has-workflow-plan-badge::after {
-  content: '';
-  position: absolute;
-  top: 10px;
-  left: -6px;
-  z-index: 2;
-  width: 18px;
-  height: 2px;
-  background: var(--session-sidebar-accent, #0ea5e9);
-  transform-origin: center center;
-  pointer-events: none;
-}
-
-.session-sidebar-item.has-workflow-plan-badge::before {
-  transform: rotate(54deg);
-}
-
-.session-sidebar-item.has-workflow-plan-badge::after {
-  transform: rotate(-54deg);
-}
-
 .session-sidebar-item:hover {
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
+  background: color-mix(in srgb, var(--session-sidebar-outline) 7%, var(--app-surface-color, #fff));
 }
 
 .session-sidebar-item.is-active {
-  border-color: color-mix(
-    in srgb,
-    var(--session-sidebar-accent, var(--n-primary-color)) 44%,
-    var(--n-border-color)
-  );
-  background: linear-gradient(
-    135deg,
-    color-mix(
-        in srgb,
-        var(--session-sidebar-accent, var(--n-primary-color)) 14%,
-        var(--app-surface-color, #fff)
-      )
-      0%,
-    color-mix(
-        in srgb,
-        var(--session-sidebar-accent, var(--n-primary-color)) 6%,
-        var(--app-surface-color, #fff)
-      )
-      100%
-  );
-  box-shadow: 0 6px 16px
-    color-mix(in srgb, var(--session-sidebar-accent, var(--n-primary-color)) 20%, transparent);
+  border-color: color-mix(in srgb, var(--session-sidebar-outline) 72%, #ffffff);
+  background: color-mix(in srgb, var(--session-sidebar-outline) 8%, var(--app-surface-color, #fff));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--session-sidebar-outline) 22%, transparent),
+    0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.session-sidebar-item:focus-within {
+  border-color: color-mix(in srgb, var(--session-sidebar-outline) 72%, #ffffff);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--session-sidebar-outline) 22%, transparent),
+    0 1px 3px rgba(15, 23, 42, 0.06);
 }
 
 .session-sidebar-item.is-archived {
-  border-style: dashed;
+  opacity: 0.9;
 }
 
 .session-sidebar-item.is-archiving {
   cursor: wait;
 }
 
+.session-sidebar-plan-flag {
+  position: absolute;
+  z-index: 2;
+  top: -7px;
+  left: -6px;
+  color: #6366f1;
+  pointer-events: none;
+}
+
+.session-sidebar-plan-flag :deep(svg) {
+  display: block;
+}
+
 .session-sidebar-main {
   flex: 1;
   min-width: 0;
+  align-self: stretch;
   display: flex;
   align-items: center;
+  gap: 6px;
+  padding: 0 0 0 7px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.session-sidebar-main:focus {
+  outline: none;
 }
 
 .session-sidebar-title-line {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
   min-width: 0;
+  overflow: hidden;
+}
+
+.session-sidebar-agent-wrap {
+  position: relative;
+  width: var(--session-sidebar-leading-icon-size, 16px);
+  height: var(--session-sidebar-leading-icon-size, 16px);
+  flex: 0 0 var(--session-sidebar-leading-icon-size, 16px);
 }
 
 .session-sidebar-agent-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
+  width: var(--session-sidebar-leading-icon-size, 16px);
+  height: var(--session-sidebar-leading-icon-size, 16px);
   background: transparent;
   color: var(--n-primary-color);
-  flex-shrink: 0;
 }
 
 .session-sidebar-agent-icon :deep(svg) {
@@ -186,7 +300,7 @@ const emit = defineEmits<{
 
 .session-sidebar-item-title {
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--session-sidebar-title-font-size, 12px);
   font-weight: 600;
   color: var(--app-text-color, var(--n-text-color-1, #111827));
   white-space: nowrap;
@@ -209,7 +323,9 @@ const emit = defineEmits<{
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
+  min-width: 0;
+  justify-content: flex-end;
 }
 
 @keyframes web-session-sidebar-spin {
@@ -219,8 +335,8 @@ const emit = defineEmits<{
 }
 
 .session-sidebar-spinner {
-  width: 11px;
-  height: 11px;
+  width: 9px;
+  height: 9px;
   flex-shrink: 0;
   border-radius: 50%;
   border: 1.75px solid color-mix(in srgb, var(--n-primary-color) 24%, transparent);
@@ -228,130 +344,141 @@ const emit = defineEmits<{
   animation: web-session-sidebar-spin 0.72s linear infinite;
 }
 
-.session-archived-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 38px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, #94a3b8 16%, transparent);
-  color: color-mix(in srgb, #334155 78%, var(--n-text-color-2));
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.session-sidebar-item.is-active .session-archived-pill {
-  background: color-mix(in srgb, var(--n-primary-color) 18%, rgba(255, 255, 255, 0.92));
-  color: color-mix(in srgb, var(--n-primary-color) 88%, #ffffff 12%);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 26%, transparent),
-    0 1px 2px rgba(59, 130, 246, 0.14);
-}
-
 .project-index-badge.session-project-badge {
-  width: 18px;
-  height: 18px;
-  font-size: 10px;
+  width: var(--session-sidebar-badge-size, 18px);
+  height: var(--session-sidebar-badge-size, 18px);
+  font-size: 9px;
+  font-weight: 800;
   color: #ffffff;
   background: var(--badge-color, #3b82f6);
   background-image: none;
   border: 1px solid
     color-mix(in srgb, var(--badge-color, #3b82f6) 78%, var(--app-surface-color, #fff) 22%);
-  margin-left: 2px;
-  box-shadow: none;
+  margin-left: 0;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--badge-color, #3b82f6) 22%, transparent);
 }
 
 .project-index-badge.session-project-badge.is-single-project {
-  visibility: hidden;
-  pointer-events: none;
+  display: none;
 }
 
-.session-current-indicator {
-  width: 18px;
-  height: 18px;
+.session-sidebar-trailing-slot {
+  width: 38px;
+  height: var(--session-sidebar-action-size, 22px);
+  flex: 0 0 38px;
+  display: grid;
+  align-items: center;
+  justify-items: end;
+}
+
+.session-sidebar-activity-time {
+  grid-area: 1 / 1;
+  padding-right: 2px;
+  color: var(--n-text-color-3);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+}
+
+.session-sidebar-menu-button {
+  grid-area: 1 / 1;
+  width: var(--session-sidebar-action-size, 22px);
+  height: var(--session-sidebar-action-size, 22px);
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: color-mix(in srgb, var(--n-text-color-2) 84%, #475569);
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  line-height: 0;
-  border-radius: 50%;
-  background: var(--n-primary-color);
-  color: #ffffff;
-  border: 1px solid
-    color-mix(in srgb, var(--n-primary-color) 78%, var(--app-surface-color, #fff) 22%);
-  box-shadow: none;
-}
-
-.session-current-indicator.is-hidden {
   opacity: 0;
   pointer-events: none;
+  transition:
+    opacity 0.14s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
 }
 
-.session-current-indicator svg {
+.session-sidebar-item:hover .session-sidebar-activity-time,
+.session-sidebar-item:focus-within .session-sidebar-activity-time {
+  opacity: 0;
+}
+
+.session-sidebar-item:hover .session-sidebar-menu-button,
+.session-sidebar-item:focus-within .session-sidebar-menu-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-sidebar-menu-button:hover {
+  background: color-mix(in srgb, var(--n-border-color) 40%, transparent);
+  color: var(--n-text-color-1);
+}
+
+.session-sidebar-menu-button :deep(svg) {
   display: block;
 }
 
 .session-sidebar-working {
-  background: color-mix(in srgb, #8b5cf6 8%, var(--app-surface-color, #fff));
+  --session-sidebar-outline: #8b5cf6;
+  background: color-mix(in srgb, #8b5cf6 9%, var(--app-surface-color, #fff));
 }
 
 .session-sidebar-approval {
-  border-color: rgba(247, 144, 9, 0.44);
-  background: rgba(247, 144, 9, 0.14);
+  --session-sidebar-outline: #f79009;
+  background: rgba(247, 144, 9, 0.12);
 }
 
 .session-sidebar-item.session-sidebar-approval.is-active,
 .session-sidebar-item.session-sidebar-approval.is-active:hover {
-  border-color: rgba(247, 144, 9, 0.6);
-  background: rgba(247, 144, 9, 0.22);
-  box-shadow: none;
+  background: rgba(247, 144, 9, 0.18);
 }
 
 .session-sidebar-plan-approval {
-  border-color: var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3));
-  background: var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14));
+  --session-sidebar-outline: var(--session-sidebar-accent, #0891b2);
+  background: color-mix(
+    in srgb,
+    var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 82%,
+    var(--app-surface-color, #fff)
+  );
 }
 
 .session-sidebar-item.session-sidebar-plan-approval.is-active,
 .session-sidebar-item.session-sidebar-plan-approval.is-active:hover {
-  border-color: color-mix(
+  background: color-mix(
     in srgb,
-    var(--web-session-plan-approval-accent-strong, #0e7490) 14%,
-    var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3)) 86%
+    var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 100%,
+    var(--app-surface-color, #fff)
   );
-  border-left-color: var(--web-session-plan-approval-accent, #0891b2);
-  background: linear-gradient(
-    135deg,
-    color-mix(
-        in srgb,
-        var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 92%,
-        var(--app-surface-color, #fff) 8%
-      )
-      0%,
-    color-mix(
-        in srgb,
-        var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 76%,
-        var(--app-surface-color, #fff) 24%
-      )
-      100%
-  );
-  box-shadow:
-    inset 0 0 0 1px
-      color-mix(in srgb, var(--web-session-plan-approval-accent, #0891b2) 16%, transparent),
-    0 6px 18px color-mix(in srgb, var(--web-session-plan-approval-accent, #0891b2) 14%, transparent);
 }
 
 .session-sidebar-completion {
+  --session-sidebar-outline: #10b981;
   background: color-mix(in srgb, #10b981 10%, var(--app-surface-color, #fff));
 }
 
 .session-sidebar-idle {
-  background: color-mix(in srgb, #9ca3af 4%, var(--app-surface-color, #fff));
+  background: var(--app-surface-color, #fff);
 }
 
 .session-sidebar-error {
-  background: color-mix(in srgb, #f04438 8%, var(--app-surface-color, #fff));
+  --session-sidebar-outline: #e5484d;
+  background: color-mix(in srgb, #e5484d 9%, var(--app-surface-color, #fff));
+}
+
+.session-sidebar-item.session-sidebar-error:hover {
+  background: color-mix(in srgb, #e5484d 11%, var(--app-surface-color, #fff));
+}
+
+.session-sidebar-item.session-sidebar-error.is-active,
+.session-sidebar-item.session-sidebar-error.is-active:hover {
+  background: color-mix(in srgb, #e5484d 14%, var(--app-surface-color, #fff));
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -2033,8 +2033,10 @@
                   class="session-sidebar-virtual-section"
                   :class="{ 'is-separated': item.separated }"
                 >
-                  <span>{{ item.label }}</span>
-                  <span class="session-sidebar-section-count">{{ item.count }}</span>
+                  <span class="session-sidebar-section-label">
+                    <span>{{ item.label }}</span>
+                    <span>({{ item.count }})</span>
+                  </span>
                 </div>
                 <div v-else-if="item.type === 'empty'" class="session-sidebar-virtual-row">
                   <div class="session-sidebar-section-empty">{{ item.label }}</div>
@@ -2042,7 +2044,9 @@
                 <div v-else-if="item.type === 'session'" class="session-sidebar-virtual-row">
                   <WebSessionSidebarRow
                     :row="item.entry.row"
+                    :action-options="buildSidebarSessionActionOptions(item.entry.source.session)"
                     @select="handleSidebarVirtualSessionSelect(item)"
+                    @action="handleSidebarSessionActionSelect($event, item.entry.source)"
                   />
                 </div>
                 <div v-else class="session-sidebar-virtual-row">
@@ -2487,12 +2491,17 @@ import {
 import { shouldShowAutoRetryRateLimitNotice } from '@/components/web-session/webSessionAutoRetryNotice';
 import {
   formatWebSessionDateTime,
+  formatWebSessionSidebarTime,
   formatWebSessionTimestamp,
 } from '@/components/web-session/webSessionTimeFormat';
 import {
   resolveWebSessionLiveTimeCopy,
   type WebSessionLiveTimeTooltipItem,
 } from '@/components/web-session/webSessionLiveTime';
+import {
+  calculateBillableTokenUsage,
+  calculateCodexRemainingContext,
+} from '@/components/web-session/webSessionContextUsage';
 import {
   buildOrderedTabSessions,
   resolveActiveTabSessionId,
@@ -2521,6 +2530,7 @@ import {
 } from '@/components/web-session/webSessionSidebarScope';
 import {
   buildWebSessionSidebarVirtualItems,
+  groupWebSessionSidebarEntriesByDate,
   WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE,
   type WebSessionSidebarRowView,
   type WebSessionSidebarSessionEntry,
@@ -2586,6 +2596,11 @@ const emit = defineEmits<{
 
 const liveStateClockMs = ref(Date.now());
 let liveStateClockTimer: number | null = null;
+const sidebarCalendarDayStartMs = computed(() => {
+  const date = new Date(liveStateClockMs.value);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+});
 
 type DraftSessionTab = WebSessionSummary & {
   isDraft: true;
@@ -4518,10 +4533,16 @@ const contextUsageIndicator = computed(() => {
   const totalInputTokens = Number(session.usage.inputTokens || 0);
   const totalCachedInputTokens = Number(session.usage.cachedInputTokens || 0);
   const totalOutputTokens = Number(session.usage.outputTokens || 0);
-  const totalUsedTokens = Math.max(0, totalInputTokens + totalOutputTokens);
-  const remainingEstimateTokens = Math.max(0, compactLimitTokens - usedTokens);
-  const remainingPercent =
-    compactLimitTokens > 0 ? Math.round((remainingEstimateTokens / compactLimitTokens) * 100) : 0;
+  const totalUsedTokens = calculateBillableTokenUsage(
+    totalInputTokens,
+    totalCachedInputTokens,
+    totalOutputTokens
+  );
+  const { remainingTokens: remainingEstimateTokens, remainingPercent } =
+    calculateCodexRemainingContext({
+      compactLimitTokens,
+      usedTokens,
+    });
   const sourceLabel =
     source === 'session_usage'
       ? t('webSession.contextUsageSourceSessionUsage')
@@ -5882,6 +5903,38 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
   return options;
 }
 
+function buildSidebarSessionActionOptions(session: WebSessionSummary): DropdownOption[] {
+  const options: DropdownOption[] = [
+    {
+      label: t('common.edit'),
+      key: 'rename',
+      icon: renderDropdownIcon(CreateOutline),
+    },
+  ];
+
+  options.push(
+    session.archivedAt
+      ? {
+          label: t('webSession.unarchiveAction'),
+          key: 'unarchive',
+          icon: renderDropdownIcon(ArchiveOutline),
+        }
+      : {
+          label: t('webSession.archiveAction'),
+          key: 'archive',
+          icon: renderDropdownIcon(ArchiveOutline),
+          disabled: isSessionArchiving(session.id),
+        },
+    {
+      label: t('common.delete'),
+      key: 'delete',
+      icon: renderDropdownIcon(TrashOutline),
+    }
+  );
+
+  return options;
+}
+
 const contextMenuOptions = computed<DropdownOption[]>(() =>
   buildSessionActionOptions(contextMenuSession.value)
 );
@@ -7099,6 +7152,19 @@ const archivedSidebarEntries = computed<WebSessionSidebarSessionEntry<CrossProje
       row: buildSidebarSessionRow(item, true),
     }))
 );
+const currentSidebarSections = computed(() =>
+  groupWebSessionSidebarEntriesByDate({
+    entries: currentSidebarEntries.value,
+    getTimestamp: entry => resolveWebSessionSidebarSortTimestamp(entry.source.session),
+    labels: {
+      today: t('webSession.sessionGroupToday'),
+      yesterday: t('webSession.sessionGroupYesterday'),
+      lastSevenDays: t('webSession.sessionGroupLastSevenDays'),
+      earlier: t('webSession.sessionGroupEarlier'),
+    },
+    now: liveStateClockMs.value,
+  })
+);
 const sidebarIsEmpty = computed(
   () =>
     crossProjectSessions.value.length === 0 &&
@@ -7108,11 +7174,9 @@ const sidebarIsEmpty = computed(
 );
 const sidebarVirtualItems = computed<WebSessionSidebarVirtualItem<CrossProjectSessionItem>[]>(() =>
   buildWebSessionSidebarVirtualItems({
-    current: currentSidebarEntries.value,
+    currentSections: currentSidebarSections.value,
     archived: archivedSidebarEntries.value,
-    currentLabel: t('webSession.currentSessions'),
-    currentEmptyLabel: t('webSession.currentSessionsEmpty'),
-    archivedLabel: t('webSession.archivedSessions'),
+    archivedLabel: t('webSession.sessionGroupArchived'),
     archivedEmptyLabel: t('webSession.archivedSessionsEmpty'),
     archivedLoadingLabel: t('common.loading'),
     archivedTotal: archivedSidebarMeta.value.total,
@@ -8696,6 +8760,133 @@ async function handleLoadMoreArchived() {
   }
 }
 
+async function handleSidebarSessionActionSelect(
+  key: string | number,
+  item: CrossProjectSessionItem
+) {
+  const action = String(key);
+  if (action === 'rename') {
+    openSessionRenameDialog(item.session);
+    return;
+  }
+  if (action === 'archive') {
+    handleSidebarArchiveSession(item);
+    return;
+  }
+  if (action === 'unarchive') {
+    await handleSidebarUnarchiveSession(item);
+    return;
+  }
+  if (action === 'delete') {
+    confirmSidebarDeleteSession(item);
+  }
+}
+
+function handleSidebarArchiveSession(item: CrossProjectSessionItem) {
+  if (isSessionArchiving(item.session.id)) {
+    return;
+  }
+  if (confirmBeforeTerminalClose.value) {
+    let archiveConfirmDialog: DialogReactive | null = null;
+    archiveConfirmDialog = dialog.warning({
+      title: t('webSession.confirmCloseTitle'),
+      content: () =>
+        h('div', { class: 'web-session-close-confirm' }, [
+          h('div', { class: 'web-session-close-confirm__message' }, [
+            t('webSession.confirmCloseContent', { title: item.session.title }),
+          ]),
+        ]),
+      positiveText: t('webSession.confirmCloseButton'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: async () => {
+        if (archiveConfirmDialog?.loading) {
+          return false;
+        }
+        if (archiveConfirmDialog) {
+          archiveConfirmDialog.loading = true;
+        }
+        try {
+          return await performSidebarArchiveSession(item);
+        } finally {
+          if (archiveConfirmDialog) {
+            archiveConfirmDialog.loading = false;
+          }
+        }
+      },
+    });
+    return;
+  }
+
+  void performSidebarArchiveSession(item);
+}
+
+async function performSidebarArchiveSession(item: CrossProjectSessionItem): Promise<boolean> {
+  if (isSessionArchiving(item.session.id)) {
+    return false;
+  }
+  beginSessionArchive(item.session.id);
+  try {
+    const visibleSession = visibleSessionById.value.get(item.session.id);
+    if (visibleSession && visibleSession.projectId === item.projectId) {
+      await closeTabById(item.session.id, async () => {
+        await webSessionStore.archiveSession(item.projectId, item.session.id);
+      });
+    } else {
+      await webSessionStore.archiveSession(item.projectId, item.session.id);
+    }
+    await refreshArchivedSidebar();
+    return true;
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+    return false;
+  } finally {
+    endSessionArchive(item.session.id);
+  }
+}
+
+async function handleSidebarUnarchiveSession(item: CrossProjectSessionItem) {
+  try {
+    const restored = await webSessionStore.unarchiveSession(item.projectId, item.session.id);
+    await refreshArchivedSidebar();
+    if (archivedPreviewSession.value?.id === item.session.id) {
+      clearArchivedPreviewSession();
+      if (restored.projectId === props.projectId) {
+        await activateTabById(restored.id);
+      }
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+function confirmSidebarDeleteSession(item: CrossProjectSessionItem) {
+  dialog.warning({
+    title: t('common.delete'),
+    content: t('webSession.deleteConfirm', { title: item.session.title }),
+    positiveText: t('common.delete'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => performSidebarDeleteSession(item),
+  });
+}
+
+async function performSidebarDeleteSession(item: CrossProjectSessionItem): Promise<boolean> {
+  const visibleSession = visibleSessionById.value.get(item.session.id);
+  if (visibleSession && visibleSession.projectId === item.projectId) {
+    return performDeleteSession(item.session.id);
+  }
+  try {
+    if (archivedPreviewSession.value?.id === item.session.id) {
+      clearArchivedPreviewSession();
+    }
+    await webSessionStore.deleteSession(item.projectId, item.session.id);
+    await refreshArchivedSidebar();
+    return true;
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+    return false;
+  }
+}
+
 function handleSidebarScopeSelect(key: string | number) {
   sidebarScope.value = normalizeWebSessionSidebarScope(key);
 }
@@ -8932,6 +9123,14 @@ async function handleRenameSession(sessionId: string) {
     return;
   }
 
+  openSessionRenameDialog(session);
+}
+
+function openSessionRenameDialog(session: WebSessionSummary | SessionTab) {
+  if (isDraftSession(session)) {
+    return;
+  }
+
   const inputValue = ref(session.title);
   dialog.create({
     title: t('webSession.renameTitle'),
@@ -8960,7 +9159,7 @@ async function handleRenameSession(sessionId: string) {
         return true;
       }
       try {
-        await webSessionStore.renameSession(session.projectId, sessionId, nextTitle);
+        await webSessionStore.renameSession(session.projectId, session.id, nextTitle);
         if (isArchivedPreviewSession(session) && archivedPreviewSession.value?.id === session.id) {
           archivedPreviewSession.value = {
             ...archivedPreviewSession.value,
@@ -10815,6 +11014,7 @@ function buildSidebarSessionRow(
   archived: boolean
 ): WebSessionSidebarRowView {
   const session = item.session;
+  const activityTimestamp = resolveWebSessionSidebarSortTimestamp(session);
   const phase = webSessionStore.getLiveState(session.id).phase;
   const hasUnread = hasSessionUnread(session);
   const displayState = resolveWebSessionDisplayState({
@@ -10856,7 +11056,13 @@ function buildSidebarSessionRow(
     singleProject: isSingleSidebarProject.value,
     projectBadge: item.projectBadge,
     currentIndicatorTitle: t('terminal.currentActiveSession'),
-    archivedLabel: t('webSession.archivedBadge'),
+    activityTimeLabel: formatWebSessionSidebarTime(
+      activityTimestamp,
+      new Date(sidebarCalendarDayStartMs.value),
+      !archived
+    ),
+    activityTimeTitle: formatWebSessionDateTime(activityTimestamp, locale.value),
+    moreActionsLabel: t('common.moreActions'),
   };
 }
 
@@ -10949,7 +11155,7 @@ function confirmSyncSession(session: WebSessionSummary, mode: 'fast' | 'deep') {
         ? t('webSession.deepSyncFromTerminal')
         : t('webSession.syncFromTerminal'),
     negativeText: t('common.cancel'),
-    onPositiveClick: async () => handleSyncSession(session.id, mode, clearExisting.value),
+    onPositiveClick: async () => handleSyncSessionSummary(session, mode, clearExisting.value),
   });
 }
 
@@ -10962,11 +11168,19 @@ async function handleSyncSession(
   if (!session) {
     return;
   }
+  await handleSyncSessionSummary(session, mode, clearExisting);
+}
+
+async function handleSyncSessionSummary(
+  session: WebSessionSummary,
+  mode: 'fast' | 'deep' = 'fast',
+  clearExisting = false
+) {
   try {
-    await webSessionStore.syncSession(session.projectId, sessionId, mode, clearExisting, {
-      rememberActive: !isArchivedPreviewSession(session),
+    await webSessionStore.syncSession(session.projectId, session.id, mode, clearExisting, {
+      rememberActive: !session.archivedAt,
     });
-    syncArchivedPreviewSessionSummary(sessionId);
+    syncArchivedPreviewSessionSummary(session.id);
     message.success(
       mode === 'deep' ? t('webSession.deepSyncSuccess') : t('webSession.syncSuccess')
     );
@@ -12730,6 +12944,15 @@ defineExpose({
 }
 
 .session-sidebar {
+  --session-sidebar-control-height: 30px;
+  --session-sidebar-count-height: 26px;
+  --session-sidebar-row-height: 34px;
+  --session-sidebar-virtual-row-height: 38px;
+  --session-sidebar-section-height: 30px;
+  --session-sidebar-leading-icon-size: 16px;
+  --session-sidebar-action-size: 22px;
+  --session-sidebar-badge-size: 18px;
+  --session-sidebar-title-font-size: 12px;
   box-sizing: border-box;
   min-height: 0;
   overflow: hidden;
@@ -12737,7 +12960,8 @@ defineExpose({
   border-left: 1px solid var(--n-border-color);
   border-radius: 0;
   background: transparent;
-  padding: 4px 0 8px 12px;
+  box-shadow: none;
+  padding: 4px 6px 8px;
   display: flex;
   flex-direction: column;
 }
@@ -12749,6 +12973,7 @@ defineExpose({
   gap: 8px;
   padding: 2px 0 6px;
   border-bottom: 1px solid color-mix(in srgb, var(--n-primary-color) 8%, var(--n-border-color));
+  background: transparent;
 }
 
 .session-sidebar-title-wrap {
@@ -12789,18 +13014,18 @@ defineExpose({
 }
 
 .session-sidebar-count {
-  min-width: 22px;
-  height: 22px;
-  padding: 0 5px;
-  margin-right: 4px;
+  min-width: 26px;
+  height: var(--session-sidebar-count-height);
+  padding: 0 7px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
-  color: var(--n-primary-color);
-  font-size: 10px;
+  background: color-mix(in srgb, var(--n-primary-color) 9%, var(--app-surface-color, #fff));
+  color: color-mix(in srgb, var(--n-primary-color) 58%, var(--n-text-color-2));
+  font-size: 11px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .session-sidebar-list {
@@ -12808,41 +13033,70 @@ defineExpose({
   min-height: 0;
   height: 100%;
   overflow-y: auto;
-  padding: 6px 0 2px;
+  padding: 0 0 10px;
   display: flex;
   flex-direction: column;
+  gap: 0;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--n-text-color-3) 45%, transparent) transparent;
+}
+
+.session-sidebar-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.session-sidebar-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--n-text-color-3) 42%, transparent);
+}
+
+.session-sidebar-list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .session-sidebar-virtual-row {
   box-sizing: border-box;
-  min-height: 40px;
-  padding-bottom: 6px;
+  min-height: var(--session-sidebar-virtual-row-height);
+  padding: 2px 0;
 }
 
 .session-sidebar-virtual-section {
   box-sizing: border-box;
-  min-height: 30px;
+  height: var(--session-sidebar-section-height);
+  min-height: var(--session-sidebar-section-height);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 6px 6px;
-  font-size: 11px;
-  font-weight: 700;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 0 0 4px;
+  font-size: var(--session-sidebar-title-font-size, 12px);
+  font-weight: 600;
   color: var(--n-text-color-2);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 .session-sidebar-virtual-section.is-separated {
-  min-height: 38px;
-  padding-top: 12px;
+  position: relative;
+  height: calc(var(--session-sidebar-section-height) + 6px);
+  min-height: calc(var(--session-sidebar-section-height) + 6px);
+  padding-top: 6px;
+}
+
+.session-sidebar-virtual-section.is-separated::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--n-border-color) 74%, transparent);
+  pointer-events: none;
 }
 
 .session-sidebar-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
 }
 
 .session-sidebar-section-header {
@@ -12850,29 +13104,34 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 6px;
-  font-size: 11px;
+  padding: 14px 0 6px;
+  font-size: 10px;
   font-weight: 700;
-  color: var(--n-text-color-2);
+  color: var(--n-text-color-3);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
-.session-sidebar-section-count {
-  font-variant-numeric: tabular-nums;
+.session-sidebar-section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 16px;
+  transform: translateY(1px);
 }
 
 .session-sidebar-section-empty {
-  padding: 8px 10px;
+  margin: 6px 0;
+  padding: 8px 10px 8px 22px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--n-border-color) 26%, transparent);
-  font-size: 11px;
+  background: color-mix(in srgb, var(--n-border-color) 20%, transparent);
+  font-size: 12px;
   color: var(--n-text-color-3);
 }
 
 .session-sidebar-empty {
-  padding: 20px 12px;
-  font-size: 12px;
+  padding: 24px 18px;
+  font-size: 13px;
   color: var(--n-text-color-3);
 }
 
@@ -12884,12 +13143,13 @@ defineExpose({
 
 .session-sidebar-load-more {
   width: 100%;
-  border: 1px dashed color-mix(in srgb, var(--n-primary-color) 24%, var(--n-border-color));
-  background: color-mix(in srgb, var(--n-primary-color) 5%, transparent);
+  margin-top: 8px;
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 18%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 4%, transparent);
   color: var(--n-primary-color);
   border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 11px;
+  padding: 10px 12px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   transition:

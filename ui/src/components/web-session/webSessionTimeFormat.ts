@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import type { LocaleType } from '@/composables/useLocale';
 
 type WebSessionLocale = LocaleType | string;
@@ -75,4 +76,27 @@ export function formatWebSessionDateTime(timestamp: number, locale: WebSessionLo
   }
 
   return getFormatter(locale, 'fullDateTime').format(new Date(timestamp));
+}
+
+export function formatWebSessionSidebarTime(
+  timestamp: number,
+  now: Date = new Date(),
+  showYesterdayAsTime = true
+) {
+  if (!isValidTimestamp(timestamp)) {
+    return '';
+  }
+
+  const date = dayjs(timestamp);
+  const reference = dayjs(now);
+  if (
+    date.isSame(reference, 'day') ||
+    (showYesterdayAsTime && date.isSame(reference.subtract(1, 'day'), 'day'))
+  ) {
+    return date.format('HH:mm');
+  }
+  if (date.isSame(reference, 'year')) {
+    return date.format('M/D');
+  }
+  return date.format('YY/M/D');
 }

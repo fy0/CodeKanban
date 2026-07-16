@@ -16,12 +16,27 @@ export type WebSessionSidebarRowView = {
   singleProject: boolean;
   projectBadge?: ProjectBadge;
   currentIndicatorTitle: string;
-  archivedLabel: string;
+  activityTimeLabel: string;
+  activityTimeTitle: string;
+  moreActionsLabel?: string;
 };
 
 export type WebSessionSidebarSessionEntry<T> = {
   source: T;
   row: WebSessionSidebarRowView;
+};
+
+export type WebSessionSidebarSection<T> = {
+  key: string;
+  label: string;
+  entries: WebSessionSidebarSessionEntry<T>[];
+};
+
+export type WebSessionSidebarDateGroupLabels = {
+  today: string;
+  yesterday: string;
+  lastSevenDays: string;
+  earlier: string;
 };
 
 export type WebSessionSidebarVirtualItem<T> =
@@ -50,10 +65,8 @@ export type WebSessionSidebarVirtualItem<T> =
     };
 
 type BuildWebSessionSidebarVirtualItemsOptions<T> = {
-  current: WebSessionSidebarSessionEntry<T>[];
+  currentSections: WebSessionSidebarSection<T>[];
   archived: WebSessionSidebarSessionEntry<T>[];
-  currentLabel: string;
-  currentEmptyLabel: string;
   archivedLabel: string;
   archivedEmptyLabel: string;
   archivedLoadingLabel: string;
@@ -63,13 +76,55 @@ type BuildWebSessionSidebarVirtualItemsOptions<T> = {
   loadMoreLabel: string;
 };
 
-export const WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE = 40;
+export const WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE = 38;
+
+function startOfLocalDay(timestamp: number, daysAgo = 0) {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - daysAgo);
+  return date.getTime();
+}
+
+export function groupWebSessionSidebarEntriesByDate<T>({
+  entries,
+  getTimestamp,
+  labels,
+  now = Date.now(),
+}: {
+  entries: WebSessionSidebarSessionEntry<T>[];
+  getTimestamp: (entry: WebSessionSidebarSessionEntry<T>) => number;
+  labels: WebSessionSidebarDateGroupLabels;
+  now?: number;
+}): WebSessionSidebarSection<T>[] {
+  const groups: WebSessionSidebarSection<T>[] = [
+    { key: 'today', label: labels.today, entries: [] },
+    { key: 'yesterday', label: labels.yesterday, entries: [] },
+    { key: 'last-seven-days', label: labels.lastSevenDays, entries: [] },
+    { key: 'earlier', label: labels.earlier, entries: [] },
+  ];
+  const todayStart = startOfLocalDay(now);
+  const yesterdayStart = startOfLocalDay(now, 1);
+  const lastSevenDaysStart = startOfLocalDay(now, 6);
+
+  entries.forEach(entry => {
+    const timestamp = getTimestamp(entry);
+    if (timestamp >= todayStart) {
+      groups[0].entries.push(entry);
+    } else if (timestamp >= yesterdayStart) {
+      groups[1].entries.push(entry);
+    } else if (timestamp >= lastSevenDaysStart) {
+      groups[2].entries.push(entry);
+    } else {
+      groups[3].entries.push(entry);
+    }
+  });
+
+  return groups;
+}
 
 export function buildWebSessionSidebarVirtualItems<T>({
-  current,
+  currentSections,
   archived,
-  currentLabel,
-  currentEmptyLabel,
   archivedLabel,
   archivedEmptyLabel,
   archivedLoadingLabel,
@@ -78,38 +133,32 @@ export function buildWebSessionSidebarVirtualItems<T>({
   archivedHasMore,
   loadMoreLabel,
 }: BuildWebSessionSidebarVirtualItemsOptions<T>): WebSessionSidebarVirtualItem<T>[] {
-  const items: WebSessionSidebarVirtualItem<T>[] = [
-    {
-      key: 'section:current',
-      type: 'section',
-      label: currentLabel,
-      count: current.length,
-      separated: false,
-    },
-  ];
+  const items: WebSessionSidebarVirtualItem<T>[] = [];
+  const visibleCurrentSections = currentSections.filter(section => section.entries.length > 0);
 
-  if (current.length > 0) {
-    current.forEach(entry => {
+  visibleCurrentSections.forEach(section => {
+    items.push({
+      key: `section:${section.key}`,
+      type: 'section',
+      label: section.label,
+      count: section.entries.length,
+      separated: false,
+    });
+    section.entries.forEach(entry => {
       items.push({
         key: entry.row.key,
         type: 'session',
         entry,
       });
     });
-  } else {
-    items.push({
-      key: 'empty:current',
-      type: 'empty',
-      label: currentEmptyLabel,
-    });
-  }
+  });
 
   items.push({
     key: 'section:archived',
     type: 'section',
     label: archivedLabel,
     count: archivedTotal,
-    separated: true,
+    separated: visibleCurrentSections.length > 0,
   });
 
   if (archived.length > 0) {

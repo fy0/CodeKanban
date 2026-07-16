@@ -722,6 +722,11 @@ export default {
     currentProjectSessions: '当前项目会话列表',
     currentSessions: '当前会话',
     currentSessionsEmpty: '暂无当前会话',
+    sessionGroupToday: '今天',
+    sessionGroupYesterday: '昨天',
+    sessionGroupLastSevenDays: '七天内',
+    sessionGroupEarlier: '更早',
+    sessionGroupArchived: '归档',
     archivedSessions: '归档会话',
     archivedSessionsEmpty: '暂无归档会话',
     archivedBadge: '归档',
@@ -756,6 +761,7 @@ export default {
     confirmCloseContent: '确定要归档"{title}"吗？',
     confirmCloseButton: '确认归档',
     archiveAction: '归档',
+    unarchiveAction: '取消归档',
     syncSessionAction: '同步会话',
     syncFromTerminal: '快速同步',
     deepSyncFromTerminal: '深度同步',
@@ -898,7 +904,7 @@ export default {
     contextUsageModeCumulativeTotal: '按累计 session usage 估算',
     contextUsageEstimatedBreakdown:
       '当前估算明细：input {input} / cached {cached} / output {output}',
-    contextUsageTotalUsed: '本 session 累计消耗：{count} tokens',
+    contextUsageTotalUsed: '本 session 累计非缓存消耗：{count} tokens',
     contextUsageTotalBreakdown: '累计明细：input {input} / cached {cached} / output {output}',
     contextUsageNoteLatestTokenCount:
       '注意：这是 Codex token_count 事件里的最新请求快照，通常比累计消耗更接近当前上下文占用。',

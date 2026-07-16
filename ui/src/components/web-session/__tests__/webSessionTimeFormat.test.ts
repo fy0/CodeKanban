@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   formatWebSessionDateTime,
+  formatWebSessionSidebarTime,
   formatWebSessionTimestamp,
 } from '@/components/web-session/webSessionTimeFormat';
 
@@ -57,5 +58,20 @@ describe('webSessionTimeFormat', () => {
 
     expect(formatWebSessionDateTime(timestamp, 'zh-CN')).toBe(zhExpected);
     expect(formatWebSessionDateTime(timestamp, 'en-US')).toBe(enExpected);
+  });
+
+  it('formats compact sidebar timestamps by local calendar date', () => {
+    const now = new Date(2026, 6, 16, 18, 30, 0);
+
+    expect(formatWebSessionSidebarTime(new Date(2026, 6, 16, 9, 8).getTime(), now)).toBe('09:08');
+    expect(formatWebSessionSidebarTime(new Date(2026, 6, 15, 23, 50).getTime(), now)).toBe('23:50');
+    expect(formatWebSessionSidebarTime(new Date(2026, 6, 15, 23, 50).getTime(), now, false)).toBe(
+      '7/15'
+    );
+    expect(formatWebSessionSidebarTime(new Date(2026, 6, 10, 23, 50).getTime(), now)).toBe('7/10');
+    expect(formatWebSessionSidebarTime(new Date(2025, 11, 31, 23, 50).getTime(), now)).toBe(
+      '25/12/31'
+    );
+    expect(formatWebSessionSidebarTime(Number.NaN, now)).toBe('');
   });
 });

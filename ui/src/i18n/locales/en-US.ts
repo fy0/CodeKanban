@@ -739,6 +739,11 @@ export default {
     currentProjectSessions: 'Current project sessions',
     currentSessions: 'Current Sessions',
     currentSessionsEmpty: 'No current sessions',
+    sessionGroupToday: 'Today',
+    sessionGroupYesterday: 'Yesterday',
+    sessionGroupLastSevenDays: 'Within 7 Days',
+    sessionGroupEarlier: 'Earlier',
+    sessionGroupArchived: 'Archived',
     archivedSessions: 'Archived Sessions',
     archivedSessionsEmpty: 'No archived sessions',
     archivedBadge: 'Archived',
@@ -775,6 +780,7 @@ export default {
     confirmCloseContent: 'Archive "{title}"?',
     confirmCloseButton: 'Archive',
     archiveAction: 'Archive',
+    unarchiveAction: 'Unarchive',
     syncSessionAction: 'Sync Session',
     syncFromTerminal: 'Quick Sync',
     deepSyncFromTerminal: 'Deep Sync',
@@ -924,7 +930,7 @@ export default {
     contextUsageModeCumulativeTotal: 'estimated from cumulative session usage',
     contextUsageEstimatedBreakdown:
       'Current estimate breakdown: input {input} / cached {cached} / output {output}',
-    contextUsageTotalUsed: 'Cumulative session usage: {count} tokens',
+    contextUsageTotalUsed: 'Cumulative non-cached session usage: {count} tokens',
     contextUsageTotalBreakdown:
       'Cumulative breakdown: input {input} / cached {cached} / output {output}',
     contextUsageNoteLatestTokenCount:
