@@ -3706,6 +3706,27 @@ export const useWebSessionStore = defineStore('web-session', () => {
         };
   }
 
+  function getApprovalForNotification(
+    sessionId: string,
+    projection: RuntimeProjection
+  ): WebSessionApprovalState | null {
+    if (projection.pendingApproval) {
+      return projection.pendingApproval;
+    }
+
+    const state = projection.liveState;
+    if (state.phase !== 'waiting_approval' && state.phase !== 'waiting_plan_approval') {
+      return null;
+    }
+
+    return {
+      id: `status:${sessionId}:${state.phase}:${state.updatedAt}`,
+      prompt: '',
+      requestedAt: state.updatedAt,
+      stale: false,
+    };
+  }
+
   function emitStateTransition(
     sessionId: string,
     previousProjection: RuntimeProjection,
@@ -3717,20 +3738,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     const previousState = previousProjection.liveState;
-    const previousApproval = previousProjection.pendingApproval;
     const nextState = nextProjection.liveState;
-    const nextApproval = nextProjection.pendingApproval;
     const hasPendingInputs = getPendingInputs(sessionId).length > 0;
-    const approvalForNotification =
-      nextApproval ??
-      (nextState.phase === 'waiting_approval' || nextState.phase === 'waiting_plan_approval'
-        ? {
-            id: `status:${sessionId}:${nextState.updatedAt}`,
-            prompt: '',
-            requestedAt: nextState.updatedAt,
-            stale: false,
-          }
-        : null);
+    const previousApprovalForNotification = getApprovalForNotification(
+      sessionId,
+      previousProjection
+    );
+    const approvalForNotification = getApprovalForNotification(sessionId, nextProjection);
     const baseEvent: WebSessionAIEvent = {
       sessionId,
       sessionTitle: session.title,
@@ -3744,11 +3758,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
     if (
       approvalForNotification &&
-      (!previousApproval ||
-        previousApproval.id !== approvalForNotification.id ||
-        previousApproval.requestedAt !== approvalForNotification.requestedAt ||
-        (previousState.phase !== 'waiting_approval' &&
-          previousState.phase !== 'waiting_plan_approval'))
+      (!previousApprovalForNotification ||
+        previousApprovalForNotification.id !== approvalForNotification.id ||
+        previousApprovalForNotification.requestedAt !== approvalForNotification.requestedAt)
     ) {
       emitter.emit('ai:approval-needed', {
         ...baseEvent,

@@ -3231,6 +3231,99 @@ describe('webSession loading behavior', () => {
     expect(handleApproval).toHaveBeenCalledTimes(1);
   });
 
+  it('does not repeat plan approval notifications for delayed plan updates', async () => {
+    const store = useWebSessionStore();
+    const workingSession = makeSession({
+      id: 'session-delayed-plan-approval',
+      status: 'running',
+      assistantState: 'working',
+      workflowMode: 'plan',
+    });
+    const planApprovalSession = makeSession({
+      ...workingSession,
+      revision: '2',
+      assistantState: 'waiting_plan_approval',
+      assistantStateUpdatedAt: '2026-04-09T10:02:00.000Z',
+      updatedAt: '2026-04-09T10:02:00.000Z',
+    });
+    const handleApproval = vi.fn();
+    listMock.mockResolvedValue([workingSession]);
+
+    await store.loadSessions(workingSession.projectId);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    store.getLiveState(workingSession.id);
+    store.emitter.on('ai:approval-needed', handleApproval);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: workingSession.id,
+      rev: '2',
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession(planApprovalSession),
+    });
+    expect(handleApproval).toHaveBeenCalledTimes(1);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: workingSession.id,
+      rev: '3',
+      ts: Date.now(),
+      op: 'scheduled',
+      si: [
+        {
+          id: 'scheduled-plan-1',
+          a: 'execute_plan',
+          tid: 'plan-item-1',
+          m: 'send',
+          st: 'scheduled',
+          txt: 'Implement the plan.',
+          atts: [],
+          sf: Date.parse('2026-04-09T10:10:00.000Z'),
+          ca: Date.parse('2026-04-09T10:02:00.000Z'),
+          ua: Date.parse('2026-04-09T10:02:00.000Z'),
+        },
+      ],
+    });
+    expect(handleApproval).toHaveBeenCalledTimes(1);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: workingSession.id,
+      rev: '4',
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession({
+        ...planApprovalSession,
+        revision: '4',
+        workflowMode: 'default',
+        updatedAt: '2026-04-09T10:03:00.000Z',
+      }),
+    });
+    expect(handleApproval).toHaveBeenCalledTimes(1);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: workingSession.id,
+      rev: '5',
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession({
+        ...planApprovalSession,
+        revision: '5',
+        workflowMode: 'default',
+        assistantStateUpdatedAt: '2026-04-09T10:04:00.000Z',
+        updatedAt: '2026-04-09T10:04:00.000Z',
+      }),
+    });
+    expect(handleApproval).toHaveBeenCalledTimes(2);
+  });
+
   it('updates a 500-block assistant tail 1000 times without full rescans or event sorts', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
