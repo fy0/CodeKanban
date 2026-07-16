@@ -78,6 +78,24 @@ codekanban-cli session list --project-name codekanban
 If the service is local and you omit `--project-id`, `--project-name`, and `--path`, project-scoped commands fall back to the current working directory.
 If the service is remote, prefer `--project-id` or `--project-name`. In remote mode, `--path` means a server-side path on the machine running CodeKanban.
 
+## Image attachments
+
+Pass `--image <path>` to upload a local image with a web-session message. The option is repeatable and can be combined with existing `--attachment-id` values:
+
+```bash
+codekanban-cli web-session run --project-name codekanban --agent codex --text "Update the page to match these references." --image ./desktop.png --image ./mobile.png
+codekanban-cli web-session send --session-id <session-id> --text "Also compare this state." --image ./reference.png
+```
+
+Image paths are read from the machine running the CLI, including when the CodeKanban service is remote. This flow currently supports image attachments only and uses the server's configured attachment size limit.
+
+The two-step flow remains available when an uploaded image needs to be reused:
+
+```bash
+codekanban-cli web-session attach --project-name codekanban --file ./reference.png
+codekanban-cli web-session send --session-id <session-id> --text "Use the uploaded reference." --attachment-id <attachment-id>
+```
+
 ## Common commands
 
 ```bash
@@ -89,8 +107,9 @@ codekanban-cli web-session state --project-name codekanban --session-id <session
 codekanban-cli web-session answer-pending --project-name codekanban --session-id <session-id>
 codekanban-cli web-session execute-plan --project-name codekanban --session-id <session-id>
 codekanban-cli web-session wait --project-name codekanban --session-id <session-id> --until done --settle-ms 2000
+codekanban-cli web-session send --session-id <session-id> --text "Review this reference." --image ./reference.png
 codekanban-cli file read --project-name codekanban --file notes/123.md
-codekanban-cli web-session run --project-name codekanban --agent codex --text "Create a concise plan first, then implement it." --strict-cwd
+codekanban-cli web-session run --project-name codekanban --agent codex --text "Create a concise plan first, then implement it." --image ./reference.png --strict-cwd
 ```
 
 If the service is not running on the default address, use either:

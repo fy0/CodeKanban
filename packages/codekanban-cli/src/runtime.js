@@ -47,6 +47,7 @@ function parseCliArgs(argv) {
   const flags = {
     addDirs: [],
     attachmentIds: [],
+    imagePaths: [],
     deleteFilesBefore: [],
     extraArgs: [],
     readFilesAfter: [],
@@ -117,6 +118,10 @@ function parseCliArgs(argv) {
         break;
       case '--attachment-id':
         flags.attachmentIds.push(readFlagValue(argv, index, token));
+        index += 1;
+        break;
+      case '--image':
+        flags.imagePaths.push(readFlagValue(argv, index, token));
         index += 1;
         break;
       case '--extra-arg':
@@ -294,12 +299,14 @@ Common options:
   --project-id <id>     Project identifier
   --path <path>         Local project path
   --session-id <id>     Session identifier
+  --image <path>        Upload a local image for web-session send/run; repeatable
   --claude-runtime <rt> Claude launcher for workflow terminal mode: claude or ccr
   --help                Show this help text
 
 Examples:
   ${commandName} session list --base-url http://127.0.0.1:3007 --path D:/repo
   ${commandName} web-session state --base-url http://127.0.0.1:3007 --path D:/repo --session-id <id>
+  ${commandName} web-session send --session-id <id> --text "Review this reference" --image ./reference.png
   ${commandName} web-session run --base-url http://127.0.0.1:3007 --path D:/repo --agent codex --text "Create notes/123.md" --delete-file-before notes/123.md --read-file-after notes/123.md --strict-cwd
 `;
 
@@ -529,6 +536,29 @@ async function readFilesAfter(client, flags, sessionProjectId) {
   return files;
 }
 
+async function uploadWebSessionImages(client, imagePaths, target = {}) {
+  const attachments = [];
+  for (const filePath of imagePaths) {
+    const attachment = await client.uploadWebSessionAttachment({
+      projectId: target.projectId,
+      path: target.path,
+      filePath,
+    });
+    if (!attachment?.id) {
+      throw new Error(`image upload did not return an attachment id: ${filePath}`);
+    }
+    attachments.push(attachment);
+  }
+  return attachments;
+}
+
+function mergeAttachmentIds(attachmentIds, uploadedAttachments) {
+  return [
+    ...attachmentIds,
+    ...uploadedAttachments.map(attachment => attachment.id),
+  ];
+}
+
 async function runWebSessionFlow(client, flags) {
   const intervalMs = parseIntegerFlag(flags.intervalMs, 'intervalMs') || 2000;
   const timeoutMs = parseIntegerFlag(flags.timeoutMs, 'timeoutMs') || 120000;
@@ -538,10 +568,15 @@ async function runWebSessionFlow(client, flags) {
   let sessionId = flags.sessionId;
   let sessionProjectId = flags.projectId;
   const initialPrompt = withStrictCwdPrompt(flags.text || flags.prompt, flags.strictCwd);
+  const uploadedAttachments = await uploadWebSessionImages(client, flags.imagePaths, {
+    projectId: flags.projectId,
+    path: flags.path,
+  });
+  const attachmentIds = mergeAttachmentIds(flags.attachmentIds, uploadedAttachments);
 
   if (!sessionId) {
-    if (!initialPrompt) {
-      throw new Error('web-session run requires --session-id or an initial --text/--prompt');
+    if (!initialPrompt && attachmentIds.length === 0) {
+      throw new Error('web-session run requires --session-id or an initial --text/--prompt/--image/--attachment-id');
     }
     session = await client.createWebSession({
       projectId: flags.projectId,
@@ -565,11 +600,11 @@ async function runWebSessionFlow(client, flags) {
 
   const deletedBefore = await maybeDeleteFilesBefore(client, flags, sessionProjectId);
 
-  if (initialPrompt) {
+  if (initialPrompt || attachmentIds.length > 0) {
     await client.sendWebSessionMessage({
       sessionId,
       text: initialPrompt,
-      attachmentIds: flags.attachmentIds,
+      attachmentIds,
       mode: flags.mode,
     });
   }
@@ -838,13 +873,24 @@ export async function runCli(argv, options = {}) {
         filePath: flags.file,
       });
     } else if (scope === 'web-session' && action === 'send') {
-      result = await withWebSessionCommandChannel(client, channel =>
-        channel.sendMessage(flags.sessionId, {
+      result = await withWebSessionCommandChannel(client, async channel => {
+        let uploadedAttachments = [];
+        if (flags.imagePaths.length > 0) {
+          const snapshot = await channel.connect(flags.sessionId);
+          const projectId = snapshot?.session?.projectId || flags.projectId;
+          if (!projectId) {
+            throw new Error(`unable to resolve the project for web session ${flags.sessionId}`);
+          }
+          uploadedAttachments = await uploadWebSessionImages(client, flags.imagePaths, {
+            projectId,
+          });
+        }
+        return await channel.sendMessage(flags.sessionId, {
           text: withStrictCwdPrompt(flags.text || flags.prompt, flags.strictCwd),
-          attachmentIds: flags.attachmentIds,
+          attachmentIds: mergeAttachmentIds(flags.attachmentIds, uploadedAttachments),
           mode: flags.mode,
-        }),
-      );
+        });
+      });
     } else if (scope === 'web-session' && action === 'approve') {
       result = await withWebSessionCommandChannel(client, channel => channel.approve(flags.sessionId));
     } else if (scope === 'web-session' && action === 'reject') {

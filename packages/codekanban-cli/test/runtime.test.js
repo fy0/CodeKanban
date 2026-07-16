@@ -76,6 +76,7 @@ test('CLI --help prints usage text', { concurrency: false }, async () => {
   const result = await runCliCaptured(['--help']);
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /CodeKanban command runtime/);
+  assert.match(result.stdout, /--image <path>/);
   assert.equal(result.stderr, '');
 });
 
@@ -188,6 +189,152 @@ test('CLI web-session send sends a websocket command and prints the ack', { conc
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.type, 'ack');
   assert.equal(payload.operation, 'send');
+});
+
+test('CLI web-session send uploads repeated local images and merges attachment ids', { concurrency: false }, async t => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'codekanban-cli-'));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const firstImage = path.join(tempDir, 'first.png');
+  const secondImage = path.join(tempDir, 'second.jpg');
+  await writeFile(firstImage, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  await writeFile(secondImage, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+
+  const uploadedNames = [];
+  const handlers = new Map([
+    ['POST /api/v1/projects/p1/web-sessions/attachments', ({ body }) => {
+      const file = body.get('file');
+      uploadedNames.push(file.name);
+      const sequence = uploadedNames.length;
+      return createJsonResponse({
+        item: {
+          id: `att-${sequence}`,
+          name: file.name,
+          mime: file.type,
+          size: file.size,
+          path: `/tmp/${file.name}`,
+          createdAt: '2026-04-10T00:00:00Z',
+        },
+      }, 201);
+    }],
+  ]);
+
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+    const originalSend = socket.send.bind(socket);
+    socket.send = payload => {
+      originalSend(payload);
+      const frame = JSON.parse(payload);
+      if (frame.op === 'connect') {
+        queueMicrotask(() => {
+          socket.emitJson({
+            v: 1,
+            k: 'ack',
+            rid: frame.rid,
+            sid: frame.sid,
+            ts: 1710000300000,
+            op: frame.op,
+            ok: 1,
+          });
+          socket.emitJson({
+            v: 1,
+            k: 'snap',
+            rid: frame.rid,
+            sid: frame.sid,
+            ts: 1710000300000,
+            s: { id: 'ws1', pid: 'p1', ag: 'codex' },
+            h: { items: [] },
+            pi: [],
+          });
+        });
+        return;
+      }
+      assert.equal(frame.op, 'send');
+      assert.deepEqual(frame.p, {
+        txt: 'compare the references',
+        atts: ['att-existing', 'att-1', 'att-2'],
+      });
+      queueMicrotask(() => {
+        socket.emitJson({
+          v: 1,
+          k: 'ack',
+          rid: frame.rid,
+          sid: frame.sid,
+          ts: 1710000300000,
+          op: frame.op,
+          ok: 1,
+        });
+      });
+    };
+  });
+
+  const result = await runCliCaptured([
+    'web-session',
+    'send',
+    '--base-url',
+    'http://127.0.0.1:3000',
+    '--session-id',
+    'ws1',
+    '--text',
+    'compare the references',
+    '--attachment-id',
+    'att-existing',
+    '--image',
+    firstImage,
+    '--image',
+    secondImage,
+  ], {
+    fetchImpl: createFetchMock(handlers),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(uploadedNames, ['first.png', 'second.jpg']);
+  assert.equal(JSON.parse(result.stdout).operation, 'send');
+});
+
+test('CLI web-session send does not send when an image upload fails', { concurrency: false }, async () => {
+  let sent = false;
+  let closed = false;
+  const result = await runCliCaptured([
+    'web-session',
+    'send',
+    '--base-url',
+    'http://127.0.0.1:3000',
+    '--session-id',
+    'ws1',
+    '--text',
+    'continue',
+    '--image',
+    './missing.png',
+  ], {
+    clientFactory: () => ({
+      openWebSessionCommandChannel() {
+        return {
+          async waitForOpen() {},
+          async connect() {
+            return { session: { id: 'ws1', projectId: 'p1' } };
+          },
+          async sendMessage() {
+            sent = true;
+          },
+          close() {
+            closed = true;
+          },
+        };
+      },
+      async uploadWebSessionAttachment() {
+        throw new Error('image upload failed');
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(sent, false);
+  assert.equal(closed, true);
+  assert.match(JSON.parse(result.stderr).error.message, /image upload failed/);
 });
 
 test('CLI web-session user-input parses answers JSON and prints the ack', { concurrency: false }, async () => {
@@ -525,6 +672,87 @@ test('CLI web-session run reuses SDK orchestration and still reads optional file
   assert.equal(runInput.settleMs, 2500);
   assert.equal(runInput.executePlanPrompt.includes('Stay strictly inside the current working directory'), true);
   assert.equal(payload.filesAfter[0].text, '# summary');
+});
+
+test('CLI web-session run accepts an image-only initial message', { concurrency: false }, async () => {
+  const calls = [];
+  const result = await runCliCaptured([
+    'web-session',
+    'run',
+    '--base-url',
+    'http://127.0.0.1:3000',
+    '--project-id',
+    'p1',
+    '--image',
+    './reference.png',
+  ], {
+    clientFactory: () => ({
+      async uploadWebSessionAttachment(input) {
+        calls.push({ type: 'upload', input });
+        return { id: 'att-image', name: 'reference.png', mime: 'image/png' };
+      },
+      async createWebSession(input) {
+        calls.push({ type: 'create', input });
+        return { id: 'ws-created', projectId: 'p1' };
+      },
+      async sendWebSessionMessage(input) {
+        calls.push({ type: 'send', input });
+        return { operation: 'send' };
+      },
+      async runWebSessionUntilDone(input) {
+        calls.push({ type: 'run-until-done', input });
+        return {
+          stopReason: 'done',
+          actions: [],
+          finalState: { phase: 'done' },
+        };
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(calls.map(call => call.type), [
+    'upload',
+    'create',
+    'send',
+    'run-until-done',
+  ]);
+  assert.deepEqual(calls[0].input, {
+    projectId: 'p1',
+    path: undefined,
+    filePath: './reference.png',
+  });
+  assert.equal(calls[2].input.text, '');
+  assert.deepEqual(calls[2].input.attachmentIds, ['att-image']);
+});
+
+test('CLI web-session run does not create a session when an image upload fails', { concurrency: false }, async () => {
+  let created = false;
+  const result = await runCliCaptured([
+    'web-session',
+    'run',
+    '--base-url',
+    'http://127.0.0.1:3000',
+    '--project-id',
+    'p1',
+    '--text',
+    'inspect the image',
+    '--image',
+    './missing.png',
+  ], {
+    clientFactory: () => ({
+      async uploadWebSessionAttachment() {
+        throw new Error('image upload failed');
+      },
+      async createWebSession() {
+        created = true;
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(created, false);
+  assert.match(JSON.parse(result.stderr).error.message, /image upload failed/);
 });
 
 test('CLI web-session list preserves array output', { concurrency: false }, async () => {

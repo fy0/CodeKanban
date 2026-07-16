@@ -82,6 +82,21 @@ For the common structured flow "create a session, answer user-input questions, e
 codekanban-cli web-session run --project-name codekanban --agent codex --text "Create a concise plan first, then implement it." --strict-cwd
 ```
 
+## Image inputs
+
+Use repeatable `--image <path>` options when the initial task or a follow-up message needs local image references:
+
+```bash
+codekanban-cli web-session run --project-name codekanban --agent codex --text "Match the implementation to these references." --image ./desktop.png --image ./mobile.png --strict-cwd
+codekanban-cli web-session send --session-id <SESSION_ID> --text "Also account for this state." --image ./reference.png
+```
+
+- `--image` is supported by `web-session run` and `web-session send`.
+- Image paths are local to the machine running `codekanban-cli`, even when the CodeKanban service is remote.
+- The option is repeatable and can be combined with existing `--attachment-id` values.
+- Web-session attachments currently support images only and are subject to the server attachment size limit.
+- Use `web-session attach --file <path>` followed by `--attachment-id <id>` only when an uploaded image must be reused across commands.
+
 ## Remote web-session test loop (minimal SDK)
 
 Use this when you want a short programmable remote verification loop without stitching websocket events by hand.
@@ -180,8 +195,9 @@ codekanban-cli web-session state --project-name codekanban --session-id <SESSION
 codekanban-cli web-session answer-pending --project-name codekanban --session-id <SESSION_ID>
 codekanban-cli web-session execute-plan --project-name codekanban --session-id <SESSION_ID>
 codekanban-cli web-session wait --project-name codekanban --session-id <SESSION_ID> --until done --settle-ms 2000
+codekanban-cli web-session send --session-id <SESSION_ID> --text "Review this reference." --image ./reference.png
 codekanban-cli file read --project-name codekanban --file notes/123.md
-codekanban-cli web-session run --project-name codekanban --agent codex --text "Create a concise plan first, then implement it." --strict-cwd
+codekanban-cli web-session run --project-name codekanban --agent codex --text "Create a concise plan first, then implement it." --image ./reference.png --strict-cwd
 codekanban-cli workflow start --project-name codekanban --profile plan --prompt "Inspect the repository and respond with a plan"
 codekanban-cli terminal continue --session-id <TERMINAL_SESSION_ID> --prompt "Continue from the last step"
 ```
@@ -191,6 +207,7 @@ codekanban-cli terminal continue --session-id <TERMINAL_SESSION_ID> --prompt "Co
 - If the user names a project, resolve by project name first.
 - If the user asks to "open/start/create a CodeKanban session", default to `web-session create` unless they explicitly want PTY-style terminal behavior.
 - If the user asks to continue or reply in an existing web session, use `web-session send`.
+- If the user provides local image references, pass each one with `--image` on `web-session run` or `web-session send`.
 - If the user asks for progress or completion state, use `web-session state`, `web-session wait`, or `web-session watch`.
 - If the user asks for the whole structured plan / answer / execute / wait flow, use `web-session run`.
 - If the user wants a programmable remote loop instead of a pure CLI sequence, use the minimal SDK template with `runWebSessionUntilDone(...)`.

@@ -1,6 +1,6 @@
 {
   "name": "@codekanban/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Installable Codex skill CLI for operating CodeKanban workflows, sessions, and web sessions.",
   "type": "module",
   "main": "./src/index.js",

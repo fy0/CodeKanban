@@ -27,6 +27,7 @@ const VALUE_FLAGS = new Set([
   '--approval-policy',
   '--add-dir',
   '--attachment-id',
+  '--image',
   '--extra-arg',
   '--title',
   '--working-dir',
@@ -929,7 +930,7 @@ export async function runCodeKanbanCliWithRuntime(argv, runtimeBindings, options
     state.flags.baseUrl = baseUrlFromArgs;
 
     if (state.flags.version) {
-      const version = options.version || '0.1.0';
+      const version = options.version || '0.2.0';
       stdout.write(`${APP_NAME} ${version}\n`);
       return 0;
     }
