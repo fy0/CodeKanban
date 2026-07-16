@@ -5349,18 +5349,124 @@ func TestHandleCodexAppServerUsageDefaultsContextEstimateToCumulativeTotal(t *te
 	}
 }
 
+func TestHandleCodexAppServerUsageUsesLatestSnapshotForContextEstimate(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Latest Usage Snapshot", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	run := &activeRun{
+		sessionID:          session.ID,
+		runID:              "run_latest_snapshot",
+		assistantDeltaSeen: make(map[string]bool),
+	}
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":4380698,"cachedInputTokens":4032512,"outputTokens":96629},"last":{"inputTokens":59571,"cachedInputTokens":59000,"outputTokens":199,"totalTokens":12656},"modelContextWindow":512000}}`),
+	)
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	summary := manager.mapSessionSummary(record)
+	if summary.ContextEstimateMode != ContextEstimateModeLatestTokenCount {
+		t.Fatalf("expected context estimate mode %q, got %q", ContextEstimateModeLatestTokenCount, summary.ContextEstimateMode)
+	}
+	if summary.ContextEstimate.InputTokens != 59571 ||
+		summary.ContextEstimate.CachedInputTokens != 59000 ||
+		summary.ContextEstimate.OutputTokens != 199 ||
+		summary.ContextEstimate.UsedTokens != 12656 {
+		t.Fatalf("unexpected context estimate: %#v", summary.ContextEstimate)
+	}
+	if summary.Usage.InputTokens != 4380698 ||
+		summary.Usage.CachedInputTokens != 4032512 ||
+		summary.Usage.OutputTokens != 96629 {
+		t.Fatalf("unexpected cumulative usage: %#v", summary.Usage)
+	}
+	if summary.ContextWindowTokens == nil || *summary.ContextWindowTokens != 512000 {
+		t.Fatalf("expected session context window 512000, got %#v", summary.ContextWindowTokens)
+	}
+	if summary.ContextWindowSource != ContextWindowSourceSessionUsage {
+		t.Fatalf("expected context window source %q, got %q", ContextWindowSourceSessionUsage, summary.ContextWindowSource)
+	}
+}
+
+func TestHandleCodexAppServerUsageClearsLatestSnapshotWhenMissingLast(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Missing Last Snapshot", 1000)
+	now := time.Now()
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Updates(map[string]any{
+			"latest_token_count_input_tokens":        100,
+			"latest_token_count_cached_input_tokens": 20,
+			"latest_token_count_output_tokens":       5,
+			"latest_token_count_total_tokens":        120,
+			"latest_token_count_updated_at":          now,
+		}).Error; err != nil {
+		t.Fatalf("failed to seed latest token count: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	run := &activeRun{
+		sessionID:          session.ID,
+		runID:              "run_missing_last",
+		assistantDeltaSeen: make(map[string]bool),
+	}
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":150,"cachedInputTokens":35,"outputTokens":12}}}`),
+	)
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	summary := manager.mapSessionSummary(record)
+	if record.LatestTokenCountUpdatedAt != nil ||
+		record.LatestTokenCountInputTokens != 0 ||
+		record.LatestTokenCountCachedInputTokens != 0 ||
+		record.LatestTokenCountOutputTokens != 0 ||
+		record.LatestTokenCountTotalTokens != 0 {
+		t.Fatalf("expected latest token count fields to be cleared, got %#v", record)
+	}
+	if summary.ContextEstimateMode != ContextEstimateModeCumulativeTotal {
+		t.Fatalf("expected fallback estimate mode %q, got %q", ContextEstimateModeCumulativeTotal, summary.ContextEstimateMode)
+	}
+	if summary.ContextEstimate.UsedTokens != 162 {
+		t.Fatalf("expected cumulative usedTokens 162, got %d", summary.ContextEstimate.UsedTokens)
+	}
+}
+
 func TestBuildContextEstimateUsesLatestTokenCountSnapshot(t *testing.T) {
 	now := time.Now()
 	record := tables.WebSessionTable{
-		TotalInputTokens:                 999,
-		TotalCachedInputTokens:           111,
-		TotalOutputTokens:                88,
-		LatestTokenCountTotalTokens:      12656,
-		LatestTokenCountUpdatedAt:        &now,
-		LastContextCompactionAt:          &now,
-		ContextBaselineInputTokens:       900,
-		ContextBaselineCachedInputTokens: 100,
-		ContextBaselineOutputTokens:      80,
+		TotalInputTokens:                  999,
+		TotalCachedInputTokens:            111,
+		TotalOutputTokens:                 88,
+		LatestTokenCountInputTokens:       200,
+		LatestTokenCountCachedInputTokens: 190,
+		LatestTokenCountOutputTokens:      50,
+		LatestTokenCountTotalTokens:       12656,
+		LatestTokenCountUpdatedAt:         &now,
+		LastContextCompactionAt:           &now,
+		ContextBaselineInputTokens:        900,
+		ContextBaselineCachedInputTokens:  100,
+		ContextBaselineOutputTokens:       80,
 	}
 
 	estimate, mode := buildContextEstimate(record)
@@ -5370,8 +5476,8 @@ func TestBuildContextEstimateUsesLatestTokenCountSnapshot(t *testing.T) {
 	if estimate.UsedTokens != 12656 {
 		t.Fatalf("expected usedTokens from latest token_count total, got %d", estimate.UsedTokens)
 	}
-	if estimate.InputTokens != 0 || estimate.CachedInputTokens != 0 || estimate.OutputTokens != 0 {
-		t.Fatalf("expected zero token_count breakdown, got %#v", estimate)
+	if estimate.InputTokens != 200 || estimate.CachedInputTokens != 190 || estimate.OutputTokens != 50 {
+		t.Fatalf("unexpected token_count breakdown, got %#v", estimate)
 	}
 }
 

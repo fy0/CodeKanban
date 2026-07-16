@@ -5271,9 +5271,10 @@ func buildLatestTokenCountUsage(record tables.WebSessionTable) (ContextEstimate,
 		CachedInputTokens: maxInt64(0, record.LatestTokenCountCachedInputTokens),
 		OutputTokens:      maxInt64(0, record.LatestTokenCountOutputTokens),
 	}
-	estimate.UsedTokens = contextEstimateUsedTokens(estimate.InputTokens, estimate.OutputTokens)
-	if estimate.UsedTokens == 0 && record.LatestTokenCountTotalTokens > 0 {
-		estimate.UsedTokens = record.LatestTokenCountTotalTokens
+	if record.LatestTokenCountTotalTokens > 0 {
+		estimate.UsedTokens = maxInt64(0, record.LatestTokenCountTotalTokens)
+	} else {
+		estimate.UsedTokens = contextEstimateUsedTokens(estimate.InputTokens, estimate.OutputTokens)
 	}
 	return estimate, contextEstimateHasValue(estimate)
 }
@@ -5309,20 +5310,6 @@ func maxInt64(left, right int64) int64 {
 		return left
 	}
 	return right
-}
-
-func contextEstimateTotalsUpdate(in, cin, out int64) map[string]any {
-	return map[string]any{
-		"total_input_tokens":                     in,
-		"total_cached_input_tokens":              cin,
-		"total_output_tokens":                    out,
-		"latest_token_count_input_tokens":        0,
-		"latest_token_count_cached_input_tokens": 0,
-		"latest_token_count_output_tokens":       0,
-		"latest_token_count_total_tokens":        0,
-		"latest_token_count_updated_at":          nil,
-		"updated_at":                             time.Now(),
-	}
 }
 
 func contextEstimateIncrementUpdate(in, cin, out int64) map[string]any {

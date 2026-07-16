@@ -1163,22 +1163,42 @@ func (m *Manager) handleCodexAppServerUsage(
 ) {
 	payload := decodeRawObject(params)
 	tokenUsage := decodeRawObject(payload["tokenUsage"])
-	total := decodeRawObject(tokenUsage["total"])
-	in := int64(numberValue(total["inputTokens"]))
-	cin := int64(numberValue(total["cachedInputTokens"]))
-	out := int64(numberValue(total["outputTokens"]))
-	contextWindow := int64(numberValue(tokenUsage["modelContextWindow"]))
-	updates := contextEstimateTotalsUpdate(in, cin, out)
-	if contextWindow > 0 {
+	total, _ := parseCodexTokenUsageSnapshot(tokenUsage["total"])
+	last, hasLast := parseCodexTokenUsageSnapshot(tokenUsage["last"])
+	now := time.Now()
+	updates := map[string]any{
+		"total_input_tokens":                     total.InputTokens,
+		"total_cached_input_tokens":              total.CachedInputTokens,
+		"total_output_tokens":                    total.OutputTokens,
+		"latest_token_count_input_tokens":        0,
+		"latest_token_count_cached_input_tokens": 0,
+		"latest_token_count_output_tokens":       0,
+		"latest_token_count_total_tokens":        0,
+		"latest_token_count_updated_at":          nil,
+		"updated_at":                             now,
+	}
+	if hasLast {
+		updates["latest_token_count_input_tokens"] = last.InputTokens
+		updates["latest_token_count_cached_input_tokens"] = last.CachedInputTokens
+		updates["latest_token_count_output_tokens"] = last.OutputTokens
+		updates["latest_token_count_total_tokens"] = last.TotalTokens
+		updates["latest_token_count_updated_at"] = now
+	}
+	contextWindow, hasContextWindow := codexInt64Field(
+		tokenUsage,
+		"modelContextWindow",
+		"model_context_window",
+	)
+	if hasContextWindow && contextWindow > 0 {
 		updates["session_context_window_tokens"] = contextWindow
-		updates["session_context_window_observed_at"] = time.Now()
+		updates["session_context_window_observed_at"] = now
 	}
 	_ = m.updateRuntimeState(context.Background(), session.ID, updates)
 
 	eventPayload := map[string]any{
-		"in":  in,
-		"cin": cin,
-		"out": out,
+		"in":  total.InputTokens,
+		"cin": total.CachedInputTokens,
+		"out": total.OutputTokens,
 	}
 	if contextWindow > 0 {
 		eventPayload["cwt"] = contextWindow
@@ -1188,7 +1208,7 @@ func (m *Manager) handleCodexAppServerUsage(
 		Seq:       0,
 		Type:      "usage",
 		RunID:     run.runID,
-		Timestamp: time.Now(),
+		Timestamp: now,
 		Payload:   eventPayload,
 	})
 	if contextWindow > 0 {
