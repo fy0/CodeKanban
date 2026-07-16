@@ -167,6 +167,25 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
         },
       });
     }],
+    ['POST /api/v1/web-sessions/search', ({ body }) => {
+      assert.deepEqual(body, {
+        projectIds: ['p1'],
+        query: 'needle',
+        includeArchived: true,
+        includeBody: true,
+        cursor: 'cursor-1',
+        scanLimit: 50,
+      });
+      return createJsonResponse({
+        item: {
+          items: [{ id: 'ws-search-1' }],
+          nextCursor: 'cursor-2',
+          done: false,
+          scanned: 50,
+          total: 120,
+        },
+      });
+    }],
     ['GET /api/v1/projects/p1/web-sessions/ws1/command-groups/group-1', () =>
       createJsonResponse({ item: { groupId: 'group-1', count: 2 } })],
     ['GET /api/v1/web-sessions/runtime-config', () =>
@@ -249,6 +268,15 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
     limit: 5,
   });
   assert.equal(archivedQuery.nextOffset, 15);
+
+  const searchResult = await client.searchWebSessions({
+    projectIds: ['p1'],
+    query: 'needle',
+    includeArchived: true,
+    cursor: 'cursor-1',
+  });
+  assert.equal(searchResult.nextCursor, 'cursor-2');
+  assert.equal(searchResult.items[0].id, 'ws-search-1');
 
   const commandGroup = await client.getWebSessionCommandGroup({
     projectId: 'p1',

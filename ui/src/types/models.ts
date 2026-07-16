@@ -427,6 +427,7 @@ export interface WebSessionSummary {
   contextWindowTokens?: number | null;
   contextWindowSource: WebSessionContextWindowSource;
   goal?: WebSessionGoal | null;
+  searchMatchSources?: Array<'title' | 'body'>;
 }
 
 export interface WebSessionAttachment {

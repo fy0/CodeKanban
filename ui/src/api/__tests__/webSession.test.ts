@@ -1,0 +1,97 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { postMethodMock, postSendMock, postAbortMock } = vi.hoisted(() => {
+  const postSendMock = vi.fn();
+  const postAbortMock = vi.fn();
+  return {
+    postMethodMock: vi.fn(() => ({
+      send: postSendMock,
+      abort: postAbortMock,
+    })),
+    postSendMock,
+    postAbortMock,
+  };
+});
+
+vi.mock('@/api', () => ({
+  urlBase: '',
+}));
+
+vi.mock('@/api/http', () => ({
+  http: {
+    Get: vi.fn(),
+    Post: postMethodMock,
+    Patch: vi.fn(),
+    Delete: vi.fn(),
+  },
+}));
+
+import { webSessionApi } from '@/api/webSession';
+
+describe('webSessionApi.search', () => {
+  beforeEach(() => {
+    postMethodMock.mockClear();
+    postSendMock.mockReset();
+    postAbortMock.mockReset();
+    postSendMock.mockResolvedValue({
+      item: {
+        items: [{ id: 'session-1' }],
+        nextCursor: 'cursor-2',
+        done: false,
+        scanned: 50,
+        total: 120,
+      },
+    });
+  });
+
+  it('sends a bounded progressive search chunk request', async () => {
+    const result = await webSessionApi.search({
+      projectIds: ['project-1'],
+      query: '  needle  ',
+      includeArchived: true,
+      cursor: 'cursor-1',
+      scanLimit: 50,
+    });
+
+    expect(postMethodMock).toHaveBeenCalledWith('/web-sessions/search', {
+      projectIds: ['project-1'],
+      query: 'needle',
+      includeArchived: true,
+      includeBody: true,
+      cursor: 'cursor-1',
+      scanLimit: 50,
+    });
+    expect(result).toMatchObject({
+      nextCursor: 'cursor-2',
+      scanned: 50,
+      total: 120,
+    });
+  });
+
+  it('aborts the active chunk request with the caller signal', async () => {
+    let rejectRequest: ((reason?: unknown) => void) | null = null;
+    postMethodMock.mockImplementationOnce(() => ({
+      send: vi.fn(
+        () =>
+          new Promise((_, reject) => {
+            rejectRequest = reject;
+          })
+      ),
+      abort: vi.fn(() => {
+        rejectRequest?.(new DOMException('session search aborted', 'AbortError'));
+      }),
+    }));
+    const controller = new AbortController();
+
+    const request = webSessionApi.search(
+      {
+        projectIds: ['project-1'],
+        query: 'needle',
+      },
+      { signal: controller.signal }
+    );
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});

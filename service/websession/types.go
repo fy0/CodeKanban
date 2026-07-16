@@ -150,6 +150,13 @@ const (
 	SyncModeDeep SyncMode = "deep"
 )
 
+type SessionSearchMatchSource string
+
+const (
+	SessionSearchMatchTitle SessionSearchMatchSource = "title"
+	SessionSearchMatchBody  SessionSearchMatchSource = "body"
+)
+
 type PendingInputMode string
 
 const (
@@ -184,53 +191,54 @@ const (
 )
 
 type SessionSummary struct {
-	ID                       string              `json:"id"`
-	Revision                 string              `json:"revision"`
-	ProjectID                string              `json:"projectId"`
-	WorktreeID               *string             `json:"worktreeId,omitempty"`
-	OrderIndex               float64             `json:"orderIndex"`
-	Agent                    Agent               `json:"agent"`
-	ClaudeRuntime            ClaudeRuntime       `json:"claudeRuntime"`
-	Title                    string              `json:"title"`
-	Model                    string              `json:"model"`
-	ReasoningEffort          ReasoningEffort     `json:"reasoningEffort"`
-	WorkflowMode             WorkflowMode        `json:"workflowMode"`
-	PermissionLevel          PermissionLevel     `json:"permissionLevel"`
-	ActiveCallTimeoutEnabled bool                `json:"activeCallTimeoutEnabled"`
-	AutoRetryEnabled         bool                `json:"autoRetryEnabled"`
-	AutoRetryScope           AutoRetryScope      `json:"autoRetryScope"`
-	AutoRetryPreset          AutoRetryPreset     `json:"autoRetryPreset"`
-	Cwd                      string              `json:"cwd"`
-	NativeSessionID          *string             `json:"nativeSessionId,omitempty"`
-	Status                   Status              `json:"status"`
-	AssistantState           AssistantState      `json:"assistantState,omitempty"`
-	HasUnread                bool                `json:"hasUnread"`
-	ArchivedAt               *time.Time          `json:"archivedAt,omitempty"`
-	ActivityAt               time.Time           `json:"activityAt"`
-	StatusUpdatedAt          *time.Time          `json:"statusUpdatedAt,omitempty"`
-	LastMessageAt            *time.Time          `json:"lastMessageAt,omitempty"`
-	AssistantStateUpdatedAt  *time.Time          `json:"assistantStateUpdatedAt,omitempty"`
-	SourceKind               string              `json:"sourceKind"`
-	SyncState                SyncState           `json:"syncState"`
-	LastSyncMode             SyncMode            `json:"lastSyncMode,omitempty"`
-	SourceCreatedAt          *time.Time          `json:"sourceCreatedAt,omitempty"`
-	SourceUpdatedAt          *time.Time          `json:"sourceUpdatedAt,omitempty"`
-	LastSyncedAt             *time.Time          `json:"lastSyncedAt,omitempty"`
-	ThreadPath               *string             `json:"threadPath,omitempty"`
-	ThreadPreview            *string             `json:"threadPreview,omitempty"`
-	TurnCount                int                 `json:"turnCount"`
-	ItemCount                int                 `json:"itemCount"`
-	SyncError                *string             `json:"syncError,omitempty"`
-	CreatedAt                time.Time           `json:"createdAt"`
-	UpdatedAt                time.Time           `json:"updatedAt"`
-	Usage                    Usage               `json:"usage"`
-	LatestTurnUsage          ContextEstimate     `json:"latestTurnUsage"`
-	ContextEstimate          ContextEstimate     `json:"contextEstimate"`
-	ContextEstimateMode      ContextEstimateMode `json:"contextEstimateMode"`
-	LastContextCompactionAt  *time.Time          `json:"lastContextCompactionAt,omitempty"`
-	ContextWindowTokens      *int64              `json:"contextWindowTokens,omitempty"`
-	ContextWindowSource      ContextWindowSource `json:"contextWindowSource"`
-	Goal                     *SessionGoal        `json:"goal,omitempty"`
+	ID                       string                     `json:"id"`
+	Revision                 string                     `json:"revision"`
+	ProjectID                string                     `json:"projectId"`
+	WorktreeID               *string                    `json:"worktreeId,omitempty"`
+	OrderIndex               float64                    `json:"orderIndex"`
+	Agent                    Agent                      `json:"agent"`
+	ClaudeRuntime            ClaudeRuntime              `json:"claudeRuntime"`
+	Title                    string                     `json:"title"`
+	Model                    string                     `json:"model"`
+	ReasoningEffort          ReasoningEffort            `json:"reasoningEffort"`
+	WorkflowMode             WorkflowMode               `json:"workflowMode"`
+	PermissionLevel          PermissionLevel            `json:"permissionLevel"`
+	ActiveCallTimeoutEnabled bool                       `json:"activeCallTimeoutEnabled"`
+	AutoRetryEnabled         bool                       `json:"autoRetryEnabled"`
+	AutoRetryScope           AutoRetryScope             `json:"autoRetryScope"`
+	AutoRetryPreset          AutoRetryPreset            `json:"autoRetryPreset"`
+	Cwd                      string                     `json:"cwd"`
+	NativeSessionID          *string                    `json:"nativeSessionId,omitempty"`
+	Status                   Status                     `json:"status"`
+	AssistantState           AssistantState             `json:"assistantState,omitempty"`
+	HasUnread                bool                       `json:"hasUnread"`
+	ArchivedAt               *time.Time                 `json:"archivedAt,omitempty"`
+	ActivityAt               time.Time                  `json:"activityAt"`
+	StatusUpdatedAt          *time.Time                 `json:"statusUpdatedAt,omitempty"`
+	LastMessageAt            *time.Time                 `json:"lastMessageAt,omitempty"`
+	AssistantStateUpdatedAt  *time.Time                 `json:"assistantStateUpdatedAt,omitempty"`
+	SourceKind               string                     `json:"sourceKind"`
+	SyncState                SyncState                  `json:"syncState"`
+	LastSyncMode             SyncMode                   `json:"lastSyncMode,omitempty"`
+	SourceCreatedAt          *time.Time                 `json:"sourceCreatedAt,omitempty"`
+	SourceUpdatedAt          *time.Time                 `json:"sourceUpdatedAt,omitempty"`
+	LastSyncedAt             *time.Time                 `json:"lastSyncedAt,omitempty"`
+	ThreadPath               *string                    `json:"threadPath,omitempty"`
+	ThreadPreview            *string                    `json:"threadPreview,omitempty"`
+	TurnCount                int                        `json:"turnCount"`
+	ItemCount                int                        `json:"itemCount"`
+	SyncError                *string                    `json:"syncError,omitempty"`
+	CreatedAt                time.Time                  `json:"createdAt"`
+	UpdatedAt                time.Time                  `json:"updatedAt"`
+	Usage                    Usage                      `json:"usage"`
+	LatestTurnUsage          ContextEstimate            `json:"latestTurnUsage"`
+	ContextEstimate          ContextEstimate            `json:"contextEstimate"`
+	ContextEstimateMode      ContextEstimateMode        `json:"contextEstimateMode"`
+	LastContextCompactionAt  *time.Time                 `json:"lastContextCompactionAt,omitempty"`
+	ContextWindowTokens      *int64                     `json:"contextWindowTokens,omitempty"`
+	ContextWindowSource      ContextWindowSource        `json:"contextWindowSource"`
+	Goal                     *SessionGoal               `json:"goal,omitempty"`
+	SearchMatchSources       []SessionSearchMatchSource `json:"searchMatchSources,omitempty"`
 }
 
 type SessionGoal struct {
@@ -249,6 +257,14 @@ type ArchivedQueryResult struct {
 	Total      int              `json:"total"`
 	HasMore    bool             `json:"hasMore"`
 	NextOffset int              `json:"nextOffset"`
+}
+
+type SessionSearchChunkResult struct {
+	Items      []SessionSummary `json:"items"`
+	NextCursor string           `json:"nextCursor,omitempty"`
+	Done       bool             `json:"done"`
+	Scanned    int              `json:"scanned"`
+	Total      int              `json:"total"`
 }
 
 type Attachment struct {

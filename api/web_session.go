@@ -507,6 +507,44 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Post(group, "/web-sessions/search", func(
+		ctx context.Context,
+		input *struct {
+			Body struct {
+				ProjectIDs      []string `json:"projectIds"`
+				Query           string   `json:"query"`
+				IncludeArchived bool     `json:"includeArchived"`
+				IncludeBody     *bool    `json:"includeBody,omitempty"`
+				Cursor          string   `json:"cursor,omitempty"`
+				ScanLimit       int      `json:"scanLimit,omitempty"`
+			}
+		},
+	) (*h.ItemResponse[websession.SessionSearchChunkResult], error) {
+		includeBody := input.Body.IncludeBody == nil || *input.Body.IncludeBody
+		item, err := c.manager.SearchSessionsChunk(
+			ctx,
+			input.Body.ProjectIDs,
+			input.Body.Query,
+			input.Body.IncludeArchived,
+			includeBody,
+			input.Body.Cursor,
+			input.Body.ScanLimit,
+		)
+		if err != nil {
+			if errors.Is(err, websession.ErrInvalidSessionSearchCursor) {
+				return nil, huma.Error400BadRequest(err.Error())
+			}
+			return nil, huma.Error500InternalServerError("failed to search web sessions", err)
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-search"
+		op.Summary = "渐进搜索会话标题、预览和可选正文"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Get(group, "/projects/{projectId}/web-sessions/{sessionId}/command-groups/{groupId}", func(
 		ctx context.Context,
 		input *struct {

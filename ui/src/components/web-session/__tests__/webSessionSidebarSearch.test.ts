@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   matchesWebSessionSidebarSearch,
+  mergeWebSessionSearchMatchSources,
   mergeWebSessionSidebarSearchPage,
   normalizeWebSessionSidebarSearchQuery,
+  resolveWebSessionSidebarSearchMatchSources,
 } from '@/components/web-session/webSessionSidebarSearch';
 import type { WebSessionSummary } from '@/types/models';
 
@@ -23,6 +25,26 @@ describe('webSession sidebar search', () => {
     expect(matchesWebSessionSidebarSearch(session, 'MIGRATION'.toLocaleLowerCase())).toBe(true);
     expect(matchesWebSessionSidebarSearch(session, 'missing')).toBe(false);
     expect(matchesWebSessionSidebarSearch(session, '')).toBe(true);
+    expect(matchesWebSessionSidebarSearch(session, 'migration', false)).toBe(false);
+  });
+
+  it('reports title and body match sources in display order', () => {
+    const session = {
+      title: 'Migration checklist',
+      threadPreview: 'Investigate the migration failure',
+    };
+
+    expect(resolveWebSessionSidebarSearchMatchSources(session, 'migration')).toEqual([
+      'title',
+      'body',
+    ]);
+    expect(resolveWebSessionSidebarSearchMatchSources(session, 'migration', false)).toEqual([
+      'title',
+    ]);
+    expect(mergeWebSessionSearchMatchSources(['body'], ['title', 'body'])).toEqual([
+      'title',
+      'body',
+    ]);
   });
 
   it('merges archived search pages without duplicating sessions', () => {

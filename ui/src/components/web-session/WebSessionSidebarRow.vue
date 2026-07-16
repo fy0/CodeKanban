@@ -28,6 +28,9 @@
       </span>
       <span class="session-sidebar-title-line">
         <span class="session-sidebar-item-title">{{ row.title }}</span>
+        <span v-if="row.searchMatchLabel" class="session-sidebar-search-match">
+          {{ row.searchMatchLabel }}
+        </span>
       </span>
     </button>
 
@@ -306,6 +309,15 @@ onBeforeUnmount(clearLongPressTimer);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.session-sidebar-search-match {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  color: var(--n-text-color-3);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .session-sidebar-state-text {

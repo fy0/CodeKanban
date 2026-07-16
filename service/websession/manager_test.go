@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1804,6 +1805,168 @@ func TestManagerListArchivedSessionsPaginatesByActivityDescending(t *testing.T) 
 	}
 	if len(searchPageTwo.Items) != 1 || searchPageTwo.Items[0].ID != sessionC.ID {
 		t.Fatalf("expected preview match second, got %#v", searchPageTwo.Items)
+	}
+}
+
+func TestManagerSearchSessionsChunkFindsSyncedBodyProgressively(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	otherProject := seedProject(t)
+	now := time.Now()
+	titleMatch := seedWebSession(t, project.ID, "Needle in title", 1000)
+	noMatch := seedWebSession(t, project.ID, "No match", 2000)
+	bodyMatch := seedWebSession(t, project.ID, "Body match", 3000)
+	archivedMatch := seedWebSession(t, project.ID, "Archived body match", 4000)
+	otherMatch := seedWebSession(t, otherProject.ID, "Other project", 5000)
+
+	for index, session := range []*tables.WebSessionTable{
+		titleMatch,
+		noMatch,
+		bodyMatch,
+		archivedMatch,
+		otherMatch,
+	} {
+		updates := map[string]any{
+			"activity_at": now.Add(-time.Duration(index) * time.Hour),
+			"updated_at":  now,
+		}
+		if session.ID == archivedMatch.ID {
+			updates["archived_at"] = now
+		}
+		if err := model.GetDB().Model(&tables.WebSessionTable{}).
+			Where("id = ?", session.ID).
+			Updates(updates).Error; err != nil {
+			t.Fatalf("failed to update search seed %s: %v", session.ID, err)
+		}
+	}
+
+	for order, session := range []*tables.WebSessionTable{
+		titleMatch,
+		bodyMatch,
+		archivedMatch,
+		otherMatch,
+	} {
+		row := &tables.WebSessionItemTable{
+			WebSessionID: session.ID,
+			OrderIndex:   int64(order + 1),
+			ItemKind:     "message",
+			ItemType:     "agent_message",
+			Text:         "Needle stored in synchronized body text",
+		}
+		row.Init()
+		if err := model.GetDB().Create(row).Error; err != nil {
+			t.Fatalf("failed to seed search body: %v", err)
+		}
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	pageOne, err := manager.SearchSessionsChunk(
+		context.Background(),
+		[]string{"", project.ID, project.ID},
+		"  NEEDLE  ",
+		false,
+		true,
+		"",
+		2,
+	)
+	if err != nil {
+		t.Fatalf("SearchSessionsChunk page one returned error: %v", err)
+	}
+	if pageOne.Done || pageOne.NextCursor == "" || pageOne.Scanned != 2 || pageOne.Total != 3 {
+		t.Fatalf("unexpected first search page metadata: %+v", pageOne)
+	}
+	if len(pageOne.Items) != 1 || pageOne.Items[0].ID != titleMatch.ID {
+		t.Fatalf("expected title match on first search page, got %#v", pageOne.Items)
+	}
+	if !reflect.DeepEqual(
+		pageOne.Items[0].SearchMatchSources,
+		[]SessionSearchMatchSource{SessionSearchMatchTitle, SessionSearchMatchBody},
+	) {
+		t.Fatalf("expected combined title and body sources, got %#v", pageOne.Items[0].SearchMatchSources)
+	}
+
+	pageTwo, err := manager.SearchSessionsChunk(
+		context.Background(),
+		[]string{project.ID},
+		"needle",
+		false,
+		true,
+		pageOne.NextCursor,
+		2,
+	)
+	if err != nil {
+		t.Fatalf("SearchSessionsChunk page two returned error: %v", err)
+	}
+	if !pageTwo.Done || pageTwo.NextCursor != "" || pageTwo.Scanned != 1 || pageTwo.Total != 3 {
+		t.Fatalf("unexpected second search page metadata: %+v", pageTwo)
+	}
+	if len(pageTwo.Items) != 1 || pageTwo.Items[0].ID != bodyMatch.ID {
+		t.Fatalf("expected synchronized body match on second search page, got %#v", pageTwo.Items)
+	}
+	if !reflect.DeepEqual(
+		pageTwo.Items[0].SearchMatchSources,
+		[]SessionSearchMatchSource{SessionSearchMatchBody},
+	) {
+		t.Fatalf("expected body-only source, got %#v", pageTwo.Items[0].SearchMatchSources)
+	}
+
+	withArchived, err := manager.SearchSessionsChunk(
+		context.Background(),
+		[]string{project.ID},
+		"needle",
+		true,
+		true,
+		"",
+		10,
+	)
+	if err != nil {
+		t.Fatalf("SearchSessionsChunk with archived returned error: %v", err)
+	}
+	if !withArchived.Done || withArchived.Total != 4 || len(withArchived.Items) != 3 {
+		t.Fatalf("unexpected archived search result: %+v", withArchived)
+	}
+	if withArchived.Items[2].ID != archivedMatch.ID || withArchived.Items[2].ArchivedAt == nil {
+		t.Fatalf("expected archived body match last, got %#v", withArchived.Items)
+	}
+
+	withoutBody, err := manager.SearchSessionsChunk(
+		context.Background(),
+		[]string{project.ID},
+		"needle",
+		true,
+		false,
+		"",
+		10,
+	)
+	if err != nil {
+		t.Fatalf("SearchSessionsChunk without body returned error: %v", err)
+	}
+	if len(withoutBody.Items) != 1 || withoutBody.Items[0].ID != titleMatch.ID {
+		t.Fatalf("expected title-only match with body search disabled, got %#v", withoutBody.Items)
+	}
+	if !reflect.DeepEqual(
+		withoutBody.Items[0].SearchMatchSources,
+		[]SessionSearchMatchSource{SessionSearchMatchTitle},
+	) {
+		t.Fatalf("expected title-only source, got %#v", withoutBody.Items[0].SearchMatchSources)
+	}
+
+	if _, err := manager.SearchSessionsChunk(
+		context.Background(),
+		[]string{project.ID},
+		"needle",
+		false,
+		true,
+		"not-a-valid-cursor",
+		2,
+	); !errors.Is(err, ErrInvalidSessionSearchCursor) {
+		t.Fatalf("expected invalid cursor error, got %v", err)
 	}
 }
 

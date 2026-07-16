@@ -34,6 +34,14 @@ export type ArchivedQueryResult = {
   nextOffset: number;
 };
 
+export type SessionSearchChunkResult = {
+  items: WebSessionSummary[];
+  nextCursor?: string;
+  done: boolean;
+  scanned: number;
+  total: number;
+};
+
 type CountsResponse = {
   counts?: Record<string, number>;
 };
@@ -317,6 +325,45 @@ export const webSessionApi = {
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to query archived AI sessions');
+    }
+    return body.item;
+  },
+
+  async search(
+    data: {
+      projectIds: string[];
+      query: string;
+      includeArchived?: boolean;
+      includeBody?: boolean;
+      cursor?: string;
+      scanLimit?: number;
+    },
+    options?: { signal?: AbortSignal }
+  ): Promise<SessionSearchChunkResult> {
+    const method = http.Post<ItemResponse<SessionSearchChunkResult>>('/web-sessions/search', {
+      projectIds: data.projectIds,
+      query: data.query.trim(),
+      includeArchived: data.includeArchived === true,
+      includeBody: data.includeBody !== false,
+      cursor: data.cursor || undefined,
+      scanLimit: data.scanLimit ?? 50,
+    });
+    const abortHandler = () => {
+      method.abort();
+    };
+
+    if (options?.signal?.aborted) {
+      throw createAbortError();
+    }
+    options?.signal?.addEventListener('abort', abortHandler, { once: true });
+    let body: ItemResponse<SessionSearchChunkResult> = {};
+    try {
+      body = (await method.send()) ?? {};
+    } finally {
+      options?.signal?.removeEventListener('abort', abortHandler);
+    }
+    if (!body.item) {
+      throw new Error('failed to search AI sessions');
     }
     return body.item;
   },

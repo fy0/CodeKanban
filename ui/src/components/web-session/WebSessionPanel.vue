@@ -2086,10 +2086,10 @@
                     secondary
                     size="small"
                     class="session-sidebar-filter-button"
-                    :class="{ 'is-active': sidebarSearchArchived }"
+                    :class="{ 'is-active': sidebarSearchArchived || !sidebarSearchBody }"
                     :title="t('webSession.sidebarSearchFilter')"
                     :aria-label="t('webSession.sidebarSearchFilter')"
-                    :aria-pressed="sidebarSearchArchived"
+                    :aria-pressed="sidebarSearchArchived || !sidebarSearchBody"
                   >
                     <template #icon>
                       <n-icon size="16"><FunnelOutline /></n-icon>
@@ -2097,6 +2097,9 @@
                   </n-button>
                 </template>
                 <div class="session-sidebar-filter-popover">
+                  <n-checkbox v-model:checked="sidebarSearchBody">
+                    {{ t('webSession.sidebarSearchBody') }}
+                  </n-checkbox>
                   <n-checkbox v-model:checked="sidebarSearchArchived">
                     {{ t('webSession.sidebarSearchArchived') }}
                   </n-checkbox>
@@ -2104,8 +2107,24 @@
               </n-popover>
             </div>
 
+            <div
+              v-if="sidebarSearchProgressVisible"
+              class="session-sidebar-search-progress"
+              role="progressbar"
+              :aria-label="t('webSession.sidebarSearchProgress')"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              :aria-valuenow="sidebarSearchProgressPercentage"
+            >
+              <span :style="{ width: sidebarSearchProgressPercentage + '%' }"></span>
+            </div>
+
             <div v-if="sidebarIsEmpty" class="session-sidebar-empty">
               {{ t('webSession.emptyTitle') }}
+            </div>
+
+            <div v-else-if="sidebarSearchError" class="session-sidebar-empty">
+              {{ t('webSession.sidebarSearchFailed') }}
             </div>
 
             <div v-else-if="sidebarHasNoSearchResults" class="session-sidebar-empty">
@@ -2499,7 +2518,7 @@ import {
 } from '@/utils/webSessionImages';
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
-import { webSessionApi, type ArchivedQueryResult } from '@/api/webSession';
+import { webSessionApi, type SessionSearchChunkResult } from '@/api/webSession';
 import { createLongPressTracker } from '@/utils/longPress';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
@@ -2639,9 +2658,10 @@ import {
   type WebSessionSidebarVirtualItem,
 } from '@/components/web-session/webSessionSidebarVirtualList';
 import {
-  matchesWebSessionSidebarSearch,
+  mergeWebSessionSearchMatchSources,
   mergeWebSessionSidebarSearchPage,
   normalizeWebSessionSidebarSearchQuery,
+  resolveWebSessionSidebarSearchMatchSources,
 } from '@/components/web-session/webSessionSidebarSearch';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
@@ -2675,6 +2695,8 @@ const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
 const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY = 'workspace-web-session-sidebar-search-archived';
+const SIDEBAR_SEARCH_BODY_STORAGE_KEY = 'workspace-web-session-sidebar-search-body';
+const SIDEBAR_SEARCH_SCAN_LIMIT = 50;
 const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS = 120;
@@ -2723,22 +2745,22 @@ type SessionTab =
   | DraftSessionTab
   | ArchivedPreviewSessionTab;
 
-type ArchivedSidebarSearchState = {
+type SidebarSearchState = {
   items: WebSessionSummary[];
+  scanned: number;
   total: number;
-  offset: number;
-  hasMore: boolean;
   loading: boolean;
+  done: boolean;
   error: boolean;
 };
 
-function createArchivedSidebarSearchState(): ArchivedSidebarSearchState {
+function createSidebarSearchState(): SidebarSearchState {
   return {
     items: [],
+    scanned: 0,
     total: 0,
-    offset: 0,
-    hasMore: false,
     loading: false,
+    done: false,
     error: false,
   };
 }
@@ -3128,10 +3150,10 @@ const sidebarWidthPx = useStorage<number>(
 const persistedSidebarScope = useStorage<string>(SIDEBAR_SCOPE_STORAGE_KEY, 'all');
 const sidebarSearchQuery = ref('');
 const sidebarSearchArchived = useStorage<boolean>(SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY, false);
-const archivedSidebarSearchState = ref<ArchivedSidebarSearchState>(
-  createArchivedSidebarSearchState()
-);
-let archivedSidebarSearchRequestVersion = 0;
+const sidebarSearchBody = useStorage<boolean>(SIDEBAR_SEARCH_BODY_STORAGE_KEY, true);
+const sidebarSearchState = ref<SidebarSearchState>(createSidebarSearchState());
+let sidebarSearchRequestVersion = 0;
+let sidebarSearchAbortController: AbortController | null = null;
 let sidebarResizeObserver: ResizeObserver | null = null;
 const composerTransferErrorMessage = ref('');
 const composerTransferErrorDetail = ref('');
@@ -7309,6 +7331,97 @@ function withProjectBadges(
   }));
 }
 
+function sortCrossProjectSessionItems(items: CrossProjectSessionItem[]) {
+  const projectIds = buildSidebarProjectOrder(items);
+  const sorted = [...items].sort((left, right) => {
+    const rightTimestamp = resolveWebSessionSidebarSortTimestamp(right.session);
+    const leftTimestamp = resolveWebSessionSidebarSortTimestamp(left.session);
+    if (rightTimestamp !== leftTimestamp) {
+      return rightTimestamp - leftTimestamp;
+    }
+    if (left.session.orderIndex !== right.session.orderIndex) {
+      return left.session.orderIndex - right.session.orderIndex;
+    }
+    return left.session.id.localeCompare(right.session.id);
+  });
+  return withProjectBadges(sorted, projectIds);
+}
+
+function mergeSidebarSearchResults(
+  localItems: CrossProjectSessionItem[],
+  remoteSessions: WebSessionSummary[],
+  archived: boolean,
+  query: string,
+  includeBody: boolean
+) {
+  const localByID = new Map(localItems.map(item => [item.session.id, item]));
+  const merged: CrossProjectSessionItem[] = localItems.flatMap(item => {
+    const searchMatchSources = resolveWebSessionSidebarSearchMatchSources(
+      item.session,
+      query,
+      includeBody
+    );
+    if (searchMatchSources.length === 0) {
+      return [];
+    }
+    return [
+      {
+        ...item,
+        session: {
+          ...item.session,
+          searchMatchSources,
+        },
+      },
+    ];
+  });
+  const mergedIndexByID = new Map(merged.map((item, index) => [item.session.id, index]));
+
+  remoteSessions.forEach(session => {
+    if (Boolean(session.archivedAt) !== archived) {
+      return;
+    }
+    const existingIndex = mergedIndexByID.get(session.id);
+    if (existingIndex !== undefined) {
+      const existingItem = merged[existingIndex];
+      merged[existingIndex] = {
+        ...existingItem,
+        session: {
+          ...existingItem.session,
+          searchMatchSources: mergeWebSessionSearchMatchSources(
+            existingItem.session.searchMatchSources,
+            session.searchMatchSources
+          ),
+        },
+      };
+      return;
+    }
+    const localItem = localByID.get(session.id);
+    if (localItem) {
+      merged.push({
+        ...localItem,
+        session: {
+          ...localItem.session,
+          searchMatchSources: mergeWebSessionSearchMatchSources(
+            resolveWebSessionSidebarSearchMatchSources(localItem.session, query, includeBody),
+            session.searchMatchSources
+          ),
+        },
+      });
+    } else {
+      merged.push({
+        session,
+        projectId: session.projectId,
+        projectName: getProjectName(session.projectId),
+        isCurrent: archived
+          ? activeArchivedPreviewId.value === session.id
+          : session.projectId === props.projectId && session.id === activeSessionId.value,
+      });
+    }
+    mergedIndexByID.set(session.id, merged.length - 1);
+  });
+  return sortCrossProjectSessionItems(merged);
+}
+
 const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
   const rawItems: CrossProjectSessionItem[] = [];
   sidebarVisibleProjectIds.value.forEach(projectId => {
@@ -7321,20 +7434,7 @@ const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
       });
     });
   });
-  const projectIds = buildSidebarProjectOrder(rawItems);
-  const sorted = [...rawItems].sort((left, right) => {
-    const rightTimestamp = resolveWebSessionSidebarSortTimestamp(right.session);
-    const leftTimestamp = resolveWebSessionSidebarSortTimestamp(left.session);
-    if (rightTimestamp !== leftTimestamp) {
-      return rightTimestamp - leftTimestamp;
-    }
-    if (left.session.orderIndex !== right.session.orderIndex) {
-      return left.session.orderIndex - right.session.orderIndex;
-    }
-    return left.session.id.localeCompare(right.session.id);
-  });
-
-  return withProjectBadges(sorted, projectIds);
+  return sortCrossProjectSessionItems(rawItems);
 });
 
 const filteredCrossProjectSessions = computed(() => {
@@ -7342,8 +7442,12 @@ const filteredCrossProjectSessions = computed(() => {
   if (!query) {
     return crossProjectSessions.value;
   }
-  return crossProjectSessions.value.filter(item =>
-    matchesWebSessionSidebarSearch(item.session, query)
+  return mergeSidebarSearchResults(
+    crossProjectSessions.value,
+    sidebarSearchState.value.items,
+    false,
+    query,
+    sidebarSearchBody.value
   );
 });
 
@@ -7360,13 +7464,13 @@ const baseCrossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() 
 });
 
 const searchedCrossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
-  const items = archivedSidebarSearchState.value.items.map(session => ({
-    session,
-    projectId: session.projectId,
-    projectName: getProjectName(session.projectId),
-    isCurrent: activeArchivedPreviewId.value === session.id,
-  }));
-  return withProjectBadges(items);
+  return mergeSidebarSearchResults(
+    baseCrossProjectArchivedSessions.value,
+    sidebarSearchState.value.items,
+    true,
+    normalizedSidebarSearchQuery.value,
+    sidebarSearchBody.value
+  );
 });
 
 const showArchivedSidebarSection = computed(
@@ -7398,91 +7502,109 @@ const archivedSidebarMeta = computed(() => {
   if (!archivedSidebarSearchActive.value) {
     return baseArchivedSidebarMeta.value;
   }
-  const state = archivedSidebarSearchState.value;
+  const state = sidebarSearchState.value;
+  const archivedTotal = searchedCrossProjectArchivedSessions.value.length;
   return {
     scopeKey: 'sidebar-search',
-    total: state.total,
-    offset: state.offset,
-    hasMore: state.hasMore,
+    total: archivedTotal,
+    offset: archivedTotal,
+    hasMore: false,
     loading: state.loading,
   };
 });
 
-function clearArchivedSidebarSearchState() {
-  archivedSidebarSearchRequestVersion += 1;
-  archivedSidebarSearchState.value = createArchivedSidebarSearchState();
+function cancelSidebarSearchRequest() {
+  sidebarSearchRequestVersion += 1;
+  sidebarSearchAbortController?.abort();
+  sidebarSearchAbortController = null;
 }
 
-async function loadArchivedSidebarSearch(reset = false) {
-  if (!archivedSidebarSearchActive.value) {
-    clearArchivedSidebarSearchState();
-    return;
-  }
+function clearSidebarSearchState(loading = false) {
+  cancelSidebarSearchRequest();
+  sidebarSearchState.value = {
+    ...createSidebarSearchState(),
+    loading,
+  };
+}
 
+async function loadSidebarSearch() {
   const query = normalizedSidebarSearchQuery.value;
   const projectIds = [...sidebarVisibleProjectIds.value];
   if (!query || projectIds.length === 0) {
-    clearArchivedSidebarSearchState();
+    clearSidebarSearchState();
     return;
   }
 
+  cancelSidebarSearchRequest();
   const scopeKey = projectIds.join('|');
-  const requestVersion = ++archivedSidebarSearchRequestVersion;
-  const previous = archivedSidebarSearchState.value;
-  const offset = reset ? 0 : previous.offset;
-  archivedSidebarSearchState.value = reset
-    ? {
-        ...createArchivedSidebarSearchState(),
-        loading: true,
-      }
-    : {
-        ...previous,
-        loading: true,
-        error: false,
-      };
+  const includeArchived = sidebarSearchArchived.value;
+  const includeBody = sidebarSearchBody.value;
+  const requestVersion = ++sidebarSearchRequestVersion;
+  const abortController = new AbortController();
+  sidebarSearchAbortController = abortController;
+  sidebarSearchState.value = {
+    ...createSidebarSearchState(),
+    loading: true,
+  };
 
   try {
-    const result: ArchivedQueryResult = await webSessionApi.queryArchived({
-      projectIds,
-      query,
-      offset,
-      limit: 20,
-    });
-    if (
-      requestVersion !== archivedSidebarSearchRequestVersion ||
-      query !== normalizedSidebarSearchQuery.value ||
-      scopeKey !== sidebarVisibleProjectIds.value.join('|') ||
-      !archivedSidebarSearchActive.value
-    ) {
-      return;
-    }
+    let cursor = '';
+    while (true) {
+      const result: SessionSearchChunkResult = await webSessionApi.search(
+        {
+          projectIds,
+          query,
+          includeArchived,
+          includeBody,
+          cursor,
+          scanLimit: SIDEBAR_SEARCH_SCAN_LIMIT,
+        },
+        { signal: abortController.signal }
+      );
+      if (
+        requestVersion !== sidebarSearchRequestVersion ||
+        query !== normalizedSidebarSearchQuery.value ||
+        scopeKey !== sidebarVisibleProjectIds.value.join('|') ||
+        includeArchived !== sidebarSearchArchived.value ||
+        includeBody !== sidebarSearchBody.value
+      ) {
+        return;
+      }
 
-    archivedSidebarSearchState.value = {
-      items: reset
-        ? mergeWebSessionSidebarSearchPage([], result.items)
-        : mergeWebSessionSidebarSearchPage(previous.items, result.items),
-      total: result.total,
-      offset: result.nextOffset,
-      hasMore: result.hasMore,
-      loading: false,
-      error: false,
-    };
+      const done = result.done || !result.nextCursor;
+      sidebarSearchState.value = {
+        items: mergeWebSessionSidebarSearchPage(sidebarSearchState.value.items, result.items),
+        scanned: sidebarSearchState.value.scanned + result.scanned,
+        total: result.total,
+        loading: !done,
+        done,
+        error: false,
+      };
+      if (done) {
+        return;
+      }
+      cursor = result.nextCursor ?? '';
+    }
   } catch (error) {
-    if (requestVersion !== archivedSidebarSearchRequestVersion) {
+    if (requestVersion !== sidebarSearchRequestVersion || isAbortLikeError(error)) {
       return;
     }
-    archivedSidebarSearchState.value = {
-      ...archivedSidebarSearchState.value,
+    sidebarSearchState.value = {
+      ...sidebarSearchState.value,
       loading: false,
-      hasMore: false,
+      done: true,
       error: true,
     };
-    console.error('[Web Session] Failed to search archived sidebar sessions', error);
+    console.error('[Web Session] Failed to search sidebar sessions', error);
+  } finally {
+    if (sidebarSearchAbortController === abortController) {
+      sidebarSearchAbortController = null;
+    }
   }
 }
 
-const scheduleArchivedSidebarSearch = useDebounceFn(() => {
-  void loadArchivedSidebarSearch(true);
+const scheduleSidebarSearch = useDebounceFn(() => {
+  void loadSidebarSearch();
 }, 300);
 
 async function ensureArchivedScopeLoaded(projectIds: string[], limit = 20) {
@@ -7571,20 +7693,32 @@ const sidebarIsEmpty = computed(
 const sidebarHasNoSearchResults = computed(
   () =>
     normalizedSidebarSearchQuery.value.length > 0 &&
+    sidebarSearchState.value.done &&
+    !sidebarSearchState.value.error &&
     filteredCrossProjectSessions.value.length === 0 &&
-    crossProjectArchivedSessions.value.length === 0 &&
-    archivedSidebarMeta.value.total === 0 &&
-    !archivedSidebarMeta.value.loading &&
-    !(archivedSidebarSearchActive.value && archivedSidebarSearchState.value.error)
+    crossProjectArchivedSessions.value.length === 0
 );
 const sidebarVisibleSessionCount = computed(
   () => filteredCrossProjectSessions.value.length + archivedSidebarMeta.value.total
 );
+const sidebarSearchError = computed(
+  () => normalizedSidebarSearchQuery.value.length > 0 && sidebarSearchState.value.error
+);
+const sidebarSearchProgressVisible = computed(
+  () => normalizedSidebarSearchQuery.value.length > 0 && sidebarSearchState.value.loading
+);
+const sidebarSearchProgressPercentage = computed(() => {
+  const { scanned, total } = sidebarSearchState.value;
+  if (total <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round((scanned / total) * 100)));
+});
 const archivedSidebarEmptyLabel = computed(() => {
   if (!archivedSidebarSearchActive.value) {
     return t('webSession.archivedSessionsEmpty');
   }
-  return archivedSidebarSearchState.value.error
+  return sidebarSearchState.value.error
     ? t('webSession.sidebarArchivedSearchFailed')
     : t('webSession.sidebarArchivedSearchNoResults');
 });
@@ -9169,10 +9303,6 @@ async function handleSidebarVirtualSessionSelect(
 
 async function handleLoadMoreArchived() {
   try {
-    if (archivedSidebarSearchActive.value) {
-      await loadArchivedSidebarSearch();
-      return;
-    }
     await webSessionStore.loadArchivedSessions(sidebarVisibleProjectIds.value, {
       limit: 20,
     });
@@ -9605,8 +9735,8 @@ async function refreshArchivedSidebar() {
     reset: true,
     limit: 20,
   });
-  if (archivedSidebarSearchActive.value) {
-    await loadArchivedSidebarSearch(true);
+  if (normalizedSidebarSearchQuery.value) {
+    await loadSidebarSearch();
   }
 }
 
@@ -11461,11 +11591,17 @@ function buildSidebarSessionRow(
     hasUnread,
     status: session.status,
   });
+  const searchMatchLabels = (session.searchMatchSources ?? []).map(source =>
+    source === 'title'
+      ? t('webSession.sidebarSearchMatchTitle')
+      : t('webSession.sidebarSearchMatchBody')
+  );
 
   return {
     key: `${archived ? 'archived' : 'current'}:${item.projectId}:${session.id}`,
     sessionId: session.id,
     title: session.title,
+    searchMatchLabel: searchMatchLabels.length > 0 ? `[${searchMatchLabels.join(',')}]` : '',
     iconHtml: getAssistantIconByType(session.agent === 'claude' ? 'claude-code' : 'codex'),
     subtitle,
     tooltip: joinSessionHoverParts([
@@ -11939,12 +12075,14 @@ watch(
   [
     normalizedSidebarSearchQuery,
     sidebarSearchArchived,
+    sidebarSearchBody,
     () => sidebarVisibleProjectIds.value.join('|'),
   ],
   () => {
-    clearArchivedSidebarSearchState();
-    if (archivedSidebarSearchActive.value) {
-      scheduleArchivedSidebarSearch();
+    const searchActive = normalizedSidebarSearchQuery.value.length > 0;
+    clearSidebarSearchState(searchActive);
+    if (searchActive) {
+      scheduleSidebarSearch();
     }
   }
 );
@@ -12368,7 +12506,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  archivedSidebarSearchRequestVersion += 1;
+  cancelSidebarSearchRequest();
   persistActiveUserInputDraft();
   realSessionSnapshotLoadController.cancel();
   streamingMarkdownController.clear();
@@ -13365,6 +13503,21 @@ defineExpose({
   border-bottom: 1px solid color-mix(in srgb, var(--n-primary-color) 8%, var(--n-border-color));
 }
 
+.session-sidebar-search-progress {
+  height: 2px;
+  margin-bottom: -2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+}
+
+.session-sidebar-search-progress > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: var(--n-primary-color);
+  transition: width 0.12s ease;
+}
+
 .session-sidebar-search-input {
   min-width: 0;
   flex: 1 1 auto;
@@ -13404,6 +13557,10 @@ defineExpose({
 }
 
 .session-sidebar-filter-popover {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   padding: 2px 0;
   white-space: nowrap;
 }

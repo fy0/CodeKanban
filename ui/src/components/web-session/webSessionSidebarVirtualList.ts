@@ -4,6 +4,7 @@ export type WebSessionSidebarRowView = {
   key: string;
   sessionId: string;
   title: string;
+  searchMatchLabel?: string;
   iconHtml: string;
   subtitle: string;
   tooltip: string;

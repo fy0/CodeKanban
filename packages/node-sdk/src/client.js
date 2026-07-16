@@ -1225,6 +1225,38 @@ export class CodeKanbanClient {
     );
   }
 
+  async searchWebSessions({
+    projectIds,
+    query,
+    includeArchived = false,
+    includeBody = true,
+    cursor = "",
+    scanLimit = 50,
+  }) {
+    const response = await this.requestJson("/api/v1/web-sessions/search", {
+      method: "POST",
+      body: {
+        projectIds: Array.isArray(projectIds) ? projectIds : [],
+        query: ensureString(query, "query"),
+        includeArchived: includeArchived === true,
+        includeBody: includeBody !== false,
+        cursor: typeof cursor === "string" ? cursor : "",
+        scanLimit: Number.isFinite(scanLimit)
+          ? Math.max(1, Math.min(100, Math.trunc(scanLimit)))
+          : 50,
+      },
+    });
+    return (
+      extractPayloadItem(response) || {
+        items: [],
+        nextCursor: "",
+        done: true,
+        scanned: 0,
+        total: 0,
+      }
+    );
+  }
+
   async getWebSessionCommandGroup({ projectId, projectName, projectIndex, path, sessionId, groupId }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
