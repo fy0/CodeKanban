@@ -68,6 +68,7 @@ type wireSess struct {
 	Title                    string      `json:"ttl"`
 	Cwd                      string      `json:"cwd"`
 	NativeSessionID          *string     `json:"nsid,omitempty"`
+	CyberPolicyFlagged       bool        `json:"cpf,omitempty"`
 	Status                   string      `json:"st"`
 	AssistantState           string      `json:"ast,omitempty"`
 	Unread                   bool        `json:"unr"`
@@ -408,6 +409,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		Title:                    session.Title,
 		Cwd:                      session.Cwd,
 		NativeSessionID:          session.NativeSessionID,
+		CyberPolicyFlagged:       session.CyberPolicyFlagged,
 		Status:                   string(session.Status),
 		AssistantState:           string(session.AssistantState),
 		Unread:                   session.HasUnread,

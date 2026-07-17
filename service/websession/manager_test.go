@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -2818,6 +2819,80 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	if !sawRootAnswer {
 		t.Fatal("expected root answer after sub-agent completion")
 	}
+}
+
+func TestCodexAppServerPersistsCyberPolicyFailureWithoutRetry(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:        project.ID,
+		Agent:            AgentCodex,
+		AutoRetryEnabled: true,
+		AutoRetryScope:   AutoRetryScopeAllFailures,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	session, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	run := &activeRun{runID: "run-cyber-policy", agent: AgentCodex}
+	outcome, handleErr := manager.handleCodexAppServerMessage(
+		session,
+		run,
+		nil,
+		codexTurnScope{threadID: "thread_test", turnID: "turn_test"},
+		codexAppServerIncoming{
+			Method: "error",
+			Params: json.RawMessage(`{
+				"threadId":"thread_test",
+				"turnId":"turn_test",
+				"error":{
+					"message":"This content was flagged for possible cybersecurity risk.",
+					"codexErrorInfo":"cyber_policy"
+				},
+				"willRetry":false
+			}`),
+		},
+	)
+	if outcome != codexTurnOutcomeFailed || handleErr == nil {
+		t.Fatalf("expected failed cyber policy outcome, got outcome=%v err=%v", outcome, handleErr)
+	}
+	manager.handleRunFailureWithCode(created.ID, session, run, run.lastErrorCode, handleErr)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusError) || !record.CyberPolicyFlagged {
+		t.Fatalf("expected flagged error session, got status=%q flagged=%v", record.Status, record.CyberPolicyFlagged)
+	}
+	summary := manager.mapSessionSummary(record)
+	if !summary.CyberPolicyFlagged || !mapWireSession(summary).CyberPolicyFlagged {
+		t.Fatal("expected cyber policy flag in session summary and compact wire payload")
+	}
+	if record.AutoRetryAttempt != 0 || record.AutoRetryNextAt != nil {
+		t.Fatalf("expected no cyber policy retry, got attempt=%d next=%v", record.AutoRetryAttempt, record.AutoRetryNextAt)
+	}
+
+	events, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	for _, event := range events {
+		if event.Type == "run_fail" && stringValue(event.Payload["code"]) == codexCyberPolicyErrorCode {
+			return
+		}
+	}
+	t.Fatalf("expected structured cyber policy run_fail event, got %#v", events)
 }
 
 func TestCodexAppServerTransportRetryPersistsAsNoteAndCompletes(t *testing.T) {

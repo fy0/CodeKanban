@@ -66,6 +66,46 @@ func TestParseCodexDeepHistoryCapturesToolsAndTimestamps(t *testing.T) {
 	}
 }
 
+func TestParseCodexDeepHistoryCapturesCyberPolicyError(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	message := "This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request."
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-05-03T12:33:18Z","type":"event_msg","payload":{"type":"user_message","message":"inspect this","images":[]}}`,
+		`{"timestamp":"2026-05-03T12:33:19Z","type":"event_msg","payload":{"type":"error","message":` + strconv.Quote(message) + `,"codex_error_info":"cyber_policy"}}`,
+	})
+
+	result, err := manager.parseCodexDeepHistoryWithStats(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistoryWithStats returned error: %v", err)
+	}
+	if !result.Stats.CyberPolicyFlagged {
+		t.Fatal("expected cyber policy flag in deep history stats")
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected user message and cyber policy error, got %#v", result.Items)
+	}
+	item := result.Items[1]
+	if item.Kind != "system" || item.ItemType != "cyber_policy" || item.Level != "error" {
+		t.Fatalf("unexpected cyber policy history item: %#v", item)
+	}
+	if item.Text != message || stringValue(item.Payload["codex_error_info"]) != codexCyberPolicyErrorCode {
+		t.Fatalf("unexpected cyber policy history payload: %#v", item)
+	}
+
+	updates := map[string]any{}
+	applyCodexDeepHistoryStatsUpdates(updates, result.Stats)
+	if flagged, ok := updates["cyber_policy_flagged"].(bool); !ok || !flagged {
+		t.Fatalf("expected deep sync update to persist cyber policy flag, got %#v", updates)
+	}
+}
+
 func TestParseCodexDeepHistoryFiltersIncompleteTurnContinuationPrompt(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

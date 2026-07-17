@@ -813,7 +813,7 @@ func (m *Manager) handleCodexAppServerMessage(
 		if !isRootEvent {
 			return codexTurnOutcomeNone, nil
 		}
-		run.lastError = parseCodexTurnError(message.Params)
+		run.lastError, run.lastErrorCode = parseCodexTurnError(message.Params)
 		if retryInfo, ok := classifyCodexTransportRetryMessage(run.lastError); ok {
 			retryInfo = retryInfo.withRemoteURL(run.transportRemoteURL)
 			run.transportRetrySeen = true
@@ -822,16 +822,17 @@ func (m *Manager) handleCodexAppServerMessage(
 			run.lastErrorCode = ""
 			return codexTurnOutcomeNone, nil
 		}
-		run.lastErrorCode = codexRuntimeErrorCode
 		if run.transportRetrySeen {
 			run.lastErrorCode = codexTransportRetryExhaustedCode
+		} else if strings.TrimSpace(run.lastErrorCode) == "" {
+			run.lastErrorCode = codexRuntimeErrorCode
 		}
 		return codexTurnOutcomeFailed, fmt.Errorf("%s", firstNonEmpty(run.lastError, "codex app-server turn failed"))
 	case "turn/completed":
 		if !isRootEvent {
 			return codexTurnOutcomeNone, nil
 		}
-		status, errMessage := parseCodexTurnCompletion(message.Params)
+		status, errMessage, errCode := parseCodexTurnCompletion(message.Params)
 		_ = m.finalizeLatestTurnUsage(context.Background(), session.ID)
 		if status == "completed" {
 			return codexTurnOutcomeCompleted, nil
@@ -841,6 +842,8 @@ func (m *Manager) handleCodexAppServerMessage(
 		}
 		if run.transportRetrySeen {
 			run.lastErrorCode = codexTransportRetryExhaustedCode
+		} else if errCode != "" {
+			run.lastErrorCode = errCode
 		} else {
 			run.lastErrorCode = codexRuntimeErrorCode
 		}
@@ -1601,26 +1604,22 @@ func codexNotificationTurnID(raw json.RawMessage) string {
 	))
 }
 
-func parseCodexTurnError(raw json.RawMessage) string {
+func parseCodexTurnError(raw json.RawMessage) (message string, code string) {
 	payload := decodeRawObject(raw)
 	errorMap := decodeRawObject(payload["error"])
-	return firstNonEmpty(
-		stringValue(errorMap["message"]),
-		stringValue(errorMap["additionalDetails"]),
-		stringValue(payload["message"]),
-	)
+	message = firstNonEmpty(codexErrorMessage(errorMap), codexErrorMessage(payload))
+	code = firstNonEmpty(codexErrorInfo(errorMap), codexErrorInfo(payload))
+	return message, code
 }
 
-func parseCodexTurnCompletion(raw json.RawMessage) (status string, errMessage string) {
+func parseCodexTurnCompletion(raw json.RawMessage) (status string, errMessage string, errCode string) {
 	payload := decodeRawObject(raw)
 	turn := decodeRawObject(payload["turn"])
 	status = firstNonEmpty(stringValue(turn["status"]), "completed")
 	errorMap := decodeRawObject(turn["error"])
-	errMessage = firstNonEmpty(
-		stringValue(errorMap["message"]),
-		stringValue(errorMap["additionalDetails"]),
-	)
-	return status, errMessage
+	errMessage = codexErrorMessage(errorMap)
+	errCode = codexErrorInfo(errorMap)
+	return status, errMessage, errCode
 }
 
 func decodeRawObject(raw any) map[string]any {

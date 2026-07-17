@@ -838,6 +838,8 @@ export default {
     readyTitle: 'Ready for the next turn',
     readyDescription:
       'Once you send a prompt, this area will stream tool activity, progress, and approvals.',
+    cyberPolicyFlagged: 'This chat was flagged for possible cybersecurity risk',
+    devCyberPolicyWarning: 'Cyber warning',
     liveIdle: 'Ready',
     liveIdleDetail: 'Waiting for the next message',
     liveRecovered: 'The previous run was interrupted by an app restart',

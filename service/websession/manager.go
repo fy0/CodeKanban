@@ -401,10 +401,13 @@ var autoRetryRateLimitFailureKeywords = []string{
 
 func shouldAutoRetryFailure(scope AutoRetryScope, code string, message string) bool {
 	normalizedScope := normalizeAutoRetryScope(scope)
+	normalizedCode := normalizeCodexErrorInfo(code)
+	if normalizedCode == codexCyberPolicyErrorCode {
+		return false
+	}
 	if normalizedScope == AutoRetryScopeAllFailures {
 		return true
 	}
-	normalizedCode := strings.ToLower(strings.TrimSpace(code))
 	normalizedMessage := strings.ToLower(strings.TrimSpace(message))
 	isNetworkFailure := normalizedCode == codexTransportRetryExhaustedCode
 	if !isNetworkFailure {
@@ -3551,6 +3554,9 @@ func (m *Manager) handleRunFailureWithCode(
 	if strings.TrimSpace(code) == "" {
 		code = "runtime_error"
 	}
+	if normalizeCodexErrorInfo(code) == codexCyberPolicyErrorCode {
+		code = codexCyberPolicyErrorCode
+	}
 	now := time.Now()
 	if normalizeAgent(Agent(session.Agent)) == AgentCodex {
 		_ = m.finalizeLatestTurnUsage(context.Background(), sessionID)
@@ -3566,15 +3572,19 @@ func (m *Manager) handleRunFailureWithCode(
 			"msg":  message,
 		},
 	})
+	updates := applyAssistantStateUpdates(map[string]any{
+		"status":                     string(StatusError),
+		"last_error":                 message,
+		"auto_retry_last_error_code": nilIfEmpty(code),
+		"updated_at":                 now,
+	}, AssistantStateNone, now)
+	if code == codexCyberPolicyErrorCode {
+		updates["cyber_policy_flagged"] = true
+	}
 	_ = m.updateRuntimeState(
 		context.Background(),
 		sessionID,
-		applyAssistantStateUpdates(map[string]any{
-			"status":                     string(StatusError),
-			"last_error":                 message,
-			"auto_retry_last_error_code": nilIfEmpty(code),
-			"updated_at":                 now,
-		}, AssistantStateNone, now),
+		updates,
 	)
 	if err := m.reconcileAutoRetry(context.Background(), sessionID, now); err != nil && m.logger != nil {
 		m.logger.Warn("auto retry reconciliation failed", zap.String("sessionId", sessionID), zap.Error(err))
@@ -4178,8 +4188,10 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 	case "turn.failed":
 		errorMap, _ := raw["error"].(map[string]any)
 		run.lastError = stringValue(errorMap["message"])
+		run.lastErrorCode = codexErrorInfo(errorMap)
 	case "error":
 		run.lastError = stringValue(raw["message"])
+		run.lastErrorCode = codexErrorInfo(raw)
 	}
 }
 
@@ -5135,6 +5147,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		AutoRetryPreset:          normalizeAutoRetryPreset(AutoRetryPreset(record.AutoRetryPreset)),
 		Cwd:                      record.Cwd,
 		NativeSessionID:          record.NativeSessionID,
+		CyberPolicyFlagged:       record.CyberPolicyFlagged,
 		Status:                   effectiveStatus(record, assistantState),
 		AssistantState:           assistantState,
 		HasUnread:                record.HasUnread,

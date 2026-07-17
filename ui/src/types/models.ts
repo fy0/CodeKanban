@@ -393,6 +393,7 @@ export interface WebSessionSummary {
   autoRetryPreset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
   cwd: string;
   nativeSessionId?: string | null;
+  cyberPolicyFlagged?: boolean;
   status: 'idle' | 'running' | 'waiting_approval' | 'done' | 'err' | 'aborting';
   assistantState?:
     | 'working'

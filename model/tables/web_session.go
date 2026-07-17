@@ -32,6 +32,7 @@ type WebSessionTable struct {
 	Cwd                      string `gorm:"type:text;not null" json:"cwd"`
 
 	NativeSessionID         *string    `gorm:"type:text" json:"nativeSessionId"`
+	CyberPolicyFlagged      bool       `gorm:"type:boolean;not null;default:false" json:"cyberPolicyFlagged"`
 	Status                  string     `gorm:"type:text;not null;index" json:"status"`
 	AssistantState          string     `gorm:"type:text;index" json:"assistantState"`
 	HasUnread               bool       `gorm:"type:boolean;not null;default:false" json:"hasUnread"`

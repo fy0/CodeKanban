@@ -209,6 +209,7 @@ type SessionSummary struct {
 	AutoRetryPreset          AutoRetryPreset            `json:"autoRetryPreset"`
 	Cwd                      string                     `json:"cwd"`
 	NativeSessionID          *string                    `json:"nativeSessionId,omitempty"`
+	CyberPolicyFlagged       bool                       `json:"cyberPolicyFlagged"`
 	Status                   Status                     `json:"status"`
 	AssistantState           AssistantState             `json:"assistantState,omitempty"`
 	HasUnread                bool                       `json:"hasUnread"`

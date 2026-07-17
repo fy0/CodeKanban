@@ -2,6 +2,18 @@
   <div class="web-session-panel" :style="webSessionStyleVars">
     <WebSessionCompletionNotifier />
     <WebSessionApprovalNotifier />
+    <aside
+      v-if="webSessionDevMode"
+      class="web-session-dev-panel"
+      :class="{ 'has-cyber-policy-warning': showCyberPolicyWarning }"
+      aria-label="DEV"
+    >
+      <span class="web-session-dev-title">DEV</span>
+      <label class="web-session-dev-control">
+        <span>{{ t('webSession.devCyberPolicyWarning') }}</span>
+        <n-switch v-model:value="devCyberPolicyWarning" size="small" :disabled="!currentSession" />
+      </label>
+    </aside>
     <WebSessionImportDialog
       v-if="props.projectId"
       v-model:show="showImportDialog"
@@ -1030,6 +1042,17 @@
                 </div>
               </div>
             </div>
+            <n-alert
+              v-if="showCyberPolicyWarning"
+              class="cyber-policy-alert"
+              type="warning"
+              :bordered="false"
+              :theme-overrides="cyberPolicyAlertThemeOverrides"
+              closable
+              @close="dismissCyberPolicyWarning"
+            >
+              {{ t('webSession.cyberPolicyFlagged') }}
+            </n-alert>
           </div>
 
           <div v-else-if="!currentSession" class="empty-state">
@@ -2531,6 +2554,10 @@ import WebSessionSidebarRow from '@/components/web-session/WebSessionSidebarRow.
 import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkillCatalogPanel.vue';
 import type { WebSessionComposerEditorExposed } from '@/components/web-session/webSessionComposerEditor';
 import {
+  isWebSessionDevMode,
+  shouldShowCyberPolicyWarning,
+} from '@/components/web-session/webSessionDevMode';
+import {
   buildWebSessionComposerPastePlan,
   getImageFilesFromTransfer,
   mergeClipboardImageFiles,
@@ -2704,6 +2731,8 @@ const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY = 'workspace-web-session-sidebar-search-archived';
 const SIDEBAR_SEARCH_BODY_STORAGE_KEY = 'workspace-web-session-sidebar-search-body';
+const CYBER_POLICY_DISMISSALS_STORAGE_KEY =
+  'workspace-web-session-cyber-policy-dismissals';
 const SIDEBAR_SEARCH_SCAN_LIMIT = 50;
 const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
 const LIVE_TIME_TICK_MS = 1000;
@@ -3019,8 +3048,13 @@ const persistedActiveDraftSessionIdByProject = useStorage<Record<string, string>
 );
 const persistedTabOrderByProject = useStorage<Record<string, string[]>>(TAB_ORDER_STORAGE_KEY, {});
 const persistedTabMruByProject = useStorage<Record<string, string[]>>(TAB_MRU_STORAGE_KEY, {});
+const dismissedCyberPolicyWarnings = useStorage<Record<string, boolean>>(
+  CYBER_POLICY_DISMISSALS_STORAGE_KEY,
+  {}
+);
 const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query));
 const routeWorkspaceTab = computed(() => inferWorkspaceRouteTab(route.query));
+const webSessionDevMode = computed(() => isWebSessionDevMode(route.query));
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const mobileTabTriggerRef = ref<HTMLButtonElement | null>(null);
@@ -3037,6 +3071,7 @@ const composerInputRef = ref<WebSessionComposerEditorExposed | null>(null);
 const sidebarRootRef = ref<HTMLElement | null>(null);
 const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
+const devCyberPolicySessionId = ref('');
 const lastTimelineScrollTop = ref(0);
 const expandedTools = ref<Record<string, boolean>>({});
 const imageViewPreviewSrcByToolId = ref<Record<string, string>>({});
@@ -3233,10 +3268,78 @@ const currentSession = computed<SessionTab | null>(() => {
   const activeRealId = webSessionStore.getActiveSessionId(props.projectId);
   return realSessions.value.find(session => session.id === activeRealId) ?? null;
 });
+const devCyberPolicyWarning = computed({
+  get: () =>
+    Boolean(
+      currentSession.value?.id && devCyberPolicySessionId.value === currentSession.value.id
+    ),
+  set: enabled => {
+    devCyberPolicySessionId.value = enabled ? (currentSession.value?.id ?? '') : '';
+  },
+});
 const currentRealSession = computed<WebSessionSummary | null>(() => {
   const session = currentSession.value;
   return session && !isDraftSession(session) ? session : null;
 });
+const currentCyberPolicyWarningDismissed = computed(() => {
+  const sessionId = currentRealSession.value?.id;
+  return Boolean(sessionId && dismissedCyberPolicyWarnings.value[sessionId] === true);
+});
+const showCyberPolicyWarning = computed(() =>
+  shouldShowCyberPolicyWarning({
+    sessionFlagged: currentRealSession.value?.cyberPolicyFlagged,
+    sessionDismissed: currentCyberPolicyWarningDismissed.value,
+    devMode: webSessionDevMode.value,
+    simulatedWarning: devCyberPolicyWarning.value,
+  })
+);
+const cyberPolicyAlertThemeOverrides = computed(() => {
+  const dark = isDarkHex(activeTheme.value.bodyColor || '#ffffff');
+  return {
+    borderRadius: '0',
+    padding: '8px 14px',
+    iconSize: '16px',
+    iconMargin: '10px 7px 0 14px',
+    closeSize: '18px',
+    closeMargin: '9px 12px 0 0',
+    colorWarning: dark ? '#332b1f' : '#fff1d6',
+    contentTextColorWarning: dark ? '#f4e3c3' : '#5c4326',
+    iconColorWarning: dark ? '#f5b74f' : '#e88700',
+  };
+});
+
+function dismissCyberPolicyWarning() {
+  const session = currentRealSession.value;
+  if (session?.cyberPolicyFlagged) {
+    dismissedCyberPolicyWarnings.value = {
+      ...dismissedCyberPolicyWarnings.value,
+      [session.id]: true,
+    };
+  }
+  devCyberPolicyWarning.value = false;
+}
+
+watch(webSessionDevMode, enabled => {
+  if (!enabled) {
+    devCyberPolicySessionId.value = '';
+  }
+});
+watch(
+  () =>
+    [
+      currentRealSession.value?.id ?? '',
+      currentRealSession.value?.cyberPolicyFlagged === true,
+    ] as const,
+  ([sessionId, flagged]) => {
+    if (!sessionId || flagged || dismissedCyberPolicyWarnings.value[sessionId] !== true) {
+      return;
+    }
+    const nextDismissals = { ...dismissedCyberPolicyWarnings.value };
+    delete nextDismissals[sessionId];
+    dismissedCyberPolicyWarnings.value = nextDismissals;
+  },
+  { immediate: true }
+);
 const runtimeHasCodex = computed(() => codexRuntimeConfig.value?.hasCodex === true);
 const runtimeHasClaudeCode = computed(() => codexRuntimeConfig.value?.hasClaudeCode === true);
 const runtimeCodexVersion = computed(() => codexRuntimeConfig.value?.codexVersion?.trim() || '');
@@ -12809,6 +12912,57 @@ defineExpose({
   overflow: hidden;
 }
 
+.web-session-dev-panel {
+  position: fixed;
+  right: 12px;
+  bottom: calc(
+    12px + var(--web-session-mobile-composer-inset, var(--workspace-mobile-websession-inset, 0px))
+  );
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 24px);
+  padding: 6px 8px;
+  border: 1px solid var(--n-border-color, #d9d9d9);
+  border-radius: 6px;
+  background: var(--app-surface-color, var(--n-card-color, #fff));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  color: var(--app-text-color, var(--n-text-color-1, #1f1f1f));
+  font-size: 11px;
+}
+
+.web-session-dev-title {
+  flex-shrink: 0;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--n-warning-color, #f0a020);
+  color: #1f2328;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.web-session-dev-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .web-session-dev-panel.has-cyber-policy-warning {
+    bottom: calc(
+      76px + var(--web-session-mobile-composer-inset, var(--workspace-mobile-websession-inset, 0px))
+    );
+  }
+
+  .cyber-policy-alert {
+    margin-bottom: 22px;
+  }
+}
+
 .panel-main {
   height: 100%;
   min-width: 0;
@@ -14055,12 +14209,24 @@ defineExpose({
 
 .timeline-shell {
   position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
 
+.cyber-policy-alert {
+  flex-shrink: 0;
+  border-top: 1px solid var(--n-border-color, #d9d9d9);
+}
+
+.cyber-policy-alert :deep(.n-alert-body__content) {
+  font-size: 12px;
+}
+
 .timeline-scroll {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   background:

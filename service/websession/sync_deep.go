@@ -37,6 +37,7 @@ type codexDeepHistoryStats struct {
 	LastContextCompactionAt        *time.Time
 	HasContextBaseline             bool
 	ContextBaseline                codexTokenUsageSnapshot
+	CyberPolicyFlagged             bool
 }
 
 type codexDeepHistoryParseResult struct {
@@ -322,6 +323,7 @@ func applyCodexDeepHistoryStatsUpdates(updates map[string]any, stats codexDeepHi
 			updates["context_baseline_output_tokens"] = stats.ContextBaseline.OutputTokens
 		}
 	}
+	updates["cyber_policy_flagged"] = stats.CyberPolicyFlagged
 }
 
 func (stats *codexDeepHistoryStats) observeEventMessage(payload map[string]any, ts time.Time) {
@@ -334,6 +336,10 @@ func (stats *codexDeepHistoryStats) observeEventMessage(payload map[string]any, 
 		stats.observeTokenCount(payload, ts)
 	case "context_compacted":
 		stats.observeContextCompaction(ts)
+	case "error":
+		if isCodexCyberPolicyError(payload) {
+			stats.CyberPolicyFlagged = true
+		}
 	}
 }
 
@@ -520,6 +526,20 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 			Timestamp:  ptr(ts),
 			ObservedAt: ptr(ts),
 			Level:      "warn",
+			Payload:    cloneMap(payload),
+		}}
+	case "error":
+		if !isCodexCyberPolicyError(payload) {
+			return nil
+		}
+		return []HistoryItem{{
+			ID:         utils.NewID(),
+			Kind:       "system",
+			ItemType:   "cyber_policy",
+			Text:       firstNonEmpty(codexErrorMessage(payload), codexCyberPolicyFallbackText),
+			Timestamp:  ptr(ts),
+			ObservedAt: ptr(ts),
+			Level:      "error",
 			Payload:    cloneMap(payload),
 		}}
 	case "context_compacted":

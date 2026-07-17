@@ -532,6 +532,9 @@ func (m *Manager) syncSessionFromThreadSource(
 	historyItems := make([]HistoryItem, 0)
 
 	for turnIndex, turn := range remote.Turns {
+		if isCodexCyberPolicyError(turn) {
+			metadataUpdates["cyber_policy_flagged"] = true
+		}
 		turnRow := tables.WebSessionTurnTable{}
 		turnRow.Init()
 		turnRow.WebSessionID = session.ID

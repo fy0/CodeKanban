@@ -818,6 +818,8 @@ export default {
     hideSidebar: '隐藏右侧栏',
     readyTitle: '准备开始这一轮协作',
     readyDescription: '发送你的需求后，这里会持续显示工具动作、思考进度和审批节点。',
+    cyberPolicyFlagged: '此聊天因可能存在网络安全风险而被标记',
+    devCyberPolicyWarning: '网络安全警告',
     liveIdle: '准备继续',
     liveIdleDetail: '等待下一步消息',
     liveRecovered: '上次运行已因程序重启中断',

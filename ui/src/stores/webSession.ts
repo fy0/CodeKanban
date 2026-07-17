@@ -59,6 +59,7 @@ type WireSession = {
   ttl: string;
   cwd: string;
   nsid?: string | null;
+  cpf?: boolean;
   st: SessionStatus;
   ast?: SessionAssistantState | null;
   unr: boolean;
@@ -2337,6 +2338,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           : 'gentle_stop',
       cwd: session.cwd,
       nativeSessionId: session.nsid ?? null,
+      cyberPolicyFlagged: session.cpf === true,
       status: session.st,
       assistantState: normalizeAssistantStateValue(session.ast) || null,
       hasUnread: session.unr,

@@ -124,6 +124,7 @@ function toWireSession(session: WebSessionSummary) {
     ttl: session.title,
     cwd: session.cwd,
     nsid: session.nativeSessionId,
+    cpf: session.cyberPolicyFlagged === true,
     st: session.status,
     ast: session.assistantState ?? undefined,
     unr: session.hasUnread,
