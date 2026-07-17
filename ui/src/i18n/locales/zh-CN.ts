@@ -895,6 +895,11 @@ export default {
     attachmentUploading: '正在上传图片',
     attachmentUploadingBatch: '正在上传图片 {current}/{total}',
     attachmentUploadFailed: '图片上传失败',
+    pastedImageFailedMarker: '[图片上传失败]',
+    remoteImageDownloadTitle: '下载远程图片？',
+    remoteImageDownloadPrompt:
+      '检测到 {count} 张远程图片。是否由服务器下载并转为附件？下载失败时将保留原链接。',
+    remoteImageDownloadFailed: '远程图片下载失败，已保留原链接。',
     contextUsageTitle: '剩余预算估算',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',

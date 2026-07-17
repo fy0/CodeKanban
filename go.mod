@@ -26,6 +26,8 @@ require (
 	github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188
 	github.com/valyala/fasthttp v1.62.0
 	go.uber.org/zap v1.27.0
+	golang.org/x/crypto v0.41.0
+	golang.org/x/net v0.43.0
 	golang.org/x/sys v0.37.0
 	golang.org/x/text v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -84,9 +86,7 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.3 // indirect
-	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/mod v0.26.0 // indirect
-	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/tools v0.35.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect

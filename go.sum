@@ -50,10 +50,6 @@ github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S
 github.com/fsnotify/fsnotify v1.9.0/go.mod h1:8jBTzvmWwFyi3Pb8djgCCO5IBqzKJ/Jwo8TRcHyHii0=
 github.com/fy0/huma/v2 v2.0.0-20250928113553-954c3a7f416c h1:dJjWz7d7t+RAnYsdh7fnYtv3RpLZeSvc1ILcXdg1vpM=
 github.com/fy0/huma/v2 v2.0.0-20250928113553-954c3a7f416c/go.mod h1:ynwJgLk8iGVgoaipi5tgwIQ5yoFNmiu+QdhU7CEEmhk=
-github.com/fy0/vt10x v0.0.0-20260114040053-051b8e089f34 h1:4b5DhleTO6rHej/ih2ucHdGpy40zA29fAigNRPIiNwQ=
-github.com/fy0/vt10x v0.0.0-20260114040053-051b8e089f34/go.mod h1:kLTxd2st9meXCZgrEJsGzb+5iwO73IJeppBYMGHLoWE=
-github.com/fy0/vt10x v0.0.0-20260407161044-7144fb849786 h1:RPfUE7PyWBgALf6tDm6xzIxlWT8T3QKgZzvcn8i+tHo=
-github.com/fy0/vt10x v0.0.0-20260407161044-7144fb849786/go.mod h1:kLTxd2st9meXCZgrEJsGzb+5iwO73IJeppBYMGHLoWE=
 github.com/fy0/vt10x v0.0.0-20260407180223-4d4db3ffa887 h1:FqU9FN67HLkggni88GrwO98m5/SjMDl7ZpiIdr1X2vI=
 github.com/fy0/vt10x v0.0.0-20260407180223-4d4db3ffa887/go.mod h1:kLTxd2st9meXCZgrEJsGzb+5iwO73IJeppBYMGHLoWE=
 github.com/glebarez/go-sqlite v1.21.2 h1:3a6LFC4sKahUunAmynQKLZceZCOzUthkRkEAl9gAXWo=

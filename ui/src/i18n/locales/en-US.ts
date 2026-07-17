@@ -921,6 +921,11 @@ export default {
     attachmentUploading: 'Uploading image',
     attachmentUploadingBatch: 'Uploading image {current}/{total}',
     attachmentUploadFailed: 'Image upload failed',
+    pastedImageFailedMarker: '[Image upload failed]',
+    remoteImageDownloadTitle: 'Download remote images?',
+    remoteImageDownloadPrompt:
+      'Found {count} remote image(s). Should the server download them as attachments? Original URLs will be kept if downloading fails.',
+    remoteImageDownloadFailed: 'Remote image download failed. The original URL was kept.',
     contextUsageTitle: 'Remaining Budget Estimate',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',

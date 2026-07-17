@@ -2531,6 +2531,14 @@ import WebSessionSidebarRow from '@/components/web-session/WebSessionSidebarRow.
 import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkillCatalogPanel.vue';
 import type { WebSessionComposerEditorExposed } from '@/components/web-session/webSessionComposerEditor';
 import {
+  buildWebSessionComposerPastePlan,
+  getImageFilesFromTransfer,
+  mergeClipboardImageFiles,
+  readClipboardImageFiles,
+  renderWebSessionComposerPastePlan,
+  type WebSessionComposerPastePlan,
+} from '@/components/web-session/webSessionComposerPaste';
+import {
   insertCodexSkillTokenAtCursor,
   replaceTextSelection,
 } from '@/components/web-session/webSessionCodexSkills';
@@ -3158,6 +3166,8 @@ let sidebarResizeObserver: ResizeObserver | null = null;
 const composerTransferErrorMessage = ref('');
 const composerTransferErrorDetail = ref('');
 let composerTransferErrorTimer: number | null = null;
+const composerPastePendingBySession = ref<Record<string, number>>({});
+const composerPasteQueues = new Map<string, Promise<void>>();
 let cancelUserInputSlowHint: (() => void) | null = null;
 let activeUserInputSlowHintOwnerId = '';
 let mobileQuickInputOpenedAt = 0;
@@ -4354,7 +4364,12 @@ const sendConflictSessions = computed(() => {
 const draftAttachmentUpload = computed(() =>
   webSessionStore.getDraftAttachmentUpload(props.projectId, currentDraftSessionId.value)
 );
-const isDraftAttachmentUploading = computed(() => Boolean(draftAttachmentUpload.value));
+const isComposerPastePending = computed(
+  () => (composerPastePendingBySession.value[currentDraftSessionId.value] ?? 0) > 0
+);
+const isDraftAttachmentUploading = computed(
+  () => Boolean(draftAttachmentUpload.value) || isComposerPastePending.value
+);
 const activeTerminalTheme = computed(() => {
   return getTerminalThemeById(effectiveTerminalThemeId.value) || getDefaultTerminalTheme();
 });
@@ -4372,6 +4387,14 @@ const composerTransferCard = computed(() => {
           : t('webSession.attachmentUploading'),
       detail: '',
       progress: upload.percent ?? 0,
+    };
+  }
+  if (isComposerPastePending.value) {
+    return {
+      tone: 'progress' as const,
+      message: t('webSession.attachmentUploading'),
+      detail: '',
+      progress: 0,
     };
   }
   if (composerTransferErrorMessage.value) {
@@ -9848,56 +9871,6 @@ function openFilePicker() {
   fileInputRef.value?.click();
 }
 
-function getTransferImageKey(file: File) {
-  const normalizedName = file.name.trim().toLowerCase() || 'clipboard-image';
-  const normalizedType = file.type.trim().toLowerCase();
-  return [normalizedName, normalizedType, String(file.size)].join(':');
-}
-
-function collectImageFiles(
-  items: Iterable<File | DataTransferItem>,
-  options: { fromDataTransferItem: boolean }
-) {
-  const imageFiles: File[] = [];
-  const seen = new Set<string>();
-
-  for (const entry of items) {
-    const file = options.fromDataTransferItem
-      ? (entry as DataTransferItem).getAsFile()
-      : (entry as File);
-    if (!file || !file.type.startsWith('image/')) {
-      continue;
-    }
-    const key = getTransferImageKey(file);
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    imageFiles.push(file);
-  }
-
-  return imageFiles;
-}
-
-function getImageFilesFromTransfer(dataTransfer: DataTransfer | null) {
-  if (!dataTransfer) {
-    return [];
-  }
-
-  // Clipboard paste can expose the same image through both items and files.
-  // Prefer items when available and only fall back to files if items yield nothing.
-  const itemFiles = collectImageFiles(Array.from(dataTransfer.items || []), {
-    fromDataTransferItem: true,
-  });
-  if (itemFiles.length > 0) {
-    return itemFiles;
-  }
-
-  return collectImageFiles(Array.from(dataTransfer.files || []), {
-    fromDataTransferItem: false,
-  });
-}
-
 function hasFileTransfer(dataTransfer: DataTransfer | null) {
   if (!dataTransfer) {
     return false;
@@ -9955,14 +9928,120 @@ async function handleFileChange(event: Event) {
   }
 }
 
-function handleComposerPaste(event: ClipboardEvent) {
-  const files = getImageFilesFromTransfer(event.clipboardData);
-  if (files.length === 0) {
+function confirmRemoteImageDownload(count: number) {
+  return new Promise<boolean>(resolve => {
+    let settled = false;
+    const settle = (value: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+
+    dialog.warning({
+      title: t('webSession.remoteImageDownloadTitle'),
+      content: t('webSession.remoteImageDownloadPrompt', { count }),
+      positiveText: t('common.yes'),
+      negativeText: t('common.no'),
+      closable: false,
+      closeOnEsc: false,
+      maskClosable: false,
+      onPositiveClick: () => settle(true),
+      onNegativeClick: () => settle(false),
+    });
+  });
+}
+
+async function prepareComposerPaste(options: {
+  sessionId: string;
+  html: string;
+  plainText: string;
+  eventImageFiles: File[];
+  clipboardImageFiles: Promise<File[]>;
+  baseText: string;
+  selection: { start: number; end: number };
+}) {
+  const clipboardImageFiles = await options.clipboardImageFiles;
+  const plan = buildWebSessionComposerPastePlan({
+    failureMarker: t('webSession.pastedImageFailedMarker'),
+    html: options.html,
+    imageFiles: mergeClipboardImageFiles(options.eventImageFiles, clipboardImageFiles),
+    plainText: options.plainText,
+  });
+  if (!plan) {
+    insertComposerPasteText(
+      options.sessionId,
+      options.plainText,
+      options.baseText,
+      options.selection
+    );
     return;
   }
 
+  const downloadRemoteImages =
+    plan.remoteImages.length > 0
+      ? await confirmRemoteImageDownload(plan.remoteImages.length)
+      : false;
+  if (
+    plan.images.length === 0 &&
+    plan.unavailableImages.length === 0 &&
+    !downloadRemoteImages
+  ) {
+    insertComposerPasteText(
+      options.sessionId,
+      renderWebSessionComposerPastePlan(plan),
+      options.baseText,
+      options.selection
+    );
+    return;
+  }
+
+  enqueueComposerPaste(
+    options.sessionId,
+    plan,
+    options.baseText,
+    options.selection,
+    downloadRemoteImages
+  );
+}
+
+function handleComposerPaste(event: ClipboardEvent) {
+  const sessionId = currentDraftSessionId.value;
+  const clipboardData = event.clipboardData;
+  if (!sessionId || !clipboardData) {
+    return;
+  }
+
+  const html = clipboardData.getData('text/html');
+  const plainText = clipboardData.getData('text/plain');
+  const eventImageFiles = getImageFilesFromTransfer(clipboardData);
+  const initialPlan = buildWebSessionComposerPastePlan({
+    failureMarker: t('webSession.pastedImageFailedMarker'),
+    html,
+    imageFiles: eventImageFiles,
+    plainText,
+  });
+  if (!initialPlan) {
+    return;
+  }
+
+  const clipboardImageFiles =
+    initialPlan.unavailableImageCount > 0
+      ? readClipboardImageFiles()
+      : Promise.resolve([] as File[]);
   event.preventDefault();
-  void uploadComposerImages(files);
+  const selection = getComposerSelectionRange();
+  const baseText = composerText.value;
+  void prepareComposerPaste({
+    sessionId,
+    html,
+    plainText,
+    eventImageFiles,
+    clipboardImageFiles,
+    baseText,
+    selection,
+  });
 }
 
 function handleComposerDragEnter(event: DragEvent) {
@@ -10055,6 +10134,176 @@ function setComposerTextAndSelection(text: string, cursor: number) {
     composerInputRef.value?.setSelectionRange(cursor, cursor);
   });
   return true;
+}
+
+function updateComposerPastePending(sessionId: string, delta: number) {
+  const next = { ...composerPastePendingBySession.value };
+  const count = Math.max(0, (next[sessionId] ?? 0) + delta);
+  if (count > 0) {
+    next[sessionId] = count;
+  } else {
+    delete next[sessionId];
+  }
+  composerPastePendingBySession.value = next;
+}
+
+function insertComposerPasteText(
+  sessionId: string,
+  pastedText: string,
+  baseText: string,
+  fallbackSelection: { start: number; end: number }
+) {
+  if (!pastedText) {
+    return;
+  }
+
+  const draft = webSessionStore.getDraft(props.projectId, sessionId);
+  const isCurrentDraft = currentDraftSessionId.value === sessionId;
+  const selection = isCurrentDraft
+    ? getComposerSelectionRange()
+    : draft.text === baseText
+      ? fallbackSelection
+      : { start: draft.text.length, end: draft.text.length };
+  const next = replaceTextSelection(draft.text, selection.start, selection.end, pastedText);
+  webSessionStore.setDraftText(props.projectId, sessionId, next.text);
+
+  if (isCurrentDraft) {
+    ensureMobileComposerVisible();
+    nextTick(() => {
+      composerInputRef.value?.focus();
+      composerInputRef.value?.setSelectionRange(next.cursor, next.cursor);
+    });
+  }
+}
+
+async function processComposerPaste(
+  sessionId: string,
+  plan: WebSessionComposerPastePlan,
+  baseText: string,
+  fallbackSelection: { start: number; end: number },
+  downloadRemoteImages: boolean
+) {
+  const replacements: string[] = [];
+  const remoteReplacements: string[] = [];
+  const unavailableReplacements: string[] = [];
+  if (currentDraftSessionId.value === sessionId) {
+    clearComposerTransferError();
+  }
+
+  for (const segment of plan.segments) {
+    if (segment.type === 'image' && replacements[segment.imageIndex] == null) {
+      const file = plan.images[segment.imageIndex];
+      try {
+        const attachment = await webSessionStore.uploadAttachment(props.projectId, sessionId, file);
+        const attachmentIndex = webSessionStore
+          .getDraftAttachments(props.projectId, sessionId)
+          .findIndex(item => item.id === attachment.id);
+        replacements[segment.imageIndex] =
+          attachmentIndex >= 0 ? buildImagePlaceholder(attachmentIndex + 1) : plan.failureMarker;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : t('common.error');
+        replacements[segment.imageIndex] = plan.failureMarker;
+        if (currentDraftSessionId.value === sessionId) {
+          showComposerTransferError(detail);
+        }
+        message.error(file.name ? `${file.name}: ${detail}` : detail);
+      }
+      continue;
+    }
+
+    if (
+      segment.type === 'unavailable-image' &&
+      unavailableReplacements[segment.unavailableImageIndex] == null
+    ) {
+      const source = plan.unavailableImages[segment.unavailableImageIndex];
+      try {
+        const attachment = await webSessionStore.importClipboardAttachment(
+          props.projectId,
+          sessionId,
+          source
+        );
+        const attachmentIndex = webSessionStore
+          .getDraftAttachments(props.projectId, sessionId)
+          .findIndex(item => item.id === attachment.id);
+        unavailableReplacements[segment.unavailableImageIndex] =
+          attachmentIndex >= 0 ? buildImagePlaceholder(attachmentIndex + 1) : plan.failureMarker;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : t('common.error');
+        unavailableReplacements[segment.unavailableImageIndex] = plan.failureMarker;
+        if (currentDraftSessionId.value === sessionId) {
+          showComposerTransferError(detail);
+        }
+        message.error(detail);
+      }
+      continue;
+    }
+
+    if (segment.type !== 'remote-image' || remoteReplacements[segment.remoteImageIndex] != null) {
+      continue;
+    }
+    const url = plan.remoteImages[segment.remoteImageIndex];
+    if (!downloadRemoteImages) {
+      remoteReplacements[segment.remoteImageIndex] = url;
+      continue;
+    }
+    try {
+      const attachment = await webSessionStore.importRemoteAttachment(
+        props.projectId,
+        sessionId,
+        url
+      );
+      const attachmentIndex = webSessionStore
+        .getDraftAttachments(props.projectId, sessionId)
+        .findIndex(item => item.id === attachment.id);
+      remoteReplacements[segment.remoteImageIndex] =
+        attachmentIndex >= 0 ? buildImagePlaceholder(attachmentIndex + 1) : url;
+    } catch (error) {
+      remoteReplacements[segment.remoteImageIndex] = url;
+      message.warning(t('webSession.remoteImageDownloadFailed'));
+    }
+  }
+
+  insertComposerPasteText(
+    sessionId,
+    renderWebSessionComposerPastePlan(
+      plan,
+      replacements,
+      remoteReplacements,
+      unavailableReplacements
+    ),
+    baseText,
+    fallbackSelection
+  );
+}
+
+function enqueueComposerPaste(
+  sessionId: string,
+  plan: WebSessionComposerPastePlan,
+  baseText: string,
+  fallbackSelection: { start: number; end: number },
+  downloadRemoteImages: boolean
+) {
+  const queueKey = `${props.projectId}:${sessionId}`;
+  const previousTask = composerPasteQueues.get(queueKey) ?? Promise.resolve();
+  updateComposerPastePending(sessionId, 1);
+
+  const task = previousTask
+    .catch(() => undefined)
+    .then(() =>
+      processComposerPaste(sessionId, plan, baseText, fallbackSelection, downloadRemoteImages)
+    )
+    .catch(error => {
+      const detail = error instanceof Error ? error.message : t('common.error');
+      message.error(detail);
+    })
+    .finally(() => {
+      updateComposerPastePending(sessionId, -1);
+      if (composerPasteQueues.get(queueKey) === task) {
+        composerPasteQueues.delete(queueKey);
+      }
+    });
+
+  composerPasteQueues.set(queueKey, task);
 }
 
 async function applyQuickInputText(text: string) {

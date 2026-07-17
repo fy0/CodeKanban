@@ -575,6 +575,58 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Post(group, "/projects/{projectId}/web-sessions/attachments/import-url", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			Body      struct {
+				URL string `json:"url" minLength:"1" maxLength:"4096"`
+			}
+		},
+	) (*h.ItemResponse[websession.Attachment], error) {
+		if strings.TrimSpace(input.ProjectID) == "" {
+			return nil, huma.Error400BadRequest("projectId is required")
+		}
+		attachment, err := c.manager.ImportRemoteAttachment(ctx, input.Body.URL)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		resp := h.NewItemResponse(attachment)
+		resp.Status = http.StatusCreated
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-attachment-import-url"
+		op.Summary = "下载远程图片为会话附件"
+		op.Tags = []string{webSessionTag}
+	})
+
+	app.Post("/api/v1/projects/:projectId/web-sessions/attachments/import-clipboard", func(ctx *fiber.Ctx) error {
+		if remoteIP := ctx.Context().RemoteIP(); remoteIP == nil || !remoteIP.IsLoopback() {
+			return fiber.NewError(http.StatusForbidden, "local clipboard import requires a loopback connection")
+		}
+		projectID := strings.TrimSpace(ctx.Params("projectId"))
+		if projectID == "" {
+			return fiber.NewError(http.StatusBadRequest, "projectId is required")
+		}
+		input := struct {
+			Source string `json:"source"`
+		}{}
+		if err := ctx.BodyParser(&input); err != nil {
+			return fiber.NewError(http.StatusBadRequest, "invalid clipboard import request")
+		}
+		input.Source = strings.TrimSpace(input.Source)
+		if input.Source == "" || len(input.Source) > 4096 {
+			return fiber.NewError(http.StatusBadRequest, "clipboard image source is required")
+		}
+		attachment, err := c.manager.ImportLocalClipboardAttachment(ctx.UserContext(), input.Source)
+		if err != nil {
+			return fiber.NewError(http.StatusBadRequest, err.Error())
+		}
+		resp := h.NewItemResponse(attachment)
+		resp.Status = http.StatusCreated
+		return ctx.Status(http.StatusCreated).JSON(resp.Body)
+	})
+
 	app.Post("/api/v1/projects/:projectId/web-sessions/attachments", func(ctx *fiber.Ctx) error {
 		projectID := strings.TrimSpace(ctx.Params("projectId"))
 		if projectID == "" {

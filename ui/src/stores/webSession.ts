@@ -5511,6 +5511,41 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return attachment;
   }
 
+  async function importRemoteAttachment(projectId: string, sessionId: string, url: string) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId || !String(url || '').trim()) {
+      throw new Error('remote image URL is required');
+    }
+
+    const attachment = await webSessionApi.importRemoteAttachment(normalizedProjectId, url);
+    updateDraft(normalizedProjectId, normalizedSessionId, draft => ({
+      ...draft,
+      attachments: [...draft.attachments, attachment],
+      updatedAt: Date.now(),
+    }));
+    return attachment;
+  }
+
+  async function importClipboardAttachment(projectId: string, sessionId: string, source: string) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId || !String(source || '').trim()) {
+      throw new Error('clipboard image source is required');
+    }
+
+    const attachment = await webSessionApi.importClipboardAttachment(
+      normalizedProjectId,
+      source
+    );
+    updateDraft(normalizedProjectId, normalizedSessionId, draft => ({
+      ...draft,
+      attachments: [...draft.attachments, attachment],
+      updatedAt: Date.now(),
+    }));
+    return attachment;
+  }
+
   function removeDraftAttachment(projectId: string, sessionId: string, attachmentId: string) {
     updateDraft(projectId, sessionId, draft => ({
       ...draft,
@@ -5619,6 +5654,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getLiveState,
     uploadAttachments,
     uploadAttachment,
+    importRemoteAttachment,
+    importClipboardAttachment,
     removeDraftAttachment,
     removePendingInput,
     updatePendingInput,

@@ -51,6 +51,7 @@ var (
 type Config struct {
 	DataDir                 string
 	AttachmentSizeLimit     int64
+	RemoteAttachmentClient  *http.Client
 	ClaudePath              string
 	CCRPath                 string
 	CCRConfigPath           string
@@ -2333,26 +2334,42 @@ func (m *Manager) SaveAttachment(fileHeader *multipart.FileHeader) (Attachment, 
 	if written > m.cfg.AttachmentSizeLimit {
 		return Attachment{}, fmt.Errorf("attachment too large")
 	}
+	return m.saveAttachmentBytes(fileHeader.Filename, fileHeader.Header.Get("Content-Type"), buffer.Bytes())
+}
+
+func (m *Manager) saveAttachmentBytes(fileName, mimeType string, data []byte) (Attachment, error) {
+	if len(data) == 0 {
+		return Attachment{}, fmt.Errorf("empty file")
+	}
+	if int64(len(data)) > m.cfg.AttachmentSizeLimit {
+		return Attachment{}, fmt.Errorf("attachment too large")
+	}
+
+	fileName = filepath.Base(strings.TrimSpace(fileName))
+	if fileName == "" || fileName == "." {
+		fileName = "image"
+	}
+	mimeType = strings.TrimSpace(mimeType)
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	} else if parsedMime, _, err := mime.ParseMediaType(mimeType); err == nil && parsedMime != "" {
+		mimeType = parsedMime
+	}
 
 	attachmentID := utils.NewID()
-	extension := filepath.Ext(fileHeader.Filename)
+	extension := filepath.Ext(fileName)
 	targetPath := m.store.attachmentPath(attachmentID, extension)
-	if err := os.WriteFile(targetPath, buffer.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(targetPath, data, 0o644); err != nil {
 		return Attachment{}, err
 	}
 
 	attachment := Attachment{
 		ID:        attachmentID,
-		Name:      filepath.Base(fileHeader.Filename),
-		Mime:      fileHeader.Header.Get("Content-Type"),
-		Size:      written,
+		Name:      fileName,
+		Mime:      mimeType,
+		Size:      int64(len(data)),
 		Path:      targetPath,
 		CreatedAt: time.Now(),
-	}
-	if attachment.Mime == "" {
-		attachment.Mime = http.DetectContentType(buffer.Bytes())
-	} else if parsedMime, _, err := mime.ParseMediaType(attachment.Mime); err == nil && parsedMime != "" {
-		attachment.Mime = parsedMime
 	}
 
 	meta := attachmentMeta{

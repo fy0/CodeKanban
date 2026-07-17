@@ -505,4 +505,33 @@ export const webSessionApi = {
       xhr.send(formData);
     });
   },
+
+  async importRemoteAttachment(projectId: string, url: string): Promise<WebSessionAttachment> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionAttachment>
+        >(`/projects/${projectId}/web-sessions/attachments/import-url`, { url })
+        .send()) ?? {};
+    if (!body.item?.id) {
+      throw new Error('remote image download succeeded but no attachment was returned');
+    }
+    return body.item;
+  },
+
+  async importClipboardAttachment(
+    projectId: string,
+    source: string
+  ): Promise<WebSessionAttachment> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionAttachment>
+        >(`/projects/${projectId}/web-sessions/attachments/import-clipboard`, { source })
+        .send()) ?? {};
+    if (!body.item?.id) {
+      throw new Error('clipboard image import succeeded but no attachment was returned');
+    }
+    return body.item;
+  },
 };
