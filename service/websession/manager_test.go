@@ -160,6 +160,120 @@ func TestManagerCreateSessionDefaultsCodexToAppServerBackend(t *testing.T) {
 	}
 }
 
+func TestManagerCreateSessionYoloConfiguresFirstCodexThreadWithoutApprovals(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "verify_yolo"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:       project.ID,
+		Agent:           AgentCodex,
+		PermissionLevel: PermissionLevelYolo,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if created.PermissionLevel != PermissionLevelYolo || effectivePermissionLevel(record) != PermissionLevelYolo {
+		t.Fatalf("expected persisted yolo permission, got summary=%q record=%q", created.PermissionLevel, record.PermissionLevel)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "verify first turn permissions", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+	settled, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after first turn returned error: %v", err)
+	}
+	if settled.Status != string(StatusDone) {
+		errorMessage := ""
+		if settled.LastError != nil {
+			errorMessage = *settled.LastError
+		}
+		t.Fatalf("expected first yolo turn to complete, got status=%q error=%q", settled.Status, errorMessage)
+	}
+}
+
+func TestCodexCommandApprovalPersistsDetailsAndSnapshot(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	run := &activeRun{
+		sessionID: created.ID,
+		runID:     "run-command-approval",
+		app:       &codexAppServerClient{},
+	}
+	manager.mu.Lock()
+	manager.runs[created.ID] = run
+	manager.mu.Unlock()
+
+	message := codexAppServerIncoming{
+		ID:     json.RawMessage(`"approval-command-1"`),
+		Method: "item/commandExecution/requestApproval",
+		Params: json.RawMessage(`{
+			"threadId":"thread-1",
+			"turnId":"turn-1",
+			"itemId":"command-1",
+			"command":"rm -r /tmp/example"
+		}`),
+	}
+	if err := manager.handleCodexAppServerApprovalRequest(record, run, message); err != nil {
+		t.Fatalf("handleCodexAppServerApprovalRequest returned error: %v", err)
+	}
+
+	refreshed, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after approval returned error: %v", err)
+	}
+	snapshot, err := manager.loadSnapshotLocal(context.Background(), refreshed, DefaultHistoryWindow, false)
+	if err != nil {
+		t.Fatalf("loadSnapshotLocal returned error: %v", err)
+	}
+	if snapshot.PendingApproval == nil {
+		t.Fatal("expected pending approval in snapshot")
+	}
+	if snapshot.PendingApproval.ItemID != "command-1" ||
+		snapshot.PendingApproval.Kind != string(pendingServerRequestCommandApproval) ||
+		snapshot.PendingApproval.Command != "rm -r /tmp/example" ||
+		!snapshot.PendingApproval.Actionable ||
+		strings.TrimSpace(snapshot.PendingApproval.Prompt) == "" {
+		t.Fatalf("unexpected pending approval: %#v", snapshot.PendingApproval)
+	}
+	if len(snapshot.History.Items) != 1 || snapshot.History.Items[0].Detail == nil {
+		t.Fatalf("expected persisted approval history item, got %#v", snapshot.History.Items)
+	}
+	detail := snapshot.History.Items[0].Detail
+	if detail.ApprovalKind != string(pendingServerRequestCommandApproval) || detail.Command != "rm -r /tmp/example" {
+		t.Fatalf("unexpected approval history detail: %#v", detail)
+	}
+}
+
 func TestImportCodexSessionCreatesBoundSessionAndSyncsHistory(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -6172,7 +6286,8 @@ printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason"
 func writeFakeCodexAppServerCLI(t *testing.T, mode string) string {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "fake-codex-app-server.js")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-codex-app-server.js")
 	script := fmt.Sprintf(`#!/usr/bin/env node
 if (process.argv.includes('--version')) {
   process.stdout.write('codex 0.137.0\n');
@@ -6186,7 +6301,7 @@ const threadId = 'thread_test';
 const turnId = 'turn_test';
 const childThreadId = 'thread_child';
 const childTurnId = 'turn_child';
-const stateFile = __filename + '.state';
+const stateFile = (process.env.CODEKANBAN_FAKE_CODEX_PATH || __filename) + '.state';
 const goalStateFile = stateFile + '.goal.json';
 let activeThreadId = threadId;
 
@@ -6784,6 +6899,19 @@ rl.on('line', line => {
       });
       return;
     }
+    if (
+      mode === 'verify_yolo' &&
+      message.method === 'thread/start' &&
+      (!message.params ||
+        message.params.approvalPolicy !== 'never' ||
+        message.params.sandbox !== 'danger-full-access')
+    ) {
+      send({
+        id: message.id,
+        error: { message: 'expected yolo approvalPolicy=never and sandbox=danger-full-access' },
+      });
+      return;
+    }
     const resumedThreadId = message.params && typeof message.params.threadId === 'string'
       ? message.params.threadId
       : threadId;
@@ -6923,7 +7051,7 @@ rl.on('line', line => {
       return;
     }
 
-    if (mode === 'basic' || mode === 'resume_only' || mode === 'plan') {
+    if (mode === 'basic' || mode === 'resume_only' || mode === 'plan' || mode === 'verify_yolo') {
       finishTurn('done');
       return;
     }
@@ -7169,6 +7297,14 @@ process.on('exit', () => {
 `, mode)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex app-server cli failed: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		cmdPath := filepath.Join(dir, "fake-codex-app-server.cmd")
+		wrapper := "@echo off\r\nset \"CODEKANBAN_FAKE_CODEX_PATH=%~f0\"\r\nnode \"%~dp0fake-codex-app-server.js\" %*\r\nexit /b %ERRORLEVEL%\r\n"
+		if err := os.WriteFile(cmdPath, []byte(wrapper), 0o755); err != nil {
+			t.Fatalf("write fake codex app-server wrapper failed: %v", err)
+		}
+		return cmdPath
 	}
 	return path
 }

@@ -1434,8 +1434,33 @@ func (m *Manager) loadSnapshotLocal(
 		History:          history,
 		PendingInputs:    m.pendingInputsSnapshot(record.ID),
 		ScheduledInputs:  scheduledInputs,
+		PendingApproval:  m.pendingApprovalSnapshot(record),
 		PendingUserInput: pendingUserInputFromHistory(history.Items),
 	}, nil
+}
+
+func (m *Manager) pendingApprovalSnapshot(record tables.WebSessionTable) *PendingApproval {
+	if AssistantState(record.AssistantState) != AssistantStateWaitingApproval {
+		return nil
+	}
+	m.mu.RLock()
+	run := m.runs[record.ID]
+	m.mu.RUnlock()
+	if run == nil || run.app == nil {
+		return nil
+	}
+	request, ok := run.pendingApprovalRequest()
+	if !ok || request.Kind == pendingServerRequestPlanApproval {
+		return nil
+	}
+	return &PendingApproval{
+		ItemID:      request.ItemID,
+		Kind:        string(request.Kind),
+		Prompt:      firstNonEmpty(request.Prompt, approvalPromptFallback(request.Kind)),
+		Command:     request.Command,
+		RequestedAt: request.RequestedAt,
+		Actionable:  len(request.RawID) > 0,
+	}
 }
 
 func (m *Manager) History(ctx context.Context, sessionID string, limit int, beforeSeq *int64) (HistoryWindow, error) {

@@ -305,11 +305,13 @@ type HistoryAnswerEntry struct {
 }
 
 type HistoryDetail struct {
-	Type      string                `json:"type"`
-	Prompt    string                `json:"prompt,omitempty"`
-	Questions []toolRequestQuestion `json:"questions,omitempty"`
-	Answers   []HistoryAnswerEntry  `json:"answers,omitempty"`
-	Action    string                `json:"action,omitempty"`
+	Type         string                `json:"type"`
+	Prompt       string                `json:"prompt,omitempty"`
+	ApprovalKind string                `json:"approvalKind,omitempty"`
+	Command      string                `json:"command,omitempty"`
+	Questions    []toolRequestQuestion `json:"questions,omitempty"`
+	Answers      []HistoryAnswerEntry  `json:"answers,omitempty"`
+	Action       string                `json:"action,omitempty"`
 }
 
 type HistoryAttachment struct {
@@ -377,12 +379,22 @@ type PendingUserInput struct {
 	RequestedAt *time.Time            `json:"requestedAt,omitempty"`
 }
 
+type PendingApproval struct {
+	ItemID      string     `json:"itemId"`
+	Kind        string     `json:"kind"`
+	Prompt      string     `json:"prompt"`
+	Command     string     `json:"command,omitempty"`
+	RequestedAt *time.Time `json:"requestedAt,omitempty"`
+	Actionable  bool       `json:"actionable"`
+}
+
 type SessionSnapshot struct {
 	Revision         string            `json:"revision"`
 	Session          SessionSummary    `json:"session"`
 	History          HistoryWindow     `json:"history"`
 	PendingInputs    []PendingInput    `json:"pendingInputs"`
 	ScheduledInputs  []ScheduledInput  `json:"scheduledInputs"`
+	PendingApproval  *PendingApproval  `json:"pendingApproval,omitempty"`
 	PendingUserInput *PendingUserInput `json:"pendingUserInput,omitempty"`
 }
 
@@ -393,6 +405,7 @@ type SessionSnapshotResponse struct {
 	History          *HistoryWindow    `json:"history,omitempty"`
 	PendingInputs    []PendingInput    `json:"pendingInputs,omitempty"`
 	ScheduledInputs  []ScheduledInput  `json:"scheduledInputs,omitempty"`
+	PendingApproval  *PendingApproval  `json:"pendingApproval,omitempty"`
 	PendingUserInput *PendingUserInput `json:"pendingUserInput,omitempty"`
 }
 
@@ -403,6 +416,7 @@ func NewSessionSnapshotResponse(snapshot SessionSnapshot) SessionSnapshotRespons
 		History:          &snapshot.History,
 		PendingInputs:    snapshot.PendingInputs,
 		ScheduledInputs:  snapshot.ScheduledInputs,
+		PendingApproval:  snapshot.PendingApproval,
 		PendingUserInput: snapshot.PendingUserInput,
 	}
 }

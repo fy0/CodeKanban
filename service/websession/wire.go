@@ -43,6 +43,7 @@ type wireFrame struct {
 	Item             *wireHistItem         `json:"i,omitempty"`
 	Pending          []wirePendingInput    `json:"pi,omitempty"`
 	Scheduled        []wireScheduledInput  `json:"si,omitempty"`
+	PendingApproval  *wirePendingApproval  `json:"pa,omitempty"`
 	PendingUserInput *wirePendingUserInput `json:"ui,omitempty"`
 	Code             string                `json:"code,omitempty"`
 	Message          string                `json:"msg,omitempty"`
@@ -179,11 +180,13 @@ type wireHistoryCommandGroup struct {
 }
 
 type wireHistoryDetail struct {
-	Type      string                `json:"type"`
-	Prompt    string                `json:"prompt,omitempty"`
-	Questions []toolRequestQuestion `json:"questions,omitempty"`
-	Answers   []HistoryAnswerEntry  `json:"answers,omitempty"`
-	Action    string                `json:"action,omitempty"`
+	Type         string                `json:"type"`
+	Prompt       string                `json:"prompt,omitempty"`
+	ApprovalKind string                `json:"approvalKind,omitempty"`
+	Command      string                `json:"command,omitempty"`
+	Questions    []toolRequestQuestion `json:"questions,omitempty"`
+	Answers      []HistoryAnswerEntry  `json:"answers,omitempty"`
+	Action       string                `json:"action,omitempty"`
 }
 
 type wirePendingInput struct {
@@ -215,6 +218,15 @@ type wirePendingUserInput struct {
 	Prompt      string                `json:"txt,omitempty"`
 	Questions   []toolRequestQuestion `json:"qs,omitempty"`
 	RequestedAt *int64                `json:"ra,omitempty"`
+}
+
+type wirePendingApproval struct {
+	ItemID      string `json:"iid"`
+	Kind        string `json:"kind"`
+	Prompt      string `json:"txt"`
+	Command     string `json:"cmd,omitempty"`
+	RequestedAt *int64 `json:"ra,omitempty"`
+	Actionable  bool   `json:"act"`
 }
 
 func newAckFrame(requestID, op, sessionID string, payload any, revision ...string) wireFrame {
@@ -277,6 +289,7 @@ func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
 		},
 		Pending:          mapWirePendingInputs(snap.PendingInputs),
 		Scheduled:        mapWireScheduledInputs(snap.ScheduledInputs),
+		PendingApproval:  mapWirePendingApproval(snap.PendingApproval),
 		PendingUserInput: mapWirePendingUserInput(snap.PendingUserInput),
 	}
 }
@@ -658,10 +671,31 @@ func mapWireHistoryDetail(detail *HistoryDetail) *wireHistoryDetail {
 		return nil
 	}
 	return &wireHistoryDetail{
-		Type:      detail.Type,
-		Prompt:    detail.Prompt,
-		Questions: detail.Questions,
-		Answers:   detail.Answers,
-		Action:    detail.Action,
+		Type:         detail.Type,
+		Prompt:       detail.Prompt,
+		ApprovalKind: detail.ApprovalKind,
+		Command:      detail.Command,
+		Questions:    detail.Questions,
+		Answers:      detail.Answers,
+		Action:       detail.Action,
+	}
+}
+
+func mapWirePendingApproval(input *PendingApproval) *wirePendingApproval {
+	if input == nil {
+		return nil
+	}
+	var requestedAt *int64
+	if input.RequestedAt != nil {
+		value := input.RequestedAt.UnixMilli()
+		requestedAt = &value
+	}
+	return &wirePendingApproval{
+		ItemID:      input.ItemID,
+		Kind:        input.Kind,
+		Prompt:      input.Prompt,
+		Command:     input.Command,
+		RequestedAt: requestedAt,
+		Actionable:  input.Actionable,
 	}
 }

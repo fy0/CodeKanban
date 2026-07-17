@@ -869,6 +869,10 @@ export default {
     liveTooltipSinceLastActivity: 'Since last activity',
     approvalTitle: 'Approval Required',
     approvalPromptFallback: 'The agent is waiting for confirmation before continuing.',
+    approvalDetailsLoading: 'Recovering approval details...',
+    approvalDetailsUnavailable:
+      'Approval details are unavailable. Reload them, or stop the current run and try again.',
+    approvalDetailsRefresh: 'Reload',
     approvalApprove: 'Approve',
     approvalReject: 'Reject',
     historyApprovalApproved: 'Approved',

@@ -3217,6 +3217,106 @@ describe('webSession loading behavior', () => {
     });
   });
 
+  it('restores an actionable approval from snapshot when approval history is missing', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-snapshot-approval',
+      status: 'running',
+      assistantState: 'waiting_approval',
+    });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          makeWireHistoryItem(1, {
+            kd: 'user',
+            tp: 'user_message',
+            txt: 'An earlier user message',
+          }),
+        ],
+        hasMore: false,
+        total: 1,
+      },
+      pendingApproval: {
+        itemId: 'command-1',
+        kind: 'command_approval',
+        prompt: 'Approve this command?',
+        command: 'rm -r /tmp/example',
+        requestedAt: '2026-04-09T10:00:01.000Z',
+        actionable: true,
+      },
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getPendingApproval(session.id)).toMatchObject({
+      id: 'command-1',
+      itemId: 'command-1',
+      kind: 'command_approval',
+      prompt: 'Approve this command?',
+      command: 'rm -r /tmp/example',
+      actionable: true,
+      stale: false,
+    });
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'waiting_approval',
+      approval: { itemId: 'command-1' },
+    });
+
+    await store.openEventStream();
+    findSocket('/api/v1/web-sessions/events')?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: makeWireHistoryItem(2, {
+        id: 'approval-response',
+        tp: 'approval_res',
+        dt: { type: 'approval_response', action: 'approve' },
+      }),
+    });
+    expect(store.getPendingApproval(session.id)).toBeNull();
+  });
+
+  it('does not emit an empty approval notification from waiting status alone', async () => {
+    const store = useWebSessionStore();
+    const workingSession = makeSession({
+      id: 'session-missing-approval-details',
+      status: 'running',
+      assistantState: 'working',
+    });
+    const handleApproval = vi.fn();
+    listMock.mockResolvedValue([workingSession]);
+
+    await store.loadSessions(workingSession.projectId);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    store.getLiveState(workingSession.id);
+    store.emitter.on('ai:approval-needed', handleApproval);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: workingSession.id,
+      rev: '2',
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession({
+        ...workingSession,
+        revision: '2',
+        assistantState: 'waiting_approval',
+        assistantStateUpdatedAt: '2026-04-09T10:02:00.000Z',
+      }),
+    });
+
+    expect(store.getPendingApproval(workingSession.id)).toBeNull();
+    expect(store.getLiveState(workingSession.id).phase).toBe('waiting_approval');
+    expect(handleApproval).not.toHaveBeenCalled();
+  });
+
   it('derives one next projection per history frame without repeating approval notifications', async () => {
     const store = useWebSessionStore();
     const session = makeSession({

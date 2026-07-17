@@ -6,6 +6,7 @@ import {
   type WebSessionAttachmentUploadProgress,
   type WebSessionImportResult,
   type WebSessionSnapshot,
+  type WebSessionPendingApprovalRecord,
 } from '@/api/webSession';
 import type {
   WebSessionAttachment,
@@ -178,6 +179,8 @@ type WireHistoryItem = {
   dt?: {
     type: 'approval_request' | 'approval_response' | 'user_input_request' | 'user_input_response';
     prompt?: string;
+    approvalKind?: string;
+    command?: string;
     questions?: WebSessionUserInputQuestion[];
     answers?: WebSessionHistoryAnswerEntry[];
     action?: 'approve' | 'reject' | string;
@@ -205,6 +208,14 @@ type WireFrame = {
   i?: WireHistoryItem;
   pi?: WirePendingInput[];
   si?: WireScheduledInput[];
+  pa?: {
+    iid: string;
+    kind: string;
+    txt: string;
+    cmd?: string;
+    ra?: number | null;
+    act: boolean;
+  } | null;
   code?: string;
   msg?: string;
   retry?: boolean;
@@ -246,6 +257,8 @@ export interface WebSessionHistoryAnswerEntry {
 export interface WebSessionHistoryDetail {
   type: 'approval_request' | 'approval_response' | 'user_input_request' | 'user_input_response';
   prompt?: string;
+  approvalKind?: string;
+  command?: string;
   questions?: WebSessionUserInputQuestion[];
   answers?: WebSessionHistoryAnswerEntry[];
   action?: 'approve' | 'reject' | string;
@@ -278,9 +291,13 @@ export interface WebSessionBlock {
 
 export interface WebSessionApprovalState {
   id: string;
+  itemId: string;
+  kind: string;
   prompt: string;
+  command: string;
   requestedAt: number;
   stale: boolean;
+  actionable: boolean;
   recoveryReason?: string;
   recoveryMessage?: string;
 }
@@ -822,6 +839,29 @@ function parseHistoryTimeValue(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function normalizePendingApproval(
+  value: WebSessionPendingApprovalRecord | WireFrame['pa'] | null | undefined
+): WebSessionApprovalState | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const itemId = String(record.iid ?? record.itemId ?? '').trim();
+  if (!itemId) {
+    return null;
+  }
+  return {
+    id: itemId,
+    itemId,
+    kind: String(record.kind ?? '').trim(),
+    prompt: String(record.txt ?? record.prompt ?? '').trim(),
+    command: String(record.cmd ?? record.command ?? '').trim(),
+    requestedAt: parseHistoryTimeValue(record.ra ?? record.requestedAt) ?? Date.now(),
+    stale: false,
+    actionable: record.act === true || record.actionable === true,
+  };
 }
 
 function parseToolCommandGroup(value: unknown) {
@@ -1508,6 +1548,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   >({});
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
   const scheduledInputsBySession = ref<Record<string, WebSessionScheduledInput[]>>({});
+  const snapshotApprovalsBySession = ref<Record<string, WebSessionApprovalState>>({});
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
   const cachedCounts = reactive(new Map<string, number>());
@@ -1981,6 +2022,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sessionId: string,
     summary: WebSessionSummary,
     items: WebSessionBlock[],
+    pendingApproval: WebSessionApprovalState | null,
     pendingInputs: WebSessionPendingInput[],
     scheduledInputs: WebSessionScheduledInput[],
     history: {
@@ -1993,6 +2035,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   ) {
     upsertSession(summary, options);
+    setSnapshotApproval(sessionId, pendingApproval);
     resetSessionEvents(sessionId, items);
     setPendingInputs(sessionId, pendingInputs);
     setScheduledInputs(sessionId, scheduledInputs);
@@ -2676,6 +2719,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
                   ? inferredDetailType
                   : 'approval_request',
               prompt: typeof rawDetail?.prompt === 'string' ? rawDetail.prompt : undefined,
+              approvalKind:
+                typeof rawDetail?.approvalKind === 'string'
+                  ? rawDetail.approvalKind
+                  : typeof rawPayload?.kind === 'string'
+                    ? rawPayload.kind
+                    : undefined,
+              command:
+                typeof rawDetail?.command === 'string'
+                  ? rawDetail.command
+                  : typeof rawPayload?.command === 'string'
+                    ? rawPayload.command
+                    : undefined,
               questions: detailQuestions,
               answers: detailAnswers,
               action: typeof rawDetail?.action === 'string' ? rawDetail.action : undefined,
@@ -2927,6 +2982,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     fullSnapshotBaselineSessions.delete(sessionId);
     pendingAutoRetryOverrides.delete(sessionId);
     pendingActiveCallTimeoutOverrides.delete(sessionId);
+    const nextSnapshotApprovals = { ...snapshotApprovalsBySession.value };
+    delete nextSnapshotApprovals[sessionId];
+    snapshotApprovalsBySession.value = nextSnapshotApprovals;
     runtimeProjectionCacheBySession.delete(sessionId);
     eventIndexBySession.delete(sessionId);
     const nextPendingInputs = { ...pendingInputsBySession.value };
@@ -3044,6 +3102,58 @@ export const useWebSessionStore = defineStore('web-session', () => {
     scheduledInputsBySession.value = nextScheduledInputs;
   }
 
+  function setSnapshotApproval(
+    sessionId: string,
+    approval: WebSessionApprovalState | null,
+    invalidate = true
+  ) {
+    const next = { ...snapshotApprovalsBySession.value };
+    if (approval) {
+      next[sessionId] = approval;
+    } else {
+      delete next[sessionId];
+    }
+    snapshotApprovalsBySession.value = next;
+    if (invalidate) {
+      invalidateRuntimeProjection(sessionId);
+    }
+  }
+
+  function approvalStateFromHistoryBlock(
+    block: WebSessionBlock
+  ): WebSessionApprovalState | null {
+    if (block.detail?.type !== 'approval_request') {
+      return null;
+    }
+    const itemId = block.sourceItemId || block.id;
+    return {
+      id: itemId,
+      itemId,
+      kind: block.detail.approvalKind ?? '',
+      prompt: block.detail.prompt ?? block.text,
+      command: block.detail.command ?? '',
+      requestedAt: block.timestamp,
+      stale: false,
+      actionable: true,
+    };
+  }
+
+  function syncSnapshotApprovalFromRealtimeBlock(sessionId: string, block: WebSessionBlock) {
+    const approval = approvalStateFromHistoryBlock(block);
+    if (approval) {
+      setSnapshotApproval(sessionId, approval, false);
+      return;
+    }
+    if (
+      block.detail?.type === 'approval_response' ||
+      block.kind === 'user' ||
+      block.itemType === 'run_abort' ||
+      block.itemType === 'run_fail'
+    ) {
+      setSnapshotApproval(sessionId, null, false);
+    }
+  }
+
   function invalidateRuntimeProjection(sessionId: string) {
     runtimeProjectionCacheBySession.delete(sessionId);
   }
@@ -3109,6 +3219,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const indexById = getEventIndex(sessionId, current);
     const existingIndex = indexById.get(item.id);
     const previousCache = runtimeProjectionCacheBySession.get(sessionId);
+    syncSnapshotApprovalFromRealtimeBlock(sessionId, item);
     let nextEvents: WebSessionBlock[];
     let incrementalSeed: RuntimeAccumulator | null = null;
     let incrementalStartIndex = -1;
@@ -3201,8 +3312,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const getBlocks = (sessionId: string) => buildBlocks(sessionId);
 
   function createRuntimeAccumulator(session: WebSessionSummary | null): RuntimeAccumulator {
+    const snapshotApproval =
+      session?.assistantState === 'waiting_approval'
+        ? (snapshotApprovalsBySession.value[session.id] ?? null)
+        : null;
     return {
-      pendingApproval: null,
+      pendingApproval: snapshotApproval,
       pendingUserInput: null,
       activeTool: undefined,
       activeSubAgents: new Map(),
@@ -3223,13 +3338,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function applyRuntimeBlock(accumulator: RuntimeAccumulator, block: WebSessionBlock) {
-    if (block.detail?.type === 'approval_request') {
-      accumulator.pendingApproval = {
-        id: block.id,
-        prompt: block.detail.prompt ?? block.text,
-        requestedAt: block.timestamp,
-        stale: false,
-      };
+    const approval = approvalStateFromHistoryBlock(block);
+    if (approval) {
+      accumulator.pendingApproval = approval;
     } else if (block.detail?.type === 'approval_response' || block.kind === 'user') {
       accumulator.pendingApproval = null;
     } else if (
@@ -3344,11 +3455,27 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
+  function applySnapshotApprovalToAccumulator(
+    session: WebSessionSummary | null,
+    accumulator: RuntimeAccumulator
+  ) {
+    if (session?.assistantState !== 'waiting_approval') {
+      return;
+    }
+    const approval = snapshotApprovalsBySession.value[session.id];
+    if (approval) {
+      accumulator.pendingApproval = approval;
+    }
+  }
+
   function finalizeRuntimeProjection(
     session: WebSessionSummary | null,
     accumulator: RuntimeAccumulator
   ): RuntimeProjection {
-    const approval = accumulator.pendingApproval;
+    const approval =
+      session?.assistantState === 'waiting_approval'
+        ? (snapshotApprovalsBySession.value[session.id] ?? accumulator.pendingApproval)
+        : accumulator.pendingApproval;
     const userInput = accumulator.pendingUserInput;
     const assistantState = getSessionAssistantStateValue(session);
     const assistantStateUpdatedAt = getAssistantStateUpdatedAt(session);
@@ -3500,6 +3627,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
       applyRuntimeBlock(accumulator, block);
     });
+    applySnapshotApprovalToAccumulator(session, accumulator);
     if (capture) {
       capture.accumulator = accumulator;
       capture.beforeLastAccumulator = beforeLastAccumulator;
@@ -3524,6 +3652,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
       applyRuntimeBlock(accumulator, blocks[index]!);
     }
+    applySnapshotApprovalToAccumulator(session, accumulator);
     runtimeProjectionCacheBySession.set(sessionId, {
       blocks,
       session,
@@ -3735,15 +3864,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     const state = projection.liveState;
-    if (state.phase !== 'waiting_approval' && state.phase !== 'waiting_plan_approval') {
+    if (state.phase !== 'waiting_plan_approval') {
       return null;
     }
 
     return {
       id: `status:${sessionId}:${state.phase}:${state.updatedAt}`,
+      itemId: '',
+      kind: 'plan_approval',
       prompt: '',
+      command: '',
       requestedAt: state.updatedAt,
       stale: false,
+      actionable: false,
     };
   }
 
@@ -3878,6 +4011,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         frame.sid,
         summary,
         Array.isArray(frame.h?.its) ? frame.h.its.map(item => normalizeHistoryItem(item)) : [],
+        normalizePendingApproval(frame.pa),
         Array.isArray(frame.pi)
           ? frame.pi
               .map(item =>
@@ -4585,6 +4719,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           Array.isArray(snapshot.history?.items)
             ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
             : [],
+          normalizePendingApproval(snapshot.pendingApproval),
           Array.isArray(snapshot.pendingInputs)
             ? snapshot.pendingInputs
                 .map(item => normalizePendingInput(item))
@@ -4667,6 +4802,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         Array.isArray(result.history?.items)
           ? result.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
           : [],
+        normalizePendingApproval(result.pendingApproval),
         Array.isArray(result.pendingInputs)
           ? result.pendingInputs
               .map(item => normalizePendingInput(item))
@@ -4713,6 +4849,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           Array.isArray(snapshot?.history?.items)
             ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
             : [],
+          normalizePendingApproval(snapshot.pendingApproval),
           Array.isArray(snapshot.pendingInputs)
             ? snapshot.pendingInputs
                 .map(item => normalizePendingInput(item))

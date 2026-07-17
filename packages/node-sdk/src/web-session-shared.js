@@ -190,6 +190,8 @@ function normalizeHistoryDetail(value) {
   return {
     type: trimmedString(value.type),
     prompt: trimmedString(value.prompt) || null,
+    approvalKind: trimmedString(value.approvalKind) || null,
+    command: trimmedString(value.command) || null,
     questions: Array.isArray(value.questions)
       ? value.questions.map(normalizeUserInputQuestion)
       : [],
@@ -197,6 +199,27 @@ function normalizeHistoryDetail(value) {
       ? value.answers.map(normalizeHistoryAnswerEntry)
       : [],
     action: trimmedString(value.action) || null,
+  };
+}
+
+function normalizePendingApprovalState(value) {
+  const itemId = trimmedString(value?.iid ?? value?.itemId);
+  if (!itemId) {
+    return null;
+  }
+  return {
+    id: itemId,
+    itemId,
+    kind: trimmedString(value?.kind),
+    prompt: trimmedString(value?.txt ?? value?.prompt),
+    command: trimmedString(value?.cmd ?? value?.command),
+    requestedAt:
+      isoFromUnixMilli(value?.ra) ||
+      (typeof value?.requestedAt === "string"
+        ? trimmedString(value.requestedAt) || null
+        : null),
+    stale: false,
+    actionable: value?.act === true || value?.actionable === true,
   };
 }
 
@@ -339,6 +362,7 @@ export function normalizeWebSessionSnapshotFromWire(frame) {
     pendingInputs: Array.isArray(frame?.pi)
       ? frame.pi.map(normalizePendingInput).filter(Boolean)
       : [],
+    pendingApproval: normalizePendingApprovalState(frame?.pa),
     pendingUserInput: normalizePendingUserInputState(frame?.ui),
   };
 }
@@ -397,11 +421,14 @@ function findPendingApproval(items) {
   for (const item of items) {
     if (item?.detail?.type === "approval_request") {
       pending = {
-        id: item.id,
+        id: item.sourceItemId || item.id,
         itemId: item.sourceItemId || item.id,
+        kind: item.detail.approvalKind || "",
         prompt: item.detail.prompt || item.text || "",
+        command: item.detail.command || "",
         requestedAt: item.timestamp || item.observedAt || null,
         stale: false,
+        actionable: true,
       };
       continue;
     }
@@ -533,7 +560,9 @@ export function analyzeWebSession(snapshot) {
     ? snapshot.pendingInputs.filter(Boolean)
     : [];
   const items = Array.isArray(history.items) ? history.items : [];
-  const pendingApproval = findPendingApproval(items);
+  const pendingApproval =
+    normalizePendingApprovalState(snapshot?.pendingApproval) ||
+    findPendingApproval(items);
   const pendingUserInput =
     normalizePendingUserInputState(snapshot?.pendingUserInput) ||
     findPendingUserInput(items);
@@ -562,6 +591,8 @@ export function analyzeWebSession(snapshot) {
     nextAction = {
       type: "approval",
       prompt: pendingApproval.prompt,
+      command: pendingApproval.command,
+      actionable: pendingApproval.actionable,
       requestedAt: pendingApproval.requestedAt,
     };
   } else if (pendingUserInput?.isPlanChoice && latestPlan?.awaitingExecution) {
@@ -611,6 +642,7 @@ export function analyzeWebSession(snapshot) {
       session,
       history,
       pendingInputs,
+      pendingApproval,
       pendingUserInput,
     },
   };

@@ -881,7 +881,7 @@
                   <div
                     v-if="pendingApproval"
                     class="approval-card"
-                    :class="{ 'is-stale': pendingApproval.stale }"
+                    :class="{ 'is-stale': pendingApproval.stale || !pendingApproval.actionable }"
                   >
                     <div class="approval-card-header">
                       <span class="approval-badge">{{ t('webSession.approvalTitle') }}</span>
@@ -894,14 +894,23 @@
                     <div class="approval-prompt">
                       {{ pendingApproval.prompt || t('webSession.approvalPromptFallback') }}
                     </div>
-                    <div v-if="pendingApproval.stale" class="approval-note">
-                      {{ pendingApproval.recoveryMessage || t('webSession.recoveredRuntimeHint') }}
+                    <pre v-if="pendingApproval.command" class="approval-command">{{
+                      pendingApproval.command
+                    }}</pre>
+                    <div
+                      v-if="pendingApproval.stale || !pendingApproval.actionable"
+                      class="approval-note"
+                    >
+                      {{
+                        pendingApproval.recoveryMessage ||
+                        t('webSession.approvalDetailsUnavailable')
+                      }}
                     </div>
                     <div class="approval-actions">
                       <n-button
                         size="small"
                         type="primary"
-                        :disabled="pendingApproval.stale"
+                        :disabled="pendingApproval.stale || !pendingApproval.actionable"
                         @click="handleApproval('approve')"
                       >
                         {{ t('webSession.approvalApprove') }}
@@ -909,17 +918,41 @@
                       <n-button
                         size="small"
                         secondary
-                        :disabled="pendingApproval.stale"
+                        :disabled="pendingApproval.stale || !pendingApproval.actionable"
                         @click="handleApproval('reject')"
                       >
                         {{ t('webSession.approvalReject') }}
                       </n-button>
+                      <n-button size="small" tertiary @click="handleAbortCurrent">
+                        {{ t('webSession.stop') }}
+                      </n-button>
+                    </div>
+                  </div>
+
+                  <div v-else-if="approvalDetailsMissing" class="approval-card is-stale">
+                    <div class="approval-card-header">
+                      <span class="approval-badge">{{ t('webSession.approvalTitle') }}</span>
+                    </div>
+                    <div class="approval-prompt">
+                      {{
+                        approvalDetailsLoading
+                          ? t('webSession.approvalDetailsLoading')
+                          : t('webSession.approvalDetailsUnavailable')
+                      }}
+                    </div>
+                    <div class="approval-actions">
                       <n-button
                         size="small"
-                        tertiary
-                        :disabled="pendingApproval.stale"
-                        @click="handleAbortCurrent"
+                        secondary
+                        :loading="approvalDetailsLoading"
+                        @click="handleRecoverApprovalDetails"
                       >
+                        <template #icon
+                          ><n-icon><RefreshOutline /></n-icon
+                        ></template>
+                        {{ t('webSession.approvalDetailsRefresh') }}
+                      </n-button>
+                      <n-button size="small" tertiary @click="handleAbortCurrent">
                         {{ t('webSession.stop') }}
                       </n-button>
                     </div>
@@ -4178,8 +4211,78 @@ const streamingMarkdownTargets = computed(() =>
 const pendingApproval = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingApproval(currentRealSession.value.id) : null
 );
+const approvalRecoveryKey = ref('');
+const approvalRecoveryStatus = ref<'idle' | 'loading' | 'unavailable'>('idle');
+const approvalDetailsMissing = computed(
+  () => liveState.value.phase === 'waiting_approval' && !pendingApproval.value
+);
+const approvalDetailsLoading = computed(
+  () => approvalDetailsMissing.value && approvalRecoveryStatus.value !== 'unavailable'
+);
 const pendingUserInput = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
+);
+
+function currentApprovalRecoveryKey() {
+  const session = currentRealSession.value;
+  if (!session) {
+    return '';
+  }
+  return `${session.id}:${session.assistantStateUpdatedAt || liveState.value.updatedAt}`;
+}
+
+async function recoverApprovalDetails(force = false) {
+  const session = currentRealSession.value;
+  if (!session || liveState.value.phase !== 'waiting_approval' || pendingApproval.value) {
+    return;
+  }
+  const recoveryKey = currentApprovalRecoveryKey();
+  if (
+    !force &&
+    approvalRecoveryKey.value === recoveryKey &&
+    approvalRecoveryStatus.value !== 'idle'
+  ) {
+    return;
+  }
+  approvalRecoveryKey.value = recoveryKey;
+  approvalRecoveryStatus.value = 'loading';
+  try {
+    await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
+      rememberActive: false,
+    });
+    if (approvalRecoveryKey.value !== recoveryKey) {
+      return;
+    }
+    approvalRecoveryStatus.value = webSessionStore.getPendingApproval(session.id)
+      ? 'idle'
+      : 'unavailable';
+  } catch {
+    if (approvalRecoveryKey.value === recoveryKey) {
+      approvalRecoveryStatus.value = 'unavailable';
+    }
+  }
+}
+
+function handleRecoverApprovalDetails() {
+  void recoverApprovalDetails(true);
+}
+
+watch(
+  () => [
+    currentRealSession.value?.id ?? '',
+    currentRealSession.value?.assistantStateUpdatedAt ?? '',
+    liveState.value.phase,
+    pendingApproval.value?.itemId ?? '',
+  ],
+  () => {
+    if (approvalDetailsMissing.value) {
+      void recoverApprovalDetails();
+      return;
+    }
+    approvalRecoveryKey.value = '';
+    approvalRecoveryStatus.value = 'idle';
+  },
+  { immediate: true }
 );
 
 function getRuntimeSwitchNoticeKey() {
@@ -15896,6 +15999,22 @@ defineExpose({
   line-height: 1.55;
   color: color-mix(in srgb, var(--web-session-approval-accent-strong) 82%, #111827);
   white-space: pre-wrap;
+}
+
+.approval-command {
+  max-height: 180px;
+  margin: 10px 0 0;
+  padding: 9px 10px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 78%, #111827 6%);
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .approval-actions {

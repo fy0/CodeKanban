@@ -11,6 +11,7 @@ function createWebSessionSnapshot({
   session = {},
   items = [],
   history = {},
+  pendingApproval = null,
   pendingUserInput = null,
 } = {}) {
   return {
@@ -64,6 +65,7 @@ function createWebSessionSnapshot({
       total: items.length,
       ...history,
     },
+    pendingApproval,
     pendingUserInput,
   };
 }
@@ -649,6 +651,46 @@ test('CodeKanbanClient getWebSessionState prefers snapshot.pendingUserInput when
 
   assert.equal(state.pendingUserInput.itemId, 'call_snapshot');
   assert.equal(state.nextAction.type, 'answer_user_input');
+});
+
+test('CodeKanbanClient getWebSessionState restores approval from snapshot without history', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () =>
+      createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'running',
+            assistantState: 'waiting_approval',
+          },
+          pendingApproval: {
+            itemId: 'command_1',
+            kind: 'command_approval',
+            prompt: 'Approve this command?',
+            command: 'rm -r /tmp/example',
+            requestedAt: '2026-04-10T00:00:03Z',
+            actionable: true,
+          },
+        }),
+      })],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const state = await client.getWebSessionState({
+    projectId: 'p1',
+    sessionId: 'ws1',
+  });
+
+  assert.equal(state.phase, 'waiting_approval');
+  assert.equal(state.pendingApproval.itemId, 'command_1');
+  assert.equal(state.pendingApproval.command, 'rm -r /tmp/example');
+  assert.equal(state.nextAction.type, 'approval');
+  assert.equal(state.nextAction.actionable, true);
 });
 
 test('CodeKanbanClient answerPendingUserInput uses the active itemId from snapshot analysis', async () => {

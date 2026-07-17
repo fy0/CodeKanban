@@ -109,6 +109,15 @@ export type WebSessionScheduledInputRecord = {
   canceledAt?: string | number | null;
 };
 
+export type WebSessionPendingApprovalRecord = {
+  itemId?: string;
+  kind?: 'command_approval' | 'file_change_approval' | 'permissions_approval' | string;
+  prompt?: string;
+  command?: string;
+  requestedAt?: string | number | null;
+  actionable?: boolean;
+};
+
 export type WebSessionSnapshot = {
   revision?: string;
   unchanged?: boolean;
@@ -116,6 +125,7 @@ export type WebSessionSnapshot = {
   history?: WebSessionHistoryWindow;
   pendingInputs?: WebSessionPendingInputRecord[];
   scheduledInputs?: WebSessionScheduledInputRecord[];
+  pendingApproval?: WebSessionPendingApprovalRecord | null;
 };
 
 export type WebSessionImportResult = Omit<

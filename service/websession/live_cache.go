@@ -432,16 +432,20 @@ func (m *Manager) applyEventToHistoryCache(
 		}
 		return &item, nil
 	case "approval_req":
+		itemID := stringValue(payload["iid"])
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			Kind:       "system",
-			ItemType:   "approval_request",
-			Text:       firstNonEmpty(stringValue(payload["prompt"]), "Approval required"),
-			Timestamp:  ptr(event.Timestamp),
-			ObservedAt: ptr(event.Timestamp),
-			Level:      "warn",
+			SourceItemID: nilIfEmptyHistory(itemID),
+			Kind:         "system",
+			ItemType:     "approval_request",
+			Text:         firstNonEmpty(stringValue(payload["prompt"]), "Approval required"),
+			Timestamp:    ptr(event.Timestamp),
+			ObservedAt:   ptr(event.Timestamp),
+			Level:        "warn",
 			Detail: &HistoryDetail{
-				Type:   "approval_request",
-				Prompt: stringValue(payload["prompt"]),
+				Type:         "approval_request",
+				Prompt:       stringValue(payload["prompt"]),
+				ApprovalKind: stringValue(payload["kind"]),
+				Command:      stringValue(payload["command"]),
 			},
 			Payload: payload,
 		})

@@ -98,6 +98,8 @@ type pendingServerRequest struct {
 	Kind        pendingServerRequestKind
 	ItemID      string
 	Prompt      string
+	Command     string
+	RequestedAt *time.Time
 	Questions   []toolRequestQuestion
 	Permissions map[string]any
 }
@@ -111,7 +113,12 @@ func (r *pendingServerRequest) clone() *pendingServerRequest {
 		Kind:        r.Kind,
 		ItemID:      r.ItemID,
 		Prompt:      r.Prompt,
+		Command:     r.Command,
 		Permissions: nil,
+	}
+	if r.RequestedAt != nil {
+		requestedAt := *r.RequestedAt
+		clone.RequestedAt = &requestedAt
 	}
 	if len(r.Questions) > 0 {
 		clone.Questions = make([]toolRequestQuestion, 0, len(r.Questions))
@@ -1380,9 +1387,10 @@ func (m *Manager) handleCodexAppServerApprovalRequest(
 	message codexAppServerIncoming,
 ) error {
 	request := decodePendingApprovalRequest(message)
+	now := time.Now()
+	request.RequestedAt = ptr(now)
 	run.setPendingServerRequest(request)
 	m.pauseActiveCallTimeout(run)
-	now := time.Now()
 	_, err := m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
@@ -1391,7 +1399,10 @@ func (m *Manager) handleCodexAppServerApprovalRequest(
 		ParentID:  run.assistantMessageID,
 		Timestamp: now,
 		Payload: map[string]any{
-			"prompt": request.Prompt,
+			"iid":     request.ItemID,
+			"kind":    string(request.Kind),
+			"prompt":  request.Prompt,
+			"command": request.Command,
 		},
 	})
 	if err == nil {
@@ -1412,14 +1423,9 @@ func decodePendingApprovalRequest(message codexAppServerIncoming) *pendingServer
 	itemID := stringValue(payload["itemId"])
 
 	request := &pendingServerRequest{
-		RawID:  append(json.RawMessage(nil), message.ID...),
-		ItemID: itemID,
-		Prompt: firstNonEmpty(
-			stringValue(payload["reason"]),
-			stringValue(payload["command"]),
-			stringValue(payload["grantRoot"]),
-			"Codex is waiting for approval before continuing.",
-		),
+		RawID:   append(json.RawMessage(nil), message.ID...),
+		ItemID:  itemID,
+		Command: stringValue(payload["command"]),
 	}
 
 	switch message.Method {
@@ -1431,7 +1437,25 @@ func decodePendingApprovalRequest(message codexAppServerIncoming) *pendingServer
 		request.Kind = pendingServerRequestPermissionsApproval
 		request.Permissions = decodeRawObject(payload["permissions"])
 	}
+	request.Prompt = firstNonEmpty(
+		stringValue(payload["reason"]),
+		stringValue(payload["grantRoot"]),
+		approvalPromptFallback(request.Kind),
+	)
 	return request
+}
+
+func approvalPromptFallback(kind pendingServerRequestKind) string {
+	switch kind {
+	case pendingServerRequestCommandApproval:
+		return "Codex is waiting for approval to run this command."
+	case pendingServerRequestFileChangeApproval:
+		return "Codex is waiting for approval to apply file changes."
+	case pendingServerRequestPermissionsApproval:
+		return "Codex is waiting for approval to change permissions."
+	default:
+		return "Codex is waiting for approval before continuing."
+	}
 }
 
 func approvalResponsePayload(request *pendingServerRequest, action string) any {
