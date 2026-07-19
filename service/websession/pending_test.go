@@ -1,6 +1,10 @@
 package websession
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 func TestReorderPendingInputAcrossPartitions(t *testing.T) {
 	queue := []PendingInput{
@@ -41,5 +45,56 @@ func TestReorderPendingInputWithinQueuePartition(t *testing.T) {
 	}
 	if got := []string{reordered[0].ID, reordered[1].ID, reordered[2].ID, reordered[3].ID}; got[0] != "redirect-1" || got[1] != "queue-3" || got[2] != "queue-1" || got[3] != "queue-2" {
 		t.Fatalf("unexpected queue partition order: %#v", got)
+	}
+}
+
+func TestRedirectDoesNotInterruptAutoRetryRun(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	manager := &Manager{
+		runs: map[string]*activeRun{
+			"session-1": {
+				fromAutoRetry: true,
+				cancel:        cancel,
+			},
+		},
+		pendingInputs: map[string][]PendingInput{
+			"session-1": {{ID: "next-1", Mode: PendingInputModeRedirect, Text: "next"}},
+		},
+	}
+
+	manager.maybeInterruptForRedirect("session-1")
+	select {
+	case <-ctx.Done():
+		t.Fatal("expected redirect to leave the automatic retry run active")
+	case <-time.After(25 * time.Millisecond):
+	}
+}
+
+func TestStaleRedirectInterruptDoesNotCancelReplacementAutoRetryRun(t *testing.T) {
+	normalCtx, cancelNormal := context.WithCancel(context.Background())
+	defer cancelNormal()
+	retryCtx, cancelRetry := context.WithCancel(context.Background())
+	defer cancelRetry()
+
+	normalRun := &activeRun{cancel: cancelNormal}
+	retryRun := &activeRun{fromAutoRetry: true, cancel: cancelRetry}
+	manager := &Manager{
+		runs: map[string]*activeRun{
+			"session-1": retryRun,
+		},
+	}
+
+	manager.abortRunForRedirect("session-1", "next-1", normalRun)
+	select {
+	case <-retryCtx.Done():
+		t.Fatal("expected stale redirect interrupt to leave the replacement retry run active")
+	case <-time.After(25 * time.Millisecond):
+	}
+	select {
+	case <-normalCtx.Done():
+		t.Fatal("expected stale redirect interrupt to ignore the replaced normal run")
+	default:
 	}
 }

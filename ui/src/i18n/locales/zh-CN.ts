@@ -872,6 +872,8 @@ export default {
     showReasoning: '显示思考',
     hideReasoning: '隐藏思考',
     infiniteRetry: '自动重试',
+    autoRetryDispatchPendingOnFailure: '重试失败后继续执行下一步',
+    autoRetryDispatchPendingOnFailureTip: '关闭时保留下一步等待，由你决定何时继续。',
     activeCallTimeoutDurationSeconds: '{seconds} 秒',
     autoInterruptLongCall: '自动打断超长调用（{duration}）',
     autoInterruptLongCallSummary: '超长调用打断 {duration}',
@@ -1235,10 +1237,14 @@ export default {
     webSessionAutoContinueScopeAllFailures: '所有 run_fail',
     webSessionAutoContinuePreset: '自动继续退避策略',
     webSessionAutoContinuePresetTip:
-      '连续自动 continue 仍失败时，按这里的节奏逐步拉长等待时间；用户手动介入后会取消自动策略。',
+      '连续自动 continue 仍失败时，按这里的节奏逐步拉长等待时间；直接发送新消息会取消自动策略，已排队的下一步会等待重试结束。',
     webSessionAutoContinuePresetGentleStop: '温和：3/10/30/60 秒后停止',
     webSessionAutoContinuePresetAggressiveStop: '积极：2/5/15/30/60 秒后停止',
     webSessionAutoContinuePresetSustain60s: '持续：3/10/30 秒后每 60 秒继续',
+    webSessionAutoRetryDispatchPendingOnFailure: '重试失败后的下一步',
+    webSessionAutoRetryDispatchPendingOnFailureEnabled: '继续执行已排队的下一步',
+    webSessionAutoRetryDispatchPendingOnFailureTip:
+      '作为新建会话的默认值；已有会话可在输入框设置中单独覆盖。默认关闭。',
     webSessionQuickInputPinned: '会话快捷输入常驻项',
     webSessionQuickInputPinnedTip:
       '这里配置的内容会固定出现在会话输入框的“快捷输入”按钮里；最近发送过的文本会自动显示在后面。',

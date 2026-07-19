@@ -77,7 +77,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -103,7 +103,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.followSystemTheme).toBe(1);
 
     setActivePinia(createPinia());
@@ -133,7 +133,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -157,7 +157,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.followSystemTheme).toBe(1);
   });
 
@@ -197,7 +197,7 @@ describe('settings theme storage', () => {
       customTheme?: Record<string, unknown>;
     };
 
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.terminalDisplayMode).toBeUndefined();
     expect(persisted.theme?.terminalFloatingButtonBg).toBeUndefined();
     expect(persisted.customTheme?.terminalFloatingButtonFg).toBeUndefined();
@@ -256,6 +256,24 @@ describe('settings theme storage', () => {
     expect(persisted.webSessionActivityDisplayMode).toBe('text');
   });
 
+  it('defaults retry failure dispatch to disabled and persists updates', async () => {
+    const store = useSettingsStore();
+    const { webSessionAutoRetryDispatchPendingOnFailure } = storeToRefs(store);
+
+    expect(webSessionAutoRetryDispatchPendingOnFailure.value).toBe(false);
+
+    store.updateWebSessionAutoRetryDispatchPendingOnFailure(true);
+    await nextTick();
+
+    expect(webSessionAutoRetryDispatchPendingOnFailure.value).toBe(true);
+    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      version?: number;
+      webSessionAutoRetryDispatchPendingOnFailure?: boolean;
+    };
+    expect(persisted.version).toBe(5);
+    expect(persisted.webSessionAutoRetryDispatchPendingOnFailure).toBe(true);
+  });
+
   it('defaults web session streaming markdown cadence to the built-in profile', () => {
     const store = useSettingsStore();
     const {
@@ -289,7 +307,7 @@ describe('settings theme storage', () => {
       dailyTipEnabled?: boolean;
     };
 
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.dailyTipEnabled).toBeUndefined();
   });
 

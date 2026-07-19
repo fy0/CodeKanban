@@ -113,6 +113,7 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
         autoRetryEnabled: false,
         autoRetryScope: 'network_only',
         autoRetryPreset: 'gentle_stop',
+        autoRetryDispatchPendingOnFailure: false,
         permissionMode: '',
         title: '',
       });
@@ -348,6 +349,7 @@ test('CodeKanbanClient createWebSession auto-selects main worktree and required 
         autoRetryEnabled: false,
         autoRetryScope: 'network_only',
         autoRetryPreset: 'gentle_stop',
+        autoRetryDispatchPendingOnFailure: false,
         permissionMode: '',
         title: '',
       });

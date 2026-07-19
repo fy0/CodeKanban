@@ -52,6 +52,7 @@ function makeSession(overrides: Partial<WebSessionSummary> = {}): WebSessionSumm
     autoRetryEnabled: false,
     autoRetryScope: 'network_only',
     autoRetryPreset: 'gentle_stop',
+    autoRetryDispatchPendingOnFailure: false,
     cwd: '/tmp/project',
     nativeSessionId: 'native-1',
     status: 'running',
@@ -115,6 +116,7 @@ function toWireSession(session: WebSessionSummary) {
     ae: session.autoRetryEnabled,
     ars: session.autoRetryScope,
     arp: session.autoRetryPreset,
+    ardpf: session.autoRetryDispatchPendingOnFailure,
     ttl: session.title,
     cwd: session.cwd,
     nsid: session.nativeSessionId,
@@ -372,6 +374,73 @@ describe('webSession auto retry optimistic updates', () => {
     expect(confirmedSession?.autoRetryEnabled).toBe(true);
     expect(confirmedSession?.autoRetryScope).toBe('network_only');
     expect(confirmedSession?.autoRetryPreset).toBe('gentle_stop');
+  });
+
+  it('keeps the optimistic retry failure dispatch toggle until a newer summary confirms it', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession();
+    listMock.mockResolvedValue([session]);
+
+    await store.loadSessions(session.projectId, true);
+    await store.openEventStream();
+    await flushMicrotasks();
+
+    const updatePromise = store.updateAutoRetryDispatchPendingOnFailure(session.id, true);
+    await flushMicrotasks();
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    const commandSocket = findSocket('/api/v1/web-sessions/ws');
+    if (!eventSocket || !commandSocket) {
+      throw new Error('expected both event and command sockets to be connected');
+    }
+
+    expect(store.getSessions(session.projectId)[0]?.autoRetryDispatchPendingOnFailure).toBe(true);
+    expect(commandSocket.sent[0]).toMatchObject({
+      op: 'set_ardpf',
+      sid: session.id,
+      p: { ardpf: true },
+    });
+
+    eventSocket.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'status',
+      s: toWireSession(
+        makeSession({
+          updatedAt: '2026-04-10T09:59:59.000Z',
+        })
+      ),
+    });
+    expect(store.getSessions(session.projectId)[0]?.autoRetryDispatchPendingOnFailure).toBe(true);
+
+    const requestId = String(commandSocket.sent[0]?.rid ?? '');
+    commandSocket.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'set_ardpf',
+    });
+    await updatePromise;
+
+    eventSocket.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession(
+        makeSession({
+          autoRetryDispatchPendingOnFailure: true,
+          updatedAt: '2026-04-10T10:00:02.000Z',
+        })
+      ),
+    });
+
+    expect(store.getSessions(session.projectId)[0]?.autoRetryDispatchPendingOnFailure).toBe(true);
   });
 
   it('keeps the optimistic active call timeout toggle when an older summary arrives first', async () => {

@@ -238,6 +238,7 @@ interface GeneralSettings {
   webSessionActivityDisplayMode: WebSessionActivityDisplayMode;
   webSessionAutoContinueScope: WebSessionAutoContinueScope;
   webSessionAutoContinuePreset: WebSessionAutoContinuePreset;
+  webSessionAutoRetryDispatchPendingOnFailure: boolean;
   webSessionStreamingMarkdownThrottleMode: WebSessionStreamingMarkdownThrottleMode;
   webSessionStreamingMarkdownThrottleCustomMs: number;
   terminalThemeId: string;
@@ -268,7 +269,7 @@ type LoadSettingsResult = {
   shouldPersist: boolean;
 };
 
-const STORAGE_VERSION = 4;
+const STORAGE_VERSION = 5;
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
@@ -360,6 +361,7 @@ const defaultSettings: GeneralSettings = {
   webSessionActivityDisplayMode: DEFAULT_WEB_SESSION_ACTIVITY_DISPLAY_MODE,
   webSessionAutoContinueScope: DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE,
   webSessionAutoContinuePreset: DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET,
+  webSessionAutoRetryDispatchPendingOnFailure: false,
   webSessionStreamingMarkdownThrottleMode: 'default',
   webSessionStreamingMarkdownThrottleCustomMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
@@ -419,6 +421,9 @@ export const useSettingsStore = defineStore('settings', () => {
   );
   const webSessionAutoContinueScope = computed(() => settings.value.webSessionAutoContinueScope);
   const webSessionAutoContinuePreset = computed(() => settings.value.webSessionAutoContinuePreset);
+  const webSessionAutoRetryDispatchPendingOnFailure = computed(
+    () => settings.value.webSessionAutoRetryDispatchPendingOnFailure
+  );
   const webSessionStreamingMarkdownThrottleMode = computed(
     () => settings.value.webSessionStreamingMarkdownThrottleMode
   );
@@ -797,6 +802,10 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.webSessionAutoContinuePreset = sanitizeWebSessionAutoContinuePreset(value);
   }
 
+  function updateWebSessionAutoRetryDispatchPendingOnFailure(value: boolean) {
+    settings.value.webSessionAutoRetryDispatchPendingOnFailure = value === true;
+  }
+
   function updateWebSessionStreamingMarkdownThrottleMode(
     value: WebSessionStreamingMarkdownThrottleMode
   ) {
@@ -975,6 +984,7 @@ export const useSettingsStore = defineStore('settings', () => {
     webSessionActivityDisplayMode,
     webSessionAutoContinueScope,
     webSessionAutoContinuePreset,
+    webSessionAutoRetryDispatchPendingOnFailure,
     webSessionStreamingMarkdownThrottleMode,
     webSessionStreamingMarkdownThrottleCustomMs,
     webSessionStreamingMarkdownThrottleMs,
@@ -1013,6 +1023,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateWebSessionActivityDisplayMode,
     updateWebSessionAutoContinueScope,
     updateWebSessionAutoContinuePreset,
+    updateWebSessionAutoRetryDispatchPendingOnFailure,
     updateWebSessionStreamingMarkdownThrottleMode,
     updateWebSessionStreamingMarkdownThrottleCustomMs,
     updateTerminalTheme,
@@ -1134,6 +1145,8 @@ function cloneDefaultSettings(): GeneralSettings {
     webSessionActivityDisplayMode: defaultSettings.webSessionActivityDisplayMode,
     webSessionAutoContinueScope: defaultSettings.webSessionAutoContinueScope,
     webSessionAutoContinuePreset: defaultSettings.webSessionAutoContinuePreset,
+    webSessionAutoRetryDispatchPendingOnFailure:
+      defaultSettings.webSessionAutoRetryDispatchPendingOnFailure,
     webSessionStreamingMarkdownThrottleMode:
       defaultSettings.webSessionStreamingMarkdownThrottleMode,
     webSessionStreamingMarkdownThrottleCustomMs:
@@ -1220,6 +1233,8 @@ function loadSettingsFromParsed(
       webSessionAutoContinuePreset: sanitizeWebSessionAutoContinuePreset(
         parsed.webSessionAutoContinuePreset
       ),
+      webSessionAutoRetryDispatchPendingOnFailure:
+        parsed.webSessionAutoRetryDispatchPendingOnFailure === true,
       webSessionStreamingMarkdownThrottleMode: sanitizeWebSessionStreamingMarkdownThrottleMode(
         parsed.webSessionStreamingMarkdownThrottleMode
       ),

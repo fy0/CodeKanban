@@ -1422,6 +1422,16 @@
                         >
                           {{ t('webSession.infiniteRetry') }}
                         </n-checkbox>
+                        <n-checkbox
+                          v-model:checked="webSessionAutoRetryDispatchPendingOnFailureValue"
+                          size="small"
+                          :disabled="!currentSessionAutoRetryEnabled"
+                        >
+                          {{ t('webSession.autoRetryDispatchPendingOnFailure') }}
+                        </n-checkbox>
+                        <div class="composer-settings-popover-tip">
+                          {{ t('webSession.autoRetryDispatchPendingOnFailureTip') }}
+                        </div>
                         <div
                           v-if="autoRetryRateLimitNotice"
                           class="composer-settings-popover-tip is-warning"
@@ -2998,6 +3008,7 @@ const {
   webSessionActivityDisplayMode,
   webSessionAutoContinueScope,
   webSessionAutoContinuePreset,
+  webSessionAutoRetryDispatchPendingOnFailure,
   webSessionStreamingMarkdownThrottleMs,
   effectiveTerminalThemeId,
   webSessionQuickInput,
@@ -3434,6 +3445,9 @@ const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
 const currentSessionAutoRetryEnabled = computed(() =>
   Boolean(currentSession.value?.autoRetryEnabled)
 );
+const currentSessionAutoRetryDispatchPendingOnFailure = computed(() =>
+  Boolean(currentSession.value?.autoRetryDispatchPendingOnFailure)
+);
 
 const canConfigureActiveCallTimeout = computed(() => currentSession.value?.agent === 'codex');
 const currentSessionActiveCallTimeoutEnabled = computed(() => {
@@ -3491,6 +3505,32 @@ const webSessionAutoContinueEnabledValue = computed({
           scope: webSessionAutoContinueScope.value,
           preset: webSessionAutoContinuePreset.value,
         })
+        .catch(error => {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        });
+    }
+  },
+});
+
+const webSessionAutoRetryDispatchPendingOnFailureValue = computed({
+  get: () => currentSessionAutoRetryDispatchPendingOnFailure.value,
+  set: value => {
+    const next = value === true;
+    const session = currentSession.value;
+    if (!session) {
+      return;
+    }
+    if (isDraftSession(session)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        autoRetryDispatchPendingOnFailure: next,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      void webSessionStore
+        .updateAutoRetryDispatchPendingOnFailure(currentRealSession.value.id, next)
         .catch(error => {
           message.error(error instanceof Error ? error.message : t('common.error'));
         });
@@ -6688,6 +6728,8 @@ function normalizeDraftSession(
       session.autoRetryPreset === 'aggressive_stop' || session.autoRetryPreset === 'sustain_60s'
         ? session.autoRetryPreset
         : webSessionAutoContinuePreset.value,
+    autoRetryDispatchPendingOnFailure:
+      session.autoRetryDispatchPendingOnFailure === true,
     cwd: typeof session.cwd === 'string' ? session.cwd : projectStore.currentProject?.path || '',
     nativeSessionId: null,
     status: 'idle',
@@ -7132,6 +7174,10 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
       source?.autoRetryEnabled === true
         ? source.autoRetryPreset
         : webSessionAutoContinuePreset.value,
+    autoRetryDispatchPendingOnFailure:
+      typeof source?.autoRetryDispatchPendingOnFailure === 'boolean'
+        ? source.autoRetryDispatchPendingOnFailure
+        : webSessionAutoRetryDispatchPendingOnFailure.value,
     cwd: context.cwd,
     nativeSessionId: null,
     status: 'idle',
@@ -9834,6 +9880,10 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
         source?.autoRetryEnabled === true
           ? source.autoRetryPreset
           : webSessionAutoContinuePreset.value,
+      autoRetryDispatchPendingOnFailure:
+        typeof source?.autoRetryDispatchPendingOnFailure === 'boolean'
+          ? source.autoRetryDispatchPendingOnFailure
+          : webSessionAutoRetryDispatchPendingOnFailure.value,
     });
     if (isDraftSession(source)) {
       webSessionStore.moveDraft(props.projectId, source.id, session.id);

@@ -15,21 +15,22 @@ type WebSessionTable struct {
 	WorktreeID *string `gorm:"type:text;index" json:"worktreeId"`
 	OrderIndex float64 `gorm:"type:real;not null;default:0;index" json:"orderIndex"`
 
-	Agent                    string `gorm:"type:text;not null;index" json:"agent"`
-	ClaudeRuntime            string `gorm:"type:text;not null;default:claude" json:"claudeRuntime"`
-	Backend                  string `gorm:"type:text;not null;default:legacy_exec" json:"-"`
-	Title                    string `gorm:"type:text;not null" json:"title"`
-	TitleAuto                bool   `gorm:"type:boolean;not null;default:false" json:"-"`
-	Model                    string `gorm:"type:text" json:"model"`
-	ReasoningEffort          string `gorm:"type:text" json:"reasoningEffort"`
-	WorkflowMode             string `gorm:"type:text;not null;default:default" json:"workflowMode"`
-	PermissionLevel          string `gorm:"type:text;not null;default:elevated" json:"permissionLevel"`
-	ActiveCallTimeoutEnabled *bool  `gorm:"type:boolean" json:"activeCallTimeoutEnabled,omitempty"`
-	AutoRetryEnabled         bool   `gorm:"type:boolean;not null;default:false" json:"autoRetryEnabled"`
-	AutoRetryScope           string `gorm:"type:text;not null;default:network_only" json:"autoRetryScope"`
-	AutoRetryPreset          string `gorm:"type:text;not null;default:gentle_stop" json:"autoRetryPreset"`
-	LegacyPermissionMode     string `gorm:"column:permission_mode;type:text" json:"-"`
-	Cwd                      string `gorm:"type:text;not null" json:"cwd"`
+	Agent                             string `gorm:"type:text;not null;index" json:"agent"`
+	ClaudeRuntime                     string `gorm:"type:text;not null;default:claude" json:"claudeRuntime"`
+	Backend                           string `gorm:"type:text;not null;default:legacy_exec" json:"-"`
+	Title                             string `gorm:"type:text;not null" json:"title"`
+	TitleAuto                         bool   `gorm:"type:boolean;not null;default:false" json:"-"`
+	Model                             string `gorm:"type:text" json:"model"`
+	ReasoningEffort                   string `gorm:"type:text" json:"reasoningEffort"`
+	WorkflowMode                      string `gorm:"type:text;not null;default:default" json:"workflowMode"`
+	PermissionLevel                   string `gorm:"type:text;not null;default:elevated" json:"permissionLevel"`
+	ActiveCallTimeoutEnabled          *bool  `gorm:"type:boolean" json:"activeCallTimeoutEnabled,omitempty"`
+	AutoRetryEnabled                  bool   `gorm:"type:boolean;not null;default:false" json:"autoRetryEnabled"`
+	AutoRetryScope                    string `gorm:"type:text;not null;default:network_only" json:"autoRetryScope"`
+	AutoRetryPreset                   string `gorm:"type:text;not null;default:gentle_stop" json:"autoRetryPreset"`
+	AutoRetryDispatchPendingOnFailure bool   `gorm:"type:boolean;not null;default:false" json:"autoRetryDispatchPendingOnFailure"`
+	LegacyPermissionMode              string `gorm:"column:permission_mode;type:text" json:"-"`
+	Cwd                               string `gorm:"type:text;not null" json:"cwd"`
 
 	NativeSessionID         *string    `gorm:"type:text" json:"nativeSessionId"`
 	CyberPolicyFlagged      bool       `gorm:"type:boolean;not null;default:false" json:"cyberPolicyFlagged"`

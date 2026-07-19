@@ -896,6 +896,9 @@ export default {
     showReasoning: 'Show Reasoning',
     hideReasoning: 'Hide Reasoning',
     infiniteRetry: 'Auto Retry',
+    autoRetryDispatchPendingOnFailure: 'Run Next after retries fail',
+    autoRetryDispatchPendingOnFailureTip:
+      'When disabled, Next remains pending until you choose how to continue.',
     activeCallTimeoutDurationSeconds: '{seconds}s',
     autoInterruptLongCall: 'Interrupt long calls automatically ({duration})',
     autoInterruptLongCallSummary: 'Long-call interrupt {duration}',
@@ -1292,10 +1295,14 @@ export default {
     webSessionAutoContinueScopeAllFailures: 'All run_fail events',
     webSessionAutoContinuePreset: 'Auto-continue backoff strategy',
     webSessionAutoContinuePresetTip:
-      'If repeated automatic continue attempts still fail, the wait time will expand based on this preset. Any manual user action cancels the automatic sequence.',
+      'If repeated automatic continue attempts still fail, the wait time will expand based on this preset. Sending a direct message cancels the sequence; queued Next input waits for retries to finish.',
     webSessionAutoContinuePresetGentleStop: 'Gentle: stop after 3/10/30/60s',
     webSessionAutoContinuePresetAggressiveStop: 'Aggressive: stop after 2/5/15/30/60s',
     webSessionAutoContinuePresetSustain60s: 'Sustain: 3/10/30s, then every 60s',
+    webSessionAutoRetryDispatchPendingOnFailure: 'Next after retry failure',
+    webSessionAutoRetryDispatchPendingOnFailureEnabled: 'Run queued Next input',
+    webSessionAutoRetryDispatchPendingOnFailureTip:
+      'Used as the default for new sessions. Existing sessions can override it in composer settings. Disabled by default.',
     webSessionQuickInputPinned: 'Web session pinned quick input',
     webSessionQuickInputPinnedTip:
       'These entries stay at the top of the session composer quick-input menu. Recently sent text appears automatically after them.',

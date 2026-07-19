@@ -73,6 +73,7 @@ export interface SettingsBackupClientSettings {
   webSessionActivityDisplayMode: WebSessionActivityDisplayMode;
   webSessionAutoContinueScope: WebSessionAutoContinueScope;
   webSessionAutoContinuePreset: WebSessionAutoContinuePreset;
+  webSessionAutoRetryDispatchPendingOnFailure: boolean;
   webSessionStreamingMarkdownThrottleMode: WebSessionStreamingMarkdownThrottleMode;
   webSessionStreamingMarkdownThrottleCustomMs: number;
   terminalThemeId: string;

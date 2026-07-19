@@ -79,6 +79,7 @@ type Manager struct {
 	scheduledInputTimers        map[string]*time.Timer
 	scheduledInputTimerSessions map[string]string
 	scheduledInputLocks         [64]sync.Mutex
+	sessionDispatchLocks        [64]sync.Mutex
 	revisionBroadcastLocks      [64]sync.Mutex
 	pendingInputs               map[string][]PendingInput
 	pendingProcessing           map[string]bool
@@ -129,6 +130,7 @@ type activeRun struct {
 	agent                  Agent
 	backend                SessionBackend
 	runID                  string
+	fromAutoRetry          bool
 	hiddenBootstrap        bool
 	bootstrapGoalObjective string
 	bootstrapGoalState     GoalStatus
@@ -405,6 +407,9 @@ func shouldAutoRetryFailure(scope AutoRetryScope, code string, message string) b
 	if normalizedCode == codexCyberPolicyErrorCode {
 		return false
 	}
+	if isCodexModelCapacityError(normalizedCode, message) {
+		return true
+	}
 	if normalizedScope == AutoRetryScopeAllFailures {
 		return true
 	}
@@ -456,6 +461,18 @@ func autoRetryDelay(preset AutoRetryPreset, attempt int) (time.Duration, bool) {
 		}
 		return delays[attempt-1], true
 	}
+}
+
+func autoRetryDelayForFailure(
+	preset AutoRetryPreset,
+	attempt int,
+	code string,
+	message string,
+) (time.Duration, bool) {
+	if attempt == 1 && isCodexModelCapacityError(code, message) {
+		return 3 * time.Second, true
+	}
+	return autoRetryDelay(preset, attempt)
 }
 
 func (m *Manager) UnregisterClient(client *client) {
@@ -704,45 +721,46 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 
 	now := time.Now()
 	record := tables.WebSessionTable{
-		ProjectID:                project.Id,
-		WorktreeID:               nilIfEmpty(worktreeID),
-		OrderIndex:               orderIndex,
-		Agent:                    string(normalizeAgent(params.Agent)),
-		ClaudeRuntime:            string(normalizeClaudeRuntime(params.ClaudeRuntime)),
-		Backend:                  string(normalizeSessionBackend(params.Backend, normalizeAgent(params.Agent))),
-		Title:                    title,
-		TitleAuto:                strings.TrimSpace(params.Title) == "",
-		Model:                    defaultModel(normalizeAgent(params.Agent), params.Model),
-		ReasoningEffort:          string(defaultReasoningEffort(normalizeAgent(params.Agent), params.ReasoningEffort)),
-		WorkflowMode:             string(normalizeWorkflowMode(params.WorkflowMode)),
-		PermissionLevel:          string(normalizePermissionLevel(params.PermissionLevel)),
-		ActiveCallTimeoutEnabled: params.ActiveCallTimeoutEnabled,
-		AutoRetryEnabled:         params.AutoRetryEnabled,
-		AutoRetryScope:           string(normalizeAutoRetryScope(params.AutoRetryScope)),
-		AutoRetryPreset:          string(normalizeAutoRetryPreset(params.AutoRetryPreset)),
-		Cwd:                      cwd,
-		Status:                   string(StatusIdle),
-		AssistantState:           "",
-		HasUnread:                false,
-		ArchivedAt:               nil,
-		ActivityAt:               now,
-		StatusUpdatedAt:          &now,
-		AssistantStateUpdatedAt:  nil,
-		SourceKind:               defaultSourceKind(normalizeAgent(params.Agent)),
-		SyncState:                string(SyncStateMissing),
-		LastSyncMode:             "",
-		SourceCreatedAt:          nil,
-		SourceUpdatedAt:          nil,
-		LastSyncedAt:             nil,
-		ThreadPath:               nil,
-		ThreadPreview:            nil,
-		TurnCount:                0,
-		ItemCount:                0,
-		LastEventSeq:             0,
-		TotalInputTokens:         0,
-		TotalCachedInputTokens:   0,
-		TotalOutputTokens:        0,
-		TotalCost:                0,
+		ProjectID:                         project.Id,
+		WorktreeID:                        nilIfEmpty(worktreeID),
+		OrderIndex:                        orderIndex,
+		Agent:                             string(normalizeAgent(params.Agent)),
+		ClaudeRuntime:                     string(normalizeClaudeRuntime(params.ClaudeRuntime)),
+		Backend:                           string(normalizeSessionBackend(params.Backend, normalizeAgent(params.Agent))),
+		Title:                             title,
+		TitleAuto:                         strings.TrimSpace(params.Title) == "",
+		Model:                             defaultModel(normalizeAgent(params.Agent), params.Model),
+		ReasoningEffort:                   string(defaultReasoningEffort(normalizeAgent(params.Agent), params.ReasoningEffort)),
+		WorkflowMode:                      string(normalizeWorkflowMode(params.WorkflowMode)),
+		PermissionLevel:                   string(normalizePermissionLevel(params.PermissionLevel)),
+		ActiveCallTimeoutEnabled:          params.ActiveCallTimeoutEnabled,
+		AutoRetryEnabled:                  params.AutoRetryEnabled,
+		AutoRetryScope:                    string(normalizeAutoRetryScope(params.AutoRetryScope)),
+		AutoRetryPreset:                   string(normalizeAutoRetryPreset(params.AutoRetryPreset)),
+		AutoRetryDispatchPendingOnFailure: params.AutoRetryDispatchPendingOnFailure,
+		Cwd:                               cwd,
+		Status:                            string(StatusIdle),
+		AssistantState:                    "",
+		HasUnread:                         false,
+		ArchivedAt:                        nil,
+		ActivityAt:                        now,
+		StatusUpdatedAt:                   &now,
+		AssistantStateUpdatedAt:           nil,
+		SourceKind:                        defaultSourceKind(normalizeAgent(params.Agent)),
+		SyncState:                         string(SyncStateMissing),
+		LastSyncMode:                      "",
+		SourceCreatedAt:                   nil,
+		SourceUpdatedAt:                   nil,
+		LastSyncedAt:                      nil,
+		ThreadPath:                        nil,
+		ThreadPreview:                     nil,
+		TurnCount:                         0,
+		ItemCount:                         0,
+		LastEventSeq:                      0,
+		TotalInputTokens:                  0,
+		TotalCachedInputTokens:            0,
+		TotalOutputTokens:                 0,
+		TotalCost:                         0,
 	}
 	record.Init()
 
@@ -841,46 +859,47 @@ func (m *Manager) createImportedCodexSession(
 
 	now := time.Now()
 	record := tables.WebSessionTable{
-		ProjectID:               project.Id,
-		WorktreeID:              nil,
-		OrderIndex:              orderIndex,
-		Agent:                   string(AgentCodex),
-		Backend:                 string(defaultSessionBackend(AgentCodex)),
-		Title:                   title,
-		TitleAuto:               titleAuto,
-		Model:                   defaultModel(AgentCodex, source.Model),
-		ReasoningEffort:         string(defaultReasoningEffort(AgentCodex, "")),
-		WorkflowMode:            string(WorkflowModeDefault),
-		PermissionLevel:         string(PermissionLevelElevated),
-		AutoRetryEnabled:        false,
-		AutoRetryScope:          string(AutoRetryScopeNetworkOnly),
-		AutoRetryPreset:         string(AutoRetryPresetGentleStop),
-		LegacyPermissionMode:    "default",
-		Cwd:                     filepath.Clean(strings.TrimSpace(source.ProjectPath)),
-		NativeSessionID:         nilIfEmpty(source.SessionID),
-		Status:                  string(StatusIdle),
-		AssistantState:          "",
-		HasUnread:               false,
-		ArchivedAt:              nil,
-		ActivityAt:              now,
-		StatusUpdatedAt:         &now,
-		AssistantStateUpdatedAt: nil,
-		SourceKind:              defaultSourceKind(AgentCodex),
-		SyncState:               string(SyncStateMissing),
-		LastSyncMode:            "",
-		SourceCreatedAt:         importedCodexSourceCreatedAt(source),
-		SourceUpdatedAt:         importedCodexSourceUpdatedAt(source),
-		LastSyncedAt:            nil,
-		ThreadPath:              nilIfEmpty(source.FilePath),
-		ThreadPreview:           nilIfEmpty(source.Title),
-		TurnCount:               0,
-		ItemCount:               0,
-		LastMessageAt:           source.LastMessageAt,
-		LastEventSeq:            0,
-		TotalInputTokens:        0,
-		TotalCachedInputTokens:  0,
-		TotalOutputTokens:       0,
-		TotalCost:               0,
+		ProjectID:                         project.Id,
+		WorktreeID:                        nil,
+		OrderIndex:                        orderIndex,
+		Agent:                             string(AgentCodex),
+		Backend:                           string(defaultSessionBackend(AgentCodex)),
+		Title:                             title,
+		TitleAuto:                         titleAuto,
+		Model:                             defaultModel(AgentCodex, source.Model),
+		ReasoningEffort:                   string(defaultReasoningEffort(AgentCodex, "")),
+		WorkflowMode:                      string(WorkflowModeDefault),
+		PermissionLevel:                   string(PermissionLevelElevated),
+		AutoRetryEnabled:                  false,
+		AutoRetryScope:                    string(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:                   string(AutoRetryPresetGentleStop),
+		AutoRetryDispatchPendingOnFailure: false,
+		LegacyPermissionMode:              "default",
+		Cwd:                               filepath.Clean(strings.TrimSpace(source.ProjectPath)),
+		NativeSessionID:                   nilIfEmpty(source.SessionID),
+		Status:                            string(StatusIdle),
+		AssistantState:                    "",
+		HasUnread:                         false,
+		ArchivedAt:                        nil,
+		ActivityAt:                        now,
+		StatusUpdatedAt:                   &now,
+		AssistantStateUpdatedAt:           nil,
+		SourceKind:                        defaultSourceKind(AgentCodex),
+		SyncState:                         string(SyncStateMissing),
+		LastSyncMode:                      "",
+		SourceCreatedAt:                   importedCodexSourceCreatedAt(source),
+		SourceUpdatedAt:                   importedCodexSourceUpdatedAt(source),
+		LastSyncedAt:                      nil,
+		ThreadPath:                        nilIfEmpty(source.FilePath),
+		ThreadPreview:                     nilIfEmpty(source.Title),
+		TurnCount:                         0,
+		ItemCount:                         0,
+		LastMessageAt:                     source.LastMessageAt,
+		LastEventSeq:                      0,
+		TotalInputTokens:                  0,
+		TotalCachedInputTokens:            0,
+		TotalOutputTokens:                 0,
+		TotalCost:                         0,
 	}
 	record.Init()
 
@@ -1835,6 +1854,23 @@ func (m *Manager) UpdateAutoRetry(
 	if err := m.reconcileAutoRetry(ctx, sessionID, time.Now()); err != nil {
 		return SessionSummary{}, err
 	}
+	m.triggerPendingProcessing(sessionID)
+	return summary, nil
+}
+
+func (m *Manager) UpdateAutoRetryDispatchPendingOnFailure(
+	ctx context.Context,
+	sessionID string,
+	enabled bool,
+) (SessionSummary, error) {
+	summary, err := m.updateFields(ctx, sessionID, map[string]any{
+		"auto_retry_dispatch_pending_on_failure": enabled,
+		"updated_at":                             time.Now(),
+	})
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	m.triggerPendingProcessing(sessionID)
 	return summary, nil
 }
 
@@ -2118,6 +2154,16 @@ func autoRetryFailureDetails(record tables.WebSessionTable) (string, string) {
 	return code, message
 }
 
+func autoRetryDefersPending(record tables.WebSessionTable) bool {
+	if !record.AutoRetryEnabled || effectiveStatus(record, effectiveAssistantState(record)) != StatusError {
+		return false
+	}
+	if record.AutoRetryNextAt != nil {
+		return true
+	}
+	return !record.AutoRetryDispatchPendingOnFailure
+}
+
 func (m *Manager) reconcileAutoRetry(ctx context.Context, sessionID string, now time.Time) error {
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
@@ -2146,7 +2192,12 @@ func (m *Manager) scheduleAutoRetry(record tables.WebSessionTable, code string, 
 	}
 
 	nextAttempt := record.AutoRetryAttempt + 1
-	delay, ok := autoRetryDelay(AutoRetryPreset(record.AutoRetryPreset), nextAttempt)
+	delay, ok := autoRetryDelayForFailure(
+		AutoRetryPreset(record.AutoRetryPreset),
+		nextAttempt,
+		code,
+		message,
+	)
 	if !ok {
 		m.cancelAutoRetryTimer(record.ID)
 		_ = m.updateRuntimeState(context.Background(), record.ID, map[string]any{
@@ -2188,8 +2239,12 @@ func (m *Manager) executeAutoRetry(sessionID string) {
 		m.clearAutoRetryNextAt(ctx, sessionID)
 		return
 	}
-	if err := m.sendMessageInternal(ctx, sessionID, "continue", nil, true); err != nil && m.logger != nil {
-		m.logger.Warn("auto retry send failed", zap.String("sessionId", sessionID), zap.Error(err))
+	if err := m.sendMessageInternal(ctx, sessionID, "continue", nil, true); err != nil {
+		m.clearAutoRetryNextAt(ctx, sessionID)
+		m.triggerPendingProcessing(sessionID)
+		if m.logger != nil {
+			m.logger.Warn("auto retry send failed", zap.String("sessionId", sessionID), zap.Error(err))
+		}
 	}
 }
 
@@ -2276,6 +2331,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleSetActiveCallTimeoutCommand(ctx, client, frame)
 	case "set_ar":
 		return m.handleSetAutoRetryCommand(ctx, client, frame)
+	case "set_ardpf":
+		return m.handleSetAutoRetryDispatchPendingOnFailureCommand(ctx, client, frame)
 	case "set_pm":
 		return m.handleLegacySetModeCommand(ctx, client, frame)
 	case "set_ag":
@@ -2441,19 +2498,20 @@ func (m *Manager) GetAttachment(id string) (Attachment, error) {
 
 func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
-		ProjectID        string `json:"pid"`
-		WorktreeID       string `json:"wid"`
-		Agent            string `json:"ag"`
-		ClaudeRuntime    string `json:"cr"`
-		Model            string `json:"md"`
-		ReasoningEffort  string `json:"re"`
-		WorkflowMode     string `json:"wm"`
-		PermissionLevel  string `json:"pl"`
-		AutoRetryEnabled bool   `json:"ae"`
-		AutoRetryScope   string `json:"ars"`
-		AutoRetryPreset  string `json:"arp"`
-		PermissionMode   string `json:"pm"`
-		Title            string `json:"ttl"`
+		ProjectID                         string `json:"pid"`
+		WorktreeID                        string `json:"wid"`
+		Agent                             string `json:"ag"`
+		ClaudeRuntime                     string `json:"cr"`
+		Model                             string `json:"md"`
+		ReasoningEffort                   string `json:"re"`
+		WorkflowMode                      string `json:"wm"`
+		PermissionLevel                   string `json:"pl"`
+		AutoRetryEnabled                  bool   `json:"ae"`
+		AutoRetryScope                    string `json:"ars"`
+		AutoRetryPreset                   string `json:"arp"`
+		AutoRetryDispatchPendingOnFailure bool   `json:"ardpf"`
+		PermissionMode                    string `json:"pm"`
+		Title                             string `json:"ttl"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, "", "bad_req", "invalid create payload", false))
@@ -2472,18 +2530,19 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 	}
 
 	summary, err := m.CreateSession(ctx, CreateParams{
-		ProjectID:        payload.ProjectID,
-		WorktreeID:       payload.WorktreeID,
-		Agent:            Agent(payload.Agent),
-		ClaudeRuntime:    ClaudeRuntime(payload.ClaudeRuntime),
-		Model:            payload.Model,
-		ReasoningEffort:  ReasoningEffort(payload.ReasoningEffort),
-		WorkflowMode:     workflowMode,
-		PermissionLevel:  permissionLevel,
-		AutoRetryEnabled: payload.AutoRetryEnabled,
-		AutoRetryScope:   AutoRetryScope(payload.AutoRetryScope),
-		AutoRetryPreset:  AutoRetryPreset(payload.AutoRetryPreset),
-		Title:            payload.Title,
+		ProjectID:                         payload.ProjectID,
+		WorktreeID:                        payload.WorktreeID,
+		Agent:                             Agent(payload.Agent),
+		ClaudeRuntime:                     ClaudeRuntime(payload.ClaudeRuntime),
+		Model:                             payload.Model,
+		ReasoningEffort:                   ReasoningEffort(payload.ReasoningEffort),
+		WorkflowMode:                      workflowMode,
+		PermissionLevel:                   permissionLevel,
+		AutoRetryEnabled:                  payload.AutoRetryEnabled,
+		AutoRetryScope:                    AutoRetryScope(payload.AutoRetryScope),
+		AutoRetryPreset:                   AutoRetryPreset(payload.AutoRetryPreset),
+		AutoRetryDispatchPendingOnFailure: payload.AutoRetryDispatchPendingOnFailure,
+		Title:                             payload.Title,
 	})
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, "", "bad_req", err.Error(), false))
@@ -2856,6 +2915,23 @@ func (m *Manager) handleSetAutoRetryCommand(
 	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
+func (m *Manager) handleSetAutoRetryDispatchPendingOnFailureCommand(
+	ctx context.Context,
+	client *client,
+	frame wireCommandFrame,
+) error {
+	var payload struct {
+		Enabled bool `json:"ardpf"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid auto retry pending dispatch payload", false))
+	}
+	if _, err := m.UpdateAutoRetryDispatchPendingOnFailure(ctx, frame.SessionID, payload.Enabled); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	return m.sendMutationAck(ctx, client, frame, nil)
+}
+
 func (m *Manager) handleLegacySetModeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
 		PermissionMode string `json:"pm"`
@@ -3127,6 +3203,10 @@ func (m *Manager) sendMessageInternal(
 	attachmentIDs []string,
 	fromAutoRetry bool,
 ) error {
+	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
+	dispatchLock.Lock()
+	defer dispatchLock.Unlock()
+
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return err
@@ -3232,12 +3312,13 @@ func (m *Manager) sendMessageInternal(
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	run := &activeRun{
-		sessionID: sessionID,
-		agent:     Agent(record.Agent),
-		backend:   effectiveSessionBackend(record),
-		runID:     runID,
-		cancel:    cancel,
-		done:      make(chan struct{}),
+		sessionID:     sessionID,
+		agent:         Agent(record.Agent),
+		backend:       effectiveSessionBackend(record),
+		runID:         runID,
+		fromAutoRetry: fromAutoRetry,
+		cancel:        cancel,
+		done:          make(chan struct{}),
 	}
 
 	m.mu.Lock()
@@ -3576,11 +3657,13 @@ func (m *Manager) handleRunFailureWithCode(
 	if strings.TrimSpace(code) == "" && run != nil {
 		code = strings.TrimSpace(run.lastErrorCode)
 	}
-	if strings.TrimSpace(code) == "" {
-		code = "runtime_error"
-	}
-	if normalizeCodexErrorInfo(code) == codexCyberPolicyErrorCode {
+	normalizedCode := normalizeCodexErrorInfo(code)
+	if normalizedCode == codexCyberPolicyErrorCode {
 		code = codexCyberPolicyErrorCode
+	} else if isCodexModelCapacityError(normalizedCode, message) {
+		code = codexModelCapacityErrorCode
+	} else if normalizedCode == "" {
+		code = codexRuntimeErrorCode
 	}
 	now := time.Now()
 	if normalizeAgent(Agent(session.Agent)) == AgentCodex {
@@ -5154,46 +5237,47 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 	latestTurnUsage, _ := buildLatestTurnUsage(record)
 	contextEstimate, contextEstimateMode := buildContextEstimate(record)
 	return SessionSummary{
-		ID:                       record.ID,
-		Revision:                 formatSnapshotRevision(record.SnapshotRevision),
-		ProjectID:                record.ProjectID,
-		WorktreeID:               record.WorktreeID,
-		OrderIndex:               record.OrderIndex,
-		Agent:                    Agent(record.Agent),
-		ClaudeRuntime:            effectiveClaudeRuntime(record),
-		Title:                    record.Title,
-		Model:                    record.Model,
-		ReasoningEffort:          ReasoningEffort(record.ReasoningEffort),
-		WorkflowMode:             effectiveWorkflowMode(record),
-		PermissionLevel:          effectivePermissionLevel(record),
-		ActiveCallTimeoutEnabled: activeCallTimeoutOverrideOrDefault(record.ActiveCallTimeoutEnabled),
-		AutoRetryEnabled:         record.AutoRetryEnabled,
-		AutoRetryScope:           normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),
-		AutoRetryPreset:          normalizeAutoRetryPreset(AutoRetryPreset(record.AutoRetryPreset)),
-		Cwd:                      record.Cwd,
-		NativeSessionID:          record.NativeSessionID,
-		CyberPolicyFlagged:       record.CyberPolicyFlagged,
-		Status:                   effectiveStatus(record, assistantState),
-		AssistantState:           assistantState,
-		HasUnread:                record.HasUnread,
-		ArchivedAt:               record.ArchivedAt,
-		ActivityAt:               activityAt,
-		StatusUpdatedAt:          statusUpdatedAt,
-		LastMessageAt:            record.LastMessageAt,
-		AssistantStateUpdatedAt:  assistantStateUpdatedAt,
-		SourceKind:               record.SourceKind,
-		SyncState:                normalizeSyncState(record.SyncState),
-		LastSyncMode:             recordedSyncMode(record.LastSyncMode),
-		SourceCreatedAt:          record.SourceCreatedAt,
-		SourceUpdatedAt:          record.SourceUpdatedAt,
-		LastSyncedAt:             record.LastSyncedAt,
-		ThreadPath:               record.ThreadPath,
-		ThreadPreview:            record.ThreadPreview,
-		TurnCount:                record.TurnCount,
-		ItemCount:                record.ItemCount,
-		SyncError:                record.SyncError,
-		CreatedAt:                record.CreatedAt,
-		UpdatedAt:                record.UpdatedAt,
+		ID:                                record.ID,
+		Revision:                          formatSnapshotRevision(record.SnapshotRevision),
+		ProjectID:                         record.ProjectID,
+		WorktreeID:                        record.WorktreeID,
+		OrderIndex:                        record.OrderIndex,
+		Agent:                             Agent(record.Agent),
+		ClaudeRuntime:                     effectiveClaudeRuntime(record),
+		Title:                             record.Title,
+		Model:                             record.Model,
+		ReasoningEffort:                   ReasoningEffort(record.ReasoningEffort),
+		WorkflowMode:                      effectiveWorkflowMode(record),
+		PermissionLevel:                   effectivePermissionLevel(record),
+		ActiveCallTimeoutEnabled:          activeCallTimeoutOverrideOrDefault(record.ActiveCallTimeoutEnabled),
+		AutoRetryEnabled:                  record.AutoRetryEnabled,
+		AutoRetryScope:                    normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),
+		AutoRetryPreset:                   normalizeAutoRetryPreset(AutoRetryPreset(record.AutoRetryPreset)),
+		AutoRetryDispatchPendingOnFailure: record.AutoRetryDispatchPendingOnFailure,
+		Cwd:                               record.Cwd,
+		NativeSessionID:                   record.NativeSessionID,
+		CyberPolicyFlagged:                record.CyberPolicyFlagged,
+		Status:                            effectiveStatus(record, assistantState),
+		AssistantState:                    assistantState,
+		HasUnread:                         record.HasUnread,
+		ArchivedAt:                        record.ArchivedAt,
+		ActivityAt:                        activityAt,
+		StatusUpdatedAt:                   statusUpdatedAt,
+		LastMessageAt:                     record.LastMessageAt,
+		AssistantStateUpdatedAt:           assistantStateUpdatedAt,
+		SourceKind:                        record.SourceKind,
+		SyncState:                         normalizeSyncState(record.SyncState),
+		LastSyncMode:                      recordedSyncMode(record.LastSyncMode),
+		SourceCreatedAt:                   record.SourceCreatedAt,
+		SourceUpdatedAt:                   record.SourceUpdatedAt,
+		LastSyncedAt:                      record.LastSyncedAt,
+		ThreadPath:                        record.ThreadPath,
+		ThreadPreview:                     record.ThreadPreview,
+		TurnCount:                         record.TurnCount,
+		ItemCount:                         record.ItemCount,
+		SyncError:                         record.SyncError,
+		CreatedAt:                         record.CreatedAt,
+		UpdatedAt:                         record.UpdatedAt,
 		Usage: Usage{
 			InputTokens:       record.TotalInputTokens,
 			CachedInputTokens: record.TotalCachedInputTokens,

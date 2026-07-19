@@ -131,6 +131,9 @@ func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	if created.PermissionLevel != PermissionLevelElevated {
 		t.Fatalf("expected elevated permission level, got %q", created.PermissionLevel)
 	}
+	if created.AutoRetryDispatchPendingOnFailure {
+		t.Fatal("expected retry failure pending dispatch to default to disabled")
+	}
 }
 
 func TestManagerCreateSessionDefaultsCodexToAppServerBackend(t *testing.T) {
@@ -717,6 +720,77 @@ func TestHandleSendCommandRejectsMissingCodexBinary(t *testing.T) {
 	}
 	if conn.frames[0].Message != errCodexNotInstalled {
 		t.Fatalf("expected message %q, got %q", errCodexNotInstalled, conn.frames[0].Message)
+	}
+}
+
+func TestHandleSetAutoRetryDispatchPendingOnFailureCommand(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:                         project.ID,
+		Agent:                             AgentCodex,
+		AutoRetryDispatchPendingOnFailure: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if !created.AutoRetryDispatchPendingOnFailure {
+		t.Fatal("expected create parameter to enable retry failure pending dispatch")
+	}
+	if wire := mapWireSession(created); !wire.AutoRetryDispatchPendingOnFailure {
+		t.Fatal("expected compact wire mapping to include enabled retry failure pending dispatch")
+	}
+
+	nextAt := time.Now().Add(time.Minute).Truncate(time.Millisecond)
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", created.ID).
+		Updates(map[string]any{
+			"auto_retry_attempt": 2,
+			"auto_retry_next_at": nextAt,
+		}).Error; err != nil {
+		t.Fatalf("failed to seed auto retry progress: %v", err)
+	}
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_set_ardpf","sid":%q,"op":"set_ardpf","p":{"ardpf":false}}`, created.ID)),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected one ack frame, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "set_ardpf" || conn.frames[0].Revision == "" {
+		t.Fatalf("expected set_ardpf ack with revision, got %#v", conn.frames[0])
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.AutoRetryDispatchPendingOnFailure {
+		t.Fatal("expected set_ardpf command to disable retry failure pending dispatch")
+	}
+	if record.AutoRetryAttempt != 2 || record.AutoRetryNextAt == nil || !record.AutoRetryNextAt.Equal(nextAt) {
+		t.Fatalf("expected retry progress to remain unchanged, got attempt=%d nextAt=%v", record.AutoRetryAttempt, record.AutoRetryNextAt)
+	}
+	if summary := mapSessionRecord(record); summary.AutoRetryDispatchPendingOnFailure {
+		t.Fatal("expected REST summary mapping to include disabled retry failure pending dispatch")
+	} else if wire := mapWireSession(summary); wire.AutoRetryDispatchPendingOnFailure {
+		t.Fatal("expected compact wire mapping to include disabled retry failure pending dispatch")
 	}
 }
 
@@ -3300,6 +3374,257 @@ func TestAutoRetryEnabledSessionContinuesAfterFailure(t *testing.T) {
 	}
 	if got := stringValue(userMessages[len(userMessages)-1].Payload["txt"]); got != "continue" {
 		t.Fatalf("expected automatic retry message %q, got %q", "continue", got)
+	}
+}
+
+func TestAutoRetryRunsBeforePendingRedirect(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	if runtime.GOOS == "windows" {
+		stableCwd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Getwd returned error: %v", err)
+		}
+		project.Path = stableCwd
+		if err := model.GetDB().Model(&tables.ProjectTable{}).
+			Where("id = ?", project.ID).
+			Update("path", project.Path).Error; err != nil {
+			t.Fatalf("failed to set stable Windows process cwd: %v", err)
+		}
+	}
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "delayed_failure_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:        project.ID,
+		Agent:            AgentCodex,
+		AutoRetryEnabled: true,
+		AutoRetryScope:   AutoRetryScopeNetworkOnly,
+		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"next",
+		nil,
+		PendingInputModeRedirect,
+		"next-1",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode returned error: %v", err)
+	}
+
+	deadline := time.Now().Add(7 * time.Second)
+	for time.Now().Before(deadline) {
+		events, readErr := manager.store.readEvents(created.ID)
+		if readErr == nil && len(userMessageTexts(events)) >= 3 && !manager.hasActiveRun(created.ID) {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	events, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := strings.Join(userMessageTexts(events), "|"); got != "inspect|continue|next" {
+		t.Fatalf("expected retry before pending redirect, got %q", got)
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected pending redirect to flush after retry success, got %#v", pending)
+	}
+}
+
+func TestTerminalAutoRetryFailureHoldsPendingUntilEnabled(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:        project.ID,
+		Agent:            AgentCodex,
+		AutoRetryEnabled: true,
+		AutoRetryScope:   AutoRetryScopeNetworkOnly,
+		AutoRetryPreset:  AutoRetryPresetGentleStop,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", created.ID).
+		Updates(map[string]any{
+			"status":                     string(StatusError),
+			"last_error":                 "This request has been flagged for possible cybersecurity risk.",
+			"auto_retry_last_error_code": codexCyberPolicyErrorCode,
+			"auto_retry_next_at":         nil,
+		}).Error; err != nil {
+		t.Fatalf("failed to seed terminal retry failure: %v", err)
+	}
+
+	if _, err := manager.queuePendingInput(
+		created.ID,
+		"next",
+		nil,
+		PendingInputModeRedirect,
+		"next-1",
+	); err != nil {
+		t.Fatalf("queuePendingInput returned error: %v", err)
+	}
+	time.Sleep(75 * time.Millisecond)
+	if events, readErr := manager.store.readEvents(created.ID); readErr != nil {
+		t.Fatalf("readEvents returned error: %v", readErr)
+	} else if got := userMessageTexts(events); len(got) != 0 {
+		t.Fatalf("expected terminal failure to hold pending input, got %#v", got)
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 1 {
+		t.Fatalf("expected pending input to remain queued, got %#v", pending)
+	}
+
+	if _, err := manager.UpdateAutoRetryDispatchPendingOnFailure(
+		context.Background(),
+		created.ID,
+		true,
+	); err != nil {
+		t.Fatalf("UpdateAutoRetryDispatchPendingOnFailure returned error: %v", err)
+	}
+	waitForUserMessageCount(t, manager, created.ID, 1)
+	if events, readErr := manager.store.readEvents(created.ID); readErr != nil {
+		t.Fatalf("readEvents returned error after enabling pending dispatch: %v", readErr)
+	} else if got := strings.Join(userMessageTexts(events), "|"); got != "next" {
+		t.Fatalf("expected pending input to dispatch after enabling, got %q", got)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
+func TestAutoRetryEnabledSessionRetriesModelCapacityFailure(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "model_capacity_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:        project.ID,
+		Agent:            AgentCodex,
+		AutoRetryEnabled: true,
+		AutoRetryScope:   AutoRetryScopeNetworkOnly,
+		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	deadline := time.Now().Add(7 * time.Second)
+	for time.Now().Before(deadline) {
+		record, getErr := manager.GetSession(context.Background(), created.ID)
+		if getErr != nil {
+			t.Fatalf("GetSession returned error: %v", getErr)
+		}
+		if record.Status == string(StatusDone) && !manager.hasActiveRun(created.ID) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected session status %q after model capacity retry, got %q", StatusDone, record.Status)
+	}
+
+	events, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(events); len(got) < 2 || got[len(got)-1] != "continue" {
+		t.Fatalf("expected model capacity retry to append continue, got %#v", got)
+	}
+	for _, event := range events {
+		if event.Type == "run_fail" && stringValue(event.Payload["code"]) == codexModelCapacityErrorCode {
+			return
+		}
+	}
+	t.Fatalf("expected structured model capacity run_fail event, got %#v", events)
+}
+
+func TestAutoRetryDisabledSessionDoesNotRetryModelCapacityFailure(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "model_capacity_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:        project.ID,
+		Agent:            AgentCodex,
+		AutoRetryEnabled: false,
+		AutoRetryScope:   AutoRetryScopeNetworkOnly,
+		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusError) {
+		t.Fatalf("expected disabled auto retry to leave status %q, got %q", StatusError, record.Status)
+	}
+	if record.AutoRetryAttempt != 0 || record.AutoRetryNextAt != nil {
+		t.Fatalf("expected no scheduled retry, got attempt=%d next=%v", record.AutoRetryAttempt, record.AutoRetryNextAt)
+	}
+
+	events, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(events); len(got) != 1 || got[0] != "inspect" {
+		t.Fatalf("expected no automatic continue, got %#v", got)
 	}
 }
 
@@ -7102,6 +7427,17 @@ rl.on('line', line => {
       writePersistentTurnCount(persistedTurns);
       if (persistedTurns === 1) {
         failTurn('unexpected status 502 Bad Gateway: Upstream service temporarily unavailable');
+        return;
+      }
+      finishTurn('done');
+      return;
+    }
+
+    if (mode === 'model_capacity_then_success') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        failTurn('Selected model is at capacity. Please try a different model.');
         return;
       }
       finishTurn('done');

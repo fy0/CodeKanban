@@ -42,6 +42,7 @@ describe('settings backup helpers in store', () => {
     const store = useSettingsStore();
     store.updateRecentProjectsLimit(7);
     store.updateShowWebSessionReasoning(true);
+    store.updateWebSessionAutoRetryDispatchPendingOnFailure(true);
     store.recordWebSessionRecentInput('Ship it');
 
     const payload = store.exportClientBackup('en-US', {
@@ -49,21 +50,26 @@ describe('settings backup helpers in store', () => {
     });
 
     expect(payload.locale).toBe('en-US');
-    expect(payload.settings.version).toBe(4);
+    expect(payload.settings.version).toBe(5);
     expect(payload.settings.recentProjectsLimit).toBe(7);
     expect(payload.settings.showWebSessionReasoning).toBe(true);
+    expect(payload.settings.webSessionAutoRetryDispatchPendingOnFailure).toBe(true);
     expect(payload.settings.webSessionQuickInput?.recent).toBeUndefined();
   });
 
   it('imports client backup and updates locale plus persisted storage', () => {
     const store = useSettingsStore();
-    const { recentProjectsLimit, showWebSessionReasoning } = storeToRefs(store);
+    const {
+      recentProjectsLimit,
+      showWebSessionReasoning,
+      webSessionAutoRetryDispatchPendingOnFailure,
+    } = storeToRefs(store);
     store.recordWebSessionRecentInput('Keep this');
 
     store.importClientBackup({
       locale: 'en-US',
       settings: {
-        version: 4,
+        version: 5,
         theme: {
           primaryColor: '#123456',
           surfaceColor: '#ffffff',
@@ -95,6 +101,7 @@ describe('settings backup helpers in store', () => {
         webSessionActivityDisplayMode: 'card',
         webSessionAutoContinueScope: 'network_only',
         webSessionAutoContinuePreset: 'gentle_stop',
+        webSessionAutoRetryDispatchPendingOnFailure: true,
         webSessionStreamingMarkdownThrottleMode: 'default',
         webSessionStreamingMarkdownThrottleCustomMs: 100,
         terminalThemeId: 'follow-theme',
@@ -117,6 +124,7 @@ describe('settings backup helpers in store', () => {
 
     expect(recentProjectsLimit.value).toBe(6);
     expect(showWebSessionReasoning.value).toBe(true);
+    expect(webSessionAutoRetryDispatchPendingOnFailure.value).toBe(true);
     expect(store.webSessionQuickInput.recent).toEqual(['Keep this']);
     expect(store.webSessionQuickInput.pinned).toEqual(['Plan']);
     expect(localStorage.getItem('app-locale')).toBe('en-US');

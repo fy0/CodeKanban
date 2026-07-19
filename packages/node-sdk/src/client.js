@@ -1022,6 +1022,8 @@ export class CodeKanbanClient {
           autoRetryPreset: normalizeWebSessionAutoRetryPreset(
             input.autoRetryPreset,
           ),
+          autoRetryDispatchPendingOnFailure:
+            input.autoRetryDispatchPendingOnFailure === true,
           permissionMode,
           title: ensureOptionalString(input.title),
         },

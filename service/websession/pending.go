@@ -161,12 +161,17 @@ func (m *Manager) sendMessageWithMode(
 	}
 
 	normalizedMode := normalizePendingInputMode(mode)
-	if normalizedMode != "" && m.hasActiveRun(sessionID) {
+	if normalizedMode != "" && (m.hasActiveRun(sessionID) || autoRetryDefersPending(record)) {
 		_, err := m.queuePendingInput(sessionID, text, attachmentIDs, normalizedMode, pendingID)
 		return err
 	}
 
-	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+	err = m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+	if normalizedMode != "" && err != nil && strings.Contains(strings.ToLower(err.Error()), "already running") {
+		_, queueErr := m.queuePendingInput(sessionID, text, attachmentIDs, normalizedMode, pendingID)
+		return queueErr
+	}
+	return err
 }
 
 func (m *Manager) removePendingInput(sessionID, pendingID string) bool {
@@ -454,6 +459,9 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 		if m.hasActiveRun(sessionID) {
 			return
 		}
+		if autoRetryDefersPending(record) {
+			return
+		}
 
 		next, ok := m.popPendingInput(sessionID)
 		if !ok {
@@ -480,17 +488,37 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 }
 
 func (m *Manager) maybeInterruptForRedirect(sessionID string) {
-	item, ok := m.peekPendingInput(sessionID)
-	if !ok || item.Mode != PendingInputModeRedirect || !m.hasActiveRun(sessionID) {
+	m.mu.RLock()
+	run := m.runs[sessionID]
+	m.mu.RUnlock()
+	if run == nil || run.fromAutoRetry {
 		return
 	}
-	go func(pendingID string) {
-		if err := m.AbortSession(sessionID); err != nil && m.logger != nil {
-			m.logger.Debug("failed to interrupt active session for redirect pending input",
-				zap.String("sessionId", sessionID),
-				zap.String("pendingId", pendingID),
-				zap.Error(err),
-			)
-		}
-	}(item.ID)
+
+	item, ok := m.peekPendingInput(sessionID)
+	if !ok || item.Mode != PendingInputModeRedirect {
+		return
+	}
+	go m.abortRunForRedirect(sessionID, item.ID, run)
+}
+
+func (m *Manager) abortRunForRedirect(sessionID, pendingID string, expectedRun *activeRun) {
+	m.mu.RLock()
+	current := m.runs[sessionID]
+	isCurrent := current != nil && current == expectedRun && !current.fromAutoRetry
+	m.mu.RUnlock()
+	if !isCurrent {
+		return
+	}
+
+	if expectedRun.cancel != nil {
+		expectedRun.cancel()
+	}
+	killCmdTree(expectedRun.cmd)
+	if m.logger != nil {
+		m.logger.Debug("interrupted active session for redirect pending input",
+			zap.String("sessionId", sessionID),
+			zap.String("pendingId", pendingID),
+		)
+	}
 }

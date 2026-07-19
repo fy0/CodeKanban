@@ -57,6 +57,7 @@ type WireSession = {
   ae?: boolean;
   ars?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
   arp?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+  ardpf?: boolean;
   ttl: string;
   cwd: string;
   nsid?: string | null;
@@ -585,6 +586,12 @@ type PendingAutoRetryOverride = {
   enabled: boolean;
   scope: WebSessionSummary['autoRetryScope'];
   preset: WebSessionSummary['autoRetryPreset'];
+  appliedAt: number;
+  ackedAt?: number;
+};
+
+type PendingAutoRetryDispatchOverride = {
+  enabled: boolean;
   appliedAt: number;
   ackedAt?: number;
 };
@@ -1580,6 +1587,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
   >();
   const draftAttachmentUploadQueues = new Map<string, Promise<unknown>>();
   const pendingAutoRetryOverrides = reactive(new Map<string, PendingAutoRetryOverride>());
+  const pendingAutoRetryDispatchOverrides = reactive(
+    new Map<string, PendingAutoRetryDispatchOverride>()
+  );
   const pendingActiveCallTimeoutOverrides = reactive(
     new Map<string, PendingActiveCallTimeoutOverride>()
   );
@@ -1974,6 +1984,59 @@ export const useWebSessionStore = defineStore('web-session', () => {
       autoRetryEnabled: pendingOverride.enabled,
       autoRetryScope: pendingOverride.scope,
       autoRetryPreset: pendingOverride.preset,
+      updatedAt: new Date(mergedUpdatedAt).toISOString(),
+    };
+  }
+
+  function setPendingAutoRetryDispatchOverride(
+    sessionId: string,
+    enabled: boolean,
+    appliedAt = Date.now()
+  ) {
+    pendingAutoRetryDispatchOverrides.set(sessionId, {
+      enabled: enabled === true,
+      appliedAt,
+    });
+  }
+
+  function acknowledgePendingAutoRetryDispatchOverride(sessionId: string, ackedAt = Date.now()) {
+    const pendingOverride = pendingAutoRetryDispatchOverrides.get(sessionId);
+    if (!pendingOverride) {
+      return;
+    }
+    pendingAutoRetryDispatchOverrides.set(sessionId, {
+      ...pendingOverride,
+      ackedAt,
+    });
+  }
+
+  function clearPendingAutoRetryDispatchOverride(sessionId: string) {
+    pendingAutoRetryDispatchOverrides.delete(sessionId);
+  }
+
+  function applyPendingAutoRetryDispatchOverride(
+    summary: WebSessionSummary
+  ): WebSessionSummary {
+    const pendingOverride = pendingAutoRetryDispatchOverrides.get(summary.id);
+    if (!pendingOverride) {
+      return summary;
+    }
+    const matchesPendingConfig =
+      summary.autoRetryDispatchPendingOnFailure === pendingOverride.enabled;
+    const updatedAt = Date.parse(summary.updatedAt || '');
+    const hasAuthoritativeUpdate =
+      Number.isFinite(updatedAt) &&
+      updatedAt >= (pendingOverride.ackedAt ?? pendingOverride.appliedAt);
+    if (matchesPendingConfig && hasAuthoritativeUpdate) {
+      pendingAutoRetryDispatchOverrides.delete(summary.id);
+      return summary;
+    }
+    const mergedUpdatedAt = Number.isFinite(updatedAt)
+      ? Math.max(updatedAt, pendingOverride.appliedAt)
+      : pendingOverride.appliedAt;
+    return {
+      ...summary,
+      autoRetryDispatchPendingOnFailure: pendingOverride.enabled,
       updatedAt: new Date(mergedUpdatedAt).toISOString(),
     };
   }
@@ -2379,6 +2442,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         session.arp === 'aggressive_stop' || session.arp === 'sustain_60s'
           ? session.arp
           : 'gentle_stop',
+      autoRetryDispatchPendingOnFailure: session.ardpf === true,
       cwd: session.cwd,
       nativeSessionId: session.nsid ?? null,
       cyberPolicyFlagged: session.cpf === true,
@@ -2981,6 +3045,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     observedRevisionBySession.delete(sessionId);
     fullSnapshotBaselineSessions.delete(sessionId);
     pendingAutoRetryOverrides.delete(sessionId);
+    pendingAutoRetryDispatchOverrides.delete(sessionId);
     pendingActiveCallTimeoutOverrides.delete(sessionId);
     const nextSnapshotApprovals = { ...snapshotApprovalsBySession.value };
     delete nextSnapshotApprovals[sessionId];
@@ -3001,7 +3066,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function upsertCurrentSession(summary: WebSessionSummary) {
     const nextSummary = applyPendingActiveCallTimeoutOverride(
-      applyPendingAutoRetryOverride(summary)
+      applyPendingAutoRetryDispatchOverride(applyPendingAutoRetryOverride(summary))
     );
     const previousProjectId = currentSessionProjectById.get(nextSummary.id);
     if (previousProjectId && previousProjectId !== nextSummary.projectId) {
@@ -3963,6 +4028,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (frame.op === 'set_ar' && frame.sid) {
         acknowledgePendingAutoRetryOverride(frame.sid, Date.now());
       }
+      if (frame.op === 'set_ardpf' && frame.sid) {
+        acknowledgePendingAutoRetryDispatchOverride(frame.sid, Date.now());
+      }
       if (frame.rid && pending.has(frame.rid)) {
         pending.get(frame.rid)?.resolve(frame);
         pending.delete(frame.rid);
@@ -4468,7 +4536,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
       );
       const sessions = items.map(item => {
         observeSessionRevision(item.id, item.revision);
-        const session = applyPendingActiveCallTimeoutOverride(applyPendingAutoRetryOverride(item));
+        const session = applyPendingActiveCallTimeoutOverride(
+          applyPendingAutoRetryDispatchOverride(applyPendingAutoRetryOverride(item))
+        );
         const current = currentById.get(session.id);
         return current && compareWebSessionRevisions(current.revision, session.revision) === 1
           ? current
@@ -5587,6 +5657,42 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
+  async function updateAutoRetryDispatchPendingOnFailure(sessionId: string, enabled: boolean) {
+    const session = findSessionById(sessionId);
+    const optimisticUpdatedAt = new Date().toISOString();
+    const previous =
+      session && !session.archivedAt
+        ? session.autoRetryDispatchPendingOnFailure === true
+        : null;
+    if (previous !== null) {
+      setPendingAutoRetryDispatchOverride(
+        sessionId,
+        enabled,
+        Date.parse(optimisticUpdatedAt)
+      );
+      updateSessionStatus(sessionId, current => ({
+        ...current,
+        autoRetryDispatchPendingOnFailure: enabled === true,
+        updatedAt: optimisticUpdatedAt,
+      }));
+    }
+    try {
+      await sendCommand('set_ardpf', sessionId, {
+        ardpf: enabled === true,
+      });
+    } catch (error) {
+      clearPendingAutoRetryDispatchOverride(sessionId);
+      if (previous !== null) {
+        updateSessionStatus(sessionId, current => ({
+          ...current,
+          autoRetryDispatchPendingOnFailure: previous,
+          updatedAt: optimisticUpdatedAt,
+        }));
+      }
+      throw error;
+    }
+  }
+
   async function moveSession(
     projectId: string,
     sessionId: string,
@@ -5707,6 +5813,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       autoRetryEnabled?: boolean;
       autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
       autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+      autoRetryDispatchPendingOnFailure?: boolean;
       title?: string;
     }
   ) {
@@ -5787,6 +5894,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updateAgent,
     updateActiveCallTimeout,
     updateAutoRetry,
+    updateAutoRetryDispatchPendingOnFailure,
     moveSession,
     getPendingApproval,
     getPendingUserInput,

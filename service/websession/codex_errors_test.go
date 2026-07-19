@@ -1,6 +1,10 @@
 package websession
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+	"time"
+)
 
 func TestCodexErrorInfoSupportsRolloutAndAppServerShapes(t *testing.T) {
 	tests := []struct {
@@ -38,5 +42,97 @@ func TestShouldAutoRetryFailureNeverRetriesCyberPolicy(t *testing.T) {
 		if shouldAutoRetryFailure(scope, codexCyberPolicyErrorCode, "temporarily unavailable") {
 			t.Fatalf("expected cyber policy failure not to retry for scope %q", scope)
 		}
+	}
+}
+
+func TestCodexModelCapacityErrorClassification(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		message string
+		want    bool
+	}{
+		{name: "structured code", code: codexModelCapacityErrorCode, want: true},
+		{
+			name:    "app server message",
+			message: "Selected model is at capacity. Please try a different model.",
+			want:    true,
+		},
+		{
+			name:    "case insensitive message",
+			message: "SELECTED MODEL IS AT CAPACITY. PLEASE TRY A DIFFERENT MODEL.",
+			want:    true,
+		},
+		{name: "other model error", message: "Selected model is unavailable.", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isCodexModelCapacityError(test.code, test.message); got != test.want {
+				t.Fatalf("isCodexModelCapacityError returned %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCodexModelCapacityErrorSupportsAppServerFailureShapes(t *testing.T) {
+	errorMessage, errorCode := parseCodexTurnError(json.RawMessage(`{
+		"error": {
+			"message": "Selected model is at capacity. Please try a different model."
+		}
+	}`))
+	if !isCodexModelCapacityError(errorCode, errorMessage) {
+		t.Fatalf("expected error notification to classify as model capacity, code=%q message=%q", errorCode, errorMessage)
+	}
+
+	status, completionMessage, completionCode := parseCodexTurnCompletion(json.RawMessage(`{
+		"turn": {
+			"status": "failed",
+			"error": {
+				"message": "Selected model is at capacity. Please try a different model."
+			}
+		}
+	}`))
+	if status != "failed" || !isCodexModelCapacityError(completionCode, completionMessage) {
+		t.Fatalf(
+			"expected failed turn completion to classify as model capacity, status=%q code=%q message=%q",
+			status,
+			completionCode,
+			completionMessage,
+		)
+	}
+}
+
+func TestShouldAutoRetryFailureRetriesModelCapacityForEveryScope(t *testing.T) {
+	for _, scope := range []AutoRetryScope{
+		AutoRetryScopeNetworkOnly,
+		AutoRetryScopeNetworkAndRateLimit,
+		AutoRetryScopeAllFailures,
+	} {
+		if !shouldAutoRetryFailure(
+			scope,
+			codexModelCapacityErrorCode,
+			"Selected model is at capacity. Please try a different model.",
+		) {
+			t.Fatalf("expected model capacity failure to retry for scope %q", scope)
+		}
+	}
+}
+
+func TestModelCapacityRetryUsesFixedInitialDelayThenPreset(t *testing.T) {
+	message := "Selected model is at capacity. Please try a different model."
+	if delay, ok := autoRetryDelayForFailure(AutoRetryPresetAggressiveStop, 1, "", message); !ok || delay != 3*time.Second {
+		t.Fatalf("expected initial model capacity delay 3s, got delay=%s ok=%v", delay, ok)
+	}
+	if delay, ok := autoRetryDelayForFailure(
+		AutoRetryPresetAggressiveStop,
+		2,
+		codexModelCapacityErrorCode,
+		message,
+	); !ok || delay != 5*time.Second {
+		t.Fatalf("expected second aggressive delay 5s, got delay=%s ok=%v", delay, ok)
+	}
+	if delay, ok := autoRetryDelayForFailure(AutoRetryPresetAggressiveStop, 1, "runtime_error", "other failure"); !ok || delay != 2*time.Second {
+		t.Fatalf("expected non-capacity aggressive delay 2s, got delay=%s ok=%v", delay, ok)
 	}
 }

@@ -3,8 +3,10 @@ package websession
 import "strings"
 
 const (
-	codexCyberPolicyErrorCode    = "cyber_policy"
-	codexCyberPolicyFallbackText = "This request has been flagged for possible cybersecurity risk."
+	codexCyberPolicyErrorCode       = "cyber_policy"
+	codexCyberPolicyFallbackText    = "This request has been flagged for possible cybersecurity risk."
+	codexModelCapacityErrorCode     = "model_at_capacity"
+	codexModelCapacityErrorFragment = "selected model is at capacity"
 )
 
 func normalizeCodexErrorInfo(value string) string {
@@ -37,6 +39,13 @@ func codexErrorInfo(record map[string]any) string {
 
 func isCodexCyberPolicyError(record map[string]any) bool {
 	return codexErrorInfo(record) == codexCyberPolicyErrorCode
+}
+
+func isCodexModelCapacityError(code string, message string) bool {
+	if normalizeCodexErrorInfo(code) == codexModelCapacityErrorCode {
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(message)), codexModelCapacityErrorFragment)
 }
 
 func codexErrorMessage(record map[string]any) string {

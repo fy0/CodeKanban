@@ -656,6 +656,21 @@
                   </n-space>
                 </n-form-item>
                 <n-form-item
+                  :label="t('settings.webSessionAutoRetryDispatchPendingOnFailure')"
+                  data-search-key="webSessionAutoRetryDispatchPendingOnFailure"
+                >
+                  <n-space vertical size="small">
+                    <n-checkbox
+                      v-model:checked="webSessionAutoRetryDispatchPendingOnFailureValue"
+                    >
+                      {{ t('settings.webSessionAutoRetryDispatchPendingOnFailureEnabled') }}
+                    </n-checkbox>
+                    <span class="form-tip">{{
+                      t('settings.webSessionAutoRetryDispatchPendingOnFailureTip')
+                    }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
                   :label="t('settings.webSessionCodexDefaultSyncMode')"
                   data-search-key="webSessionCodexDefaultSyncMode"
                 >
@@ -2100,6 +2115,7 @@ const {
   webSessionActivityDisplayMode,
   webSessionAutoContinueScope,
   webSessionAutoContinuePreset,
+  webSessionAutoRetryDispatchPendingOnFailure,
   webSessionStreamingMarkdownThrottleMode,
   webSessionStreamingMarkdownThrottleCustomMs,
   terminalThemeId,
@@ -3670,6 +3686,12 @@ const webSessionAutoContinuePresetValue = computed({
     settingsStore.updateWebSessionAutoContinuePreset(value),
 });
 
+const webSessionAutoRetryDispatchPendingOnFailureValue = computed({
+  get: () => webSessionAutoRetryDispatchPendingOnFailure.value,
+  set: (value: boolean) =>
+    settingsStore.updateWebSessionAutoRetryDispatchPendingOnFailure(value),
+});
+
 const terminalConnectionPolicyValue = computed({
   get: () => terminalConnectionPolicy.value,
   set: (value: TerminalConnectionPolicy) => settingsStore.updateTerminalConnectionPolicy(value),
@@ -3985,6 +4007,7 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
         t('settings.webSessionStreamingMarkdownThrottle'),
         t('settings.webSessionAutoContinueScope'),
         t('settings.webSessionAutoContinuePreset'),
+        t('settings.webSessionAutoRetryDispatchPendingOnFailure'),
         t('settings.webSessionQuickInputPinned'),
         t('settings.webSessionCodexDefaultSyncMode'),
         t('settings.webSessionActiveCallTimeout'),

@@ -86,7 +86,7 @@ describe('settingsBackup helpers', () => {
       clientPayload: {
         locale: 'zh-CN',
         settings: {
-          version: 4,
+          version: 5,
           theme: {
             primaryColor: '#123456',
             surfaceColor: '#ffffff',
@@ -112,6 +112,7 @@ describe('settingsBackup helpers', () => {
           webSessionActivityDisplayMode: 'default',
           webSessionAutoContinueScope: 'network_only',
           webSessionAutoContinuePreset: 'gentle_stop',
+          webSessionAutoRetryDispatchPendingOnFailure: false,
           webSessionStreamingMarkdownThrottleMode: 'default',
           webSessionStreamingMarkdownThrottleCustomMs: 100,
           terminalThemeId: 'follow-theme',
@@ -191,7 +192,7 @@ describe('settingsBackup helpers', () => {
           client: {
             locale: 'zh-CN',
             settings: {
-              version: 4,
+              version: 5,
               theme: {
                 primaryColor: '#123456',
                 surfaceColor: '#ffffff',
@@ -221,6 +222,7 @@ describe('settingsBackup helpers', () => {
               webSessionActivityDisplayMode: 'default',
               webSessionAutoContinueScope: 'network_only',
               webSessionAutoContinuePreset: 'gentle_stop',
+              webSessionAutoRetryDispatchPendingOnFailure: true,
               webSessionStreamingMarkdownThrottleMode: 'default',
               webSessionStreamingMarkdownThrottleCustomMs: 100,
               terminalThemeId: 'follow-theme',
