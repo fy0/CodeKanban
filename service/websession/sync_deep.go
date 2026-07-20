@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -44,6 +45,16 @@ type codexDeepHistoryParseResult struct {
 	Items []HistoryItem
 	Stats codexDeepHistoryStats
 }
+
+type codexDeepMessageOrigin uint8
+
+const (
+	codexDeepMessageOriginEvent codexDeepMessageOrigin = 1 << iota
+	codexDeepMessageOriginResponse
+	codexDeepMessageDedupeWindow = 2 * time.Second
+)
+
+var codexEmbeddedImageEnvelopePattern = regexp.MustCompile(`(?s)[\r\n]*<image\b[^>]*\bpath="([^"]+)"[^>]*>\s*\[input_image:\]\s*</image>`)
 
 func (m *Manager) syncSessionFromLogSource(
 	ctx context.Context,
@@ -185,6 +196,7 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 	items := make([]HistoryItem, 0, 256)
 	pendingTools := make(map[string]int)
 	pendingUserInputs := make(map[string]int)
+	messageOrigins := make(map[string]codexDeepMessageOrigin)
 	var orderIndex int64
 	var stats codexDeepHistoryStats
 
@@ -200,6 +212,30 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 		item.OrderIndex = orderIndex
 		items = append(items, item)
 		return len(items) - 1
+	}
+
+	appendMessage := func(item HistoryItem, origin codexDeepMessageOrigin) int {
+		itemTime := codexDeepMessageTime(item)
+		for index := len(items) - 1; index >= 0; index-- {
+			candidate := items[index]
+			candidateTime := codexDeepMessageTime(candidate)
+			if itemTime != nil && candidateTime != nil && itemTime.Sub(*candidateTime) > codexDeepMessageDedupeWindow {
+				break
+			}
+			candidateOrigin := messageOrigins[candidate.ID]
+			if candidateOrigin == 0 || candidateOrigin&origin != 0 {
+				continue
+			}
+			if !codexDeepMessagesMatch(candidate, item) {
+				continue
+			}
+			mergeCodexDeepMessage(&items[index], item, candidateOrigin, origin)
+			messageOrigins[candidate.ID] = candidateOrigin | origin
+			return index
+		}
+		index := appendItem(item)
+		messageOrigins[item.ID] = origin
+		return index
 	}
 
 	appendIfNotDuplicate := func(item HistoryItem) {
@@ -242,6 +278,10 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 			}
 			stats.observeEventMessage(payload, ts)
 			for _, item := range m.codexHistoryItemsFromEventMessage(payload, ts) {
+				if isCodexDeepMessage(item) {
+					appendMessage(item, codexDeepMessageOriginEvent)
+					continue
+				}
 				appendIfNotDuplicate(item)
 			}
 		case "response_item":
@@ -257,6 +297,7 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 				payload,
 				ts,
 				appendItem,
+				appendMessage,
 				pendingTools,
 				pendingUserInputs,
 			)
@@ -266,6 +307,7 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 		return codexDeepHistoryParseResult{}, err
 	}
 
+	items = dedupeCodexDeepPlanMessages(items)
 	for index := range items {
 		items[index].OrderIndex = int64(index + 1)
 	}
@@ -273,6 +315,178 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 		Items: items,
 		Stats: stats,
 	}, nil
+}
+
+func isCodexDeepMessage(item HistoryItem) bool {
+	return item.Tool == nil && (item.Kind == "user" || item.Kind == "assistant")
+}
+
+func normalizedCodexDeepMessageText(text string) string {
+	return strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+}
+
+func codexDeepMessageTime(item HistoryItem) *time.Time {
+	if item.Timestamp != nil {
+		return item.Timestamp
+	}
+	return item.ObservedAt
+}
+
+func codexDeepMessageAttachmentsCompatible(left, right []HistoryAttachment) bool {
+	if len(left) == 0 || len(right) == 0 {
+		return true
+	}
+	if len(left) != len(right) {
+		return false
+	}
+	keys := make(map[string]struct{}, len(left))
+	for _, attachment := range left {
+		key := firstNonEmpty(strings.TrimSpace(attachment.ID), strings.TrimSpace(attachment.Path))
+		keys[key] = struct{}{}
+	}
+	for _, attachment := range right {
+		key := firstNonEmpty(strings.TrimSpace(attachment.ID), strings.TrimSpace(attachment.Path))
+		if _, ok := keys[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func codexDeepMessagesMatch(left, right HistoryItem) bool {
+	if !isCodexDeepMessage(left) || !isCodexDeepMessage(right) || left.Kind != right.Kind {
+		return false
+	}
+	if normalizedCodexDeepMessageText(left.Text) != normalizedCodexDeepMessageText(right.Text) {
+		return false
+	}
+	if !codexDeepMessageAttachmentsCompatible(left.Attachments, right.Attachments) {
+		return false
+	}
+	leftTime := codexDeepMessageTime(left)
+	rightTime := codexDeepMessageTime(right)
+	if leftTime == nil || rightTime == nil {
+		return false
+	}
+	delta := leftTime.Sub(*rightTime)
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= codexDeepMessageDedupeWindow
+}
+
+func mergeHistoryAttachments(left, right []HistoryAttachment) []HistoryAttachment {
+	if len(left) == 0 {
+		return right
+	}
+	if len(right) == 0 {
+		return left
+	}
+	result := append([]HistoryAttachment{}, left...)
+	seen := make(map[string]struct{}, len(result))
+	for _, attachment := range result {
+		key := firstNonEmpty(strings.TrimSpace(attachment.ID), strings.TrimSpace(attachment.Path))
+		seen[key] = struct{}{}
+	}
+	for _, attachment := range right {
+		key := firstNonEmpty(strings.TrimSpace(attachment.ID), strings.TrimSpace(attachment.Path))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, attachment)
+	}
+	return result
+}
+
+func mergeCodexDeepMessage(
+	target *HistoryItem,
+	source HistoryItem,
+	targetOrigin codexDeepMessageOrigin,
+	sourceOrigin codexDeepMessageOrigin,
+) {
+	if target == nil {
+		return
+	}
+	if sourceOrigin == codexDeepMessageOriginEvent {
+		target.Text = source.Text
+		target.Attachments = mergeHistoryAttachments(source.Attachments, target.Attachments)
+	} else {
+		target.Attachments = mergeHistoryAttachments(target.Attachments, source.Attachments)
+	}
+	if sourceOrigin == codexDeepMessageOriginResponse || targetOrigin != codexDeepMessageOriginResponse {
+		if source.SourceTurnID != nil {
+			target.SourceTurnID = source.SourceTurnID
+		}
+		if source.SourceItemID != nil {
+			target.SourceItemID = source.SourceItemID
+		}
+		if source.Payload != nil {
+			target.Payload = source.Payload
+		}
+	}
+	target.Done = target.Done || source.Done
+	if target.Timestamp == nil || source.Timestamp != nil && source.Timestamp.Before(*target.Timestamp) {
+		target.Timestamp = source.Timestamp
+	}
+	if target.ObservedAt == nil || source.ObservedAt != nil && source.ObservedAt.After(*target.ObservedAt) {
+		target.ObservedAt = source.ObservedAt
+	}
+}
+
+func codexProposedPlanText(text string) (string, bool) {
+	trimmed := strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+	const openTag = "<proposed_plan>"
+	const closeTag = "</proposed_plan>"
+	if !strings.HasPrefix(trimmed, openTag) || !strings.HasSuffix(trimmed, closeTag) {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, openTag), closeTag)), true
+}
+
+func codexDeepItemsShareTurnOrTime(left, right HistoryItem) bool {
+	if left.SourceTurnID != nil && right.SourceTurnID != nil &&
+		strings.TrimSpace(*left.SourceTurnID) != "" && *left.SourceTurnID == *right.SourceTurnID {
+		return true
+	}
+	leftTime := codexDeepMessageTime(left)
+	rightTime := codexDeepMessageTime(right)
+	if leftTime == nil || rightTime == nil {
+		return false
+	}
+	delta := leftTime.Sub(*rightTime)
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= codexDeepMessageDedupeWindow
+}
+
+func dedupeCodexDeepPlanMessages(items []HistoryItem) []HistoryItem {
+	if len(items) == 0 {
+		return items
+	}
+	result := make([]HistoryItem, 0, len(items))
+	for index, item := range items {
+		planText, proposed := codexProposedPlanText(item.Text)
+		if item.Kind == "assistant" && proposed {
+			duplicate := false
+			for candidateIndex, candidate := range items {
+				if candidateIndex == index || candidate.Tool == nil || candidate.Tool.Kind != "plan" {
+					continue
+				}
+				if normalizedCodexDeepMessageText(candidate.Tool.Output) == normalizedCodexDeepMessageText(planText) &&
+					codexDeepItemsShareTurnOrTime(candidate, item) {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
+				continue
+			}
+		}
+		result = append(result, item)
+	}
+	return result
 }
 
 func latestHistoryItemTimestamp(items []HistoryItem) *time.Time {
@@ -635,13 +849,17 @@ func (m *Manager) applyCodexResponseItem(
 	payload map[string]any,
 	ts time.Time,
 	appendItem func(item HistoryItem) int,
+	appendMessage func(item HistoryItem, origin codexDeepMessageOrigin) int,
 	pendingTools map[string]int,
 	pendingUserInputs map[string]int,
 ) {
 	responseType := strings.TrimSpace(stringValue(payload["type"]))
 	switch responseType {
 	case "message":
-		role := strings.TrimSpace(stringValue(payload["role"]))
+		role := strings.ToLower(strings.TrimSpace(stringValue(payload["role"])))
+		if role == "developer" || role == "system" {
+			return
+		}
 		content := decodeRawArray(payload["content"])
 		textParts := make([]string, 0, len(content))
 		for _, block := range content {
@@ -653,35 +871,34 @@ func (m *Manager) applyCodexResponseItem(
 				}
 			}
 		}
-		text := strings.TrimSpace(strings.Join(textParts, "\n"))
+		text, embeddedAttachments := m.normalizeCodexResponseMessage(strings.Join(textParts, "\n"))
 		if text == "" {
 			return
 		}
 		item := HistoryItem{
-			ID:         utils.NewID(),
-			ItemType:   "message",
-			Text:       text,
-			Timestamp:  ptr(ts),
-			ObservedAt: ptr(ts),
-			Payload:    cloneMap(payload),
-			Done:       true,
+			ID:           utils.NewID(),
+			SourceTurnID: nilIfEmptyHistory(codexResponseItemTurnID(payload)),
+			SourceItemID: nilIfEmptyHistory(stringValue(payload["id"])),
+			ItemType:     "message",
+			Text:         text,
+			Timestamp:    ptr(ts),
+			ObservedAt:   ptr(ts),
+			Attachments:  embeddedAttachments,
+			Payload:      cloneMap(payload),
+			Done:         true,
 		}
 		switch role {
 		case "assistant":
 			item.Kind = "assistant"
 			item.ItemType = "agent_message"
-		case "developer", "system":
-			item.Kind = "system"
-			item.ItemType = "system_message"
-			item.Level = "info"
 		default:
-			if isHiddenCodexPrompt(text) {
+			if isHiddenCodexPrompt(text) || isCodexInjectedHostContext(text) {
 				return
 			}
 			item.Kind = "user"
 			item.ItemType = "user_message"
 		}
-		appendItem(item)
+		appendMessage(item, codexDeepMessageOriginResponse)
 	case "reasoning":
 		text := codexReasoningSummary(payload)
 		if text == "" {
@@ -984,6 +1201,41 @@ func codexReasoningSummary(payload map[string]any) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+func codexResponseItemTurnID(payload map[string]any) string {
+	metadata := decodeRawObject(payload["internal_chat_message_metadata_passthrough"])
+	return strings.TrimSpace(firstNonEmpty(
+		stringValue(metadata["turn_id"]),
+		stringValue(payload["turn_id"]),
+	))
+}
+
+func isCodexInjectedHostContext(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "# AGENTS.md instructions for ") &&
+		strings.Contains(trimmed, "<INSTRUCTIONS>") &&
+		strings.Contains(trimmed, "</INSTRUCTIONS>") {
+		return true
+	}
+	return strings.HasPrefix(trimmed, "<environment_context>") &&
+		strings.HasSuffix(trimmed, "</environment_context>")
+}
+
+func (m *Manager) normalizeCodexResponseMessage(text string) (string, []HistoryAttachment) {
+	attachments := make([]HistoryAttachment, 0)
+	for _, match := range codexEmbeddedImageEnvelopePattern.FindAllStringSubmatch(text, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		attachment, err := m.registerExternalAttachment(strings.TrimSpace(match[1]))
+		if err != nil {
+			continue
+		}
+		attachments = mergeHistoryAttachments(attachments, []HistoryAttachment{attachment})
+	}
+	text = codexEmbeddedImageEnvelopePattern.ReplaceAllString(text, "")
+	return strings.TrimSpace(text), attachments
 }
 
 func (m *Manager) codexHistoryAttachments(payload map[string]any) []HistoryAttachment {

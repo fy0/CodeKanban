@@ -249,7 +249,7 @@ func TestParseCodexDeepHistoryMapsContextCompaction(t *testing.T) {
 	}
 }
 
-func TestParseCodexDeepHistoryCapturesMessageItemsAndDedupesUserEvent(t *testing.T) {
+func TestParseCodexDeepHistoryFiltersDeveloperMessagesAndDedupesBothOrders(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -261,25 +261,95 @@ func TestParseCodexDeepHistoryCapturesMessageItemsAndDedupesUserEvent(t *testing
 	filePath := writeCodexDeepHistoryTempFile(t, []string{
 		`{"timestamp":"2026-04-09T01:00:00Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"developer prompt"}]}}`,
 		`{"timestamp":"2026-04-09T01:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}`,
-		`{"timestamp":"2026-04-09T01:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"hello","images":[]}}`,
-		`{"timestamp":"2026-04-09T01:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}}`,
+		`{"timestamp":"2026-04-09T01:00:01.020Z","type":"event_msg","payload":{"type":"user_message","message":"hello","images":[]}}`,
+		`{"timestamp":"2026-04-09T01:00:03Z","type":"event_msg","payload":{"type":"agent_message","message":"world"}}`,
+		`{"timestamp":"2026-04-09T01:00:03.020Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"msg_world","content":[{"type":"output_text","text":"world"}]}}`,
 	})
 
 	items, err := manager.parseCodexDeepHistory(filePath)
 	if err != nil {
 		t.Fatalf("parseCodexDeepHistory returned error: %v", err)
 	}
-	if len(items) != 3 {
-		t.Fatalf("expected 3 history items, got %d", len(items))
+	if len(items) != 2 {
+		t.Fatalf("expected 2 visible history items, got %d", len(items))
 	}
-	if items[0].Kind != "system" || items[0].Text != "developer prompt" {
+	if items[0].Kind != "user" || items[0].Text != "hello" {
 		t.Fatalf("unexpected first item: %#v", items[0])
 	}
-	if items[1].Kind != "user" || items[1].Text != "hello" {
+	if items[1].Kind != "assistant" || items[1].Text != "world" {
 		t.Fatalf("unexpected second item: %#v", items[1])
 	}
-	if items[2].Kind != "assistant" || items[2].Text != "world" {
-		t.Fatalf("unexpected third item: %#v", items[2])
+	if items[1].SourceItemID == nil || *items[1].SourceItemID != "msg_world" {
+		t.Fatalf("expected response item id to be preserved, got %#v", items[1].SourceItemID)
+	}
+}
+
+func TestParseCodexDeepHistoryProjectsVisibleConversation(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	dataDir := t.TempDir()
+	manager, err := NewManager(Config{DataDir: dataDir}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	imagePath := filepath.Join(dataDir, "reference.png")
+	if err := os.WriteFile(imagePath, []byte("image"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	userText := "inspect this\n\n[Image #1]"
+	responseUserText := userText + "\n<image name=[Image #1] path=\"" + imagePath + "\">\n[input_image:]\n</image>"
+	planText := "# Fix history\n\n- Filter protocol messages.\n- Merge duplicate messages."
+	proposedPlan := "<proposed_plan>\n" + planText + "\n</proposed_plan>"
+	hostContext := "# AGENTS.md instructions for D:\\\\repo\n\n<INSTRUCTIONS>\ninternal\n</INSTRUCTIONS>\n<environment_context>internal</environment_context>"
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-04-09T01:00:00Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<collaboration_mode># Plan Mode</collaboration_mode>"}]}}`,
+		`{"timestamp":"2026-04-09T01:00:00.005Z","type":"response_item","payload":{"type":"message","role":"system","content":[{"type":"input_text","text":"internal system prompt"}]}}`,
+		`{"timestamp":"2026-04-09T01:00:00.010Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":` + strconv.Quote(hostContext) + `}]}}`,
+		`{"timestamp":"2026-04-09T01:00:00.020Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>internal</environment_context>"}]}}`,
+		`{"timestamp":"2026-04-09T01:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":` + strconv.Quote(responseUserText) + `}]}}`,
+		`{"timestamp":"2026-04-09T01:00:01.020Z","type":"event_msg","payload":{"type":"user_message","message":` + strconv.Quote(userText) + `,"images":[` + strconv.Quote(imagePath) + `]}}`,
+		`{"timestamp":"2026-04-09T01:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"working","phase":"commentary"}}`,
+		`{"timestamp":"2026-04-09T01:00:02.020Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"msg_working","phase":"commentary","content":[{"type":"output_text","text":"working"}]}}`,
+		`{"timestamp":"2026-04-09T01:00:03Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"turn_plan","item":{"type":"Plan","id":"plan_1","text":` + strconv.Quote(planText) + `}}}`,
+		`{"timestamp":"2026-04-09T01:00:03.020Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"msg_plan","content":[{"type":"output_text","text":` + strconv.Quote(proposedPlan) + `}],"internal_chat_message_metadata_passthrough":{"turn_id":"turn_plan"}}}`,
+		`{"timestamp":"2026-04-09T01:00:04Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<collaboration_mode># Collaboration Mode: Default</collaboration_mode>"}]}}`,
+		`{"timestamp":"2026-04-09T01:00:04.010Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Implement the plan."}]}}`,
+		`{"timestamp":"2026-04-09T01:00:04.020Z","type":"event_msg","payload":{"type":"user_message","message":"Implement the plan.","images":[]}}`,
+		`{"timestamp":"2026-04-09T01:00:10Z","type":"event_msg","payload":{"type":"user_message","message":"repeat","images":[]}}`,
+		`{"timestamp":"2026-04-09T01:00:10.100Z","type":"event_msg","payload":{"type":"user_message","message":"repeat","images":[]}}`,
+	})
+
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory returned error: %v", err)
+	}
+	if len(items) != 6 {
+		t.Fatalf("expected 6 visible history items, got %d: %#v", len(items), items)
+	}
+	if items[0].Kind != "user" || items[0].Text != userText || len(items[0].Attachments) != 1 {
+		t.Fatalf("unexpected image user item: %#v", items[0])
+	}
+	if items[0].Attachments[0].Path != imagePath {
+		t.Fatalf("expected image attachment path %q, got %#v", imagePath, items[0].Attachments)
+	}
+	if items[1].Kind != "assistant" || items[1].Text != "working" {
+		t.Fatalf("unexpected assistant item: %#v", items[1])
+	}
+	if items[2].Tool == nil || items[2].Tool.Kind != "plan" || items[2].Tool.Output != planText {
+		t.Fatalf("unexpected plan item: %#v", items[2])
+	}
+	if items[3].Kind != "user" || items[3].Text != "Implement the plan." {
+		t.Fatalf("unexpected implementation message: %#v", items[3])
+	}
+	if items[4].Text != "repeat" || items[5].Text != "repeat" {
+		t.Fatalf("same-source repeated messages must be preserved: %#v", items[4:])
+	}
+	for _, item := range items {
+		if strings.Contains(item.Text, "collaboration_mode") || strings.Contains(item.Text, "AGENTS.md instructions") {
+			t.Fatalf("internal protocol message leaked into history: %#v", item)
+		}
 	}
 }
 
@@ -571,14 +641,14 @@ func TestSnapshotWithAutoSyncFallsBackToLogSourceWhenFastSyncCannotReadThread(t 
 	if snapshot.Session.LastSyncMode != SyncModeDeep {
 		t.Fatalf("expected fallback sync mode deep, got %q", snapshot.Session.LastSyncMode)
 	}
-	if snapshot.History.Total != 3 {
-		t.Fatalf("expected 3 history items after fallback sync, got %d", snapshot.History.Total)
+	if snapshot.History.Total != 2 {
+		t.Fatalf("expected 2 visible history items after fallback sync, got %d", snapshot.History.Total)
 	}
-	if len(snapshot.History.Items) != 3 {
-		t.Fatalf("expected 3 loaded history items, got %d", len(snapshot.History.Items))
+	if len(snapshot.History.Items) != 2 {
+		t.Fatalf("expected 2 loaded history items, got %d", len(snapshot.History.Items))
 	}
-	if snapshot.History.Items[2].Kind != "assistant" || snapshot.History.Items[2].Text != "fallback works" {
-		t.Fatalf("unexpected assistant item: %#v", snapshot.History.Items[2])
+	if snapshot.History.Items[1].Kind != "assistant" || snapshot.History.Items[1].Text != "fallback works" {
+		t.Fatalf("unexpected assistant item: %#v", snapshot.History.Items[1])
 	}
 }
 
