@@ -1138,6 +1138,7 @@
 
                   <div
                     v-else-if="pendingUserInput && !inlinePlanChoice"
+                    :key="pendingUserInput.itemId"
                     class="approval-card user-input-card"
                     :class="{ 'is-stale': pendingUserInput.stale }"
                   >
@@ -1214,6 +1215,14 @@
                       </n-radio-group>
                       <n-input
                         v-if="question.isOther || question.options.length === 0"
+                        v-memo="[
+                          pendingUserInput.itemId,
+                          question.id,
+                          userInputDrafts[question.id],
+                          isUserInputInteractionDisabled,
+                          question.isSecret,
+                          userInputPlaceholder(question),
+                        ]"
                         v-model:value="userInputDrafts[question.id]"
                         :type="question.isSecret ? 'password' : 'text'"
                         size="small"
