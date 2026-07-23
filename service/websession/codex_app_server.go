@@ -183,6 +183,7 @@ const (
 	codexIncompleteTurnErrorCode     = "incomplete_turn"
 	codexRetryNoteLevel              = "warn"
 	codexIncompleteTurnMaxRetries    = 1
+	codexSteerTargetWait             = 10 * time.Second
 )
 
 var codexReconnectProgressPattern = regexp.MustCompile(`(?i)reconnecting\.\.\.\s*(\d+)\s*/\s*(\d+)`)
@@ -400,8 +401,8 @@ func (m *Manager) runCodexAppServerSession(
 		m.handleRunFailure(session.ID, session, run, err)
 		return
 	}
-	run.app = client
-	run.cmd = client.cmd
+	run.setCodexAppServer(client)
+	run.setCommand(client.cmd)
 
 	stderrBuffer := bytes.NewBuffer(nil)
 	stderrDone := make(chan struct{})
@@ -447,6 +448,7 @@ func (m *Manager) runCodexAppServerSession(
 	if turnID != "" {
 		run.currentToolMessage = turnID
 	}
+	run.setCodexSteerTarget(threadID, turnID)
 	rootScope := codexTurnScope{threadID: threadID, turnID: turnID}
 	if strings.TrimSpace(run.bootstrapGoalObjective) != "" {
 		if _, err := client.request(ctx, "thread/goal/set", map[string]any{
@@ -541,6 +543,7 @@ func (m *Manager) runCodexAppServerSession(
 						continue
 					}
 					run.currentToolMessage = continuedTurnID
+					run.setCodexSteerTarget(threadID, continuedTurnID)
 					rootScope = codexTurnScope{threadID: threadID, turnID: continuedTurnID}
 					continue
 				}
@@ -784,6 +787,7 @@ func (m *Manager) handleCodexAppServerMessage(
 		}
 		if turnID := parseCodexTurnID(message.Params); turnID != "" {
 			run.currentToolMessage = turnID
+			run.setCodexSteerTarget(codexNotificationThreadID(message.Params), turnID)
 		}
 		return codexTurnOutcomeNone, nil
 	case "item/started":
@@ -873,6 +877,93 @@ func (m *Manager) handleCodexAppServerMessage(
 	default:
 		return codexTurnOutcomeNone, nil
 	}
+}
+
+func (m *Manager) steerActiveCodexTurn(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	text string,
+	attachmentIDs []string,
+) (bool, error) {
+	m.mu.RLock()
+	run := m.runs[session.ID]
+	m.mu.RUnlock()
+	if run == nil || normalizeAgent(run.agent) != AgentCodex || run.backend != SessionBackendCodexAppServer {
+		return false, nil
+	}
+
+	attachments := make([]Attachment, 0, len(attachmentIDs))
+	for _, attachmentID := range attachmentIDs {
+		attachment, err := m.loadAttachment(strings.TrimSpace(attachmentID))
+		if err != nil {
+			return true, fmt.Errorf("attachment %s not found", attachmentID)
+		}
+		attachments = append(attachments, attachment)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" && len(attachments) == 0 {
+		return true, fmt.Errorf("message is empty")
+	}
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(codexSteerTargetWait)
+	defer timer.Stop()
+
+	var client *codexAppServerClient
+	var threadID string
+	var turnID string
+	for client == nil || threadID == "" || turnID == "" {
+		client, threadID, turnID = run.codexSteerTarget()
+		if client != nil && threadID != "" && turnID != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return true, ctx.Err()
+		case <-run.done:
+			return false, nil
+		case <-timer.C:
+			return true, fmt.Errorf("active Codex turn is not ready to steer")
+		case <-ticker.C:
+		}
+	}
+
+	messageID := utils.NewID()
+	response, err := client.request(ctx, "turn/steer", map[string]any{
+		"threadId":            threadID,
+		"expectedTurnId":      turnID,
+		"input":               codexUserInputs(text, attachments),
+		"clientUserMessageId": messageID,
+	})
+	if err != nil {
+		return true, err
+	}
+	responseTurnID := strings.TrimSpace(stringValue(decodeRawObject(response.Result)["turnId"]))
+	if responseTurnID != "" && responseTurnID != turnID {
+		return true, fmt.Errorf("Codex steered unexpected turn %s", responseTurnID)
+	}
+
+	if _, err := m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+		ID:        utils.NewID(),
+		Type:      "msg_u",
+		RunID:     run.runID,
+		ParentID:  messageID,
+		Timestamp: time.Now(),
+		Payload: map[string]any{
+			"mid":  messageID,
+			"txt":  text,
+			"atts": attachmentPayloads(attachments),
+		},
+	}); err != nil && m.logger != nil {
+		m.logger.Error("failed to persist Codex steer message",
+			zap.String("sessionId", session.ID),
+			zap.String("turnId", turnID),
+			zap.Error(err),
+		)
+	}
+	m.broadcastPendingInputs(session.ID)
+	return true, nil
 }
 
 func classifyCodexTransportRetryMessage(message string) (codexTransportRetryInfo, bool) {

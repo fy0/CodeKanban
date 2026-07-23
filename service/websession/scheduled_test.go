@@ -1005,10 +1005,9 @@ func TestScheduledSendFollowsNormalSendBehaviorWhenRunActive(t *testing.T) {
 		t.Fatalf("ScheduleInput returned error: %v", err)
 	}
 
-	waitForPendingInputCount(t, manager, created.ID, 1)
-	pending := manager.pendingInputsSnapshot(created.ID)
-	if len(pending) != 1 || pending[0].Mode != PendingInputModeRedirect || pending[0].Text != "Next after timer" {
-		t.Fatalf("expected scheduled send to follow normal send pending behavior, got %#v", pending)
+	waitForUserMessageCount(t, manager, created.ID, 2)
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected scheduled send to steer without creating a pending input, got %#v", pending)
 	}
 	waitForScheduledInputCount(t, manager, created.ID, 0)
 
@@ -1016,22 +1015,22 @@ func TestScheduledSendFollowsNormalSendBehaviorWhenRunActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readEvents returned error: %v", err)
 	}
-	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "first" {
-		t.Fatalf("expected queued dispatch not to append a second user message yet, got %#v", got)
+	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "first|Next after timer" {
+		t.Fatalf("expected scheduled send to steer the active turn, got %#v", got)
 	}
 
 	if err := manager.respondToApproval(created.ID, "approve"); err != nil {
 		t.Fatalf("respondToApproval returned error: %v", err)
 	}
 
-	waitForUserMessageCount(t, manager, created.ID, 2)
+	waitForSessionToSettle(t, manager, created.ID)
 
 	rawEvents, err = manager.store.readEvents(created.ID)
 	if err != nil {
 		t.Fatalf("readEvents returned error after flush: %v", err)
 	}
 	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "first|Next after timer" {
-		t.Fatalf("expected queued scheduled message to flush after approval, got %#v", got)
+		t.Fatalf("expected steer message to remain after approval, got %#v", got)
 	}
 }
 

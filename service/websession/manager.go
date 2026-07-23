@@ -154,6 +154,8 @@ type activeRun struct {
 	pendingApproval        string
 	pendingServerReq       *pendingServerRequest
 	app                    *codexAppServerClient
+	codexThreadID          string
+	codexTurnID            string
 	assistantDeltaSeen     map[string]bool
 	assistantMessagePhases map[string]string
 	assistantMessageText   map[string]bool
@@ -1468,7 +1470,7 @@ func (m *Manager) pendingApprovalSnapshot(record tables.WebSessionTable) *Pendin
 	m.mu.RLock()
 	run := m.runs[record.ID]
 	m.mu.RUnlock()
-	if run == nil || run.app == nil {
+	if run == nil || run.codexAppServer() == nil {
 		return nil
 	}
 	request, ok := run.pendingApprovalRequest()
@@ -2282,7 +2284,7 @@ func (m *Manager) AbortSession(sessionID string) error {
 	if run.cancel != nil {
 		run.cancel()
 	}
-	killCmdTree(run.cmd)
+	killCmdTree(run.command())
 	return nil
 }
 
@@ -2705,6 +2707,7 @@ func (m *Manager) handlePendingUpdateCommand(client *client, frame wireCommandFr
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, code, err.Error(), false))
 	}
 	m.broadcastPendingInputs(frame.SessionID)
+	m.triggerPendingProcessing(frame.SessionID)
 	return m.sendMutationAck(context.Background(), client, frame, nil)
 }
 
@@ -2731,6 +2734,7 @@ func (m *Manager) handlePendingReorderCommand(client *client, frame wireCommandF
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, code, err.Error(), false))
 	}
 	m.broadcastPendingInputs(frame.SessionID)
+	m.triggerPendingProcessing(frame.SessionID)
 	return m.sendMutationAck(context.Background(), client, frame, nil)
 }
 
@@ -3389,7 +3393,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		m.handleRunFailure(session.ID, session, run, err)
 		return
 	}
-	run.cmd = cmd
+	run.setCommand(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -3526,7 +3530,7 @@ func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, se
 		m.handleRunFailure(session.ID, session, run, err)
 		return
 	}
-	run.cmd = cmd
+	run.setCommand(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -4912,10 +4916,11 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 	}
 
 	if pending, ok := run.pendingApprovalRequest(); ok {
-		if run.app == nil {
+		app := run.codexAppServer()
+		if app == nil {
 			return fmt.Errorf("session approval channel is unavailable")
 		}
-		if err := run.app.respond(pending.RawID, approvalResponsePayload(pending, action)); err != nil {
+		if err := app.respond(pending.RawID, approvalResponsePayload(pending, action)); err != nil {
 			return err
 		}
 		run.clearPendingServerRequest()
@@ -5042,10 +5047,11 @@ func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[strin
 	if strings.TrimSpace(itemID) == "" || strings.TrimSpace(pending.ItemID) != strings.TrimSpace(itemID) {
 		return fmt.Errorf("user input request does not match the active prompt")
 	}
-	if run.app == nil {
+	app := run.codexAppServer()
+	if app == nil {
 		return fmt.Errorf("session input channel is unavailable")
 	}
-	if err := run.app.respond(pending.RawID, userInputResponsePayload(answers)); err != nil {
+	if err := app.respond(pending.RawID, userInputResponsePayload(answers)); err != nil {
 		return err
 	}
 	run.clearPendingServerRequest()
@@ -5935,6 +5941,65 @@ func (r *activeRun) setInput(stdin io.WriteCloser) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stdin = stdin
+}
+
+func (r *activeRun) setCommand(cmd *exec.Cmd) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.cmd = cmd
+	r.mu.Unlock()
+}
+
+func (r *activeRun) command() *exec.Cmd {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cmd
+}
+
+func (r *activeRun) setCodexAppServer(client *codexAppServerClient) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.app = client
+	r.mu.Unlock()
+}
+
+func (r *activeRun) codexAppServer() *codexAppServerClient {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.app
+}
+
+func (r *activeRun) setCodexSteerTarget(threadID string, turnID string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if normalized := strings.TrimSpace(threadID); normalized != "" {
+		r.codexThreadID = normalized
+	}
+	if normalized := strings.TrimSpace(turnID); normalized != "" {
+		r.codexTurnID = normalized
+	}
+	r.mu.Unlock()
+}
+
+func (r *activeRun) codexSteerTarget() (*codexAppServerClient, string, string) {
+	if r == nil {
+		return nil, "", ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.app, strings.TrimSpace(r.codexThreadID), strings.TrimSpace(r.codexTurnID)
 }
 
 func (r *activeRun) resolveBootstrap(err error) {

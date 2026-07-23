@@ -20,6 +20,7 @@ var (
 	ErrMessageEditHistoryConflict = errors.New("session history changed; refresh and try again")
 	ErrMessageEditForkUnavailable = errors.New("the installed Codex version does not support message branching")
 	ErrMessageEditEmpty           = errors.New("message is empty")
+	ErrMessageEditSteeredMessage  = errors.New("messages added by steering an active turn cannot be edited independently")
 )
 
 var errMessageEditLocalBranchUnavailable = errors.New("local turn mapping is unavailable")
@@ -90,6 +91,9 @@ func (m *Manager) EditUserMessage(
 	if target.Kind != "user" {
 		return SessionSnapshot{}, ErrMessageEditTargetNotFound
 	}
+	if err := m.ensureEditedMessageStartsTurn(ctx, source.ID, target); err != nil {
+		return SessionSnapshot{}, err
+	}
 
 	text = strings.TrimSpace(text)
 	if text == "" && len(target.Attachments) == 0 {
@@ -151,6 +155,37 @@ func (m *Manager) editMessageAttachments(items []HistoryAttachment) ([]Attachmen
 	return attachments, nil
 }
 
+func (m *Manager) ensureEditedMessageStartsTurn(
+	ctx context.Context,
+	sessionID string,
+	target HistoryItem,
+) error {
+	if target.SourceTurnID == nil || strings.TrimSpace(*target.SourceTurnID) == "" {
+		return nil
+	}
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	var count int64
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionItemTable{}).
+		Where(
+			"web_session_id = ? AND source_turn_id = ? AND item_kind = ? AND order_index < ?",
+			sessionID,
+			strings.TrimSpace(*target.SourceTurnID),
+			"user",
+			target.OrderIndex,
+		).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrMessageEditSteeredMessage
+	}
+	return nil
+}
+
 func (m *Manager) resolveEditedMessageTurn(
 	ctx context.Context,
 	sessionID string,
@@ -164,18 +199,18 @@ func (m *Manager) resolveEditedMessageTurn(
 
 	if target.SourceTurnID != nil {
 		targetTurnID := strings.TrimSpace(*target.SourceTurnID)
-		for _, candidate := range remoteMessages {
+		for index, candidate := range remoteMessages {
 			if candidate.turnID == targetTurnID && editableMessagesMatch(target, candidate) {
-				return candidate.turnIndex, nil
+				return validateRemoteEditedMessageStartsTurn(remoteMessages, index)
 			}
 		}
 		return -1, ErrMessageEditHistoryConflict
 	}
 	if target.SourceItemID != nil {
 		targetItemID := strings.TrimSpace(*target.SourceItemID)
-		for _, candidate := range remoteMessages {
+		for index, candidate := range remoteMessages {
 			if candidate.itemID == targetItemID && editableMessagesMatch(target, candidate) {
-				return candidate.turnIndex, nil
+				return validateRemoteEditedMessageStartsTurn(remoteMessages, index)
 			}
 		}
 	}
@@ -201,7 +236,23 @@ func (m *Manager) resolveEditedMessageTurn(
 	if ordinal < 0 || ordinal >= len(remoteMessages) || !editableMessagesMatch(target, remoteMessages[ordinal]) {
 		return -1, ErrMessageEditHistoryConflict
 	}
-	return remoteMessages[ordinal].turnIndex, nil
+	return validateRemoteEditedMessageStartsTurn(remoteMessages, ordinal)
+}
+
+func validateRemoteEditedMessageStartsTurn(
+	messages []codexEditableUserMessage,
+	index int,
+) (int, error) {
+	if index < 0 || index >= len(messages) {
+		return -1, ErrMessageEditHistoryConflict
+	}
+	turnIndex := messages[index].turnIndex
+	for previous := 0; previous < index; previous++ {
+		if messages[previous].turnIndex == turnIndex {
+			return -1, ErrMessageEditSteeredMessage
+		}
+	}
+	return turnIndex, nil
 }
 
 func (m *Manager) codexEditableUserMessages(turns []map[string]any) []codexEditableUserMessage {

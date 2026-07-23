@@ -185,6 +185,76 @@ func TestResolveEditedMessageTurnFallsBackToValidatedUserOrdinal(t *testing.T) {
 	}
 }
 
+func TestEnsureEditedMessageStartsTurnRejectsSteeredMessage(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Steered", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	turnID := "turn_1"
+	first, err := manager.appendHistoryItem(context.Background(), session.ID, HistoryItem{
+		SourceTurnID: &turnID,
+		Kind:         "user",
+		ItemType:     "userMessage",
+		Text:         "Initial request",
+		OrderIndex:   1,
+	})
+	if err != nil {
+		t.Fatalf("append initial user message: %v", err)
+	}
+	steered, err := manager.appendHistoryItem(context.Background(), session.ID, HistoryItem{
+		SourceTurnID: &turnID,
+		Kind:         "user",
+		ItemType:     "userMessage",
+		Text:         "Steer request",
+		OrderIndex:   2,
+	})
+	if err != nil {
+		t.Fatalf("append steered user message: %v", err)
+	}
+
+	if err := manager.ensureEditedMessageStartsTurn(context.Background(), session.ID, first); err != nil {
+		t.Fatalf("expected first message in turn to remain editable: %v", err)
+	}
+	if err := manager.ensureEditedMessageStartsTurn(context.Background(), session.ID, steered); !errors.Is(err, ErrMessageEditSteeredMessage) {
+		t.Fatalf("expected steered message edit rejection, got %v", err)
+	}
+}
+
+func TestResolveEditedMessageTurnRejectsRemoteSteeredMessage(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	turn := codexTestTurn("turn_1", "msg_1", "Initial request")
+	turn["items"] = append(decodeRawArray(turn["items"]), map[string]any{
+		"id":   "msg_steer",
+		"type": "userMessage",
+		"content": []any{map[string]any{
+			"type": "text",
+			"text": "Steer request",
+		}},
+	})
+	targetItemID := "msg_steer"
+	target := HistoryItem{
+		SourceItemID: &targetItemID,
+		Kind:         "user",
+		ItemType:     "userMessage",
+		Text:         "Steer request",
+	}
+
+	if _, err := manager.resolveEditedMessageTurn(context.Background(), "unused", target, []map[string]any{turn}); !errors.Is(err, ErrMessageEditSteeredMessage) {
+		t.Fatalf("expected remote steered message edit rejection, got %v", err)
+	}
+}
+
 func TestCreateEditedCodexBranchRemoteFallbackReusesQueryClient(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

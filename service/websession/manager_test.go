@@ -3377,7 +3377,7 @@ func TestAutoRetryEnabledSessionContinuesAfterFailure(t *testing.T) {
 	}
 }
 
-func TestAutoRetryRunsBeforePendingRedirect(t *testing.T) {
+func TestCodexSteerRunsBeforeAutoRetryContinuation(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -3440,8 +3440,8 @@ func TestAutoRetryRunsBeforePendingRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readEvents returned error: %v", err)
 	}
-	if got := strings.Join(userMessageTexts(events), "|"); got != "inspect|continue|next" {
-		t.Fatalf("expected retry before pending redirect, got %q", got)
+	if got := strings.Join(userMessageTexts(events), "|"); got != "inspect|next|continue" {
+		t.Fatalf("expected steer before retry continuation, got %q", got)
 	}
 	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
 		t.Fatalf("expected pending redirect to flush after retry success, got %#v", pending)
@@ -4819,14 +4819,15 @@ func TestSendMessageWithModeQueuesUntilActiveRunStops(t *testing.T) {
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
-func TestSendMessageWithModeRedirectWaitsForCurrentStepBeforeInterrupting(t *testing.T) {
+func TestSendMessageWithModeRedirectSteersActiveCodexTurn(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
 	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "step_redirect")
 	manager, err := NewManager(Config{
 		DataDir:   t.TempDir(),
-		CodexPath: writeFakeCodexAppServerCLI(t, "step_redirect"),
+		CodexPath: codexPath,
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
@@ -4866,48 +4867,136 @@ func TestSendMessageWithModeRedirectWaitsForCurrentStepBeforeInterrupting(t *tes
 		t.Fatalf("sendMessageWithMode(redirect) returned error: %v", err)
 	}
 
-	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 2 || pending[0].Text != "redirected" {
-		t.Fatalf("expected redirect item to be first in pending queue, got %#v", pending)
+	steerStatePath := codexPath + ".state.steer.json"
+	waitForFile(t, steerStatePath)
+	steerState, err := os.ReadFile(steerStatePath)
+	if err != nil {
+		t.Fatalf("read steer state: %v", err)
+	}
+	var steerRequest map[string]any
+	if err := json.Unmarshal(steerState, &steerRequest); err != nil {
+		t.Fatalf("decode steer state: %v", err)
+	}
+	if stringValue(steerRequest["threadId"]) != "thread_test" ||
+		stringValue(steerRequest["expectedTurnId"]) != "turn_test" {
+		t.Fatalf("unexpected steer target: %#v", steerRequest)
+	}
+	inputs := decodeRawArray(steerRequest["input"])
+	if len(inputs) != 1 || stringValue(inputs[0]["text"]) != "redirected" {
+		t.Fatalf("unexpected steer input: %#v", steerRequest)
 	}
 
-	time.Sleep(30 * time.Millisecond)
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 1 ||
+		pending[0].Text != "queued" || pending[0].Mode != PendingInputModeQueue {
+		t.Fatalf("expected only the queued message to remain pending, got %#v", pending)
+	}
+
 	rawEvents, err := manager.store.readEvents(created.ID)
 	if err != nil {
-		t.Fatalf("readEvents returned error while checking immediate redirect behavior: %v", err)
-	}
-	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first" {
-		t.Fatalf("expected redirect not to interrupt the current step immediately, got %#v", got)
-	}
-
-	waitForUserMessageCount(t, manager, created.ID, 2)
-
-	rawEvents, err = manager.store.readEvents(created.ID)
-	if err != nil {
-		t.Fatalf("readEvents returned error: %v", err)
+		t.Fatalf("readEvents returned error while checking steer behavior: %v", err)
 	}
 	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|redirected" {
-		t.Fatalf("expected redirect message to run after the current step boundary and before queued message, got %#v", got)
+		t.Fatalf("expected steer message in the active turn, got %#v", got)
 	}
-	pending := manager.pendingInputsSnapshot(created.ID)
-	if len(pending) != 1 || pending[0].Text != "queued" || pending[0].Mode != PendingInputModeQueue {
-		t.Fatalf("expected queued message to remain pending after redirect flush, got %#v", pending)
+	if historyHasEvent(rawEvents, "run_abort") {
+		t.Fatalf("expected steer to keep the active run alive, got %#v", rawEvents)
+	}
+	if !manager.hasActiveRun(created.ID) {
+		t.Fatal("expected active Codex run to remain alive after steer")
+	}
+
+	if err := os.WriteFile(codexPath+".state.release-steer", []byte("1"), 0o644); err != nil {
+		t.Fatalf("release steered turn: %v", err)
 	}
 
 	waitForUserMessageCount(t, manager, created.ID, 3)
 
 	rawEvents, err = manager.store.readEvents(created.ID)
 	if err != nil {
-		t.Fatalf("readEvents returned error after second flush: %v", err)
+		t.Fatalf("readEvents returned error: %v", err)
 	}
 	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|redirected|queued" {
-		t.Fatalf("expected queued message to flush after redirect run stopped, got %#v", got)
+		t.Fatalf("expected queued message to flush after the steered turn, got %#v", got)
 	}
 	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
-		t.Fatalf("expected pending inputs to be empty after second flush, got %#v", pending)
+		t.Fatalf("expected pending inputs to be empty after queue flush, got %#v", pending)
 	}
 
 	if err := manager.AbortSession(created.ID); err != nil {
 		t.Fatalf("AbortSession returned error while cleaning up: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
+func TestPendingCodexRedirectSteersWhenQueueModeChanges(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "step_redirect")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if manager.hasActiveRun(created.ID) {
+			_ = manager.AbortSession(created.ID)
+		}
+	})
+	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
+
+	queued, err := manager.queuePendingInput(
+		created.ID,
+		"changed to redirect",
+		nil,
+		PendingInputModeQueue,
+		"pending-change-mode",
+	)
+	if err != nil {
+		t.Fatalf("queuePendingInput returned error: %v", err)
+	}
+	if err := manager.reorderPendingInput(
+		created.ID,
+		queued.ID,
+		PendingInputModeRedirect,
+		0,
+	); err != nil {
+		t.Fatalf("reorderPendingInput returned error: %v", err)
+	}
+	manager.triggerPendingProcessing(created.ID)
+
+	waitForFile(t, codexPath+".state.steer.json")
+	waitForUserMessageCount(t, manager, created.ID, 2)
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected converted redirect to leave the pending queue, got %#v", pending)
+	}
+	events, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := strings.Join(userMessageTexts(events), "|"); got != "first|changed to redirect" {
+		t.Fatalf("expected converted redirect to steer the active turn, got %q", got)
+	}
+	if historyHasEvent(events, "run_abort") {
+		t.Fatalf("expected converted redirect not to abort the active run, got %#v", events)
+	}
+
+	if err := os.WriteFile(codexPath+".state.release-steer", []byte("1"), 0o644); err != nil {
+		t.Fatalf("release steered turn: %v", err)
 	}
 	waitForSessionToSettle(t, manager, created.ID)
 }
@@ -7133,6 +7222,7 @@ function writePersistentTurnCount(value) {
 let awaiting = null;
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 let startedTurns = 0;
+let steered = false;
 rl.on('line', line => {
   if (!line.trim()) {
     return;
@@ -7303,6 +7393,35 @@ rl.on('line', line => {
         goal: goalState,
       },
     });
+    return;
+  }
+
+  if (message.method === 'turn/steer') {
+    fs.writeFileSync(stateFile + '.steer.json', JSON.stringify(message.params || {}));
+    send({ id: message.id, result: { turnId } });
+    if (mode === 'step_redirect') {
+      steered = true;
+      emitCommandExecutionCompleted('cmd_step_2', 'step-2');
+      send({
+        method: 'item/started',
+        params: {
+          item: {
+            type: 'commandExecution',
+            id: 'cmd_step_3',
+            command: 'step-3',
+          },
+          threadId,
+          turnId,
+        },
+      });
+      const releasePath = stateFile + '.release-steer';
+      const releaseTimer = setInterval(() => {
+        if (!fs.existsSync(releasePath)) return;
+        clearInterval(releaseTimer);
+        emitCommandExecutionCompleted('cmd_step_3', 'step-3');
+        finishTurn('steered');
+      }, 10);
+    }
     return;
   }
 
@@ -7591,8 +7710,10 @@ rl.on('line', line => {
           },
         });
         setTimeout(() => {
+          if (steered) return;
           emitCommandExecutionCompleted('cmd_step_2', 'step-2');
           setTimeout(() => {
+            if (steered) return;
             send({
               method: 'item/started',
               params: {

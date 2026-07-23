@@ -161,6 +161,15 @@ func (m *Manager) sendMessageWithMode(
 	}
 
 	normalizedMode := normalizePendingInputMode(mode)
+	if normalizedMode == PendingInputModeRedirect &&
+		m.hasActiveRun(sessionID) &&
+		normalizeAgent(Agent(record.Agent)) == AgentCodex &&
+		effectiveSessionBackend(record) == SessionBackendCodexAppServer {
+		handled, steerErr := m.steerActiveCodexTurn(ctx, record, text, attachmentIDs)
+		if handled || steerErr != nil {
+			return steerErr
+		}
+	}
 	if normalizedMode != "" && (m.hasActiveRun(sessionID) || autoRetryDefersPending(record)) {
 		_, err := m.queuePendingInput(sessionID, text, attachmentIDs, normalizedMode, pendingID)
 		return err
@@ -441,7 +450,7 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 
 	ctx := context.Background()
 	for {
-		_, ok := m.peekPendingInput(sessionID)
+		next, ok := m.peekPendingInput(sessionID)
 		if !ok {
 			return
 		}
@@ -457,13 +466,41 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 		}
 
 		if m.hasActiveRun(sessionID) {
-			return
+			if next.Mode != PendingInputModeRedirect ||
+				normalizeAgent(Agent(record.Agent)) != AgentCodex ||
+				effectiveSessionBackend(record) != SessionBackendCodexAppServer {
+				return
+			}
+			steerInput, ok := m.popPendingInput(sessionID)
+			if !ok {
+				return
+			}
+			m.broadcastPendingInputs(sessionID)
+			handled, steerErr := m.steerActiveCodexTurn(
+				ctx,
+				record,
+				steerInput.Text,
+				steerInput.AttachmentIDs,
+			)
+			if steerErr != nil || !handled {
+				m.prependPendingInput(sessionID, steerInput)
+				m.broadcastPendingInputs(sessionID)
+				if steerErr != nil && m.logger != nil {
+					m.logger.Debug("failed to steer pending Codex redirect",
+						zap.String("sessionId", sessionID),
+						zap.String("pendingId", steerInput.ID),
+						zap.Error(steerErr),
+					)
+				}
+				return
+			}
+			continue
 		}
 		if autoRetryDefersPending(record) {
 			return
 		}
 
-		next, ok := m.popPendingInput(sessionID)
+		next, ok = m.popPendingInput(sessionID)
 		if !ok {
 			return
 		}
@@ -499,6 +536,13 @@ func (m *Manager) maybeInterruptForRedirect(sessionID string) {
 	if !ok || item.Mode != PendingInputModeRedirect {
 		return
 	}
+	record, err := m.GetSession(context.Background(), sessionID)
+	if err == nil &&
+		normalizeAgent(Agent(record.Agent)) == AgentCodex &&
+		effectiveSessionBackend(record) == SessionBackendCodexAppServer {
+		m.triggerPendingProcessing(sessionID)
+		return
+	}
 	go m.abortRunForRedirect(sessionID, item.ID, run)
 }
 
@@ -514,7 +558,7 @@ func (m *Manager) abortRunForRedirect(sessionID, pendingID string, expectedRun *
 	if expectedRun.cancel != nil {
 		expectedRun.cancel()
 	}
-	killCmdTree(expectedRun.cmd)
+	killCmdTree(expectedRun.command())
 	if m.logger != nil {
 		m.logger.Debug("interrupted active session for redirect pending input",
 			zap.String("sessionId", sessionID),

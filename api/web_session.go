@@ -301,6 +301,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				return nil, huma.Error409Conflict(err.Error())
 			case errors.Is(err, websession.ErrMessageEditUnsupported),
 				errors.Is(err, websession.ErrMessageEditForkUnavailable),
+				errors.Is(err, websession.ErrMessageEditSteeredMessage),
 				errors.Is(err, websession.ErrMessageEditEmpty):
 				return nil, huma.Error400BadRequest(err.Error())
 			default:
