@@ -31,6 +31,25 @@ type CommitInfo struct {
 	Date    time.Time
 }
 
+// HasTrackedWorktreeChanges reports whether tracked files have staged,
+// unstaged, or conflicted changes. Untracked files are intentionally ignored.
+func HasTrackedWorktreeChanges(path string) (bool, error) {
+	cmd := newGitCommand(
+		path,
+		"--no-optional-locks",
+		"status",
+		"--porcelain=2",
+		"--untracked-files=no",
+		"--ignore-submodules=untracked",
+		"--no-renames",
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return len(bytes.TrimSpace(output)) > 0, nil
+}
+
 // GetWorktreeStatus gathers branch, diff, and status metrics for a worktree path.
 func GetWorktreeStatus(path string) (*WorktreeStatus, error) {
 	if status, err := collectWorktreeStatusViaGit(path); err == nil {

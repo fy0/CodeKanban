@@ -134,7 +134,11 @@ type WireScheduledInput = {
   err?: string;
   txt?: string;
   atts?: string[];
+  sk?: 'at_time' | 'when_idle' | string;
   sf?: number | null;
+  is?: number | null;
+  br?: string[];
+  ce?: string;
   ca?: number | null;
   ua?: number | null;
   sa?: number | null;
@@ -467,7 +471,11 @@ export interface WebSessionScheduledInput {
   lastError: string;
   text: string;
   attachmentIds: string[];
-  scheduledFor: number;
+  scheduleKind: 'at_time' | 'when_idle';
+  scheduledFor: number | null;
+  idleSince: number | null;
+  blockingReasons: Array<'git_dirty' | 'git_unavailable' | 'non_plan_session_active'>;
+  conditionError: string;
   createdAt: number;
   updatedAt: number;
   sentAt: number | null;
@@ -480,6 +488,10 @@ export interface WebSessionPlanExecutionTarget {
   questionId?: string;
   executeOptionLabel?: string;
 }
+
+export type WebSessionPlanSchedule =
+  | { scheduleKind: 'at_time'; scheduledFor: number }
+  | { scheduleKind: 'when_idle'; scheduledFor?: null };
 
 type RuntimeMutationStateSnapshot = {
   blockCount: number;
@@ -2556,7 +2568,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
     lastError?: string;
     text?: string;
     attachmentIds?: string[];
+    scheduleKind?: 'at_time' | 'when_idle' | string;
     scheduledFor?: string | number | null;
+    idleSince?: string | number | null;
+    blockingReasons?: string[];
+    conditionError?: string;
     createdAt?: string | number | null;
     updatedAt?: string | number | null;
     sentAt?: string | number | null;
@@ -2586,13 +2602,31 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!mode || !status) {
       return null;
     }
-    const scheduledFor =
+    const scheduleKind =
+      action === 'execute_plan' && item.scheduleKind === 'when_idle' ? 'when_idle' : 'at_time';
+    const parsedScheduledFor =
       typeof item.scheduledFor === 'number'
         ? item.scheduledFor
         : Date.parse(typeof item.scheduledFor === 'string' ? item.scheduledFor : '');
-    if (!Number.isFinite(scheduledFor)) {
+    if (scheduleKind === 'at_time' && !Number.isFinite(parsedScheduledFor)) {
       return null;
     }
+    const scheduledFor = Number.isFinite(parsedScheduledFor) ? parsedScheduledFor : null;
+    const parsedIdleSince =
+      typeof item.idleSince === 'number'
+        ? item.idleSince
+        : Date.parse(typeof item.idleSince === 'string' ? item.idleSince : '');
+    const validBlockingReasons = new Set([
+      'git_dirty',
+      'git_unavailable',
+      'non_plan_session_active',
+    ]);
+    const blockingReasons = Array.isArray(item.blockingReasons)
+      ? item.blockingReasons.filter(
+          (value): value is WebSessionScheduledInput['blockingReasons'][number] =>
+            validBlockingReasons.has(value)
+        )
+      : [];
     const createdAt =
       typeof item.createdAt === 'number'
         ? item.createdAt
@@ -2620,7 +2654,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
       attachmentIds: Array.isArray(item.attachmentIds)
         ? item.attachmentIds.filter((value): value is string => typeof value === 'string')
         : [],
+      scheduleKind,
       scheduledFor,
+      idleSince: Number.isFinite(parsedIdleSince) ? parsedIdleSince : null,
+      blockingReasons,
+      conditionError: typeof item.conditionError === 'string' ? item.conditionError.trim() : '',
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
       updatedAt: Number.isFinite(updatedAt)
         ? updatedAt
@@ -2651,8 +2689,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (left.status !== right.status) {
         return left.status === 'scheduled' ? -1 : 1;
       }
-      if (left.scheduledFor !== right.scheduledFor) {
-        return left.scheduledFor - right.scheduledFor;
+      if (left.scheduleKind !== right.scheduleKind) {
+        return left.scheduleKind === 'when_idle' ? -1 : 1;
+      }
+      if (
+        left.scheduleKind === 'at_time' &&
+        right.scheduleKind === 'at_time' &&
+        left.scheduledFor !== right.scheduledFor
+      ) {
+        return (
+          (left.scheduledFor ?? Number.MAX_SAFE_INTEGER) -
+          (right.scheduledFor ?? Number.MAX_SAFE_INTEGER)
+        );
       }
       return left.createdAt - right.createdAt;
     });
@@ -4105,7 +4153,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
                   lastError: item.err,
                   text: item.txt,
                   attachmentIds: item.atts,
+                  scheduleKind: item.sk,
                   scheduledFor: item.sf,
+                  idleSince: item.is,
+                  blockingReasons: item.br,
+                  conditionError: item.ce,
                   createdAt: item.ca,
                   updatedAt: item.ua,
                   sentAt: item.sa,
@@ -4173,7 +4225,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
                     lastError: item.err,
                     text: item.txt,
                     attachmentIds: item.atts,
+                    scheduleKind: item.sk,
                     scheduledFor: item.sf,
+                    idleSince: item.is,
+                    blockingReasons: item.br,
+                    conditionError: item.ce,
                     createdAt: item.ca,
                     updatedAt: item.ua,
                     sentAt: item.sa,
@@ -5130,7 +5186,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
       attachmentIds: Array.isArray(payload?.atts)
         ? payload.atts.filter((value): value is string => typeof value === 'string')
         : attachmentIds,
+      scheduleKind: typeof payload?.sk === 'string' ? payload.sk : 'at_time',
       scheduledFor: typeof payload?.sf === 'number' ? payload.sf : scheduledFor,
+      idleSince: null,
+      blockingReasons: [],
+      conditionError: '',
       createdAt:
         typeof payload?.ca === 'number' || typeof payload?.ca === 'string' ? payload.ca : null,
       updatedAt:
@@ -5154,19 +5214,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   async function schedulePlanExecution(
     sessionId: string,
-    scheduledFor: number,
+    scheduledForOrSchedule: number | WebSessionPlanSchedule,
     target: WebSessionPlanExecutionTarget
   ) {
     const session = findSessionById(sessionId);
     if (session?.archivedAt) {
       throw new Error('session is archived');
     }
+    const schedule: WebSessionPlanSchedule =
+      typeof scheduledForOrSchedule === 'number'
+        ? { scheduleKind: 'at_time', scheduledFor: scheduledForOrSchedule }
+        : scheduledForOrSchedule;
     const frame = await sendCommand('schedule_plan', sessionId, {
       pid: target.planItemId,
       iid: target.pendingItemId ?? '',
       qid: target.questionId ?? '',
       opt: target.executeOptionLabel ?? '',
-      at: scheduledFor,
+      sk: schedule.scheduleKind,
+      ...(schedule.scheduleKind === 'at_time' ? { at: schedule.scheduledFor } : {}),
     });
     const payload = asRecord(frame.p);
     const created = normalizeScheduledInput({
@@ -5180,7 +5245,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
       attachmentIds: Array.isArray(payload?.atts)
         ? payload.atts.filter((value): value is string => typeof value === 'string')
         : [],
-      scheduledFor: typeof payload?.sf === 'number' ? payload.sf : scheduledFor,
+      scheduleKind: typeof payload?.sk === 'string' ? payload.sk : schedule.scheduleKind,
+      scheduledFor:
+        typeof payload?.sf === 'number'
+          ? payload.sf
+          : schedule.scheduleKind === 'at_time'
+            ? schedule.scheduledFor
+            : null,
+      idleSince:
+        typeof payload?.is === 'number' || typeof payload?.is === 'string' ? payload.is : null,
+      blockingReasons: Array.isArray(payload?.br)
+        ? payload.br.filter((value): value is string => typeof value === 'string')
+        : [],
+      conditionError: typeof payload?.ce === 'string' ? payload.ce : '',
       createdAt:
         typeof payload?.ca === 'number' || typeof payload?.ca === 'string' ? payload.ca : null,
       updatedAt:
@@ -5206,7 +5283,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sessionId: string,
     inputId: string,
     update: {
-      scheduledFor: number;
+      scheduleKind?: 'at_time' | 'when_idle';
+      scheduledFor?: number | null;
       text?: string;
       mode?: 'send' | 'interrupt' | 'queue';
     }
@@ -5217,7 +5295,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
     const frame = await sendCommand('scheduled_update', sessionId, {
       id: inputId,
-      at: update.scheduledFor,
+      ...(update.scheduleKind ? { sk: update.scheduleKind } : {}),
+      ...(typeof update.scheduledFor === 'number' ? { at: update.scheduledFor } : {}),
       ...(typeof update.text === 'string' ? { txt: update.text } : {}),
       ...(update.mode ? { mode: update.mode } : {}),
     });
@@ -5233,7 +5312,22 @@ export const useWebSessionStore = defineStore('web-session', () => {
       attachmentIds: Array.isArray(payload?.atts)
         ? payload.atts.filter((value): value is string => typeof value === 'string')
         : current.attachmentIds,
-      scheduledFor: typeof payload?.sf === 'number' ? payload.sf : update.scheduledFor,
+      scheduleKind:
+        typeof payload?.sk === 'string'
+          ? payload.sk
+          : (update.scheduleKind ?? current.scheduleKind),
+      scheduledFor:
+        typeof payload?.sf === 'number'
+          ? payload.sf
+          : update.scheduleKind === 'when_idle'
+            ? null
+            : (update.scheduledFor ?? current.scheduledFor),
+      idleSince:
+        typeof payload?.is === 'number' || typeof payload?.is === 'string' ? payload.is : null,
+      blockingReasons: Array.isArray(payload?.br)
+        ? payload.br.filter((value): value is string => typeof value === 'string')
+        : [],
+      conditionError: typeof payload?.ce === 'string' ? payload.ce : '',
       createdAt:
         typeof payload?.ca === 'number' || typeof payload?.ca === 'string'
           ? payload.ca

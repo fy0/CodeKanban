@@ -3,6 +3,8 @@ package websession
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -322,6 +324,395 @@ func TestSchedulePlanExecutionIncludesTargetAndRejectsDuplicate(t *testing.T) {
 	}
 }
 
+func TestScheduledPlanWhenIdleDispatchesAfterStableCleanPeriod(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	initScheduledTestGitRepository(t, project.Path)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	previousPollInterval := scheduledIdlePollInterval
+	previousStablePeriod := scheduledIdleStablePeriod
+	scheduledIdlePollInterval = 10 * time.Millisecond
+	scheduledIdleStablePeriod = 50 * time.Millisecond
+	defer func() {
+		manager.cancelScheduledIdleMonitor()
+		scheduledIdlePollInterval = previousPollInterval
+		scheduledIdleStablePeriod = previousStablePeriod
+	}()
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Implement when idle")
+	item, err := manager.SchedulePlanExecutionWhenIdle(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecutionWhenIdle returned error: %v", err)
+	}
+	if item.ScheduleKind != ScheduledInputScheduleWhenIdle || item.ScheduledFor != nil {
+		t.Fatalf("expected when-idle schedule without timestamp, got %#v", item)
+	}
+
+	waitForUserMessageCount(t, manager, created.ID, 1)
+	waitForSessionToSettle(t, manager, created.ID)
+	waitForScheduledInputCount(t, manager, created.ID, 0)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "Implement the plan." {
+		t.Fatalf("expected idle plan implementation prompt, got %q", got)
+	}
+}
+
+func TestScheduledPlanWhenIdleResetsAfterGitChange(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	initScheduledTestGitRepository(t, project.Path)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	previousPollInterval := scheduledIdlePollInterval
+	previousStablePeriod := scheduledIdleStablePeriod
+	scheduledIdlePollInterval = 10 * time.Millisecond
+	scheduledIdleStablePeriod = 5 * time.Second
+	defer func() {
+		manager.cancelScheduledIdleMonitor()
+		scheduledIdlePollInterval = previousPollInterval
+		scheduledIdleStablePeriod = previousStablePeriod
+	}()
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Wait for clean worktree")
+	item, err := manager.SchedulePlanExecutionWhenIdle(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecutionWhenIdle returned error: %v", err)
+	}
+	firstReady := waitForScheduledIdleRecord(t, item.ID, func(record tables.WebSessionScheduledInputTable) bool {
+		return record.IdleSince != nil
+	})
+
+	dirtyPath := filepath.Join(project.Path, "tracked.txt")
+	if err := os.WriteFile(dirtyPath, []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+	waitForScheduledIdleRecord(t, item.ID, func(record tables.WebSessionScheduledInputTable) bool {
+		return record.IdleSince == nil && strings.Contains(record.BlockingReasons, string(ScheduledInputBlockedGitDirty))
+	})
+	if err := os.WriteFile(dirtyPath, []byte("clean\n"), 0o644); err != nil {
+		t.Fatalf("restore tracked file: %v", err)
+	}
+	secondReady := waitForScheduledIdleRecord(t, item.ID, func(record tables.WebSessionScheduledInputTable) bool {
+		return record.IdleSince != nil && record.IdleSince.After(*firstReady.IdleSince)
+	})
+	if secondReady.BlockingReasons != "[]" {
+		t.Fatalf("expected cleared blocking reasons, got %#v", secondReady)
+	}
+	if err := manager.RemoveScheduledInput(context.Background(), created.ID, item.ID); err != nil {
+		t.Fatalf("RemoveScheduledInput returned error: %v", err)
+	}
+}
+
+func TestScheduledPlanWhenIdleIgnoresUntrackedFiles(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	initScheduledTestGitRepository(t, project.Path)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	previousPollInterval := scheduledIdlePollInterval
+	previousStablePeriod := scheduledIdleStablePeriod
+	scheduledIdlePollInterval = 10 * time.Millisecond
+	scheduledIdleStablePeriod = 5 * time.Second
+	defer func() {
+		manager.cancelScheduledIdleMonitor()
+		scheduledIdlePollInterval = previousPollInterval
+		scheduledIdleStablePeriod = previousStablePeriod
+	}()
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Ignore untracked files")
+	item, err := manager.SchedulePlanExecutionWhenIdle(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecutionWhenIdle returned error: %v", err)
+	}
+	firstReady := waitForScheduledIdleRecord(t, item.ID, func(record tables.WebSessionScheduledInputTable) bool {
+		return record.IdleSince != nil
+	})
+
+	untrackedPath := filepath.Join(project.Path, "untracked.txt")
+	if err := os.WriteFile(untrackedPath, []byte("untracked\n"), 0o644); err != nil {
+		t.Fatalf("write untracked file: %v", err)
+	}
+	if err := manager.processScheduledIdleInput(
+		context.Background(),
+		item.ID,
+		newScheduledIdleSweepCache(),
+	); err != nil {
+		t.Fatalf("processScheduledIdleInput returned error: %v", err)
+	}
+
+	var record tables.WebSessionScheduledInputTable
+	if err := model.GetDB().First(&record, "id = ?", item.ID).Error; err != nil {
+		t.Fatalf("load scheduled idle input: %v", err)
+	}
+	if record.IdleSince == nil || !record.IdleSince.Equal(*firstReady.IdleSince) {
+		t.Fatalf("expected untracked file to preserve idle start, got %#v", record)
+	}
+	if strings.Contains(record.BlockingReasons, string(ScheduledInputBlockedGitDirty)) {
+		t.Fatalf("expected no Git dirty blocker for untracked file, got %#v", record)
+	}
+	if err := manager.RemoveScheduledInput(context.Background(), created.ID, item.ID); err != nil {
+		t.Fatalf("RemoveScheduledInput returned error: %v", err)
+	}
+}
+
+func TestScheduledIdleConditionsBlockWaitingNonPlanSessions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	initScheduledTestGitRepository(t, project.Path)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	target, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession target returned error: %v", err)
+	}
+	other, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModeDefault,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession other returned error: %v", err)
+	}
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", other.ID).
+		Updates(map[string]any{
+			"status":          string(StatusDone),
+			"assistant_state": string(AssistantStateWaitingInput),
+		}).Error; err != nil {
+		t.Fatalf("mark other session waiting: %v", err)
+	}
+
+	targetRecord, err := manager.GetSession(context.Background(), target.ID)
+	if err != nil {
+		t.Fatalf("GetSession target returned error: %v", err)
+	}
+	reasons, conditionError, err := manager.evaluateScheduledIdleConditions(context.Background(), targetRecord)
+	if err != nil || conditionError != "" {
+		t.Fatalf("evaluateScheduledIdleConditions returned error: %v, %q", err, conditionError)
+	}
+	if !scheduledBlockingReasonsContain(reasons, ScheduledInputBlockedNonPlanSessionActive) {
+		t.Fatalf("expected waiting non-plan session blocker, got %#v", reasons)
+	}
+	if _, err := manager.UpdateWorkflowMode(context.Background(), other.ID, WorkflowModePlan); err != nil {
+		t.Fatalf("UpdateWorkflowMode returned error: %v", err)
+	}
+	reasons, conditionError, err = manager.evaluateScheduledIdleConditions(context.Background(), targetRecord)
+	if err != nil || conditionError != "" || len(reasons) != 0 {
+		t.Fatalf("expected plan-mode session to be ignored, got reasons=%#v error=%v detail=%q", reasons, err, conditionError)
+	}
+}
+
+func TestScheduledIdleConditionsWaitWhenGitIsUnavailable(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	target, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	targetRecord, err := manager.GetSession(context.Background(), target.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	reasons, conditionError, err := manager.evaluateScheduledIdleConditions(context.Background(), targetRecord)
+	if err != nil {
+		t.Fatalf("evaluateScheduledIdleConditions returned error: %v", err)
+	}
+	if !scheduledBlockingReasonsContain(reasons, ScheduledInputBlockedGitUnavailable) || conditionError == "" {
+		t.Fatalf("expected Git-unavailable wait state, got reasons=%#v detail=%q", reasons, conditionError)
+	}
+}
+
+func TestRecoverPendingIdleSchedulesResetsStablePeriod(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	previousPollInterval := scheduledIdlePollInterval
+	scheduledIdlePollInterval = time.Hour
+	defer func() {
+		manager.cancelScheduledIdleMonitor()
+		scheduledIdlePollInterval = previousPollInterval
+	}()
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Recover idle plan")
+	item, err := manager.SchedulePlanExecutionWhenIdle(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecutionWhenIdle returned error: %v", err)
+	}
+	manager.cancelScheduledIdleMonitor()
+	idleSince := time.Now().Add(-time.Minute)
+	if err := model.GetDB().Model(&tables.WebSessionScheduledInputTable{}).
+		Where("id = ?", item.ID).
+		Updates(map[string]any{
+			"idle_since":            idleSince,
+			"blocking_reasons_json": marshalScheduledInputBlockingReasons([]ScheduledInputBlockingReason{ScheduledInputBlockedGitDirty}),
+			"condition_error":       "stale condition error",
+		}).Error; err != nil {
+		t.Fatalf("seed idle condition state: %v", err)
+	}
+	if err := manager.recoverPendingScheduledInputs(context.Background()); err != nil {
+		t.Fatalf("recoverPendingScheduledInputs returned error: %v", err)
+	}
+	manager.cancelScheduledIdleMonitor()
+
+	var recovered tables.WebSessionScheduledInputTable
+	if err := model.GetDB().First(&recovered, "id = ?", item.ID).Error; err != nil {
+		t.Fatalf("load recovered idle schedule: %v", err)
+	}
+	if recovered.IdleSince != nil || recovered.BlockingReasons != "[]" || recovered.ConditionError != "" {
+		t.Fatalf("expected recovery to reset idle state, got %#v", recovered)
+	}
+}
+
+func TestUpdateScheduledPlanSwitchesBetweenAtTimeAndWhenIdle(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Switch schedule kind")
+	item, err := manager.SchedulePlanExecution(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+		time.Now().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecution returned error: %v", err)
+	}
+	whenIdle := ScheduledInputScheduleWhenIdle
+	updated, err := manager.UpdateScheduledInput(context.Background(), created.ID, item.ID, scheduledInputUpdate{
+		ScheduleKind: &whenIdle,
+	})
+	if err != nil {
+		t.Fatalf("switch to when-idle returned error: %v", err)
+	}
+	if updated.ScheduleKind != ScheduledInputScheduleWhenIdle || updated.ScheduledFor != nil {
+		t.Fatalf("expected when-idle schedule, got %#v", updated)
+	}
+	atTime := ScheduledInputScheduleAtTime
+	nextTime := time.Now().Add(2 * time.Hour)
+	updated, err = manager.UpdateScheduledInput(context.Background(), created.ID, item.ID, scheduledInputUpdate{
+		ScheduleKind: &atTime,
+		ScheduledFor: nextTime,
+	})
+	if err != nil {
+		t.Fatalf("switch to at-time returned error: %v", err)
+	}
+	if updated.ScheduleKind != ScheduledInputScheduleAtTime || updated.ScheduledFor == nil ||
+		updated.ScheduledFor.UnixMilli() != nextTime.UnixMilli() {
+		t.Fatalf("expected at-time schedule, got %#v", updated)
+	}
+	manager.cancelScheduledInputTimer(item.ID)
+	manager.cancelScheduledIdleMonitor()
+}
+
 func TestScheduledPlanExecutionDispatchesOriginalPlan(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -504,6 +895,60 @@ func insertScheduledPlanHistoryItem(
 		t.Fatalf("insertHistoryItem returned error: %v", err)
 	}
 	return item
+}
+
+func initScheduledTestGitRepository(t *testing.T, path string) {
+	t.Helper()
+	runScheduledTestGit(t, path, "init")
+	runScheduledTestGit(t, path, "config", "user.email", "scheduled-test@example.com")
+	runScheduledTestGit(t, path, "config", "user.name", "Scheduled Test")
+	trackedPath := filepath.Join(path, "tracked.txt")
+	if err := os.WriteFile(trackedPath, []byte("clean\n"), 0o644); err != nil {
+		t.Fatalf("write tracked file: %v", err)
+	}
+	runScheduledTestGit(t, path, "add", "tracked.txt")
+	runScheduledTestGit(t, path, "commit", "-m", "Initial commit")
+}
+
+func runScheduledTestGit(t *testing.T, path string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = path
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+}
+
+func waitForScheduledIdleRecord(
+	t *testing.T,
+	inputID string,
+	predicate func(tables.WebSessionScheduledInputTable) bool,
+) tables.WebSessionScheduledInputTable {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var record tables.WebSessionScheduledInputTable
+		if err := model.GetDB().First(&record, "id = ?", inputID).Error; err == nil && predicate(record) {
+			return record
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	var record tables.WebSessionScheduledInputTable
+	_ = model.GetDB().First(&record, "id = ?", inputID).Error
+	t.Fatalf("scheduled idle input %q did not reach expected state: %#v", inputID, record)
+	return tables.WebSessionScheduledInputTable{}
+}
+
+func scheduledBlockingReasonsContain(
+	reasons []ScheduledInputBlockingReason,
+	want ScheduledInputBlockingReason,
+) bool {
+	for _, reason := range reasons {
+		if reason == want {
+			return true
+		}
+	}
+	return false
 }
 
 func waitForScheduledInputStatus(t *testing.T, inputID string, status ScheduledInputStatus) {

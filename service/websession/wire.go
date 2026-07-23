@@ -199,19 +199,23 @@ type wirePendingInput struct {
 }
 
 type wireScheduledInput struct {
-	ID            string   `json:"id"`
-	Action        string   `json:"a,omitempty"`
-	TargetID      string   `json:"tid,omitempty"`
-	Mode          string   `json:"m"`
-	Text          string   `json:"txt,omitempty"`
-	AttachmentIDs []string `json:"atts,omitempty"`
-	ScheduledFor  int64    `json:"sf"`
-	Status        string   `json:"st"`
-	LastError     string   `json:"err,omitempty"`
-	CreatedAt     int64    `json:"ca"`
-	UpdatedAt     int64    `json:"ua"`
-	SentAt        *int64   `json:"sa,omitempty"`
-	CanceledAt    *int64   `json:"xa,omitempty"`
+	ID              string   `json:"id"`
+	Action          string   `json:"a,omitempty"`
+	TargetID        string   `json:"tid,omitempty"`
+	Mode            string   `json:"m"`
+	Text            string   `json:"txt,omitempty"`
+	AttachmentIDs   []string `json:"atts,omitempty"`
+	ScheduleKind    string   `json:"sk,omitempty"`
+	ScheduledFor    *int64   `json:"sf,omitempty"`
+	IdleSince       *int64   `json:"is,omitempty"`
+	BlockingReasons []string `json:"br,omitempty"`
+	ConditionError  string   `json:"ce,omitempty"`
+	Status          string   `json:"st"`
+	LastError       string   `json:"err,omitempty"`
+	CreatedAt       int64    `json:"ca"`
+	UpdatedAt       int64    `json:"ua"`
+	SentAt          *int64   `json:"sa,omitempty"`
+	CanceledAt      *int64   `json:"xa,omitempty"`
 }
 
 type wirePendingUserInput struct {
@@ -517,6 +521,20 @@ func mapWireScheduledInputs(items []ScheduledInput) []wireScheduledInput {
 	}
 	wireItems := make([]wireScheduledInput, 0, len(items))
 	for _, item := range items {
+		var scheduledFor *int64
+		if item.ScheduledFor != nil {
+			value := item.ScheduledFor.UnixMilli()
+			scheduledFor = &value
+		}
+		var idleSince *int64
+		if item.IdleSince != nil {
+			value := item.IdleSince.UnixMilli()
+			idleSince = &value
+		}
+		blockingReasons := make([]string, 0, len(item.BlockingReasons))
+		for _, reason := range item.BlockingReasons {
+			blockingReasons = append(blockingReasons, string(reason))
+		}
 		var sentAt *int64
 		if item.SentAt != nil {
 			value := item.SentAt.UnixMilli()
@@ -528,19 +546,23 @@ func mapWireScheduledInputs(items []ScheduledInput) []wireScheduledInput {
 			canceledAt = &value
 		}
 		wireItems = append(wireItems, wireScheduledInput{
-			ID:            item.ID,
-			Action:        string(item.Action),
-			TargetID:      item.TargetID,
-			Mode:          string(item.Mode),
-			Text:          item.Text,
-			AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
-			ScheduledFor:  item.ScheduledFor.UnixMilli(),
-			Status:        string(item.Status),
-			LastError:     item.LastError,
-			CreatedAt:     item.CreatedAt.UnixMilli(),
-			UpdatedAt:     item.UpdatedAt.UnixMilli(),
-			SentAt:        sentAt,
-			CanceledAt:    canceledAt,
+			ID:              item.ID,
+			Action:          string(item.Action),
+			TargetID:        item.TargetID,
+			Mode:            string(item.Mode),
+			Text:            item.Text,
+			AttachmentIDs:   append([]string(nil), item.AttachmentIDs...),
+			ScheduleKind:    string(item.ScheduleKind),
+			ScheduledFor:    scheduledFor,
+			IdleSince:       idleSince,
+			BlockingReasons: blockingReasons,
+			ConditionError:  item.ConditionError,
+			Status:          string(item.Status),
+			LastError:       item.LastError,
+			CreatedAt:       item.CreatedAt.UnixMilli(),
+			UpdatedAt:       item.UpdatedAt.UnixMilli(),
+			SentAt:          sentAt,
+			CanceledAt:      canceledAt,
 		})
 	}
 	return wireItems

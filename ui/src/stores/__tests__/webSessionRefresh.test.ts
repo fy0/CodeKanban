@@ -767,7 +767,11 @@ describe('webSession loading behavior', () => {
         lastError: '',
         text: 'Send later',
         attachmentIds: ['attachment-7'],
+        scheduleKind: 'at_time',
         scheduledFor: Date.parse('2026-04-09T10:05:00.000Z'),
+        idleSince: null,
+        blockingReasons: [],
+        conditionError: '',
         createdAt: Date.parse('2026-04-09T10:01:00.000Z'),
         updatedAt: Date.parse('2026-04-09T10:01:00.000Z'),
         sentAt: null,
@@ -1255,7 +1259,11 @@ describe('webSession loading behavior', () => {
         lastError: '',
         text: 'Later message',
         attachmentIds: [],
+        scheduleKind: 'at_time',
         scheduledFor: scheduledAt,
+        idleSince: null,
+        blockingReasons: [],
+        conditionError: '',
         createdAt: scheduledAt - 60_000,
         updatedAt: scheduledAt - 60_000,
         sentAt: null,
@@ -1299,6 +1307,7 @@ describe('webSession loading behavior', () => {
         iid: 'plan-choice-1',
         qid: 'direction',
         opt: 'Implement plan',
+        sk: 'at_time',
         at: scheduledAt,
       },
     });
@@ -1337,6 +1346,73 @@ describe('webSession loading behavior', () => {
       action: 'execute_plan',
       targetId: 'plan-item-1',
       text: 'Implement the plan.',
+      scheduleKind: 'at_time',
+    });
+  });
+
+  it('stores when-idle plan schedules without a scheduled timestamp', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-schedule-plan-idle',
+      status: 'done',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const schedulePromise = store.schedulePlanExecution(
+      session.id,
+      { scheduleKind: 'when_idle' },
+      { planItemId: 'plan-item-idle' }
+    );
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    const sent = commandSocket?.sent.at(-1) as
+      | { rid?: string; p?: Record<string, unknown> }
+      | undefined;
+    expect(sent).toMatchObject({
+      p: {
+        pid: 'plan-item-idle',
+        sk: 'when_idle',
+      },
+    });
+    expect(sent?.p).not.toHaveProperty('at');
+
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: String(sent?.rid ?? ''),
+      sid: session.id,
+      ts: Date.now(),
+      op: 'schedule_plan',
+      ok: 1,
+      p: {
+        id: 'scheduled-plan-idle',
+        a: 'execute_plan',
+        tid: 'plan-item-idle',
+        m: 'send',
+        sk: 'when_idle',
+        st: 'scheduled',
+        txt: 'Implement the plan.',
+        br: ['git_dirty'],
+        ce: '',
+        ca: Date.parse('2026-04-09T10:00:00.000Z'),
+        ua: Date.parse('2026-04-09T10:00:00.000Z'),
+      },
+    });
+
+    await expect(schedulePromise).resolves.toMatchObject({
+      id: 'scheduled-plan-idle',
+      scheduleKind: 'when_idle',
+      scheduledFor: null,
+      blockingReasons: ['git_dirty'],
     });
   });
 
@@ -1510,7 +1586,11 @@ describe('webSession loading behavior', () => {
         lastError: 'scheduled plan is no longer available',
         text: 'Implement the plan.',
         attachmentIds: [],
+        scheduleKind: 'at_time',
         scheduledFor: Date.parse('2026-04-09T10:09:00.000Z'),
+        idleSince: null,
+        blockingReasons: [],
+        conditionError: '',
         createdAt: Date.parse('2026-04-09T10:01:00.000Z'),
         updatedAt: Date.parse('2026-04-09T10:02:00.000Z'),
         sentAt: null,

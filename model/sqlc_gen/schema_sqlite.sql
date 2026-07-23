@@ -1,7 +1,7 @@
 -- 数据库建表语句
 -- 生成时间: 2026-05-14 03:54:13
 -- 数据库方言: sqlite
--- 总共 87 条语句
+-- 总共 88 条语句
 
 
 CREATE TABLE "users" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"nickname" text,"avatar" text,"brief" text,"username" text NOT NULL,"password" text NOT NULL,"salt" text NOT NULL,"disabled" numeric NOT NULL DEFAULT false,PRIMARY KEY ("id"));
@@ -69,9 +69,10 @@ CREATE INDEX "idx_web_sessions_project_id" ON "web_sessions"("project_id");
 CREATE INDEX "idx_web_sessions_deleted_at" ON "web_sessions"("deleted_at");
 
 
-CREATE TABLE "web_session_scheduled_inputs" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"action" text NOT NULL DEFAULT "message","target_id" text,"payload_json" text NOT NULL DEFAULT "{}","mode" text NOT NULL DEFAULT "send","text" text,"attachment_ids_json" text NOT NULL DEFAULT "[]","scheduled_for" datetime NOT NULL,"status" text NOT NULL DEFAULT "scheduled","last_error" text NOT NULL DEFAULT "","sent_at" datetime,"canceled_at" datetime,PRIMARY KEY ("id"));
+CREATE TABLE "web_session_scheduled_inputs" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"action" text NOT NULL DEFAULT "message","target_id" text,"payload_json" text NOT NULL DEFAULT "{}","mode" text NOT NULL DEFAULT "send","text" text,"attachment_ids_json" text NOT NULL DEFAULT "[]","schedule_kind" text NOT NULL DEFAULT "at_time","scheduled_for" datetime NOT NULL,"idle_since" datetime,"blocking_reasons_json" text NOT NULL DEFAULT "[]","condition_error" text NOT NULL DEFAULT "","status" text NOT NULL DEFAULT "scheduled","last_error" text NOT NULL DEFAULT "","sent_at" datetime,"canceled_at" datetime,PRIMARY KEY ("id"));
 CREATE INDEX "idx_web_session_scheduled_inputs_status" ON "web_session_scheduled_inputs"("status");
 CREATE INDEX "idx_web_session_scheduled_inputs_scheduled_for" ON "web_session_scheduled_inputs"("scheduled_for");
+CREATE INDEX "idx_web_session_scheduled_inputs_schedule_kind" ON "web_session_scheduled_inputs"("schedule_kind");
 CREATE INDEX "idx_web_session_scheduled_inputs_mode" ON "web_session_scheduled_inputs"("mode");
 CREATE INDEX "idx_web_session_scheduled_inputs_target_id" ON "web_session_scheduled_inputs"("target_id");
 CREATE INDEX "idx_web_session_scheduled_inputs_action" ON "web_session_scheduled_inputs"("action");

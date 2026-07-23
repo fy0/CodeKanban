@@ -16,7 +16,11 @@ type WebSessionScheduledInputTable struct {
 	Mode              string     `gorm:"type:text;not null;default:send;index" json:"mode"`
 	Text              string     `gorm:"type:text" json:"text"`
 	AttachmentIDsJSON string     `gorm:"column:attachment_ids_json;type:text;not null;default:'[]'" json:"attachmentIdsJson"`
+	ScheduleKind      string     `gorm:"type:text;not null;default:at_time;index" json:"scheduleKind"`
 	ScheduledFor      time.Time  `gorm:"type:datetime;not null;index" json:"scheduledFor"`
+	IdleSince         *time.Time `gorm:"type:datetime" json:"idleSince"`
+	BlockingReasons   string     `gorm:"column:blocking_reasons_json;type:text;not null;default:'[]'" json:"blockingReasonsJson"`
+	ConditionError    string     `gorm:"type:text;not null;default:''" json:"conditionError"`
 	Status            string     `gorm:"type:text;not null;default:scheduled;index" json:"status"`
 	LastError         string     `gorm:"type:text;not null;default:''" json:"lastError"`
 	SentAt            *time.Time `gorm:"type:datetime" json:"sentAt"`

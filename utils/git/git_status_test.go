@@ -1,6 +1,46 @@
 package git
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestHasTrackedWorktreeChanges(t *testing.T) {
+	repoDir := initTestRepo(t)
+
+	assertChanged := func(want bool) {
+		t.Helper()
+		changed, err := HasTrackedWorktreeChanges(repoDir)
+		if err != nil {
+			t.Fatalf("HasTrackedWorktreeChanges returned error: %v", err)
+		}
+		if changed != want {
+			t.Fatalf("HasTrackedWorktreeChanges = %v, want %v", changed, want)
+		}
+	}
+
+	assertChanged(false)
+
+	untrackedPath := filepath.Join(repoDir, "untracked.txt")
+	if err := os.WriteFile(untrackedPath, []byte("untracked\n"), 0o644); err != nil {
+		t.Fatalf("write untracked file: %v", err)
+	}
+	assertChanged(false)
+
+	trackedPath := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(trackedPath, []byte("modified\n"), 0o644); err != nil {
+		t.Fatalf("modify tracked file: %v", err)
+	}
+	assertChanged(true)
+
+	runGit(t, repoDir, "restore", "README.md")
+	if err := os.WriteFile(trackedPath, []byte("staged\n"), 0o644); err != nil {
+		t.Fatalf("write staged file: %v", err)
+	}
+	runGit(t, repoDir, "add", "README.md")
+	assertChanged(true)
+}
 
 func TestParseGitStatusOutput(t *testing.T) {
 	output := `

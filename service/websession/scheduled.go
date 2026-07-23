@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"code-kanban/model"
 	"code-kanban/model/tables"
+	gitutil "code-kanban/utils/git"
 
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +27,37 @@ var (
 	errScheduledPlanDuplicate      = errors.New("scheduled plan already exists")
 )
 
+const scheduledIdleRequiredChecks = 3
+
+var (
+	scheduledIdlePollInterval = 10 * time.Second
+	// IdleSince is recorded by the first successful check. Two more intervals
+	// provide three checks over roughly 30 seconds from scheduling.
+	scheduledIdleStablePeriod = time.Duration(scheduledIdleRequiredChecks-1) * scheduledIdlePollInterval
+)
+
+type scheduledIdleGitCheck struct {
+	dirty bool
+	err   error
+}
+
+type scheduledIdleSessionCheck struct {
+	blocked bool
+	err     error
+}
+
+type scheduledIdleSweepCache struct {
+	gitByPath         map[string]scheduledIdleGitCheck
+	sessionsByProject map[string]scheduledIdleSessionCheck
+}
+
+func newScheduledIdleSweepCache() *scheduledIdleSweepCache {
+	return &scheduledIdleSweepCache{
+		gitByPath:         make(map[string]scheduledIdleGitCheck),
+		sessionsByProject: make(map[string]scheduledIdleSessionCheck),
+	}
+}
+
 type scheduledPlanExecutionPayload struct {
 	PendingItemID      string `json:"pendingItemId,omitempty"`
 	QuestionID         string `json:"questionId,omitempty"`
@@ -33,6 +67,7 @@ type scheduledPlanExecutionPayload struct {
 type scheduledInputUpdate struct {
 	Text         *string
 	Mode         *ScheduledInputMode
+	ScheduleKind *ScheduledInputScheduleKind
 	ScheduledFor time.Time
 }
 
@@ -112,6 +147,17 @@ func normalizeScheduledInputStatus(status ScheduledInputStatus) ScheduledInputSt
 	}
 }
 
+func normalizeScheduledInputScheduleKind(kind ScheduledInputScheduleKind) ScheduledInputScheduleKind {
+	switch strings.ToLower(strings.TrimSpace(string(kind))) {
+	case "", string(ScheduledInputScheduleAtTime):
+		return ScheduledInputScheduleAtTime
+	case string(ScheduledInputScheduleWhenIdle):
+		return ScheduledInputScheduleWhenIdle
+	default:
+		return ""
+	}
+}
+
 func activeScheduledInputStatuses() []string {
 	return []string{
 		string(ScheduledInputStatusScheduled),
@@ -160,21 +206,69 @@ func marshalScheduledInputAttachmentIDs(attachmentIDs []string) string {
 	return string(encoded)
 }
 
+func parseScheduledInputBlockingReasons(raw string) []ScheduledInputBlockingReason {
+	if strings.TrimSpace(raw) == "" {
+		return []ScheduledInputBlockingReason{}
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return []ScheduledInputBlockingReason{}
+	}
+	reasons := make([]ScheduledInputBlockingReason, 0, len(values))
+	seen := make(map[ScheduledInputBlockingReason]struct{}, len(values))
+	for _, value := range values {
+		reason := ScheduledInputBlockingReason(strings.TrimSpace(value))
+		switch reason {
+		case ScheduledInputBlockedGitDirty,
+			ScheduledInputBlockedGitUnavailable,
+			ScheduledInputBlockedNonPlanSessionActive:
+			if _, ok := seen[reason]; ok {
+				continue
+			}
+			seen[reason] = struct{}{}
+			reasons = append(reasons, reason)
+		}
+	}
+	return reasons
+}
+
+func marshalScheduledInputBlockingReasons(reasons []ScheduledInputBlockingReason) string {
+	values := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		values = append(values, string(reason))
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
 func mapScheduledInputRecord(record tables.WebSessionScheduledInputTable) ScheduledInput {
+	scheduleKind := normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind))
+	var scheduledFor *time.Time
+	if scheduleKind == ScheduledInputScheduleAtTime {
+		value := record.ScheduledFor
+		scheduledFor = &value
+	}
 	return ScheduledInput{
-		ID:            strings.TrimSpace(record.ID),
-		Action:        normalizeScheduledInputAction(ScheduledInputAction(record.Action)),
-		TargetID:      strings.TrimSpace(record.TargetID),
-		Mode:          normalizeScheduledInputMode(ScheduledInputMode(record.Mode)),
-		Text:          record.Text,
-		AttachmentIDs: parseScheduledInputAttachmentIDs(record.AttachmentIDsJSON),
-		ScheduledFor:  record.ScheduledFor,
-		Status:        normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)),
-		LastError:     strings.TrimSpace(record.LastError),
-		CreatedAt:     record.CreatedAt,
-		UpdatedAt:     record.UpdatedAt,
-		SentAt:        record.SentAt,
-		CanceledAt:    record.CanceledAt,
+		ID:              strings.TrimSpace(record.ID),
+		Action:          normalizeScheduledInputAction(ScheduledInputAction(record.Action)),
+		TargetID:        strings.TrimSpace(record.TargetID),
+		Mode:            normalizeScheduledInputMode(ScheduledInputMode(record.Mode)),
+		Text:            record.Text,
+		AttachmentIDs:   parseScheduledInputAttachmentIDs(record.AttachmentIDsJSON),
+		ScheduleKind:    scheduleKind,
+		ScheduledFor:    scheduledFor,
+		IdleSince:       record.IdleSince,
+		BlockingReasons: parseScheduledInputBlockingReasons(record.BlockingReasons),
+		ConditionError:  strings.TrimSpace(record.ConditionError),
+		Status:          normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)),
+		LastError:       strings.TrimSpace(record.LastError),
+		CreatedAt:       record.CreatedAt,
+		UpdatedAt:       record.UpdatedAt,
+		SentAt:          record.SentAt,
+		CanceledAt:      record.CanceledAt,
 	}
 }
 
@@ -256,7 +350,9 @@ func (m *Manager) ScheduleInput(
 		Mode:              string(normalizedMode),
 		Text:              normalizedText,
 		AttachmentIDsJSON: marshalScheduledInputAttachmentIDs(sanitizedAttachmentIDs),
+		ScheduleKind:      string(ScheduledInputScheduleAtTime),
 		ScheduledFor:      scheduledFor,
+		BlockingReasons:   "[]",
 		Status:            string(ScheduledInputStatusScheduled),
 	}
 	item.Init()
@@ -265,7 +361,7 @@ func (m *Manager) ScheduleInput(
 	}
 
 	created := mapScheduledInputRecord(item)
-	m.setScheduledInputTimer(created.ID, record.ID, created.ScheduledFor)
+	m.setScheduledInputTimer(created.ID, record.ID, scheduledFor)
 	m.broadcastScheduledInputs(record.ID)
 	return created, nil
 }
@@ -439,11 +535,50 @@ func (m *Manager) SchedulePlanExecution(
 	payload scheduledPlanExecutionPayload,
 	scheduledFor time.Time,
 ) (ScheduledInput, error) {
+	return m.schedulePlanExecution(
+		ctx,
+		sessionID,
+		targetID,
+		payload,
+		ScheduledInputScheduleAtTime,
+		scheduledFor,
+	)
+}
+
+func (m *Manager) SchedulePlanExecutionWhenIdle(
+	ctx context.Context,
+	sessionID string,
+	targetID string,
+	payload scheduledPlanExecutionPayload,
+) (ScheduledInput, error) {
+	return m.schedulePlanExecution(
+		ctx,
+		sessionID,
+		targetID,
+		payload,
+		ScheduledInputScheduleWhenIdle,
+		time.Time{},
+	)
+}
+
+func (m *Manager) schedulePlanExecution(
+	ctx context.Context,
+	sessionID string,
+	targetID string,
+	payload scheduledPlanExecutionPayload,
+	scheduleKind ScheduledInputScheduleKind,
+	scheduledFor time.Time,
+) (ScheduledInput, error) {
 	payload, err := normalizeScheduledPlanExecutionPayload(payload)
 	if err != nil {
 		return ScheduledInput{}, err
 	}
-	if scheduledFor.IsZero() || !scheduledFor.After(time.Now()) {
+	normalizedScheduleKind := normalizeScheduledInputScheduleKind(scheduleKind)
+	if normalizedScheduleKind == "" {
+		return ScheduledInput{}, fmt.Errorf("invalid scheduled plan kind")
+	}
+	if normalizedScheduleKind == ScheduledInputScheduleAtTime &&
+		(scheduledFor.IsZero() || !scheduledFor.After(time.Now())) {
 		return ScheduledInput{}, fmt.Errorf("scheduled time must be in the future")
 	}
 	session, err := m.validateScheduledPlanExecution(ctx, sessionID, targetID, payload)
@@ -472,6 +607,10 @@ func (m *Manager) SchedulePlanExecution(
 		return ScheduledInput{}, errScheduledPlanDuplicate
 	}
 
+	scheduledForValue := scheduledFor
+	if normalizedScheduleKind == ScheduledInputScheduleWhenIdle {
+		scheduledForValue = time.Now()
+	}
 	item := tables.WebSessionScheduledInputTable{
 		WebSessionID:      session.ID,
 		Action:            string(ScheduledInputActionExecutePlan),
@@ -480,7 +619,9 @@ func (m *Manager) SchedulePlanExecution(
 		Mode:              string(ScheduledInputModeSend),
 		Text:              "Implement the plan.",
 		AttachmentIDsJSON: "[]",
-		ScheduledFor:      scheduledFor,
+		ScheduleKind:      string(normalizedScheduleKind),
+		ScheduledFor:      scheduledForValue,
+		BlockingReasons:   "[]",
 		Status:            string(ScheduledInputStatusScheduled),
 	}
 	item.Init()
@@ -489,7 +630,11 @@ func (m *Manager) SchedulePlanExecution(
 	}
 
 	created := mapScheduledInputRecord(item)
-	m.setScheduledInputTimer(created.ID, session.ID, created.ScheduledFor)
+	if normalizedScheduleKind == ScheduledInputScheduleAtTime {
+		m.setScheduledInputTimer(created.ID, session.ID, scheduledFor)
+	} else {
+		m.ensureScheduledIdleMonitor(scheduledIdlePollInterval)
+	}
 	m.broadcastScheduledInputs(session.ID)
 	return created, nil
 }
@@ -504,9 +649,6 @@ func (m *Manager) UpdateScheduledInput(
 	normalizedInputID := strings.TrimSpace(inputID)
 	if normalizedSessionID == "" || normalizedInputID == "" {
 		return ScheduledInput{}, errScheduledInputNotFound
-	}
-	if update.ScheduledFor.IsZero() || !update.ScheduledFor.After(time.Now()) {
-		return ScheduledInput{}, fmt.Errorf("scheduled time must be in the future")
 	}
 
 	var updated ScheduledInput
@@ -532,13 +674,39 @@ func (m *Manager) UpdateScheduledInput(
 		}
 
 		action := normalizeScheduledInputAction(ScheduledInputAction(record.Action))
+		scheduleKind := normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind))
+		if update.ScheduleKind != nil {
+			scheduleKind = normalizeScheduledInputScheduleKind(*update.ScheduleKind)
+		} else if !update.ScheduledFor.IsZero() {
+			// Legacy update payloads always carry a timestamp and therefore select at-time mode.
+			scheduleKind = ScheduledInputScheduleAtTime
+		}
+		if scheduleKind == "" {
+			return fmt.Errorf("invalid scheduled plan kind")
+		}
+		if action == ScheduledInputActionMessage && scheduleKind != ScheduledInputScheduleAtTime {
+			return fmt.Errorf("scheduled messages only support at-time delivery")
+		}
+		if scheduleKind == ScheduledInputScheduleAtTime &&
+			(update.ScheduledFor.IsZero() || !update.ScheduledFor.After(time.Now())) {
+			return fmt.Errorf("scheduled time must be in the future")
+		}
+
+		scheduledForValue := time.Now()
+		if scheduleKind == ScheduledInputScheduleAtTime {
+			scheduledForValue = update.ScheduledFor
+		}
 		updates := map[string]any{
-			"scheduled_for": update.ScheduledFor,
-			"status":        string(ScheduledInputStatusScheduled),
-			"last_error":    "",
-			"sent_at":       nil,
-			"canceled_at":   nil,
-			"updated_at":    time.Now(),
+			"schedule_kind":         string(scheduleKind),
+			"scheduled_for":         scheduledForValue,
+			"idle_since":            nil,
+			"blocking_reasons_json": "[]",
+			"condition_error":       "",
+			"status":                string(ScheduledInputStatusScheduled),
+			"last_error":            "",
+			"sent_at":               nil,
+			"canceled_at":           nil,
+			"updated_at":            time.Now(),
 		}
 		switch action {
 		case ScheduledInputActionMessage:
@@ -558,7 +726,7 @@ func (m *Manager) UpdateScheduledInput(
 			updates["mode"] = string(normalizedMode)
 		case ScheduledInputActionExecutePlan:
 			if update.Text != nil || update.Mode != nil {
-				return fmt.Errorf("scheduled plan only supports changing its time")
+				return fmt.Errorf("scheduled plan only supports changing its schedule")
 			}
 			parsedPayload, err := parseScheduledPlanExecutionPayload(record.PayloadJSON)
 			if err != nil {
@@ -621,11 +789,18 @@ func (m *Manager) UpdateScheduledInput(
 		if result.RowsAffected == 0 {
 			return errScheduledInputNotEditable
 		}
-		if err := db.WithContext(ctx).First(&record, "id = ?", normalizedInputID).Error; err != nil {
+		var refreshed tables.WebSessionScheduledInputTable
+		if err := db.WithContext(ctx).First(&refreshed, "id = ?", normalizedInputID).Error; err != nil {
 			return err
 		}
+		record = refreshed
 		updated = mapScheduledInputRecord(record)
-		m.setScheduledInputTimer(updated.ID, normalizedSessionID, updated.ScheduledFor)
+		m.cancelScheduledInputTimer(updated.ID)
+		if updated.ScheduleKind == ScheduledInputScheduleAtTime && updated.ScheduledFor != nil {
+			m.setScheduledInputTimer(updated.ID, normalizedSessionID, *updated.ScheduledFor)
+		} else if updated.ScheduleKind == ScheduledInputScheduleWhenIdle {
+			m.ensureScheduledIdleMonitor(scheduledIdlePollInterval)
+		}
 		m.broadcastScheduledInputs(normalizedSessionID)
 		return nil
 	})
@@ -805,10 +980,340 @@ func (m *Manager) recoverPendingScheduledInputs(ctx context.Context) error {
 		Find(&records).Error; err != nil {
 		return err
 	}
+	hasIdleInputs := false
 	for _, record := range records {
-		m.setScheduledInputTimer(record.ID, record.WebSessionID, record.ScheduledFor)
+		switch normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind)) {
+		case ScheduledInputScheduleWhenIdle:
+			hasIdleInputs = true
+			if err := db.WithContext(ctx).
+				Model(&tables.WebSessionScheduledInputTable{}).
+				Where("id = ?", record.ID).
+				Updates(map[string]any{
+					"idle_since":            nil,
+					"blocking_reasons_json": "[]",
+					"condition_error":       "",
+				}).Error; err != nil {
+				return err
+			}
+		case ScheduledInputScheduleAtTime:
+			m.setScheduledInputTimer(record.ID, record.WebSessionID, record.ScheduledFor)
+		}
+	}
+	if hasIdleInputs {
+		m.ensureScheduledIdleMonitor(scheduledIdlePollInterval)
 	}
 	return nil
+}
+
+func (m *Manager) ensureScheduledIdleMonitor(delay time.Duration) {
+	if delay < 0 {
+		delay = 0
+	}
+	m.mu.Lock()
+	if m.scheduledIdleTimer != nil {
+		m.mu.Unlock()
+		return
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(delay, func() {
+		m.mu.Lock()
+		if m.scheduledIdleTimer == timer {
+			m.scheduledIdleTimer = nil
+		}
+		m.mu.Unlock()
+		m.runScheduledIdleSweep()
+	})
+	m.scheduledIdleTimer = timer
+	m.mu.Unlock()
+}
+
+func (m *Manager) cancelScheduledIdleMonitor() {
+	m.mu.Lock()
+	if m.scheduledIdleTimer != nil {
+		m.scheduledIdleTimer.Stop()
+		m.scheduledIdleTimer = nil
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) runScheduledIdleSweep() {
+	m.scheduledIdleSweepMu.Lock()
+	defer m.scheduledIdleSweepMu.Unlock()
+	hasPending, err := m.processScheduledIdleInputs(context.Background())
+	if err != nil && m.logger != nil {
+		m.logger.Warn("scheduled idle sweep failed", zap.Error(err))
+	}
+	if hasPending || err != nil {
+		m.ensureScheduledIdleMonitor(scheduledIdlePollInterval)
+	}
+}
+
+func (m *Manager) processScheduledIdleInputs(ctx context.Context) (bool, error) {
+	db := model.GetDB()
+	if db == nil {
+		return false, model.ErrDBNotInitialized
+	}
+	var records []tables.WebSessionScheduledInputTable
+	if err := db.WithContext(ctx).
+		Where(
+			"status = ? AND action = ? AND schedule_kind = ?",
+			string(ScheduledInputStatusScheduled),
+			string(ScheduledInputActionExecutePlan),
+			string(ScheduledInputScheduleWhenIdle),
+		).
+		Order("created_at ASC").
+		Find(&records).Error; err != nil {
+		return false, err
+	}
+	cache := newScheduledIdleSweepCache()
+	for _, record := range records {
+		if err := m.processScheduledIdleInput(ctx, record.ID, cache); err != nil && m.logger != nil {
+			m.logger.Warn(
+				"scheduled idle input check failed",
+				zap.String("scheduledInputId", record.ID),
+				zap.Error(err),
+			)
+		}
+	}
+	return len(records) > 0, nil
+}
+
+func (m *Manager) processScheduledIdleInput(
+	ctx context.Context,
+	inputID string,
+	cache *scheduledIdleSweepCache,
+) error {
+	return m.withScheduledInputLock(inputID, func() error {
+		db := model.GetDB()
+		if db == nil {
+			return model.ErrDBNotInitialized
+		}
+		var record tables.WebSessionScheduledInputTable
+		if err := db.WithContext(ctx).First(&record, "id = ?", strings.TrimSpace(inputID)).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)) != ScheduledInputStatusScheduled ||
+			normalizeScheduledInputAction(ScheduledInputAction(record.Action)) != ScheduledInputActionExecutePlan ||
+			normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind)) != ScheduledInputScheduleWhenIdle {
+			return nil
+		}
+		now := time.Now()
+		if record.IdleSince == nil && !record.UpdatedAt.IsZero() &&
+			now.Sub(record.UpdatedAt) < scheduledIdlePollInterval {
+			return nil
+		}
+
+		payload, err := parseScheduledPlanExecutionPayload(record.PayloadJSON)
+		if err == nil {
+			payload, err = normalizeScheduledPlanExecutionPayload(payload)
+		}
+		if err != nil {
+			_ = m.expireScheduledInputByID(ctx, record.ID, errScheduledPlanExpired.Error())
+			m.broadcastScheduledInputs(record.WebSessionID)
+			return err
+		}
+		session, err := m.validateScheduledPlanExecution(ctx, record.WebSessionID, record.TargetID, payload)
+		if err != nil {
+			if shouldExpireScheduledPlanExecution(err) {
+				_ = m.expireScheduledInputByID(ctx, record.ID, err.Error())
+				m.broadcastScheduledInputs(record.WebSessionID)
+				return err
+			}
+			changed, updateErr := m.updateScheduledIdleCondition(ctx, record, nil, nil, err.Error())
+			if changed {
+				m.broadcastScheduledInputs(record.WebSessionID)
+			}
+			return updateErr
+		}
+
+		if record.IdleSince == nil || now.Sub(*record.IdleSince) < scheduledIdleStablePeriod {
+			reasons, conditionError, evaluateErr := m.evaluateScheduledIdleConditionsCached(ctx, session, cache)
+			if evaluateErr != nil {
+				conditionError = evaluateErr.Error()
+			}
+			if len(reasons) > 0 || conditionError != "" {
+				changed, updateErr := m.updateScheduledIdleCondition(ctx, record, nil, reasons, conditionError)
+				if changed {
+					m.broadcastScheduledInputs(record.WebSessionID)
+				}
+				return updateErr
+			}
+			if record.IdleSince == nil {
+				changed, updateErr := m.updateScheduledIdleCondition(ctx, record, &now, nil, "")
+				if changed {
+					m.broadcastScheduledInputs(record.WebSessionID)
+				}
+				return updateErr
+			}
+			return nil
+		}
+
+		projectLock := m.scheduledProjectLock(session.ProjectID)
+		projectLock.Lock()
+		defer projectLock.Unlock()
+
+		if err := db.WithContext(ctx).First(&record, "id = ?", record.ID).Error; err != nil {
+			return err
+		}
+		if normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)) != ScheduledInputStatusScheduled ||
+			normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind)) != ScheduledInputScheduleWhenIdle {
+			return nil
+		}
+		session, err = m.validateScheduledPlanExecution(ctx, record.WebSessionID, record.TargetID, payload)
+		if err != nil {
+			if shouldExpireScheduledPlanExecution(err) {
+				_ = m.expireScheduledInputByID(ctx, record.ID, err.Error())
+				m.broadcastScheduledInputs(record.WebSessionID)
+			}
+			return err
+		}
+		reasons, conditionError, evaluateErr := m.evaluateScheduledIdleConditions(ctx, session)
+		if evaluateErr != nil {
+			conditionError = evaluateErr.Error()
+		}
+		if len(reasons) > 0 || conditionError != "" || record.IdleSince == nil ||
+			time.Since(*record.IdleSince) < scheduledIdleStablePeriod {
+			changed, updateErr := m.updateScheduledIdleCondition(ctx, record, nil, reasons, conditionError)
+			if changed {
+				m.broadcastScheduledInputs(record.WebSessionID)
+			}
+			return updateErr
+		}
+		return m.dispatchScheduledInputRecord(ctx, record)
+	})
+}
+
+func (m *Manager) evaluateScheduledIdleConditions(
+	ctx context.Context,
+	target tables.WebSessionTable,
+) ([]ScheduledInputBlockingReason, string, error) {
+	return m.evaluateScheduledIdleConditionsCached(ctx, target, nil)
+}
+
+func (m *Manager) evaluateScheduledIdleConditionsCached(
+	ctx context.Context,
+	target tables.WebSessionTable,
+	cache *scheduledIdleSweepCache,
+) ([]ScheduledInputBlockingReason, string, error) {
+	reasons := make([]ScheduledInputBlockingReason, 0, 2)
+	worktreePath := strings.TrimSpace(target.Cwd)
+	gitCheck, ok := scheduledIdleGitCheck{}, false
+	gitCacheKey := model.NormalizePathCase(worktreePath)
+	if cache != nil {
+		gitCheck, ok = cache.gitByPath[gitCacheKey]
+	}
+	if !ok {
+		gitCheck.dirty, gitCheck.err = gitutil.HasTrackedWorktreeChanges(worktreePath)
+		if cache != nil {
+			cache.gitByPath[gitCacheKey] = gitCheck
+		}
+	}
+	if gitCheck.err != nil {
+		reasons = append(reasons, ScheduledInputBlockedGitUnavailable)
+	} else if gitCheck.dirty {
+		reasons = append(reasons, ScheduledInputBlockedGitDirty)
+	}
+
+	projectID := strings.TrimSpace(target.ProjectID)
+	sessionCheck, ok := scheduledIdleSessionCheck{}, false
+	if cache != nil {
+		sessionCheck, ok = cache.sessionsByProject[projectID]
+	}
+	if !ok {
+		sessionCheck.blocked, sessionCheck.err = m.hasBlockingNonPlanSession(ctx, projectID)
+		if cache != nil {
+			cache.sessionsByProject[projectID] = sessionCheck
+		}
+	}
+	if sessionCheck.err != nil {
+		return reasons, "", sessionCheck.err
+	}
+	if sessionCheck.blocked {
+		reasons = append(reasons, ScheduledInputBlockedNonPlanSessionActive)
+	}
+
+	conditionError := ""
+	if gitCheck.err != nil {
+		conditionError = gitCheck.err.Error()
+	}
+	return reasons, conditionError, nil
+}
+
+func (m *Manager) hasBlockingNonPlanSession(ctx context.Context, projectID string) (bool, error) {
+	db := model.GetDB()
+	if db == nil {
+		return false, model.ErrDBNotInitialized
+	}
+	var sessions []tables.WebSessionTable
+	if err := db.WithContext(ctx).
+		Where("project_id = ? AND archived_at IS NULL", projectID).
+		Find(&sessions).Error; err != nil {
+		return false, err
+	}
+	for _, session := range sessions {
+		if effectiveWorkflowMode(session) == WorkflowModePlan {
+			continue
+		}
+		assistantState := effectiveAssistantState(session)
+		status := effectiveStatus(session, assistantState)
+		if m.hasActiveRun(session.ID) ||
+			assistantState != AssistantStateNone ||
+			status == StatusRunning ||
+			status == StatusWaitingApproval ||
+			status == StatusAborting ||
+			session.AutoRetryNextAt != nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (m *Manager) updateScheduledIdleCondition(
+	ctx context.Context,
+	record tables.WebSessionScheduledInputTable,
+	idleSince *time.Time,
+	reasons []ScheduledInputBlockingReason,
+	conditionError string,
+) (bool, error) {
+	encodedReasons := marshalScheduledInputBlockingReasons(reasons)
+	normalizedError := strings.TrimSpace(conditionError)
+	sameIdleSince := record.IdleSince == nil && idleSince == nil
+	if record.IdleSince != nil && idleSince != nil {
+		sameIdleSince = record.IdleSince.UnixMilli() == idleSince.UnixMilli()
+	}
+	if sameIdleSince && record.BlockingReasons == encodedReasons &&
+		strings.TrimSpace(record.ConditionError) == normalizedError {
+		return false, nil
+	}
+	db := model.GetDB()
+	if db == nil {
+		return false, model.ErrDBNotInitialized
+	}
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionScheduledInputTable{}).
+		Where("id = ? AND status = ?", record.ID, string(ScheduledInputStatusScheduled)).
+		Updates(map[string]any{
+			"idle_since":            idleSince,
+			"blocking_reasons_json": encodedReasons,
+			"condition_error":       normalizedError,
+			"updated_at":            time.Now(),
+		}).Error; err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (m *Manager) scheduledProjectLock(projectID string) *sync.Mutex {
+	normalizedProjectID := strings.TrimSpace(projectID)
+	hash := uint32(2166136261)
+	for index := 0; index < len(normalizedProjectID); index++ {
+		hash ^= uint32(normalizedProjectID[index])
+		hash *= 16777619
+	}
+	return &m.scheduledProjectLocks[hash%uint32(len(m.scheduledProjectLocks))]
 }
 
 func (m *Manager) executeScheduledInput(inputID string, expectedScheduledFor time.Time) {
@@ -825,7 +1330,8 @@ func (m *Manager) executeScheduledInput(inputID string, expectedScheduledFor tim
 		if normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)) != ScheduledInputStatusScheduled {
 			return nil
 		}
-		if record.ScheduledFor.UnixMilli() != expectedScheduledFor.UnixMilli() {
+		if normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind)) != ScheduledInputScheduleAtTime ||
+			record.ScheduledFor.UnixMilli() != expectedScheduledFor.UnixMilli() {
 			return nil
 		}
 		return m.dispatchScheduledInputRecord(ctx, record)
@@ -1084,22 +1590,42 @@ func (m *Manager) handleSchedulePlanCommand(ctx context.Context, client *client,
 		PendingItemID      string `json:"iid"`
 		QuestionID         string `json:"qid"`
 		ExecuteOptionLabel string `json:"opt"`
-		At                 int64  `json:"at"`
+		ScheduleKind       string `json:"sk"`
+		At                 *int64 `json:"at"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid scheduled plan payload", false))
 	}
-	created, err := m.SchedulePlanExecution(
-		ctx,
-		frame.SessionID,
-		payload.PlanItemID,
-		scheduledPlanExecutionPayload{
-			PendingItemID:      payload.PendingItemID,
-			QuestionID:         payload.QuestionID,
-			ExecuteOptionLabel: payload.ExecuteOptionLabel,
-		},
-		time.UnixMilli(payload.At),
-	)
+	executionPayload := scheduledPlanExecutionPayload{
+		PendingItemID:      payload.PendingItemID,
+		QuestionID:         payload.QuestionID,
+		ExecuteOptionLabel: payload.ExecuteOptionLabel,
+	}
+	scheduleKind := normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(payload.ScheduleKind))
+	var created ScheduledInput
+	var err error
+	switch scheduleKind {
+	case ScheduledInputScheduleWhenIdle:
+		created, err = m.SchedulePlanExecutionWhenIdle(
+			ctx,
+			frame.SessionID,
+			payload.PlanItemID,
+			executionPayload,
+		)
+	case ScheduledInputScheduleAtTime:
+		if payload.At == nil {
+			return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "scheduled time is required", false))
+		}
+		created, err = m.SchedulePlanExecution(
+			ctx,
+			frame.SessionID,
+			payload.PlanItemID,
+			executionPayload,
+			time.UnixMilli(*payload.At),
+		)
+	default:
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid scheduled plan kind", false))
+	}
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
@@ -1128,12 +1654,13 @@ func (m *Manager) handleScheduledDeleteCommand(ctx context.Context, client *clie
 
 func (m *Manager) handleScheduledUpdateCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
-		ID   string  `json:"id"`
-		Text *string `json:"txt"`
-		Mode *string `json:"mode"`
-		At   *int64  `json:"at"`
+		ID           string  `json:"id"`
+		Text         *string `json:"txt"`
+		Mode         *string `json:"mode"`
+		ScheduleKind *string `json:"sk"`
+		At           *int64  `json:"at"`
 	}
-	if err := json.Unmarshal(frame.Payload, &payload); err != nil || payload.At == nil {
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil || (payload.At == nil && payload.ScheduleKind == nil) {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid scheduled update payload", false))
 	}
 	var mode *ScheduledInputMode
@@ -1141,10 +1668,20 @@ func (m *Manager) handleScheduledUpdateCommand(ctx context.Context, client *clie
 		value := ScheduledInputMode(*payload.Mode)
 		mode = &value
 	}
+	var scheduleKind *ScheduledInputScheduleKind
+	if payload.ScheduleKind != nil {
+		value := ScheduledInputScheduleKind(*payload.ScheduleKind)
+		scheduleKind = &value
+	}
+	scheduledFor := time.Time{}
+	if payload.At != nil {
+		scheduledFor = time.UnixMilli(*payload.At)
+	}
 	updated, err := m.UpdateScheduledInput(ctx, frame.SessionID, payload.ID, scheduledInputUpdate{
 		Text:         payload.Text,
 		Mode:         mode,
-		ScheduledFor: time.UnixMilli(*payload.At),
+		ScheduleKind: scheduleKind,
+		ScheduledFor: scheduledFor,
 	})
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))

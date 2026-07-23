@@ -78,7 +78,10 @@ type Manager struct {
 	autoRetryTimers             map[string]*time.Timer
 	scheduledInputTimers        map[string]*time.Timer
 	scheduledInputTimerSessions map[string]string
+	scheduledIdleTimer          *time.Timer
+	scheduledIdleSweepMu        sync.Mutex
 	scheduledInputLocks         [64]sync.Mutex
+	scheduledProjectLocks       [64]sync.Mutex
 	sessionDispatchLocks        [64]sync.Mutex
 	revisionBroadcastLocks      [64]sync.Mutex
 	pendingInputs               map[string][]PendingInput

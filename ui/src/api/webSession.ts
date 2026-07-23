@@ -102,7 +102,11 @@ export type WebSessionScheduledInputRecord = {
   lastError?: string;
   text?: string;
   attachmentIds?: string[];
+  scheduleKind?: 'at_time' | 'when_idle' | string;
   scheduledFor?: string | number | null;
+  idleSince?: string | number | null;
+  blockingReasons?: string[];
+  conditionError?: string;
   createdAt?: string | number | null;
   updatedAt?: string | number | null;
   sentAt?: string | number | null;

@@ -100,13 +100,16 @@ func TestPreviewHistoryCleanupSkipsBusyAndScheduledSessions(t *testing.T) {
 	now := time.Now()
 	running := seedHistoryCleanupSession(t, project.ID, "Running", now.Add(-60*24*time.Hour), true)
 	scheduled := seedHistoryCleanupSession(t, project.ID, "Scheduled", now.Add(-60*24*time.Hour), false)
+	scheduledFor := now.Add(time.Hour)
 	scheduledInput := &tables.WebSessionScheduledInputTable{
-		WebSessionID: scheduled.ID,
-		Action:       string(ScheduledInputActionMessage),
-		PayloadJSON:  "{}",
-		Mode:         string(ScheduledInputModeSend),
-		ScheduledFor: now.Add(time.Hour),
-		Status:       string(ScheduledInputStatusScheduled),
+		WebSessionID:    scheduled.ID,
+		Action:          string(ScheduledInputActionMessage),
+		PayloadJSON:     "{}",
+		Mode:            string(ScheduledInputModeSend),
+		ScheduleKind:    string(ScheduledInputScheduleAtTime),
+		ScheduledFor:    scheduledFor,
+		BlockingReasons: "[]",
+		Status:          string(ScheduledInputStatusScheduled),
 	}
 	scheduledInput.Init()
 	if err := model.GetDB().Create(scheduledInput).Error; err != nil {

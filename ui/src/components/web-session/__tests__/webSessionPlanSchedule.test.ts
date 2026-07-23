@@ -20,6 +20,8 @@ describe('webSession plan scheduling', () => {
     expect(webSessionPanelSource).toContain("scheduledSendPurpose === 'message'");
     expect(webSessionPanelSource).toContain("openScheduledSendDialog('execute_plan', target)");
     expect(webSessionPanelSource).toContain('scheduledDialogConfirmLabel');
+    expect(webSessionPanelSource).toContain('value="when_idle"');
+    expect(webSessionPanelSource).toContain("{ scheduleKind: 'when_idle' }");
   });
 
   it('binds a scheduled action to the current plan and hides duplicate actions', () => {

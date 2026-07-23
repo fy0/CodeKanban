@@ -1879,11 +1879,8 @@
                               : scheduledModeLabel(item.mode)
                           }}
                         </span>
-                        <span
-                          class="scheduled-input-time"
-                          :title="formatDateTime(item.scheduledFor)"
-                        >
-                          {{ formatTime(item.scheduledFor) }}
+                        <span class="scheduled-input-time" :title="scheduledInputTimeTitle(item)">
+                          {{ scheduledInputTimeLabel(item) }}
                         </span>
                         <span class="scheduled-input-preview">{{
                           scheduledInputPreview(item)
@@ -1910,8 +1907,20 @@
                         </span>
                       </div>
                       <div class="scheduled-input-detail-row">
-                        <span>{{ t('webSession.scheduledForLabel') }}</span>
-                        <strong>{{ formatDateTime(item.scheduledFor) }}</strong>
+                        <span>
+                          {{
+                            item.scheduleKind === 'when_idle'
+                              ? t('webSession.scheduledConditionLabel')
+                              : t('webSession.scheduledForLabel')
+                          }}
+                        </span>
+                        <strong>
+                          {{
+                            item.scheduleKind === 'when_idle'
+                              ? scheduledIdleStatusLabel(item)
+                              : formatDateTime(item.scheduledFor ?? item.createdAt)
+                          }}
+                        </strong>
                       </div>
                       <div class="scheduled-input-popover-text">
                         {{ scheduledInputDetailText(item) }}
@@ -1929,6 +1938,13 @@
                       >
                         <span>{{ t('webSession.scheduledFailureReason') }}</span>
                         <strong>{{ scheduledFailureReason(item) }}</strong>
+                      </div>
+                      <div
+                        v-else-if="item.scheduleKind === 'when_idle' && item.conditionError"
+                        class="scheduled-input-error"
+                      >
+                        <span>{{ t('webSession.scheduledConditionError') }}</span>
+                        <strong>{{ item.conditionError }}</strong>
                       </div>
                       <div class="scheduled-input-popover-actions">
                         <template v-if="item.status !== 'expired'">
@@ -2479,7 +2495,27 @@
           </div>
         </div>
 
-        <div class="scheduled-send-section">
+        <div v-if="isScheduledDialogPlan" class="scheduled-send-section">
+          <div class="scheduled-send-section-label">
+            {{ t('webSession.planScheduleKindTitle') }}
+          </div>
+          <n-radio-group
+            v-model:value="scheduledPlanScheduleKind"
+            name="scheduled-plan-schedule-kind"
+          >
+            <n-radio-button value="at_time">
+              {{ t('webSession.planScheduleKindAtTime') }}
+            </n-radio-button>
+            <n-radio-button value="when_idle">
+              {{ t('webSession.planScheduleKindWhenIdle') }}
+            </n-radio-button>
+          </n-radio-group>
+        </div>
+
+        <div
+          v-if="!isScheduledDialogPlan || scheduledPlanScheduleKind === 'at_time'"
+          class="scheduled-send-section"
+        >
           <div class="scheduled-send-section-label">
             {{ t('webSession.scheduleSendPresetTitle') }}
           </div>
@@ -2497,7 +2533,10 @@
           </div>
         </div>
 
-        <div class="scheduled-send-section">
+        <div
+          v-if="!isScheduledDialogPlan || scheduledPlanScheduleKind === 'at_time'"
+          class="scheduled-send-section"
+        >
           <div class="scheduled-send-section-label">
             {{ t('webSession.scheduleSendCustomTime') }}
           </div>
@@ -3101,6 +3140,7 @@ type ImageViewPreviewState = 'loading' | 'ready' | 'error';
 
 type ScheduledSendMode = 'send' | 'interrupt' | 'queue';
 type ScheduledSendPurpose = 'message' | 'execute_plan' | 'edit_message' | 'edit_plan';
+type ScheduledPlanScheduleKind = 'at_time' | 'when_idle';
 
 type ScheduledSendPresetOption = {
   key: string;
@@ -3306,6 +3346,7 @@ const activeScheduledInputPopoverId = ref('');
 const scheduledInputActionId = ref('');
 const scheduledSendAt = ref<number | null>(null);
 const scheduledSendMode = ref<ScheduledSendMode>('send');
+const scheduledPlanScheduleKind = ref<ScheduledPlanScheduleKind>('at_time');
 const scheduledSendPresetOptions = ref<ScheduledSendPresetOption[]>([]);
 const scheduledSendSubmitting = ref(false);
 const activeTabIndicatorStyle = ref(hiddenCardTabIndicatorStyle());
@@ -5004,10 +5045,12 @@ const scheduledDialogSelectedTimeLabel = computed(() =>
     : t('webSession.scheduleSendSelectedTime', { time: scheduledSendSelectedTimeLabel.value })
 );
 const canConfirmScheduledSend = computed(() => {
+  const requiresScheduledTime =
+    !isScheduledDialogPlan.value || scheduledPlanScheduleKind.value === 'at_time';
   if (
     isMessageCapabilityBlocked.value ||
-    !Number.isFinite(scheduledSendAt.value) ||
-    Number(scheduledSendAt.value) <= Date.now() ||
+    (requiresScheduledTime &&
+      (!Number.isFinite(scheduledSendAt.value) || Number(scheduledSendAt.value) <= Date.now())) ||
     scheduledSendSubmitting.value
   ) {
     return false;
@@ -5593,6 +5636,7 @@ function openScheduledSendDialog(
     presets[0]?.timestamp ??
     Date.now() + 5 * 60_000;
   scheduledSendMode.value = 'send';
+  scheduledPlanScheduleKind.value = 'at_time';
   scheduledSendSubmitting.value = false;
   showScheduledSendDialog.value = true;
   closeSendQuickActions();
@@ -5615,8 +5659,10 @@ function openScheduledInputEditDialog(item: WebSessionScheduledInput) {
   scheduledEditingInput.value = item;
   scheduledEditText.value = item.text;
   scheduledSendPresetOptions.value = presets;
-  scheduledSendAt.value = item.scheduledFor > Date.now() ? item.scheduledFor : fallbackTime;
+  scheduledSendAt.value =
+    item.scheduledFor != null && item.scheduledFor > Date.now() ? item.scheduledFor : fallbackTime;
   scheduledSendMode.value = item.mode;
+  scheduledPlanScheduleKind.value = item.scheduleKind;
   scheduledSendSubmitting.value = false;
   activeScheduledInputPopoverId.value = '';
   showScheduledSendDialog.value = true;
@@ -5630,6 +5676,7 @@ function handleScheduledSendDialogVisibilityChange(show: boolean) {
     scheduledPlanDialogTarget.value = null;
     scheduledEditingInput.value = null;
     scheduledEditText.value = '';
+    scheduledPlanScheduleKind.value = 'at_time';
   }
 }
 
@@ -10714,14 +10761,14 @@ async function handleConfirmScheduledSend() {
 async function handleConfirmScheduledPlanExecution() {
   const target = scheduledPlanDialogTarget.value;
   const executeAt = Number(scheduledSendAt.value);
+  const requiresScheduledTime = scheduledPlanScheduleKind.value === 'at_time';
   if (
     !target ||
     target.sessionId !== currentRealSession.value?.id ||
     target.planItemId !== latestPlanItemId.value ||
     activeScheduledPlanTargetIds.value.has(target.planItemId) ||
     scheduledSendSubmitting.value ||
-    !Number.isFinite(executeAt) ||
-    executeAt <= Date.now()
+    (requiresScheduledTime && (!Number.isFinite(executeAt) || executeAt <= Date.now()))
   ) {
     return;
   }
@@ -10736,12 +10783,18 @@ async function handleConfirmScheduledPlanExecution() {
     if (prepared.session.id !== target.sessionId) {
       return;
     }
-    await webSessionStore.schedulePlanExecution(prepared.session.id, executeAt, {
-      planItemId: target.planItemId,
-      pendingItemId: target.pendingItemId,
-      questionId: target.questionId,
-      executeOptionLabel: target.executeOptionLabel,
-    });
+    await webSessionStore.schedulePlanExecution(
+      prepared.session.id,
+      scheduledPlanScheduleKind.value === 'when_idle'
+        ? { scheduleKind: 'when_idle' }
+        : { scheduleKind: 'at_time', scheduledFor: executeAt },
+      {
+        planItemId: target.planItemId,
+        pendingItemId: target.pendingItemId,
+        questionId: target.questionId,
+        executeOptionLabel: target.executeOptionLabel,
+      }
+    );
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, prepared.session.id));
@@ -10760,13 +10813,15 @@ async function handleConfirmScheduledInputUpdate() {
   const executeAt = Number(scheduledSendAt.value);
   const currentSession = currentRealSession.value;
   const current = editing ? scheduledInputs.value.find(item => item.id === editing.id) : undefined;
+  const scheduleKind =
+    current?.action === 'execute_plan' ? scheduledPlanScheduleKind.value : 'at_time';
+  const requiresScheduledTime = scheduleKind === 'at_time';
   if (
     !currentSession ||
     !current ||
     (current.status !== 'scheduled' && current.status !== 'failed') ||
     scheduledSendSubmitting.value ||
-    !Number.isFinite(executeAt) ||
-    executeAt <= Date.now()
+    (requiresScheduledTime && (!Number.isFinite(executeAt) || executeAt <= Date.now()))
   ) {
     return;
   }
@@ -10784,7 +10839,8 @@ async function handleConfirmScheduledInputUpdate() {
       return;
     }
     await webSessionStore.updateScheduledInput(currentSession.id, current.id, {
-      scheduledFor: executeAt,
+      scheduleKind,
+      scheduledFor: requiresScheduledTime ? executeAt : null,
       ...(current.action === 'message'
         ? {
             text: scheduledEditText.value,
@@ -11064,6 +11120,61 @@ function scheduledModeLabel(mode: WebSessionScheduledInput['mode']) {
   }
 }
 
+const scheduledIdleConfirmationWindowMs = 20_000;
+
+function scheduledIdleStatusLabel(item: WebSessionScheduledInput) {
+  if (item.blockingReasons.length > 0) {
+    return item.blockingReasons
+      .map(reason => {
+        switch (reason) {
+          case 'git_dirty':
+            return t('webSession.scheduledIdleBlockedGitDirty');
+          case 'git_unavailable':
+            return t('webSession.scheduledIdleBlockedGitUnavailable');
+          case 'non_plan_session_active':
+            return t('webSession.scheduledIdleBlockedSession');
+        }
+      })
+      .join(locale.value === 'zh-CN' ? '、' : ', ');
+  }
+  if (item.idleSince != null) {
+    const remainingSeconds = Math.max(
+      0,
+      Math.ceil(
+        (item.idleSince + scheduledIdleConfirmationWindowMs - liveStateClockMs.value) / 1000
+      )
+    );
+    return remainingSeconds > 0
+      ? t('webSession.scheduledIdleStabilizing', { seconds: remainingSeconds })
+      : t('webSession.scheduledIdleStarting');
+  }
+  return t('webSession.scheduledIdleChecking');
+}
+
+function scheduledInputTimeLabel(item: WebSessionScheduledInput) {
+  if (item.scheduleKind === 'when_idle') {
+    if (item.idleSince != null && item.blockingReasons.length === 0) {
+      const remainingSeconds = Math.max(
+        0,
+        Math.ceil(
+          (item.idleSince + scheduledIdleConfirmationWindowMs - liveStateClockMs.value) / 1000
+        )
+      );
+      return remainingSeconds > 0
+        ? t('webSession.scheduledIdleCountdownShort', { seconds: remainingSeconds })
+        : t('webSession.scheduledIdleStartingShort');
+    }
+    return t('webSession.planScheduleKindWhenIdle');
+  }
+  return formatTime(item.scheduledFor ?? item.createdAt);
+}
+
+function scheduledInputTimeTitle(item: WebSessionScheduledInput) {
+  return item.scheduleKind === 'when_idle'
+    ? scheduledIdleStatusLabel(item)
+    : formatDateTime(item.scheduledFor ?? item.createdAt);
+}
+
 function scheduledInputPreview(item: WebSessionScheduledInput) {
   if (item.action === 'execute_plan') {
     return t('webSession.planActionImplement');
@@ -11099,7 +11210,9 @@ function scheduledEditActionLabel(item: WebSessionScheduledInput) {
   if (item.status === 'failed') {
     return t('webSession.scheduledReschedule');
   }
-  return item.action === 'execute_plan' ? t('webSession.scheduledChangeTime') : t('common.edit');
+  return item.action === 'execute_plan'
+    ? t('webSession.scheduledChangeSchedule')
+    : t('common.edit');
 }
 
 function scheduledRemoveActionLabel(item: WebSessionScheduledInput) {
