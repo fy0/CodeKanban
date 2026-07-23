@@ -2913,6 +2913,10 @@ import {
   resolveStartDraftSessionDecision,
 } from '@/components/web-session/webSessionDraftTabs';
 import {
+  createWebSessionProjectInitializationGate,
+  resolveWebSessionDraftProjectPresentation,
+} from '@/components/web-session/webSessionProjectScope';
+import {
   normalizeWebSessionSidebarScope,
   resolveWebSessionSidebarProjectIds,
   resolveWebSessionSidebarToggleScope,
@@ -3400,6 +3404,7 @@ let activeUserInputSlowHintOwnerId = '';
 let mobileQuickInputOpenedAt = 0;
 let mobileSkillBrowserOpenedAt = 0;
 const realSessionSnapshotLoadController = createWebSessionSnapshotLoadController();
+const projectSessionInitializationGate = createWebSessionProjectInitializationGate();
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 
@@ -6483,10 +6488,25 @@ function parseTimestamp(value?: string | null) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
-function fallbackDraftTitle(agent: 'claude' | 'codex') {
-  const baseAgent = agent === 'claude' ? 'Claude' : 'Codex';
-  const projectName = projectStore.currentProject?.name?.trim();
-  return projectName ? `${baseAgent} · ${projectName}` : baseAgent;
+function resolveDraftProjectPresentation(
+  agent: 'claude' | 'codex',
+  worktreeId?: string | null,
+  projectId = props.projectId
+) {
+  return resolveWebSessionDraftProjectPresentation({
+    projectId,
+    agent,
+    worktreeId,
+    currentProject: projectStore.currentProject,
+    projects: projectStore.projects,
+    worktrees: projectStore.worktrees,
+    worktreesReady:
+      projectStore.currentProject?.id === projectId && !projectStore.projectDetailLoading,
+  });
+}
+
+function fallbackDraftTitle(agent: 'claude' | 'codex', projectId = props.projectId) {
+  return resolveDraftProjectPresentation(agent, null, projectId).title;
 }
 
 function normalizeDraftSession(
@@ -6499,18 +6519,18 @@ function normalizeDraftSession(
     return null;
   }
   const agent = session.agent === 'claude' ? 'claude' : 'codex';
+  const requestedWorktreeId =
+    typeof session.worktreeId === 'string' ? session.worktreeId || null : null;
+  const presentation = resolveDraftProjectPresentation(agent, requestedWorktreeId, projectId);
   const nowIso = new Date().toISOString();
   return {
     id,
     projectId,
-    worktreeId: typeof session.worktreeId === 'string' ? session.worktreeId || null : null,
+    worktreeId: presentation.worktreeId,
     orderIndex: Number.MAX_SAFE_INTEGER - index,
     agent,
     claudeRuntime: session.claudeRuntime === 'ccr' ? 'ccr' : 'claude',
-    title:
-      typeof session.title === 'string' && session.title.trim()
-        ? session.title.trim()
-        : fallbackDraftTitle(agent),
+    title: presentation.title,
     model:
       typeof session.model === 'string' && session.model.trim()
         ? session.model.trim()
@@ -6546,7 +6566,7 @@ function normalizeDraftSession(
         ? session.autoRetryPreset
         : webSessionAutoContinuePreset.value,
     autoRetryDispatchPendingOnFailure: session.autoRetryDispatchPendingOnFailure === true,
-    cwd: typeof session.cwd === 'string' ? session.cwd : projectStore.currentProject?.path || '',
+    cwd: presentation.cwd,
     nativeSessionId: null,
     status: 'idle',
     hasUnread: false,
@@ -6897,26 +6917,52 @@ function replaceDraftSessionState(
   persistDraftSessionState(projectId, nextDrafts, nextActiveDraftId);
 }
 
+function reconcileDraftSessionProjectScope(projectId = props.projectId) {
+  if (!projectId || draftSessions.value.length === 0) {
+    return;
+  }
+
+  let changed = false;
+  const nextDrafts = draftSessions.value.map(draft => {
+    if (draft.projectId !== projectId) {
+      return draft;
+    }
+    const presentation = resolveDraftProjectPresentation(draft.agent, draft.worktreeId, projectId);
+    if (
+      draft.title === presentation.title &&
+      draft.cwd === presentation.cwd &&
+      draft.worktreeId === presentation.worktreeId
+    ) {
+      return draft;
+    }
+    changed = true;
+    return {
+      ...draft,
+      title: presentation.title,
+      cwd: presentation.cwd,
+      worktreeId: presentation.worktreeId,
+    };
+  });
+
+  if (changed) {
+    replaceDraftSessionState(nextDrafts, activeDraftSessionId.value, projectId);
+  }
+}
+
 function resolveCurrentProjectWorktreeId(...worktreeIds: Array<string | null | undefined>) {
   for (const worktreeId of worktreeIds) {
     const normalizedWorktreeId = String(worktreeId || '').trim();
     if (!normalizedWorktreeId) {
       continue;
     }
-    const worktree = projectStore.worktrees.find(item => item.id === normalizedWorktreeId);
+    const worktree = projectStore.worktrees.find(
+      item => item.id === normalizedWorktreeId && item.projectId === props.projectId
+    );
     if (worktree) {
       return worktree.id;
     }
   }
   return null;
-}
-
-function resolveCurrentProjectWorktree(worktreeId?: string | null) {
-  const normalizedWorktreeId = resolveCurrentProjectWorktreeId(worktreeId);
-  if (!normalizedWorktreeId) {
-    return null;
-  }
-  return projectStore.worktrees.find(item => item.id === normalizedWorktreeId) ?? null;
 }
 
 function resolveCreateSessionWorktreeId(source: SessionTab | null) {
@@ -6927,10 +6973,14 @@ function resolveCreateSessionWorktreeId(source: SessionTab | null) {
 }
 
 function resolveDraftContext(worktreeId?: string | null) {
-  const worktree = resolveCurrentProjectWorktree(worktreeId);
+  const agent = currentSession.value?.agent ?? draftAgent.value;
+  const presentation = resolveDraftProjectPresentation(
+    agent,
+    resolveCurrentProjectWorktreeId(worktreeId)
+  );
   return {
-    worktreeId: worktree?.id ?? null,
-    cwd: worktree?.path || projectStore.currentProject?.path || currentSession.value?.cwd || '',
+    worktreeId: presentation.worktreeId,
+    cwd: presentation.cwd,
   };
 }
 
@@ -9220,6 +9270,12 @@ async function initializeProjectSessions(projectId: string) {
   if (!projectId) {
     return;
   }
+  const initialization = projectSessionInitializationGate.begin(projectId);
+  const isCurrentInitialization = () =>
+    projectSessionInitializationGate.isCurrent(initialization, props.projectId);
+  if (!isCurrentInitialization()) {
+    return;
+  }
   isProjectSessionInitializing.value = true;
   realSessionSnapshotLoadController.cancel();
   try {
@@ -9242,16 +9298,26 @@ async function initializeProjectSessions(projectId: string) {
     const activeDraftId = restoredDraftState.activeDraftId;
     replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
     const loadedSessions = await webSessionStore.loadSessions(projectId);
+    if (!isCurrentInitialization()) {
+      return;
+    }
     syncTabNavigationState(projectId, {
       orderIds: tabOrderIds.value,
       mruIds: tabMruIds.value,
     });
     await webSessionStore.openEventStream();
-    if (routeWebSessionId.value) {
-      pendingRouteActivationSessionId.value = routeWebSessionId.value;
-      const handled = await activateSessionFromRoute(projectId, routeWebSessionId.value, {
+    if (!isCurrentInitialization()) {
+      return;
+    }
+    const routeSessionId = routeWebSessionId.value;
+    if (routeSessionId) {
+      pendingRouteActivationSessionId.value = routeSessionId;
+      const handled = await activateSessionFromRoute(projectId, routeSessionId, {
         loadedSessions,
       });
+      if (!isCurrentInitialization()) {
+        return;
+      }
       if (handled) {
         return;
       }
@@ -9268,11 +9334,13 @@ async function initializeProjectSessions(projectId: string) {
       try {
         await activateTabById(targetSessionId);
       } catch (error) {
-        console.warn('[Web Session] Failed to initialize current session', {
-          projectId,
-          sessionId: targetSessionId,
-          error,
-        });
+        if (isCurrentInitialization()) {
+          console.warn('[Web Session] Failed to initialize current session', {
+            projectId,
+            sessionId: targetSessionId,
+            error,
+          });
+        }
       }
       return;
     }
@@ -9290,7 +9358,9 @@ async function initializeProjectSessions(projectId: string) {
     }
     ensureDefaultDraftSession();
   } finally {
-    isProjectSessionInitializing.value = false;
+    if (isCurrentInitialization()) {
+      isProjectSessionInitializing.value = false;
+    }
   }
 }
 
@@ -12229,7 +12299,32 @@ watch(
     clearSendConflictConfirmation();
     if (projectId) {
       void initializeProjectSessions(projectId);
+    } else {
+      projectSessionInitializationGate.invalidate();
+      isProjectSessionInitializing.value = false;
     }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => {
+    const listedProject = projectStore.projects.find(project => project.id === props.projectId);
+    return [
+      props.projectId,
+      projectStore.currentProject?.id ?? '',
+      projectStore.currentProject?.name ?? '',
+      projectStore.currentProject?.path ?? '',
+      listedProject?.name ?? '',
+      listedProject?.path ?? '',
+      projectStore.projectDetailLoading,
+      projectStore.worktrees
+        .map(worktree => `${worktree.projectId}:${worktree.id}:${worktree.path}`)
+        .join('|'),
+    ] as const;
+  },
+  () => {
+    reconcileDraftSessionProjectScope();
   },
   { immediate: true }
 );
