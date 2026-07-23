@@ -739,6 +739,8 @@ export default {
     sessionGroupLastSevenDays: '七天内',
     sessionGroupEarlier: '更早',
     sessionGroupArchived: '归档',
+    expandSessionGroup: '展开{group}分组',
+    collapseSessionGroup: '折叠{group}分组',
     archivedSessions: '归档会话',
     archivedSessionsEmpty: '暂无归档会话',
     archivedBadge: '归档',

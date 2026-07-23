@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildWebSessionSidebarVirtualItems,
   groupWebSessionSidebarEntriesByDate,
+  resolveWebSessionSidebarCollapsedKeys,
   type WebSessionSidebarRowView,
   type WebSessionSidebarSessionEntry,
 } from '@/components/web-session/webSessionSidebarVirtualList';
@@ -41,10 +42,17 @@ function makeEntry(
 function buildItems(
   current: WebSessionSidebarSessionEntry<TestSource>[],
   archived: WebSessionSidebarSessionEntry<TestSource>[] = [],
-  options: { loading?: boolean; hasMore?: boolean; total?: number; showArchived?: boolean } = {}
+  options: {
+    loading?: boolean;
+    hasMore?: boolean;
+    total?: number;
+    showArchived?: boolean;
+    collapsedSectionKeys?: ReadonlySet<string>;
+  } = {}
 ) {
   return buildWebSessionSidebarVirtualItems({
     currentSections: [{ key: 'today', label: 'Today', entries: current }],
+    collapsedSectionKeys: options.collapsedSectionKeys,
     showArchived: options.showArchived,
     archived,
     archivedLabel: 'Archived',
@@ -58,6 +66,18 @@ function buildItems(
 }
 
 describe('webSession sidebar virtual list', () => {
+  it('temporarily ignores collapsed groups while search is active', () => {
+    const collapsedSectionKeys = new Set(['today', 'archived']);
+
+    expect(
+      resolveWebSessionSidebarCollapsedKeys({ collapsedSectionKeys, searchActive: false })
+    ).toBe(collapsedSectionKeys);
+    expect([
+      ...resolveWebSessionSidebarCollapsedKeys({ collapsedSectionKeys, searchActive: true }),
+    ]).toEqual([]);
+    expect([...collapsedSectionKeys]).toEqual(['today', 'archived']);
+  });
+
   it('builds stable keyed items for thousands of sessions without cloning their sources', () => {
     const current = Array.from({ length: 2000 }, (_, index) => makeEntry(`session-${index}`));
     const archived = Array.from({ length: 20 }, (_, index) => makeEntry(`archived-${index}`, true));
@@ -105,6 +125,46 @@ describe('webSession sidebar virtual list', () => {
       expect.objectContaining({ key: 'section:today', type: 'section' }),
       expect.objectContaining({ key: current.row.key, type: 'session' }),
     ]);
+  });
+
+  it('keeps a collapsed current section heading while hiding its sessions', () => {
+    const current = [makeEntry('current-1'), makeEntry('current-2')];
+    const items = buildItems(current, [], {
+      showArchived: false,
+      collapsedSectionKeys: new Set(['today']),
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        key: 'section:today',
+        sectionKey: 'today',
+        type: 'section',
+        count: 2,
+        collapsed: true,
+      }),
+    ]);
+  });
+
+  it('hides all archived children while the archived section is collapsed', () => {
+    const current = makeEntry('current');
+    const archived = makeEntry('archived', true);
+    const items = buildItems([current], [archived], {
+      hasMore: true,
+      total: 12,
+      collapsedSectionKeys: new Set(['archived']),
+    });
+
+    expect(items.map(item => item.key)).toEqual([
+      'section:today',
+      current.row.key,
+      'section:archived',
+    ]);
+    expect(items.at(-1)).toMatchObject({
+      sectionKey: 'archived',
+      type: 'section',
+      count: 12,
+      collapsed: true,
+    });
   });
 
   it('groups current sessions by local calendar-day boundaries', () => {

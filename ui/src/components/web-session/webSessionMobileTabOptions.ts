@@ -17,8 +17,10 @@ export type WebSessionMobileTabDescriptor<TSession extends { id: string }> =
   | {
       kind: 'date-group';
       key: string;
+      groupKey: string;
       label: string;
       count: number;
+      collapsed: boolean;
       section: 'current';
     }
   | {
@@ -43,6 +45,7 @@ export function buildWebSessionMobileTabDescriptors<TSession extends { id: strin
   section: MobileSessionCategory;
   sessions: TSession[];
   sessionGroups?: WebSessionMobileTabGroup<TSession>[];
+  collapsedGroupKeys?: ReadonlySet<string>;
   hasArchivedLoadMore?: boolean;
   isArchivedLoading?: boolean;
 }) {
@@ -57,13 +60,19 @@ export function buildWebSessionMobileTabDescriptors<TSession extends { id: strin
   const visibleGroups = (input.sessionGroups ?? []).filter(group => group.sessions.length > 0);
   if (input.section === 'current' && visibleGroups.length > 0) {
     visibleGroups.forEach(group => {
+      const collapsed = input.collapsedGroupKeys?.has(group.key) === true;
       descriptors.push({
         kind: 'date-group',
         key: `mobile-session-date-group:${group.key}`,
+        groupKey: group.key,
         label: group.label,
         count: group.sessions.length,
+        collapsed,
         section: 'current',
       });
+      if (collapsed) {
+        return;
+      }
       group.sessions.forEach(session => {
         descriptors.push({
           kind: 'session',

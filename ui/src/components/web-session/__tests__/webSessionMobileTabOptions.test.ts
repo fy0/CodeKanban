@@ -120,8 +120,36 @@ describe('webSessionMobileTabOptions', () => {
     ]);
     expect(descriptors[1]).toMatchObject({
       kind: 'date-group',
+      groupKey: 'today',
       label: 'Today',
       count: 2,
+      collapsed: false,
+    });
+  });
+
+  it('keeps collapsed date headings while hiding their sessions', () => {
+    const sessions = makeSessions(['today-1', 'today-2', 'earlier-1']);
+    const descriptors = buildWebSessionMobileTabDescriptors({
+      section: 'current',
+      sessions,
+      sessionGroups: [
+        { key: 'today', label: 'Today', sessions: sessions.slice(0, 2) },
+        { key: 'earlier', label: 'Earlier', sessions: sessions.slice(2) },
+      ],
+      collapsedGroupKeys: new Set(['today']),
+    });
+
+    expect(descriptors.map(item => item.key)).toEqual([
+      'mobile-session-switcher:current',
+      'mobile-session-date-group:today',
+      'mobile-session-date-group:earlier',
+      'earlier-1',
+    ]);
+    expect(descriptors[1]).toMatchObject({
+      kind: 'date-group',
+      groupKey: 'today',
+      count: 2,
+      collapsed: true,
     });
   });
 });

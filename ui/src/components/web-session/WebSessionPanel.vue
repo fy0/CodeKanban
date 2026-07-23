@@ -77,8 +77,23 @@
           >
             <template #default="{ item }">
               <div v-if="item.kind === 'date-group'" class="mobile-session-drawer-date-group">
-                <span>{{ item.label }}</span>
-                <span class="mobile-session-drawer-date-group-count">{{ item.count }}</span>
+                <span class="mobile-session-drawer-date-group-label">
+                  <span>{{ item.label }}</span>
+                  <span class="mobile-session-drawer-date-group-count">{{ item.count }}</span>
+                </span>
+                <button
+                  type="button"
+                  class="mobile-session-drawer-date-group-toggle"
+                  :title="sessionGroupToggleLabel(item.label, item.collapsed)"
+                  :aria-label="sessionGroupToggleLabel(item.label, item.collapsed)"
+                  :aria-expanded="!item.collapsed"
+                  @click.stop="toggleSessionGroup(item.groupKey)"
+                >
+                  <n-icon size="14" aria-hidden="true">
+                    <ChevronForwardOutline v-if="item.collapsed" />
+                    <ChevronDownOutline v-else />
+                  </n-icon>
+                </button>
               </div>
               <div v-else-if="item.kind === 'session'" class="mobile-session-drawer-item-shell">
                 <button
@@ -2455,6 +2470,20 @@
                     <span>{{ item.label }}</span>
                     <span>({{ item.count }})</span>
                   </span>
+                  <button
+                    v-if="normalizedSidebarSearchQuery.length === 0"
+                    type="button"
+                    class="session-sidebar-section-toggle"
+                    :title="sessionGroupToggleLabel(item.label, item.collapsed)"
+                    :aria-label="sessionGroupToggleLabel(item.label, item.collapsed)"
+                    :aria-expanded="!item.collapsed"
+                    @click.stop="toggleSessionGroup(item.sectionKey)"
+                  >
+                    <n-icon size="13" aria-hidden="true">
+                      <ChevronForwardOutline v-if="item.collapsed" />
+                      <ChevronDownOutline v-else />
+                    </n-icon>
+                  </button>
                 </div>
                 <div v-else-if="item.type === 'empty'" class="session-sidebar-virtual-row">
                   <div class="session-sidebar-section-empty">{{ item.label }}</div>
@@ -2841,6 +2870,7 @@ import {
   AddOutline,
   ArchiveOutline,
   ChevronDownOutline,
+  ChevronForwardOutline,
   ChevronUpOutline,
   CreateOutline,
   FlashOutline,
@@ -3066,6 +3096,7 @@ import {
   buildWebSessionSidebarVirtualItems,
   groupWebSessionSidebarEntriesByDate,
   groupWebSessionItemsByDate,
+  resolveWebSessionSidebarCollapsedKeys,
   WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE,
   type WebSessionSidebarRowView,
   type WebSessionSidebarSessionEntry,
@@ -3140,6 +3171,7 @@ const emit = defineEmits<{
 }>();
 
 const liveStateClockMs = ref(Date.now());
+const collapsedSessionGroupKeys = ref<ReadonlySet<string>>(new Set());
 let liveStateClockTimer: number | null = null;
 const sidebarCalendarDayStartMs = computed(() => {
   const date = new Date(liveStateClockMs.value);
@@ -6307,10 +6339,27 @@ const mobileTabDescriptors = computed<MobileTabListDescriptor[]>(() =>
     sessions: mobileVisibleSessions.value,
     sessionGroups:
       mobileSessionCategory.value === 'current' ? mobileCurrentSessionGroups.value : undefined,
+    collapsedGroupKeys: collapsedSessionGroupKeys.value,
     hasArchivedLoadMore: mobileArchivedMeta.value.hasMore,
     isArchivedLoading: mobileArchivedMeta.value.loading,
   }).filter((descriptor): descriptor is MobileTabListDescriptor => descriptor.kind !== 'header')
 );
+
+function toggleSessionGroup(groupKey: string) {
+  const nextCollapsedKeys = new Set(collapsedSessionGroupKeys.value);
+  if (nextCollapsedKeys.has(groupKey)) {
+    nextCollapsedKeys.delete(groupKey);
+  } else {
+    nextCollapsedKeys.add(groupKey);
+  }
+  collapsedSessionGroupKeys.value = nextCollapsedKeys;
+}
+
+function sessionGroupToggleLabel(groupLabel: string, collapsed: boolean) {
+  return t(collapsed ? 'webSession.expandSessionGroup' : 'webSession.collapseSessionGroup', {
+    group: groupLabel,
+  });
+}
 
 function getMobileTabSessionClass(session: SessionTab) {
   const displayState = getSessionDisplayState(session);
@@ -8104,6 +8153,10 @@ const archivedSidebarEmptyLabel = computed(() => {
 const sidebarVirtualItems = computed<WebSessionSidebarVirtualItem<CrossProjectSessionItem>[]>(() =>
   buildWebSessionSidebarVirtualItems({
     currentSections: currentSidebarSections.value,
+    collapsedSectionKeys: resolveWebSessionSidebarCollapsedKeys({
+      collapsedSectionKeys: collapsedSessionGroupKeys.value,
+      searchActive: normalizedSidebarSearchQuery.value.length > 0,
+    }),
     showArchived: showArchivedSidebarSection.value,
     archived: archivedSidebarEntries.value,
     archivedLabel: t('webSession.sessionGroupArchived'),
@@ -13851,14 +13904,22 @@ defineExpose({
 .mobile-session-drawer-date-group {
   box-sizing: border-box;
   min-height: 34px;
-  padding: 9px 8px 5px;
+  padding: 5px 4px 1px 8px;
   color: var(--n-text-color-3);
   display: flex;
   align-items: center;
-  gap: 5px;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
+}
+
+.mobile-session-drawer-date-group-label {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .mobile-session-drawer-date-group-count {
@@ -14344,9 +14405,9 @@ defineExpose({
   min-height: var(--session-sidebar-section-height);
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: 6px;
-  padding: 0 0 0 4px;
+  padding: 0 2px 0 4px;
   font-size: var(--session-sidebar-title-font-size, 12px);
   font-weight: 600;
   color: var(--n-text-color-2);
@@ -14391,11 +14452,46 @@ defineExpose({
 }
 
 .session-sidebar-section-label {
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   line-height: 16px;
   transform: translateY(1px);
+}
+
+.mobile-session-drawer-date-group-toggle,
+.session-sidebar-section-toggle {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.session-sidebar-section-toggle {
+  width: 22px;
+  height: 22px;
+}
+
+.mobile-session-drawer-date-group-toggle:hover,
+.session-sidebar-section-toggle:hover {
+  background: color-mix(in srgb, var(--n-text-color-3) 12%, transparent);
+  color: var(--n-text-color-2);
+}
+
+.mobile-session-drawer-date-group-toggle:focus-visible,
+.session-sidebar-section-toggle:focus-visible {
+  outline: 2px solid var(--n-primary-color);
+  outline-offset: 1px;
 }
 
 .session-sidebar-section-empty {

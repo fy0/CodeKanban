@@ -756,6 +756,8 @@ export default {
     sessionGroupLastSevenDays: 'Within 7 Days',
     sessionGroupEarlier: 'Earlier',
     sessionGroupArchived: 'Archived',
+    expandSessionGroup: 'Expand {group}',
+    collapseSessionGroup: 'Collapse {group}',
     archivedSessions: 'Archived Sessions',
     archivedSessionsEmpty: 'No archived sessions',
     archivedBadge: 'Archived',

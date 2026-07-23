@@ -50,9 +50,11 @@ export type WebSessionSidebarVirtualItem<T> =
   | {
       key: string;
       type: 'section';
+      sectionKey: string;
       label: string;
       count: number;
       separated: boolean;
+      collapsed: boolean;
     }
   | {
       key: string;
@@ -73,6 +75,7 @@ export type WebSessionSidebarVirtualItem<T> =
 
 type BuildWebSessionSidebarVirtualItemsOptions<T> = {
   currentSections: WebSessionSidebarSection<T>[];
+  collapsedSectionKeys?: ReadonlySet<string>;
   showArchived?: boolean;
   archived: WebSessionSidebarSessionEntry<T>[];
   archivedLabel: string;
@@ -85,6 +88,17 @@ type BuildWebSessionSidebarVirtualItemsOptions<T> = {
 };
 
 export const WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE = 38;
+const EMPTY_COLLAPSED_SECTION_KEYS: ReadonlySet<string> = new Set();
+
+export function resolveWebSessionSidebarCollapsedKeys({
+  collapsedSectionKeys,
+  searchActive,
+}: {
+  collapsedSectionKeys: ReadonlySet<string>;
+  searchActive: boolean;
+}) {
+  return searchActive ? EMPTY_COLLAPSED_SECTION_KEYS : collapsedSectionKeys;
+}
 
 function startOfLocalDay(timestamp: number, daysAgo = 0) {
   const date = new Date(timestamp);
@@ -155,6 +169,7 @@ export function groupWebSessionItemsByDate<T>({
 
 export function buildWebSessionSidebarVirtualItems<T>({
   currentSections,
+  collapsedSectionKeys = new Set<string>(),
   showArchived = true,
   archived,
   archivedLabel,
@@ -169,13 +184,19 @@ export function buildWebSessionSidebarVirtualItems<T>({
   const visibleCurrentSections = currentSections.filter(section => section.entries.length > 0);
 
   visibleCurrentSections.forEach(section => {
+    const collapsed = collapsedSectionKeys.has(section.key);
     items.push({
       key: `section:${section.key}`,
       type: 'section',
+      sectionKey: section.key,
       label: section.label,
       count: section.entries.length,
       separated: false,
+      collapsed,
     });
+    if (collapsed) {
+      return;
+    }
     section.entries.forEach(entry => {
       items.push({
         key: entry.row.key,
@@ -189,13 +210,20 @@ export function buildWebSessionSidebarVirtualItems<T>({
     return items;
   }
 
+  const archivedCollapsed = collapsedSectionKeys.has('archived');
   items.push({
     key: 'section:archived',
     type: 'section',
+    sectionKey: 'archived',
     label: archivedLabel,
     count: archivedTotal,
     separated: visibleCurrentSections.length > 0,
+    collapsed: archivedCollapsed,
   });
+
+  if (archivedCollapsed) {
+    return items;
+  }
 
   if (archived.length > 0) {
     archived.forEach(entry => {
