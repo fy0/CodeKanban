@@ -119,16 +119,24 @@ describe('webSessionUserMessageNavigation', () => {
 
   it('renders always-visible accessible controls before the user role and timestamp', () => {
     const navigationIndex = webSessionPanelSource.indexOf('class="user-message-navigation"');
+    const editIndex = webSessionPanelSource.indexOf('<CreateOutline />', navigationIndex);
+    const previousIndex = webSessionPanelSource.indexOf('<ChevronUpOutline />', navigationIndex);
     const roleIndex = webSessionPanelSource.indexOf('class="item-role"');
     const timeIndex = webSessionPanelSource.indexOf('class="item-time"');
 
     expect(navigationIndex).toBeGreaterThan(-1);
+    expect(editIndex).toBeGreaterThan(navigationIndex);
+    expect(editIndex).toBeLessThan(previousIndex);
     expect(navigationIndex).toBeLessThan(roleIndex);
     expect(roleIndex).toBeLessThan(timeIndex);
     expect(webSessionPanelSource).toContain('<ChevronUpOutline />');
     expect(webSessionPanelSource).toContain('<ChevronDownOutline />');
     expect(webSessionPanelSource).toContain(':aria-label="t(\'terminal.prevUserMessage\')"');
     expect(webSessionPanelSource).toContain(':aria-label="t(\'terminal.nextUserMessage\')"');
+    expect(webSessionPanelSource).toContain(
+      'class="user-message-navigation-button user-message-edit-button"'
+    );
+    expect(webSessionPanelSource).toContain("t('webSession.editUserMessageWorkspaceWarning')");
   });
 
   it('keeps the controls compact and makes unavailable directions visibly quieter', () => {

@@ -94,4 +94,26 @@ describe('webSessionApi.search', () => {
 
     await expect(request).rejects.toMatchObject({ name: 'AbortError' });
   });
+
+  it('creates an edited-message branch through the source history item', async () => {
+    postSendMock.mockResolvedValueOnce({
+      item: {
+        session: { id: 'session-branch' },
+        history: { items: [], hasMore: false, total: 0 },
+      },
+    });
+
+    const result = await webSessionApi.editUserMessage(
+      'project-1',
+      'session-source',
+      'history-item-2',
+      'revised prompt'
+    );
+
+    expect(postMethodMock).toHaveBeenCalledWith(
+      '/projects/project-1/web-sessions/session-source/messages/history-item-2/edit',
+      { text: 'revised prompt' }
+    );
+    expect(result.session?.id).toBe('session-branch');
+  });
 });

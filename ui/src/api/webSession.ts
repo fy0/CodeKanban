@@ -216,6 +216,24 @@ export const webSessionApi = {
     return body.item;
   },
 
+  async editUserMessage(
+    projectId: string,
+    sessionId: string,
+    itemId: string,
+    text: string
+  ): Promise<WebSessionSnapshot> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionSnapshot>
+        >(`/projects/${projectId}/web-sessions/${sessionId}/messages/${itemId}/edit`, { text })
+        .send()) ?? {};
+    if (!body.item?.session || !body.item.history) {
+      throw new Error('failed to create edited message branch');
+    }
+    return body.item;
+  },
+
   async importSession(
     projectId: string,
     data: {

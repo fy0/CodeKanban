@@ -276,6 +276,46 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/messages/{itemId}/edit", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+			ItemID    string `path:"itemId"`
+			Body      struct {
+				Text string `json:"text"`
+			}
+		},
+	) (*h.ItemResponse[websession.SessionSnapshot], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		item, err := c.manager.EditUserMessage(ctx, input.SessionID, input.ItemID, input.Body.Text)
+		if err != nil {
+			switch {
+			case errors.Is(err, websession.ErrMessageEditTargetNotFound):
+				return nil, huma.Error404NotFound(err.Error())
+			case errors.Is(err, websession.ErrMessageEditSessionActive),
+				errors.Is(err, websession.ErrMessageEditHistoryConflict):
+				return nil, huma.Error409Conflict(err.Error())
+			case errors.Is(err, websession.ErrMessageEditUnsupported),
+				errors.Is(err, websession.ErrMessageEditForkUnavailable),
+				errors.Is(err, websession.ErrMessageEditEmpty):
+				return nil, huma.Error400BadRequest(err.Error())
+			default:
+				return nil, huma.Error500InternalServerError("failed to edit user message", err)
+			}
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusCreated
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-edit-user-message"
+		op.Summary = "编辑用户消息并创建 Codex 分支"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Post(group, "/projects/{projectId}/web-sessions/import", func(
 		ctx context.Context,
 		input *struct {

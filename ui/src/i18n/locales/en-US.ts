@@ -807,6 +807,17 @@ export default {
     syncClearExisting: 'Fully clear existing records before syncing',
     deleteConfirm: 'Delete session "{title}"?',
     jumpToBottom: 'Jump to Bottom',
+    editUserMessage: 'Edit this message',
+    editUserMessageRunning: 'Stop the current run before editing',
+    editUserMessageTitle: 'Edit User Message',
+    editUserMessageHint:
+      'The original session will be preserved and a new Codex branch will start before this message.',
+    editUserMessageAttachmentsPreserved:
+      '{count} attachment from the original message will be preserved. | {count} attachments from the original message will be preserved.',
+    editUserMessageWorkspaceWarning:
+      'The conversation will regenerate from this point, but existing workspace file changes will not be reverted.',
+    editUserMessageSubmit: 'Edit and Regenerate',
+    editUserMessageSuccess: 'Edited branch created',
     inputPlaceholder: 'Type a message, press Enter to send and Shift + Enter for a new line',
     inputPlaceholderMobile: 'Type a message',
     quickInput: 'Quick Input',

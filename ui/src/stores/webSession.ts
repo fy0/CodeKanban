@@ -4950,6 +4950,48 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return result;
   }
 
+  async function editUserMessage(
+    projectId: string,
+    sessionId: string,
+    itemId: string,
+    text: string
+  ) {
+    const snapshot = await webSessionApi.editUserMessage(projectId, sessionId, itemId, text);
+    if (!snapshot.session || !snapshot.history) {
+      throw new Error('edited message branch returned an incomplete snapshot');
+    }
+    const branchId = snapshot.session.id;
+    applySessionSnapshot(
+      branchId,
+      snapshot.session,
+      Array.isArray(snapshot.history.items)
+        ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+        : [],
+      normalizePendingApproval(snapshot.pendingApproval),
+      Array.isArray(snapshot.pendingInputs)
+        ? snapshot.pendingInputs
+            .map(item => normalizePendingInput(item))
+            .filter((item): item is WebSessionPendingInput => item != null)
+        : [],
+      Array.isArray(snapshot.scheduledInputs)
+        ? snapshot.scheduledInputs
+            .map(item => normalizeScheduledInput(item))
+            .filter((item): item is WebSessionScheduledInput => item != null)
+        : [],
+      {
+        hasMore: Boolean(snapshot.history.hasMore),
+        beforeCursor: String(snapshot.history.beforeCursor ?? ''),
+        total: Number(snapshot.history.total ?? 0),
+      }
+    );
+    rememberActiveSession(projectId, branchId);
+    emitter.emit('web-session:created', {
+      projectId,
+      sessionId: branchId,
+    });
+    return snapshot;
+  }
+
   async function syncSession(
     projectId: string,
     sessionId: string,
@@ -5956,6 +5998,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     setActiveSession,
     loadSessionSnapshot,
     createSession: createSessionViaHttp,
+    editUserMessage,
     importSession,
     renameSession,
     archiveSession,

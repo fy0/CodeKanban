@@ -438,6 +438,30 @@
                 >
                   <div v-if="!shouldHideTimelineMeta(item)" class="item-meta">
                     <span v-if="item.kind === 'user'" class="user-message-navigation">
+                      <n-tooltip
+                        v-if="canEditTimelineUserMessage(item)"
+                        trigger="hover"
+                        placement="top"
+                        :delay="100"
+                      >
+                        <template #trigger>
+                          <n-button
+                            quaternary
+                            circle
+                            size="small"
+                            class="user-message-navigation-button user-message-edit-button"
+                            :disabled="isRunActive"
+                            :title="timelineUserMessageEditTitle"
+                            :aria-label="timelineUserMessageEditTitle"
+                            @click.stop="openTimelineUserMessageEdit(item)"
+                          >
+                            <template #icon>
+                              <n-icon><CreateOutline /></n-icon>
+                            </template>
+                          </n-button>
+                        </template>
+                        {{ timelineUserMessageEditTitle }}
+                      </n-tooltip>
                       <n-tooltip trigger="hover" placement="top" :delay="100">
                         <template #trigger>
                           <n-button
@@ -2599,6 +2623,74 @@
     </n-modal>
 
     <n-modal
+      :show="showMessageEditDialog"
+      preset="card"
+      class="message-edit-modal"
+      :title="t('webSession.editUserMessageTitle')"
+      :bordered="false"
+      :segmented="{ content: false, footer: false }"
+      :mask-closable="!messageEditSubmitting"
+      closable
+      style="width: min(92vw, 620px)"
+      @update:show="handleMessageEditDialogVisibilityChange"
+    >
+      <div class="message-edit-modal-body">
+        <div class="message-edit-hint">{{ t('webSession.editUserMessageHint') }}</div>
+        <n-input
+          v-model:value="messageEditText"
+          type="textarea"
+          :autosize="{ minRows: 5, maxRows: 14 }"
+          :placeholder="t('webSession.inputPlaceholder')"
+          :disabled="messageEditSubmitting"
+          autofocus
+        />
+        <div
+          v-if="editingUserMessage && editingUserMessage.block.attachments.length > 0"
+          class="message-edit-attachments"
+        >
+          <div>
+            {{
+              t('webSession.editUserMessageAttachmentsPreserved', {
+                count: editingUserMessage.block.attachments.length,
+              })
+            }}
+          </div>
+          <div class="attachment-row">
+            <span
+              v-for="attachment in editingUserMessage.block.attachments"
+              :key="attachment.id"
+              class="attachment-pill"
+            >
+              {{ attachment.name }}
+            </span>
+          </div>
+        </div>
+        <n-alert type="warning" :show-icon="true" :bordered="false">
+          {{ t('webSession.editUserMessageWorkspaceWarning') }}
+        </n-alert>
+      </div>
+      <template #footer>
+        <div class="message-edit-modal-footer">
+          <n-button
+            secondary
+            :disabled="messageEditSubmitting"
+            @click="handleMessageEditDialogVisibilityChange(false)"
+          >
+            {{ t('common.cancel') }}
+          </n-button>
+          <n-button
+            type="primary"
+            :loading="messageEditSubmitting"
+            :disabled="!messageEditCanSubmit"
+            @click="handleConfirmMessageEdit"
+          >
+            {{ t('webSession.editUserMessageSubmit') }}
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
+
+    <n-modal
       :show="showAttachmentPreview"
       preset="card"
       class="attachment-preview-modal"
@@ -3338,6 +3430,14 @@ const planQuickActionsX = ref(0);
 const planQuickActionsY = ref(0);
 const planQuickActionAnchor = shallowRef<HTMLElement | null>(null);
 const showScheduledSendDialog = ref(false);
+const showMessageEditDialog = ref(false);
+const editingUserMessage = ref<{
+  projectId: string;
+  sessionId: string;
+  block: WebSessionBlock;
+} | null>(null);
+const messageEditText = ref('');
+const messageEditSubmitting = ref(false);
 const scheduledSendPurpose = ref<ScheduledSendPurpose>('message');
 const scheduledPlanDialogTarget = ref<ScheduledPlanDialogTarget | null>(null);
 const scheduledEditingInput = ref<WebSessionScheduledInput | null>(null);
@@ -4678,6 +4778,88 @@ function setTimelineUserMessageRef(element: unknown, block: WebSessionBlock) {
     return;
   }
   timelineUserMessageElements.delete(block.key);
+}
+
+const timelineUserMessageEditTitle = computed(() =>
+  isRunActive.value ? t('webSession.editUserMessageRunning') : t('webSession.editUserMessage')
+);
+const messageEditCanSubmit = computed(() => {
+  const editing = editingUserMessage.value;
+  if (!editing || messageEditSubmitting.value) {
+    return false;
+  }
+  return messageEditText.value.trim().length > 0 || editing.block.attachments.length > 0;
+});
+
+function canEditTimelineUserMessage(block: WebSessionBlock) {
+  const session = currentRealSession.value;
+  return Boolean(block.kind === 'user' && session?.agent === 'codex' && session.nativeSessionId);
+}
+
+function openTimelineUserMessageEdit(block: WebSessionBlock) {
+  const session = currentRealSession.value;
+  if (!session || !canEditTimelineUserMessage(block) || isRunActive.value) {
+    return;
+  }
+  editingUserMessage.value = {
+    projectId: session.projectId,
+    sessionId: session.id,
+    block,
+  };
+  messageEditText.value = block.text;
+  showMessageEditDialog.value = true;
+}
+
+function handleMessageEditDialogVisibilityChange(show: boolean) {
+  if (!show && messageEditSubmitting.value) {
+    return;
+  }
+  showMessageEditDialog.value = show;
+  if (!show) {
+    editingUserMessage.value = null;
+    messageEditText.value = '';
+  }
+}
+
+async function handleConfirmMessageEdit() {
+  const editing = editingUserMessage.value;
+  if (!editing || !messageEditCanSubmit.value) {
+    return;
+  }
+  messageEditSubmitting.value = true;
+  try {
+    const snapshot = await webSessionStore.editUserMessage(
+      editing.projectId,
+      editing.sessionId,
+      editing.block.id,
+      messageEditText.value
+    );
+    const branch = snapshot.session;
+    if (!branch) {
+      throw new Error(t('common.error'));
+    }
+    showMessageEditDialog.value = false;
+    editingUserMessage.value = null;
+    messageEditText.value = '';
+    if (editing.projectId !== props.projectId) {
+      projectStore.addRecentProject(editing.projectId);
+      await router.push(buildProjectRouteLocation(editing.projectId, branch.id));
+    } else {
+      clearArchivedPreviewSession();
+      activeArchivedPreviewId.value = '';
+      await nextTick();
+      insertTabAfter(branch.id, editing.sessionId);
+      await activateTabById(branch.id, { connectReal: false });
+      await syncWebSessionRouteSessionId(branch.id);
+      autoFollowBottom.value = true;
+      scrollToBottom(true);
+    }
+    message.success(t('webSession.editUserMessageSuccess'));
+  } catch (error) {
+    message.error(formatSessionInteractionError(error));
+  } finally {
+    messageEditSubmitting.value = false;
+  }
 }
 
 function canLoadEarlierUserMessageHistory() {
@@ -14435,6 +14617,10 @@ defineExpose({
   font-size: 11px;
 }
 
+.user-message-edit-button {
+  margin-right: 2px;
+}
+
 .user-message-navigation-button:not(:disabled):hover,
 .user-message-navigation-button:not(:disabled):focus-visible {
   color: var(--n-text-color-1);
@@ -14450,6 +14636,31 @@ defineExpose({
 .timeline-item.kind-user .item-meta {
   justify-content: flex-end;
   gap: 6px;
+}
+
+.message-edit-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.message-edit-hint,
+.message-edit-attachments {
+  color: var(--n-text-color-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.message-edit-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message-edit-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .item-bubble {
