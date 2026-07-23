@@ -270,6 +270,7 @@ import {
   DEFAULT_MOBILE_VIEW,
   mobileViewToRouteTab,
   normalizeMobileView,
+  resolveMobileProjectSelectionAction,
   resolveMobileProjectSourceViewChange,
   routeTabToMobileView,
   restorePersistedMobileView,
@@ -552,7 +553,9 @@ const loadProject = (id: string) => {
   if (!id) {
     return;
   }
-  projectStore.fetchProject(id);
+  void projectStore.fetchProject(id).catch((error: unknown) => {
+    message.error(error instanceof Error ? error.message : t('project.loadProjectFailed'));
+  });
   projectStore.addRecentProject(id);
   void maybeShowDailyTip(id);
 };
@@ -666,6 +669,7 @@ function scrollMobileProjectsToTop() {
 }
 
 async function navigateToMobileProject(projectId: string, targetView: MobileView) {
+  const previousView = mobileActiveView.value;
   mobileRouteSyncPaused.value = true;
   setMobileView(targetView);
 
@@ -686,9 +690,13 @@ async function navigateToMobileProject(projectId: string, targetView: MobileView
 
   try {
     await router.push(location);
+  } catch (error) {
+    mobileActiveView.value = previousView;
+    message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
     await nextTick();
     mobileRouteSyncPaused.value = false;
+    syncMobileRouteTab(mobileActiveView.value);
   }
 }
 
@@ -702,15 +710,17 @@ async function handleMobileProjectSelect(payload: { projectId: string }) {
     return;
   }
 
-  const sourceView = mobileProjectSourceView.value;
+  const selectionAction = resolveMobileProjectSelectionAction(mobileProjectSourceView.value);
   await nextTick();
   scrollMobileProjectsToTop();
 
-  if (!sourceView) {
+  if (selectionAction.type === 'navigate') {
     mobileProjectSourceView.value = '';
-    await navigateToMobileProject(targetProjectId, 'projects');
+    await navigateToMobileProject(targetProjectId, selectionAction.targetView);
     return;
   }
+
+  const sourceView = selectionAction.sourceView;
 
   dialog.info({
     title: t('project.mobileReturnPromptTitle'),

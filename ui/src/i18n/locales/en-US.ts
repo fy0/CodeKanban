@@ -726,6 +726,7 @@ export default {
   },
   webSession: {
     switchProject: 'Switch Project',
+    switchSession: 'Switch Session',
     emptyTitle: 'No Sessions',
     emptyDescription: 'Create a Claude or Codex session to start a conversation.',
     draftTitle: 'New Session',

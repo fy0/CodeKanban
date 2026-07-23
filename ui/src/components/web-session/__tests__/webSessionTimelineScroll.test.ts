@@ -103,6 +103,7 @@ describe('webSessionTimelineScroll', () => {
       action: 'none',
       state: {
         lastScrollTop: 760,
+        lastClientHeight: 200,
         upwardDistance: 40,
       },
     });
@@ -117,6 +118,7 @@ describe('webSessionTimelineScroll', () => {
       action: 'collapse',
       state: {
         lastScrollTop: 720,
+        lastClientHeight: 200,
         upwardDistance: 0,
       },
     });
@@ -125,6 +127,7 @@ describe('webSessionTimelineScroll', () => {
   it('resets mobile composer upward distance when scrolling downward', () => {
     const previous = {
       lastScrollTop: 760,
+      lastClientHeight: 200,
       upwardDistance: 40,
     };
 
@@ -138,6 +141,30 @@ describe('webSessionTimelineScroll', () => {
       action: 'none',
       state: {
         lastScrollTop: 780,
+        lastClientHeight: 200,
+        upwardDistance: 0,
+      },
+    });
+  });
+
+  it('ignores scroll position changes caused by mobile composer height changes', () => {
+    const previous = createWebSessionMobileComposerScrollState({
+      scrollTop: 1501,
+      scrollHeight: 2000,
+      clientHeight: 499,
+    });
+
+    expect(
+      resolveWebSessionMobileComposerScrollState(previous, {
+        scrollTop: 1393,
+        scrollHeight: 2000,
+        clientHeight: 607,
+      })
+    ).toEqual({
+      action: 'none',
+      state: {
+        lastScrollTop: 1393,
+        lastClientHeight: 607,
         upwardDistance: 0,
       },
     });

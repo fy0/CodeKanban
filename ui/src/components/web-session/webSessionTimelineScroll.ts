@@ -12,6 +12,7 @@ export interface WebSessionTimelineFollowState {
 
 export interface WebSessionMobileComposerScrollState {
   lastScrollTop: number;
+  lastClientHeight: number;
   upwardDistance: number;
 }
 
@@ -91,6 +92,7 @@ export function createWebSessionMobileComposerScrollState(
 ): WebSessionMobileComposerScrollState {
   return {
     lastScrollTop: normalizeScrollTop(metrics.scrollTop),
+    lastClientHeight: Math.max(0, metrics.clientHeight),
     upwardDistance: 0,
   };
 }
@@ -103,6 +105,22 @@ export function resolveWebSessionMobileComposerScrollState(
   state: WebSessionMobileComposerScrollState;
 } {
   const scrollTop = normalizeScrollTop(metrics.scrollTop);
+  const clientHeight = Math.max(0, metrics.clientHeight);
+
+  if (
+    Math.abs(clientHeight - previous.lastClientHeight) >
+    WEB_SESSION_TIMELINE_SCROLL_UP_EPSILON_PX
+  ) {
+    return {
+      action: 'none',
+      state: {
+        lastScrollTop: scrollTop,
+        lastClientHeight: clientHeight,
+        upwardDistance: 0,
+      },
+    };
+  }
+
   const delta = scrollTop - previous.lastScrollTop;
 
   if (delta < -WEB_SESSION_TIMELINE_SCROLL_UP_EPSILON_PX) {
@@ -112,6 +130,7 @@ export function resolveWebSessionMobileComposerScrollState(
         action: 'collapse',
         state: {
           lastScrollTop: scrollTop,
+          lastClientHeight: clientHeight,
           upwardDistance: 0,
         },
       };
@@ -121,6 +140,7 @@ export function resolveWebSessionMobileComposerScrollState(
       action: 'none',
       state: {
         lastScrollTop: scrollTop,
+        lastClientHeight: clientHeight,
         upwardDistance,
       },
     };
@@ -130,6 +150,7 @@ export function resolveWebSessionMobileComposerScrollState(
     action: 'none',
     state: {
       lastScrollTop: scrollTop,
+      lastClientHeight: clientHeight,
       upwardDistance: 0,
     },
   };

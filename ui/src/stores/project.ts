@@ -15,7 +15,9 @@ export const useProjectStore = defineStore('project', () => {
   const projects = ref<Project[]>([]);
   const currentProject = ref<Project | null>(null);
   const worktrees = ref<Worktree[]>([]);
-  const loading = ref(false);
+  const projectsLoading = ref(false);
+  const projectDetailLoading = ref(false);
+  const loading = computed(() => projectsLoading.value || projectDetailLoading.value);
   const selectedWorktreeId = ref<string | null>(null);
 
   const hasProjects = computed(() => projects.value.length > 0);
@@ -51,20 +53,20 @@ export const useProjectStore = defineStore('project', () => {
 
   async function fetchProjects(options: { silent?: boolean } = {}) {
     if (!options.silent) {
-      loading.value = true;
+      projectsLoading.value = true;
     }
     try {
       const result = await projectApi.list();
       replaceProjectList(result.items);
     } finally {
       if (!options.silent) {
-        loading.value = false;
+        projectsLoading.value = false;
       }
     }
   }
 
   async function fetchProject(id: string) {
-    loading.value = true;
+    projectDetailLoading.value = true;
     try {
       // Clear stale worktrees immediately when switching projects to avoid
       // temporarily showing the previous project's worktrees (which can lead to
@@ -76,7 +78,7 @@ export const useProjectStore = defineStore('project', () => {
       selectedWorktreeId.value = null;
       await fetchWorktrees(id);
     } finally {
-      loading.value = false;
+      projectDetailLoading.value = false;
     }
   }
 
@@ -248,6 +250,8 @@ export const useProjectStore = defineStore('project', () => {
     worktrees,
     selectedWorktree,
     selectedWorktreeId,
+    projectsLoading,
+    projectDetailLoading,
     loading,
     hasProjects,
     recentProjects,

@@ -1,13 +1,25 @@
 export type MobileSessionCategory = 'current' | 'archived';
 
-export const MOBILE_NEW_SESSION_OPTION_KEY = '__mobile-new-session__';
 export const MOBILE_ARCHIVED_LOAD_MORE_OPTION_KEY = 'mobile-session-load-more-archived';
+
+export type WebSessionMobileTabGroup<TSession extends { id: string }> = {
+  key: string;
+  label: string;
+  sessions: TSession[];
+};
 
 export type WebSessionMobileTabDescriptor<TSession extends { id: string }> =
   | {
       kind: 'header';
       key: string;
       section: MobileSessionCategory;
+    }
+  | {
+      kind: 'date-group';
+      key: string;
+      label: string;
+      count: number;
+      section: 'current';
     }
   | {
       kind: 'session';
@@ -25,16 +37,12 @@ export type WebSessionMobileTabDescriptor<TSession extends { id: string }> =
       key: typeof MOBILE_ARCHIVED_LOAD_MORE_OPTION_KEY;
       section: 'archived';
       loading: boolean;
-    }
-  | {
-      kind: 'new-session';
-      key: typeof MOBILE_NEW_SESSION_OPTION_KEY;
-      section: 'current';
     };
 
 export function buildWebSessionMobileTabDescriptors<TSession extends { id: string }>(input: {
   section: MobileSessionCategory;
   sessions: TSession[];
+  sessionGroups?: WebSessionMobileTabGroup<TSession>[];
   hasArchivedLoadMore?: boolean;
   isArchivedLoading?: boolean;
 }) {
@@ -46,7 +54,26 @@ export function buildWebSessionMobileTabDescriptors<TSession extends { id: strin
     },
   ];
 
-  if (input.sessions.length > 0) {
+  const visibleGroups = (input.sessionGroups ?? []).filter(group => group.sessions.length > 0);
+  if (input.section === 'current' && visibleGroups.length > 0) {
+    visibleGroups.forEach(group => {
+      descriptors.push({
+        kind: 'date-group',
+        key: `mobile-session-date-group:${group.key}`,
+        label: group.label,
+        count: group.sessions.length,
+        section: 'current',
+      });
+      group.sessions.forEach(session => {
+        descriptors.push({
+          kind: 'session',
+          key: session.id,
+          section: 'current',
+          session,
+        });
+      });
+    });
+  } else if (input.sessions.length > 0) {
     input.sessions.forEach(session => {
       descriptors.push({
         kind: 'session',
@@ -64,11 +91,6 @@ export function buildWebSessionMobileTabDescriptors<TSession extends { id: strin
   }
 
   if (input.section === 'current') {
-    descriptors.push({
-      kind: 'new-session',
-      key: MOBILE_NEW_SESSION_OPTION_KEY,
-      section: 'current',
-    });
     return descriptors;
   }
 

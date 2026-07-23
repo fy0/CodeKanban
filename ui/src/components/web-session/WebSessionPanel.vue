@@ -23,38 +23,216 @@
       @open-existing-session="handleOpenImportedCodexSession"
     />
 
+    <n-drawer
+      v-if="isMobile"
+      class="mobile-session-drawer"
+      placement="bottom"
+      height="min(72dvh, 560px)"
+      :show="showMobileTabSelector"
+      @update:show="handleMobileSessionSelectorVisibilityChange"
+    >
+      <n-drawer-content
+        :title="t('webSession.switchSession')"
+        closable
+        :native-scrollbar="false"
+        body-content-style="padding: 0;"
+        footer-style="padding: 0;"
+      >
+        <div class="mobile-session-drawer-body">
+          <div class="mobile-session-drawer-categories" role="tablist">
+            <button
+              type="button"
+              class="mobile-session-drawer-category"
+              :class="{ 'is-active': mobileSessionCategory === 'current' }"
+              role="tab"
+              :aria-selected="mobileSessionCategory === 'current'"
+              @click="void setMobileSessionCategory('current')"
+            >
+              <span>{{ t('webSession.currentSessions') }}</span>
+              <span class="mobile-session-drawer-category-count">{{
+                mobileCurrentSessions.length
+              }}</span>
+            </button>
+            <button
+              type="button"
+              class="mobile-session-drawer-category"
+              :class="{ 'is-active': mobileSessionCategory === 'archived' }"
+              role="tab"
+              :aria-selected="mobileSessionCategory === 'archived'"
+              @click="void setMobileSessionCategory('archived')"
+            >
+              <span>{{ t('webSession.archivedSessions') }}</span>
+              <span class="mobile-session-drawer-category-count">{{
+                mobileArchivedMeta.total
+              }}</span>
+            </button>
+          </div>
+
+          <n-virtual-list
+            class="mobile-session-drawer-list"
+            :items="mobileTabDescriptors"
+            :item-size="MOBILE_TAB_VIRTUAL_ITEM_SIZE"
+            item-resizable
+            key-field="key"
+          >
+            <template #default="{ item }">
+              <div v-if="item.kind === 'date-group'" class="mobile-session-drawer-date-group">
+                <span>{{ item.label }}</span>
+                <span class="mobile-session-drawer-date-group-count">{{ item.count }}</span>
+              </div>
+              <div v-else-if="item.kind === 'session'" class="mobile-session-drawer-item-shell">
+                <button
+                  type="button"
+                  class="mobile-session-drawer-item"
+                  :class="getMobileTabSessionClass(item.session)"
+                  :title="getSessionStatusTooltip(item.session)"
+                  @click="handleMobileTabSessionSelect(item.session)"
+                >
+                  <span class="mobile-session-drawer-agent-shell">
+                    <span
+                      class="mobile-session-drawer-agent-badge"
+                      :class="
+                        getMobileTabOptionAgentBadgeStateClass(
+                          item.session,
+                          getSessionDisplayState(item.session)
+                        )
+                      "
+                    >
+                      <span
+                        class="ai-status-icon mobile-session-drawer-agent-icon"
+                        v-html="getSessionAssistantIcon(item.session)"
+                      ></span>
+                    </span>
+                    <span
+                      v-if="
+                        getSessionDisplayState(item.session).showStatusDot &&
+                        getSessionDisplayState(item.session).statusDotClass
+                      "
+                      class="status-dot mobile-session-drawer-status-dot"
+                      :class="getSessionDisplayState(item.session).statusDotClass"
+                    ></span>
+                    <n-icon
+                      v-if="shouldShowSessionWorkflowPlanBadge(item.session)"
+                      class="mobile-session-drawer-plan-badge"
+                      size="9"
+                      aria-hidden="true"
+                    >
+                      <FlagIcon />
+                    </n-icon>
+                  </span>
+                  <span class="mobile-session-drawer-item-title">{{ item.session.title }}</span>
+                  <span class="mobile-session-drawer-trailing">
+                    <span
+                      v-if="getMobileTabOptionProjectBadge(item.session)"
+                      class="mobile-session-drawer-project-badge"
+                      :style="{
+                        '--badge-color': getMobileTabOptionProjectBadge(item.session)?.color,
+                      }"
+                      :title="getProjectName(item.session.projectId || props.projectId)"
+                    >
+                      {{ getMobileTabOptionProjectBadge(item.session)?.label }}
+                    </span>
+                    <time
+                      class="mobile-session-drawer-time"
+                      :datetime="item.session.updatedAt"
+                      :title="getMobileTabSessionTimeTitle(item.session)"
+                    >
+                      {{ getMobileTabSessionTimeLabel(item.session) }}
+                    </time>
+                  </span>
+                </button>
+              </div>
+              <div v-else-if="item.kind === 'load-more'" class="mobile-session-drawer-row">
+                <button
+                  type="button"
+                  class="mobile-session-drawer-load-more"
+                  :disabled="item.loading"
+                  @click="void loadMoreMobileArchivedSessions()"
+                >
+                  {{ item.loading ? t('common.loading') : t('webSession.loadMoreArchived') }}
+                </button>
+              </div>
+              <div v-else class="mobile-session-drawer-empty">
+                {{
+                  mobileSessionCategory === 'archived'
+                    ? mobileArchivedMeta.loading
+                      ? t('common.loading')
+                      : t('webSession.archivedSessionsEmpty')
+                    : t('webSession.currentSessionsEmpty')
+                }}
+              </div>
+            </template>
+          </n-virtual-list>
+        </div>
+
+        <template #footer>
+          <div class="mobile-session-drawer-footer">
+            <button
+              type="button"
+              class="mobile-session-drawer-scope"
+              :class="{ 'is-current': sidebarScope === 'current' }"
+              :title="sidebarScopeToggleTitle"
+              :aria-label="sidebarScopeToggleTitle"
+              :aria-pressed="sidebarScope === 'current'"
+              @click="toggleSidebarScope"
+            >
+              <span class="mobile-session-drawer-scope-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <rect
+                    x="4.5"
+                    y="5"
+                    width="9"
+                    height="6"
+                    rx="1.5"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                  />
+                  <rect
+                    x="10.5"
+                    y="13"
+                    width="9"
+                    height="6"
+                    rx="1.5"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    opacity="0.92"
+                  />
+                </svg>
+              </span>
+              <span class="mobile-session-drawer-scope-label">{{
+                sidebarScope === 'current'
+                  ? t('webSession.currentProjectSessions')
+                  : t('webSession.crossProjectSessions')
+              }}</span>
+            </button>
+            <button
+              type="button"
+              class="mobile-session-drawer-new-session"
+              :title="t('webSession.newSession')"
+              :aria-label="t('webSession.newSession')"
+              @click="handleMobileTabNewSession"
+            >
+              <n-icon size="17" aria-hidden="true"><AddOutline /></n-icon>
+              <span>{{ t('webSession.newSession') }}</span>
+            </button>
+          </div>
+        </template>
+      </n-drawer-content>
+    </n-drawer>
+
     <div class="panel-main">
       <div class="panel-body">
         <div class="panel-content">
           <div class="panel-header">
-            <n-dropdown
-              v-if="isMobile"
-              trigger="manual"
-              :placement="mobileTabDropdownPlacement"
-              :show="showMobileTabSelector"
-              :value="activeSessionId"
-              :options="mobileTabOptions"
-              :menu-props="mobileTabDropdownMenuProps"
-              :node-props="getMobileTabOptionNodeProps"
-              :render-label="renderMobileTabOptionLabel"
-              :x="mobileTabDropdownX"
-              :y="mobileTabDropdownY"
-              @select="handleMobileTabSelect"
-              @clickoutside="handleMobileTabDropdownClickoutside"
-            />
             <div
               v-if="isMobile && (sessions.length > 0 || archivedPreviewSession)"
               class="mobile-tab-selector"
             >
               <button
-                ref="mobileTabTriggerRef"
                 type="button"
                 class="mobile-tab-trigger"
                 :title="currentSession ? getSessionStatusTooltip(currentSession) : undefined"
-                @pointerdown.stop.prevent="handleMobileTabTriggerClick"
-                @click.stop.prevent
-                @keydown.enter.stop.prevent="handleMobileTabTriggerClick"
-                @keydown.space.stop.prevent="handleMobileTabTriggerClick"
+                @click.stop="handleMobileTabTriggerClick"
               >
                 <span class="mobile-tab-trigger-main">
                   <span class="mobile-tab-title">{{ activeSessionTitle }}</span>
@@ -1169,6 +1347,7 @@
               'is-drag-over': isComposerDragOver,
               'is-mobile': isMobile,
               'is-mobile-focused': isMobileComposerFocused,
+              'is-mobile-settings-expanded': isMobile && isMobileComposerSettingsExpanded,
             }"
             @paste.capture="handleComposerPaste"
             @dragenter="handleComposerDragEnter"
@@ -1185,39 +1364,32 @@
               @change="handleFileChange"
             />
 
-            <div v-if="isMobile" class="composer-mobile-panel-toggle-shell">
-              <button
-                type="button"
-                class="composer-mobile-panel-toggle"
-                :class="{ 'is-collapsed': isMobileComposerCollapsed }"
-                :aria-expanded="!isMobileComposerCollapsed"
-                :title="mobileComposerPanelToggleLabel"
-                :aria-label="mobileComposerPanelToggleLabel"
-                @click="toggleMobileComposerCollapsed"
+            <div
+              v-if="isMobile"
+              class="composer-mobile-toolbar"
+              :class="{
+                'is-collapsed': isMobileComposerCollapsed,
+                'is-settings-expanded': isMobileComposerSettingsExpanded,
+              }"
+            >
+              <div
+                v-if="!isMobileComposerCollapsed"
+                class="composer-mobile-summary"
+                :class="{ 'is-expanded': isMobileComposerSettingsExpanded }"
               >
-                <span v-if="isMobileComposerCollapsed" class="composer-mobile-panel-toggle-text">
-                  {{ t('webSession.composerPanel') }}
-                </span>
-                <n-icon
-                  class="composer-mobile-panel-toggle-arrow"
-                  :class="{ 'is-collapsed': isMobileComposerCollapsed }"
-                >
-                  <ChevronDownOutline />
-                </n-icon>
-              </button>
-            </div>
-
-            <template v-if="!isMobile || !isMobileComposerCollapsed">
-              <div v-if="isMobile" class="composer-mobile-summary">
                 <button
                   type="button"
                   class="composer-mobile-toggle"
+                  :class="{ 'is-compact': isMobileComposerSettingsExpanded }"
                   :aria-expanded="isMobileComposerSettingsExpanded"
                   :title="mobileComposerSettingsToggleLabel"
                   :aria-label="mobileComposerSettingsToggleLabel"
                   @click="toggleMobileComposerSettingsExpanded"
                 >
-                  <span class="composer-mobile-toggle-copy">
+                  <span
+                    v-if="!isMobileComposerSettingsExpanded"
+                    class="composer-mobile-toggle-copy"
+                  >
                     <span class="composer-mobile-toggle-chips">
                       <span
                         v-for="token in mobileComposerSummaryTokens"
@@ -1237,6 +1409,25 @@
                 </button>
               </div>
 
+              <button
+                type="button"
+                class="composer-mobile-panel-toggle"
+                :class="{ 'is-collapsed': isMobileComposerCollapsed }"
+                :aria-expanded="!isMobileComposerCollapsed"
+                :title="mobileComposerPanelToggleLabel"
+                :aria-label="mobileComposerPanelToggleLabel"
+                @click="toggleMobileComposerCollapsed"
+              >
+                <n-icon
+                  class="composer-mobile-panel-toggle-arrow"
+                  :class="{ 'is-collapsed': isMobileComposerCollapsed }"
+                >
+                  <ChevronDownOutline />
+                </n-icon>
+              </button>
+            </div>
+
+            <template v-if="!isMobile || !isMobileComposerCollapsed">
               <div
                 v-if="!isMobile || isMobileComposerSettingsExpanded"
                 class="composer-config"
@@ -2709,8 +2900,8 @@ import {
 } from '@/components/web-session/webSessionTabOrder';
 import {
   buildWebSessionMobileTabDescriptors,
-  MOBILE_NEW_SESSION_OPTION_KEY,
   type MobileSessionCategory,
+  type WebSessionMobileTabDescriptor,
 } from '@/components/web-session/webSessionMobileTabOptions';
 import {
   resolveWebSessionMobileSelectionAction,
@@ -2730,6 +2921,7 @@ import {
 import {
   buildWebSessionSidebarVirtualItems,
   groupWebSessionSidebarEntriesByDate,
+  groupWebSessionItemsByDate,
   WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE,
   type WebSessionSidebarRowView,
   type WebSessionSidebarSessionEntry,
@@ -2774,15 +2966,14 @@ const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY = 'workspace-web-session-sidebar-search-archived';
 const SIDEBAR_SEARCH_BODY_STORAGE_KEY = 'workspace-web-session-sidebar-search-body';
-const CYBER_POLICY_DISMISSALS_STORAGE_KEY =
-  'workspace-web-session-cyber-policy-dismissals';
+const CYBER_POLICY_DISMISSALS_STORAGE_KEY = 'workspace-web-session-cyber-policy-dismissals';
 const SIDEBAR_SEARCH_SCAN_LIMIT = 50;
 const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS = 120;
 const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
 const MOBILE_COMPOSER_OVERLAY_OPEN_GUARD_MS = 180;
-const MOBILE_TAB_SELECTOR_CLICKOUTSIDE_GUARD_MS = 220;
+const MOBILE_TAB_VIRTUAL_ITEM_SIZE = 52;
 const STREAMING_MARKDOWN_RENDER_OPTIONS = Object.freeze({
   disableCodeHighlight: true,
 });
@@ -2849,53 +3040,11 @@ type ItemResponse<T> = {
   item?: T;
 };
 
-type MobileTabSessionOption = DropdownOption & {
-  kind: 'session';
-  key: string;
-  label: string;
-  section: MobileSessionCategory;
-  session: SessionTab;
-  displayState: WebSessionDisplayState;
-  tooltip: string;
-};
-
-type MobileTabActionOption = DropdownOption & {
-  kind: 'new-session';
-  key: typeof MOBILE_NEW_SESSION_OPTION_KEY;
-  label: string;
-  section: 'current';
-};
-
-type MobileTabRenderOption = {
-  type: 'render';
-  key: string;
-  render: () => ReturnType<typeof h>;
-  props?: HTMLAttributes;
-};
-
-type MobileTabDropdownOption =
-  | MobileTabSessionOption
-  | MobileTabActionOption
-  | MobileTabRenderOption;
+type MobileTabListDescriptor = Exclude<
+  WebSessionMobileTabDescriptor<SessionTab>,
+  { kind: 'header' }
+>;
 type MobileTabSelectorSource = 'header' | 'bottom-nav';
-type MobileTabSelectorAnchor = {
-  source: MobileTabSelectorSource;
-  x: number;
-  y: number;
-  width: number;
-};
-
-function isMobileTabSessionOption(
-  option: DropdownOption | MobileTabDropdownOption
-): option is MobileTabSessionOption {
-  return (option as MobileTabSessionOption | undefined)?.kind === 'session';
-}
-
-function isMobileTabActionOption(
-  option: DropdownOption | MobileTabDropdownOption
-): option is MobileTabActionOption {
-  return (option as MobileTabActionOption | undefined)?.kind === 'new-session';
-}
 
 type InlinePlanChoiceOption = {
   label: string;
@@ -3101,7 +3250,6 @@ const routeWorkspaceTab = computed(() => inferWorkspaceRouteTab(route.query));
 const webSessionDevMode = computed(() => isWebSessionDevMode(route.query));
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
-const mobileTabTriggerRef = ref<HTMLButtonElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const timelineListRef = ref<HTMLDivElement | null>(null);
 const timelineUserMessageElements = new Map<string, HTMLElement>();
@@ -3121,7 +3269,7 @@ const expandedTools = ref<Record<string, boolean>>({});
 const imageViewPreviewSrcByToolId = ref<Record<string, string>>({});
 const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>({});
 const showMobileTabSelector = ref(false);
-const mobileTabSelectorAnchor = shallowRef<MobileTabSelectorAnchor | null>(null);
+const mobileTabSelectorSource = ref<MobileTabSelectorSource>('header');
 const showQuickInputPopover = ref(false);
 const showSkillBrowser = ref(false);
 const showImportDialog = ref(false);
@@ -3251,7 +3399,6 @@ let cancelUserInputSlowHint: (() => void) | null = null;
 let activeUserInputSlowHintOwnerId = '';
 let mobileQuickInputOpenedAt = 0;
 let mobileSkillBrowserOpenedAt = 0;
-let mobileTabSelectorOpenedAt = 0;
 const realSessionSnapshotLoadController = createWebSessionSnapshotLoadController();
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
@@ -3314,9 +3461,7 @@ const currentSession = computed<SessionTab | null>(() => {
 });
 const devCyberPolicyWarning = computed({
   get: () =>
-    Boolean(
-      currentSession.value?.id && devCyberPolicySessionId.value === currentSession.value.id
-    ),
+    Boolean(currentSession.value?.id && devCyberPolicySessionId.value === currentSession.value.id),
   set: enabled => {
     devCyberPolicySessionId.value = enabled ? (currentSession.value?.id ?? '') : '';
   },
@@ -4946,11 +5091,6 @@ const selectedAgentLabel = computed(
 const selectedModelLabel = computed(
   () => getKnownModelLabel(selectedModel.value) || t('common.default')
 );
-const selectedReasoningEffortLabel = computed(
-  () =>
-    reasoningEffortOptions.value.find(option => option.value === selectedReasoningEffort.value)
-      ?.label ?? selectedReasoningEffort.value
-);
 const selectedWorkflowModeLabel = computed(() =>
   selectedWorkflowMode.value === 'plan'
     ? t('webSession.workflowPlan')
@@ -4966,44 +5106,11 @@ const mobileComposerSettingsToggleLabel = computed(() =>
     ? t('webSession.composerSettingsCollapse')
     : t('webSession.composerSettingsExpand')
 );
-const selectedPermissionLevelLabel = computed(() => {
-  switch (selectedPermissionLevel.value) {
-    case 'elevated':
-      return t('webSession.permissionElevated');
-    case 'yolo':
-      return t('webSession.permissionYolo');
-    default:
-      return t('webSession.permissionDefault');
-  }
-});
-const mobileComposerSummaryTokens = computed(() => {
-  const tokens = [
-    { key: 'agent', label: selectedAgentLabel.value },
-    { key: 'model', label: selectedModelLabel.value },
-  ];
-  if (selectedAgent.value === 'claude') {
-    tokens.push({ key: 'claude-runtime', label: selectedClaudeRuntimeLabel.value });
-  }
-  if (selectedAgent.value === 'codex') {
-    tokens.push({ key: 'reasoning', label: selectedReasoningEffortLabel.value });
-  }
-  tokens.push(
-    { key: 'workflow', label: selectedWorkflowModeLabel.value },
-    { key: 'permission', label: selectedPermissionLevelLabel.value }
-  );
-  if (currentSessionAutoRetryEnabled.value) {
-    tokens.push({ key: 'auto-continue', label: t('webSession.infiniteRetry') });
-  }
-  if (currentSessionActiveCallTimeoutEnabled.value) {
-    tokens.push({
-      key: 'active-call-timeout',
-      label: t('webSession.autoInterruptLongCallSummary', {
-        duration: activeCallTimeoutDurationLabel.value,
-      }),
-    });
-  }
-  return tokens;
-});
+const mobileComposerSummaryTokens = computed(() => [
+  { key: 'agent', label: selectedAgentLabel.value },
+  { key: 'model', label: selectedModelLabel.value },
+  { key: 'workflow', label: selectedWorkflowModeLabel.value },
+]);
 const tokenNumberFormatter = new Intl.NumberFormat();
 const contextUsageIndicator = computed(() => {
   const session = currentSession.value;
@@ -5871,6 +5978,23 @@ const mobileArchivedMeta = computed(() => baseArchivedSidebarMeta.value);
 const mobileArchivedSessions = computed<SessionTab[]>(() =>
   baseCrossProjectArchivedSessions.value.map(item => item.session as SessionTab)
 );
+const mobileCurrentSessionGroups = computed(() =>
+  groupWebSessionItemsByDate({
+    items: mobileCurrentSessions.value,
+    getTimestamp: session => resolveWebSessionSidebarSortTimestamp(session),
+    labels: {
+      today: t('webSession.sessionGroupToday'),
+      yesterday: t('webSession.sessionGroupYesterday'),
+      lastSevenDays: t('webSession.sessionGroupLastSevenDays'),
+      earlier: t('webSession.sessionGroupEarlier'),
+    },
+    now: liveStateClockMs.value,
+  }).map(group => ({
+    key: group.key,
+    label: group.label,
+    sessions: group.items,
+  }))
+);
 const mobileVisibleSessions = computed<SessionTab[]>(() =>
   mobileSessionCategory.value === 'archived'
     ? mobileArchivedSessions.value
@@ -5896,12 +6020,6 @@ const mobileProjectBadgeById = computed(() => {
   });
   return buildProjectBadgeMap(ordered, getProjectName);
 });
-const mobileTabDropdownPlacement = computed(() =>
-  mobileTabSelectorAnchor.value?.source === 'bottom-nav' ? 'top' : 'bottom-start'
-);
-const mobileTabDropdownX = computed(() => mobileTabSelectorAnchor.value?.x ?? 0);
-const mobileTabDropdownY = computed(() => mobileTabSelectorAnchor.value?.y ?? 0);
-
 watch(
   pendingUserInputSyncKey,
   syncKey => {
@@ -5940,319 +6058,24 @@ watch(currentUserInputSubmitOwnerId, (nextOwnerId, previousOwnerId) => {
   }
 });
 
-const mobileTabOptions = computed<MobileTabDropdownOption[]>(() => {
-  const options = buildWebSessionMobileTabDescriptors({
+const mobileTabDescriptors = computed<MobileTabListDescriptor[]>(() =>
+  buildWebSessionMobileTabDescriptors({
     section: mobileSessionCategory.value,
     sessions: mobileVisibleSessions.value,
+    sessionGroups:
+      mobileSessionCategory.value === 'current' ? mobileCurrentSessionGroups.value : undefined,
     hasArchivedLoadMore: mobileArchivedMeta.value.hasMore,
     isArchivedLoading: mobileArchivedMeta.value.loading,
-  }).map(descriptor => {
-    switch (descriptor.kind) {
-      case 'header':
-        return {
-          type: 'render' as const,
-          key: descriptor.key,
-          render: renderMobileTabCategoryHeader,
-          props: {
-            class: 'mobile-tab-category-header-render',
-          },
-        };
-      case 'session': {
-        const displayState = getSessionDisplayState(descriptor.session);
-        return {
-          kind: 'session' as const,
-          label: descriptor.session.title,
-          key: descriptor.key,
-          section: descriptor.section,
-          session: descriptor.session,
-          displayState,
-          tooltip: getSessionStatusTooltip(descriptor.session),
-        };
-      }
-      case 'empty':
-        return {
-          type: 'render' as const,
-          key: descriptor.key,
-          render: renderMobileTabEmptyState,
-          props: {
-            class: 'mobile-tab-empty-render',
-          },
-        };
-      case 'load-more':
-        return {
-          type: 'render' as const,
-          key: descriptor.key,
-          render: renderMobileTabLoadMore,
-          props: {
-            class: 'mobile-tab-load-more-render',
-          },
-        };
-      case 'new-session':
-        return {
-          kind: 'new-session' as const,
-          key: descriptor.key,
-          label: t('webSession.newSession'),
-          section: 'current' as const,
-        };
-    }
-  }) as MobileTabDropdownOption[];
+  }).filter((descriptor): descriptor is MobileTabListDescriptor => descriptor.kind !== 'header')
+);
 
-  options.push({
-    type: 'render',
-    key: `mobile-session-scope-toggle:${sidebarScope.value}:${mobileSessionCategory.value}`,
-    render: renderMobileTabScopeToggle,
-    props: {
-      class: 'mobile-tab-scope-toggle-render',
-    },
-  });
-
-  return options;
-});
-
-function mobileTabDropdownMenuProps() {
-  const anchor = mobileTabSelectorAnchor.value;
-  const isBottomNav = anchor?.source === 'bottom-nav';
+function getMobileTabSessionClass(session: SessionTab) {
+  const displayState = getSessionDisplayState(session);
   return {
-    class: ['web-session-mobile-dropdown', isBottomNav && 'is-from-bottom-nav']
-      .filter(Boolean)
-      .join(' '),
-    style: {
-      width: isBottomNav
-        ? 'min(320px, calc(100vw - 24px))'
-        : `${Math.max(anchor?.width ?? 0, 220)}px`,
-      maxWidth: 'calc(100vw - 24px)',
-      '--mobile-tab-dropdown-origin': isBottomNav ? 'center bottom' : 'left top',
-    } as CSSProperties,
+    'is-selected': session.id === activeSessionId.value,
+    'is-approval': displayState.hasUnviewedApproval,
+    'is-completion': !displayState.hasUnviewedApproval && displayState.hasUnviewedCompletion,
   };
-}
-
-function getMobileTabOptionNodeProps(option: DropdownOption): HTMLAttributes {
-  const mobileOption = option as MobileTabDropdownOption;
-  const classes = ['web-session-mobile-option'];
-  if (isMobileTabActionOption(mobileOption)) {
-    classes.push('is-action', 'is-new-session');
-    return {
-      class: classes.join(' '),
-      title: mobileOption.label,
-    };
-  }
-  if (!isMobileTabSessionOption(mobileOption)) {
-    return {
-      class: classes.join(' '),
-    };
-  }
-  if (mobileOption.key === activeSessionId.value) {
-    classes.push('is-selected');
-  }
-  if (mobileOption.displayState.hasUnviewedApproval) {
-    classes.push('is-approval');
-  } else if (mobileOption.displayState.hasUnviewedCompletion) {
-    classes.push('is-completion');
-  }
-  return {
-    class: classes.join(' '),
-    title: mobileOption.tooltip,
-  };
-}
-
-function renderMobileTabCategoryHeader() {
-  return h('div', { class: 'mobile-tab-category-header' }, [
-    renderMobileTabCategoryButton('current'),
-    renderMobileTabCategoryButton('archived'),
-  ]);
-}
-
-function renderMobileTabCategoryButton(section: 'current' | 'archived') {
-  const active = mobileSessionCategory.value === section;
-  const count =
-    section === 'current' ? mobileCurrentSessions.value.length : mobileArchivedMeta.value.total;
-  const label =
-    section === 'current' ? t('webSession.currentSessions') : t('webSession.archivedSessions');
-
-  return h(
-    'button',
-    {
-      type: 'button',
-      class: ['mobile-tab-category-button', active && 'is-active'],
-      onClick: (event: MouseEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-        void setMobileSessionCategory(section);
-      },
-      onMousedown: (event: MouseEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-      },
-    },
-    [
-      h('span', { class: 'mobile-tab-category-button-label' }, label),
-      h('span', { class: 'mobile-tab-category-button-count' }, String(count)),
-    ]
-  );
-}
-
-function renderMobileTabEmptyState() {
-  return h(
-    'div',
-    { class: 'mobile-tab-empty-state' },
-    mobileSessionCategory.value === 'archived'
-      ? mobileArchivedMeta.value.loading
-        ? t('common.loading')
-        : t('webSession.archivedSessionsEmpty')
-      : t('webSession.currentSessionsEmpty')
-  );
-}
-
-function renderMobileTabLoadMore() {
-  return h(
-    'button',
-    {
-      type: 'button',
-      class: ['mobile-tab-load-more', mobileArchivedMeta.value.loading && 'is-loading'],
-      disabled: mobileArchivedMeta.value.loading,
-      onClick: (event: MouseEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-        void loadMoreMobileArchivedSessions();
-      },
-      onMousedown: (event: MouseEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-      },
-    },
-    mobileArchivedMeta.value.loading ? t('common.loading') : t('webSession.loadMoreArchived')
-  );
-}
-
-function renderMobileTabScopeToggle() {
-  return h('div', { class: 'mobile-tab-scope-toggle-anchor', 'aria-hidden': 'true' }, [
-    h(
-      'button',
-      {
-        type: 'button',
-        class: ['mobile-tab-scope-toggle-button', sidebarScope.value === 'current' && 'is-current'],
-        title: sidebarScopeToggleTitle.value,
-        'aria-label': sidebarScopeToggleTitle.value,
-        'aria-pressed': sidebarScope.value === 'current',
-        onClick: (event: MouseEvent) => {
-          event.preventDefault();
-          event.stopPropagation();
-          toggleSidebarScope();
-        },
-        onMousedown: (event: MouseEvent) => {
-          event.preventDefault();
-          event.stopPropagation();
-        },
-      },
-      [
-        h('span', { class: 'mobile-tab-scope-toggle-icon', 'aria-hidden': 'true' }, [
-          h(
-            'svg',
-            {
-              width: '18',
-              height: '18',
-              viewBox: '0 0 24 24',
-              fill: 'none',
-            },
-            [
-              h('rect', {
-                x: '4.5',
-                y: '5',
-                width: '9',
-                height: '6',
-                rx: '1.5',
-                stroke: 'currentColor',
-                'stroke-width': '1.8',
-              }),
-              h('rect', {
-                x: '10.5',
-                y: '13',
-                width: '9',
-                height: '6',
-                rx: '1.5',
-                stroke: 'currentColor',
-                'stroke-width': '1.8',
-                opacity: '0.92',
-              }),
-            ]
-          ),
-        ]),
-        h('span', {
-          class: 'mobile-tab-scope-toggle-indicator',
-          'aria-hidden': 'true',
-        }),
-      ]
-    ),
-  ]);
-}
-
-function renderMobileTabOptionLabel(option: DropdownOption) {
-  const mobileOption = option as MobileTabDropdownOption;
-  if (isMobileTabActionOption(mobileOption)) {
-    return h('div', { class: 'mobile-tab-action-option-body' }, [
-      h('span', { class: 'mobile-tab-action-option-icon', 'aria-hidden': 'true' }, [h(AddOutline)]),
-      h('span', { class: 'mobile-tab-action-option-title' }, mobileOption.label),
-    ]);
-  }
-  if (!isMobileTabSessionOption(mobileOption)) {
-    return '';
-  }
-  const { displayState } = mobileOption;
-  const projectBadge = getMobileTabOptionProjectBadge(mobileOption.session);
-
-  return h('div', { class: 'mobile-tab-option-body' }, [
-    h('span', { class: 'mobile-tab-option-agent-shell', title: mobileOption.tooltip }, [
-      h(
-        'span',
-        {
-          class: [
-            'mobile-tab-option-agent-badge',
-            getMobileTabOptionAgentBadgeStateClass(mobileOption.session, displayState),
-          ],
-        },
-        [
-          h('span', {
-            class: ['ai-status-icon', 'mobile-tab-option-agent-icon'],
-            innerHTML: getSessionAssistantIcon(mobileOption.session),
-          }),
-        ]
-      ),
-      displayState.showStatusDot && displayState.statusDotClass
-        ? h('span', {
-            class: ['status-dot', 'mobile-tab-option-badge-dot', displayState.statusDotClass],
-          })
-        : null,
-      shouldShowSessionWorkflowPlanBadge(mobileOption.session)
-        ? h(
-            NIcon,
-            {
-              class: 'mobile-tab-option-plan-badge',
-              size: 9,
-              'aria-hidden': 'true',
-            },
-            { default: () => h(FlagIcon) }
-          )
-        : null,
-    ]),
-    h(
-      'span',
-      { class: 'mobile-tab-option-title', title: mobileOption.tooltip },
-      mobileOption.session.title
-    ),
-    projectBadge
-      ? h(
-          'span',
-          {
-            class: 'mobile-tab-option-project-badge',
-            style: {
-              '--badge-color': projectBadge.color,
-            },
-            title: getProjectName(mobileOption.session.projectId || props.projectId),
-          },
-          projectBadge.label
-        )
-      : null,
-  ]);
 }
 
 function getMobileTabOptionAgentBadgeStateClass(
@@ -6271,6 +6094,18 @@ function getMobileTabOptionProjectBadge(session: SessionTab) {
     return null;
   }
   return mobileProjectBadgeById.value.get(projectId) ?? null;
+}
+
+function getMobileTabSessionTimeLabel(session: SessionTab) {
+  return formatWebSessionSidebarTime(
+    resolveWebSessionSidebarSortTimestamp(session),
+    new Date(sidebarCalendarDayStartMs.value),
+    mobileSessionCategory.value !== 'archived'
+  );
+}
+
+function getMobileTabSessionTimeTitle(session: SessionTab) {
+  return formatWebSessionDateTime(resolveWebSessionSidebarSortTimestamp(session), locale.value);
 }
 
 async function setMobileSessionCategory(section: 'current' | 'archived') {
@@ -6315,33 +6150,12 @@ function syncMobileSessionCategoryToCurrentSession() {
     : 'current';
 }
 
-function buildMobileTabSelectorAnchor(
-  anchorEl: HTMLElement,
-  source: MobileTabSelectorSource
-): MobileTabSelectorAnchor {
-  const rect = anchorEl.getBoundingClientRect();
-  if (source === 'bottom-nav') {
-    return {
-      source,
-      x: Math.round(rect.left + rect.width / 2),
-      y: Math.max(8, Math.round(rect.top) - 8),
-      width: Math.round(rect.width),
-    };
-  }
-  return {
-    source,
-    x: Math.round(rect.left),
-    y: Math.round(rect.bottom) + 4,
-    width: Math.round(rect.width),
-  };
-}
-
 function closeMobileSessionSelector() {
   showMobileTabSelector.value = false;
 }
 
 function openMobileSessionSelectorFromElement(
-  anchorEl: HTMLElement,
+  _anchorEl: HTMLElement,
   source: MobileTabSelectorSource
 ) {
   if (!isMobile.value) {
@@ -6351,32 +6165,35 @@ function openMobileSessionSelectorFromElement(
   if (mobileSessionCategory.value === 'archived') {
     void setMobileSessionCategory('archived');
   }
-  mobileTabSelectorAnchor.value = buildMobileTabSelectorAnchor(anchorEl, source);
-  mobileTabSelectorOpenedAt = Date.now();
+  mobileTabSelectorSource.value = source;
   showMobileTabSelector.value = true;
 }
 
 function handleMobileTabTriggerClick() {
-  const anchorEl = mobileTabTriggerRef.value;
-  if (!anchorEl) {
-    return;
-  }
-  if (showMobileTabSelector.value && mobileTabSelectorAnchor.value?.source === 'header') {
+  if (showMobileTabSelector.value && mobileTabSelectorSource.value === 'header') {
     closeMobileSessionSelector();
     return;
   }
-  openMobileSessionSelectorFromElement(anchorEl, 'header');
+  syncMobileSessionCategoryToCurrentSession();
+  if (mobileSessionCategory.value === 'archived') {
+    void setMobileSessionCategory('archived');
+  }
+  mobileTabSelectorSource.value = 'header';
+  showMobileTabSelector.value = true;
 }
 
-function handleMobileTabDropdownClickoutside() {
-  if (Date.now() - mobileTabSelectorOpenedAt < MOBILE_TAB_SELECTOR_CLICKOUTSIDE_GUARD_MS) {
-    return;
+function handleMobileSessionSelectorVisibilityChange(show: boolean) {
+  if (show) {
+    syncMobileSessionCategoryToCurrentSession();
+    if (mobileSessionCategory.value === 'archived') {
+      void setMobileSessionCategory('archived');
+    }
   }
-  closeMobileSessionSelector();
+  showMobileTabSelector.value = show;
 }
 
 function requestMobileViewForBottomNavSelector() {
-  if (mobileTabSelectorAnchor.value?.source !== 'bottom-nav') {
+  if (mobileTabSelectorSource.value !== 'bottom-nav') {
     return;
   }
   emit('request-mobile-view', 'webSession');
@@ -6728,8 +6545,7 @@ function normalizeDraftSession(
       session.autoRetryPreset === 'aggressive_stop' || session.autoRetryPreset === 'sustain_60s'
         ? session.autoRetryPreset
         : webSessionAutoContinuePreset.value,
-    autoRetryDispatchPendingOnFailure:
-      session.autoRetryDispatchPendingOnFailure === true,
+    autoRetryDispatchPendingOnFailure: session.autoRetryDispatchPendingOnFailure === true,
     cwd: typeof session.cwd === 'string' ? session.cwd : projectStore.currentProject?.path || '',
     nativeSessionId: null,
     status: 'idle',
@@ -8230,10 +8046,6 @@ const claudeRuntimeOptions = computed(() =>
     label: option.label,
   }))
 );
-const selectedClaudeRuntimeLabel = computed(() => {
-  const runtime = selectedClaudeRuntime.value;
-  return CLAUDE_RUNTIME_OPTIONS.find(option => option.value === runtime)?.label ?? 'CC';
-});
 
 const modelOptions = computed(() => {
   const activeModel = currentSession.value?.model ?? draftModel.value;
@@ -10239,11 +10051,7 @@ async function prepareComposerPaste(options: {
     plan.remoteImages.length > 0
       ? await confirmRemoteImageDownload(plan.remoteImages.length)
       : false;
-  if (
-    plan.images.length === 0 &&
-    plan.unavailableImages.length === 0 &&
-    !downloadRemoteImages
-  ) {
+  if (plan.images.length === 0 && plan.unavailableImages.length === 0 && !downloadRemoteImages) {
     insertComposerPasteText(
       options.sessionId,
       renderWebSessionComposerPastePlan(plan),
@@ -10959,7 +10767,6 @@ function handleComposerFocus() {
     return;
   }
   ensureMobileComposerVisible();
-  isMobileComposerSettingsExpanded.value = false;
   mobileKeyboard.setFocused(true);
   setMobileComposerFocusState(true);
 }
@@ -12298,19 +12105,16 @@ async function performMobileSessionSelection(
   }
 }
 
-function handleMobileTabSelect(_key: string | number, option: DropdownOption) {
-  const mobileOption = option as MobileTabDropdownOption;
+function handleMobileTabNewSession() {
   requestMobileViewForBottomNavSelector();
-  if (isMobileTabActionOption(mobileOption)) {
-    closeMobileSessionSelector();
-    void handleStartDraftSession();
-    return;
-  }
-  if (!isMobileTabSessionOption(mobileOption)) {
-    return;
-  }
   closeMobileSessionSelector();
-  void performMobileSessionSelection(mobileOption.session);
+  void handleStartDraftSession();
+}
+
+function handleMobileTabSessionSelect(session: SessionTab) {
+  requestMobileViewForBottomNavSelector();
+  closeMobileSessionSelector();
+  void performMobileSessionSelection(session);
 }
 
 function setupTabSorting() {
@@ -12713,13 +12517,6 @@ useEventListener(typeof document !== 'undefined' ? document : undefined, 'pointe
   if (shouldClearActiveTimelineRawBlockKey(activeRawTimelineBlockKey.value, clickedInsideRawCard)) {
     activeRawTimelineBlockKey.value = '';
   }
-});
-
-useEventListener(typeof window !== 'undefined' ? window : undefined, 'resize', () => {
-  if (!showMobileTabSelector.value) {
-    return;
-  }
-  closeMobileSessionSelector();
 });
 
 watch(
@@ -13571,333 +13368,224 @@ defineExpose({
   transform: rotate(180deg);
 }
 
-:global(.web-session-mobile-dropdown) {
-  box-sizing: border-box;
-  width: 100%;
-  max-width: calc(100vw - 24px);
-  max-height: min(72vh, 460px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  transform-origin: var(--mobile-tab-dropdown-origin, left top);
+:global(.mobile-session-drawer .n-drawer-content-wrapper) {
+  border-radius: 10px 10px 0 0;
+  overflow: hidden;
 }
 
-:global(.web-session-mobile-dropdown .n-dropdown-option-body) {
-  min-height: var(--n-option-height);
-  height: auto;
-  line-height: normal;
-  align-items: center;
-  padding-top: 4px;
-  padding-bottom: 4px;
+:global(.mobile-session-drawer .n-drawer-header) {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--n-border-color);
 }
 
-:global(.web-session-mobile-dropdown .n-dropdown-option-body__label) {
-  min-width: 0;
-  width: 100%;
-  white-space: normal;
+:global(.mobile-session-drawer .n-drawer-body),
+:global(.mobile-session-drawer .n-drawer-body-content-wrapper) {
+  min-height: 0;
+  overflow: hidden;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-category-header-render) {
-  position: sticky;
-  top: -4px;
-  z-index: 2;
-  padding: 0 6px;
-  background: var(--n-color, var(--app-surface-color, #fff));
+:global(.mobile-session-drawer .n-drawer-body-content-wrapper) {
+  height: 100%;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-category-header) {
-  display: flex;
-  gap: 0;
-  padding: 2px;
+.mobile-session-drawer-body {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--app-surface-color, #fff);
+}
+
+.mobile-session-drawer-categories {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  margin: 10px 12px 4px;
+  padding: 3px;
   border: 1px solid var(--n-border-color);
-  border-radius: 10px;
-  background: #f3f4f6;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--n-border-color) 18%, var(--app-surface-color, #fff));
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-category-button) {
-  flex: 1;
+.mobile-session-drawer-category {
   min-width: 0;
-  border: none;
-  background: transparent;
-  color: var(--app-text-color, var(--n-text-color));
-  border-radius: 8px;
-  min-height: 32px;
+  min-height: 34px;
   padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--n-text-color-2);
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   font-size: 12px;
   font-weight: 600;
+  cursor: pointer;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-category-button.is-active) {
+.mobile-session-drawer-category.is-active {
   background: var(--app-surface-color, #fff);
   color: var(--n-primary-color);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 10%, transparent);
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-category-button-label) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-category-button-count) {
-  flex-shrink: 0;
-  min-width: 18px;
+.mobile-session-drawer-category-count {
+  min-width: 20px;
   height: 18px;
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(148, 163, 184, 0.16);
-  color: inherit;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-empty-render) {
-  padding: 8px 2px 2px;
+.mobile-session-drawer-list {
+  min-height: 0;
+  height: 100%;
+  padding: 4px 10px;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-empty-state) {
-  padding: 12px 10px;
-  border-radius: 10px;
+.mobile-session-drawer-date-group {
+  box-sizing: border-box;
+  min-height: 34px;
+  padding: 9px 8px 5px;
   color: var(--n-text-color-3);
-  background: color-mix(in srgb, var(--n-border-color) 10%, transparent);
-  font-size: 12px;
-  text-align: center;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-load-more-render) {
-  padding: 6px 2px 2px;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-load-more) {
-  width: 100%;
-  border: 1px solid var(--n-border-color);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--n-primary-color) 8%, transparent);
-  color: var(--n-primary-color);
-  min-height: 36px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-load-more.is-loading) {
-  cursor: progress;
-  opacity: 0.82;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-render) {
-  position: sticky;
-  bottom: -4px;
-  z-index: 2;
-  height: 0;
-  padding: 0;
-  pointer-events: none;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-anchor) {
-  position: relative;
-  width: 100%;
-  height: 0;
-  pointer-events: none;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-button) {
-  position: relative;
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 32px;
-  height: 32px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 88%, rgba(15, 23, 42, 0.08));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%);
-  color: color-mix(in srgb, var(--n-text-color-2) 84%, var(--n-primary-color) 16%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
-  cursor: pointer;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease,
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    color 0.18s ease;
-  pointer-events: auto;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-button:hover) {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--n-primary-color) 24%, var(--n-border-color));
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-button.is-current) {
-  border-color: color-mix(in srgb, var(--n-primary-color) 36%, var(--n-border-color));
-  background: color-mix(in srgb, var(--n-primary-color) 14%, var(--app-surface-color, #fff));
-  color: color-mix(in srgb, var(--n-primary-color) 72%, var(--n-text-color-1));
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-button:focus-visible) {
-  outline: none;
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--n-primary-color) 18%, transparent),
-    0 12px 28px rgba(15, 23, 42, 0.16);
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-icon) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-indicator) {
-  position: absolute;
-  right: 7px;
-  bottom: 7px;
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  border: 1.5px solid color-mix(in srgb, var(--app-surface-color, #fff) 80%, var(--n-border-color));
-  background: color-mix(in srgb, var(--n-text-color-2) 30%, transparent);
-  transition:
-    background-color 0.18s ease,
-    transform 0.18s ease;
-}
-
-:global(
-  .web-session-mobile-dropdown
-    .mobile-tab-scope-toggle-button.is-current
-    .mobile-tab-scope-toggle-indicator
-) {
-  background: var(--n-primary-color);
-  transform: scale(1.08);
-}
-
-:global(
-  .web-session-mobile-dropdown .web-session-mobile-option.is-action > .n-dropdown-option-body
-) {
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-action-option-body) {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-  width: 100%;
-  padding: 0 8px;
-  color: var(--n-primary-color);
-  font-size: 13px;
+  gap: 5px;
+  font-size: 11px;
   font-weight: 700;
+  line-height: 1;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-action-option-icon) {
-  width: 28px;
-  height: 28px;
-  border-radius: 10px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--n-primary-color) 12%, transparent);
-  color: var(--n-primary-color);
-  flex-shrink: 0;
+.mobile-session-drawer-date-group-count {
+  color: color-mix(in srgb, var(--n-text-color-3) 78%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-action-option-icon svg) {
-  width: 16px;
-  height: 16px;
+.mobile-session-drawer-item-shell,
+.mobile-session-drawer-row {
+  box-sizing: border-box;
+  min-height: 52px;
+  padding: 3px 0;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-action-option-title) {
-  min-width: 0;
-  color: inherit;
+.mobile-session-drawer-item,
+.mobile-session-drawer-load-more {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-body) {
+.mobile-session-drawer-item {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 10px;
-  min-width: 0;
-  width: 100%;
-  padding: 0 8px;
+  gap: 10px;
+  padding: 5px 10px;
+  color: var(--n-text-color-1);
+  text-align: left;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-shell) {
+.mobile-session-drawer-item:hover,
+.mobile-session-drawer-item:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 24%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 6%, transparent);
+  outline: none;
+}
+
+.mobile-session-drawer-item.is-selected {
+  border-color: color-mix(in srgb, var(--n-primary-color) 32%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 10%, var(--app-surface-color, #fff));
+}
+
+.mobile-session-drawer-item.is-approval {
+  border-color: color-mix(in srgb, var(--web-session-approval-accent, #f79009) 26%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--web-session-approval-accent, #f79009) 8%,
+    var(--app-surface-color, #fff)
+  );
+}
+
+.mobile-session-drawer-item.is-completion {
+  border-color: color-mix(in srgb, #10b981 22%, transparent);
+  background: color-mix(in srgb, #10b981 7%, var(--app-surface-color, #fff));
+}
+
+.mobile-session-drawer-agent-shell {
   position: relative;
+  width: 30px;
+  height: 30px;
   display: inline-flex;
-  width: 28px;
-  height: 28px;
   flex-shrink: 0;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge) {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+.mobile-session-drawer-agent-badge {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid transparent;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-working) {
+.mobile-session-drawer-agent-badge.state-working {
   background: #eadffc;
   color: #7c3aed;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-approval),
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-waiting_approval) {
+.mobile-session-drawer-agent-badge.state-approval,
+.mobile-session-drawer-agent-badge.state-waiting_approval {
   background: #fed7aa;
   color: #f79009;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-waiting_plan_approval) {
+.mobile-session-drawer-agent-badge.state-waiting_plan_approval {
+  border-color: rgba(6, 182, 212, 0.18);
   background: rgba(34, 211, 238, 0.14);
   color: #0891b2;
-  border-color: rgba(6, 182, 212, 0.18);
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-completion) {
+.mobile-session-drawer-agent-badge.state-completion {
+  border-color: rgba(16, 185, 129, 0.18);
   background: rgba(16, 185, 129, 0.12);
   color: #059669;
-  border-color: rgba(16, 185, 129, 0.18);
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-waiting_input) {
+.mobile-session-drawer-agent-badge.state-waiting_input {
+  border-color: rgba(71, 84, 103, 0.08);
   background: #eceef2;
   color: #667085;
-  border-color: rgba(71, 84, 103, 0.08);
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-unknown) {
+.mobile-session-drawer-agent-badge.state-unknown {
   background: #f1f5f9;
   color: #94a3b8;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-error) {
+.mobile-session-drawer-agent-badge.state-error {
+  border-color: rgba(240, 68, 56, 0.18);
   background: rgba(240, 68, 56, 0.14);
   color: #f04438;
-  border-color: rgba(240, 68, 56, 0.18);
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-icon) {
-  line-height: 1;
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-option-agent-icon svg) {
+.mobile-session-drawer-agent-icon,
+.mobile-session-drawer-agent-icon :deep(svg) {
   display: block;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-badge-dot) {
+.mobile-session-drawer-status-dot {
   position: absolute;
   right: -2px;
   bottom: -2px;
@@ -13907,7 +13595,7 @@ defineExpose({
   box-sizing: content-box;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge) {
+.mobile-session-drawer-plan-badge {
   position: absolute;
   left: -4px;
   bottom: -3px;
@@ -13916,107 +13604,143 @@ defineExpose({
   pointer-events: none;
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge svg) {
-  display: block;
-}
-
-:global(
-  .web-session-mobile-dropdown
-    .web-session-mobile-option.is-approval
-    > .n-dropdown-option-body::before
-) {
-  background: color-mix(
-    in srgb,
-    var(--web-session-approval-accent, #f79009) 16%,
-    var(--app-surface-color, #fff)
-  );
-}
-
-:global(
-  .web-session-mobile-dropdown .web-session-mobile-option.is-approval > .n-dropdown-option-body
-) {
-  background: color-mix(
-    in srgb,
-    var(--web-session-approval-accent, #f79009) 8%,
-    var(--app-surface-color, #fff)
-  );
-}
-
-:global(
-  .web-session-mobile-dropdown .web-session-mobile-option.is-approval .mobile-tab-option-title
-) {
-  color: color-mix(in srgb, var(--web-session-approval-accent-strong, #b54708) 78%, #111827);
-}
-
-:global(
-  .web-session-mobile-dropdown
-    .web-session-mobile-option.is-completion
-    > .n-dropdown-option-body::before
-) {
-  background: color-mix(in srgb, #10b981 14%, var(--app-surface-color, #fff));
-}
-
-:global(
-  .web-session-mobile-dropdown .web-session-mobile-option.is-completion > .n-dropdown-option-body
-) {
-  background: color-mix(in srgb, #10b981 7%, var(--app-surface-color, #fff));
-}
-
-:global(
-  .web-session-mobile-dropdown
-    .web-session-mobile-option.is-selected
-    > .n-dropdown-option-body::before
-) {
-  background: color-mix(in srgb, var(--n-primary-color) 14%, var(--app-surface-color, #fff));
-}
-
-:global(
-  .web-session-mobile-dropdown .web-session-mobile-option.is-selected > .n-dropdown-option-body
-) {
-  background: color-mix(in srgb, var(--n-primary-color) 10%, var(--app-surface-color, #fff));
-}
-
-:global(
-  .web-session-mobile-dropdown .web-session-mobile-option.is-selected .mobile-tab-option-title
-) {
-  color: color-mix(in srgb, var(--n-primary-color) 72%, #111827);
-}
-
-:global(
-  .web-session-mobile-dropdown
-    .web-session-mobile-option.is-selected
-    .mobile-tab-option-project-badge
-) {
-  background: color-mix(in srgb, var(--n-primary-color) 78%, #3b82f6);
-}
-
-:global(.web-session-mobile-dropdown .mobile-tab-option-title) {
+.mobile-session-drawer-item-title {
   min-width: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
   overflow: hidden;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
   line-height: 1.35;
-  color: var(--app-text-color, var(--n-text-color));
 }
 
-:global(.web-session-mobile-dropdown .mobile-tab-option-project-badge) {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
+.mobile-session-drawer-trailing {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.mobile-session-drawer-time {
+  min-width: 34px;
+  color: var(--n-text-color-3);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-session-drawer-project-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--badge-color, #3b82f6);
+  color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--badge-color, #3b82f6);
-  color: #fff;
+  flex-shrink: 0;
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
-  flex-shrink: 0;
+}
+
+.mobile-session-drawer-load-more:hover,
+.mobile-session-drawer-load-more:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 24%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 7%, transparent);
+  outline: none;
+}
+
+.mobile-session-drawer-load-more {
+  padding: 0 12px;
+  border-color: var(--n-border-color);
+  color: var(--n-primary-color);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mobile-session-drawer-load-more:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.mobile-session-drawer-empty {
+  box-sizing: border-box;
+  min-height: 52px;
+  margin: 3px 0;
+  padding: 14px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--n-border-color) 10%, transparent);
+  color: var(--n-text-color-3);
+  font-size: 12px;
+  text-align: center;
+}
+
+.mobile-session-drawer-footer {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--app-surface-color, #fff);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-session-drawer-scope,
+.mobile-session-drawer-new-session {
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--n-border-color) 10%, transparent);
+  color: var(--n-text-color-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mobile-session-drawer-scope-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-session-drawer-scope.is-current {
+  border-color: color-mix(in srgb, var(--n-primary-color) 32%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+  color: var(--n-primary-color);
+}
+
+.mobile-session-drawer-new-session {
+  padding-inline: 12px;
+  border-color: color-mix(in srgb, var(--n-primary-color) 30%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 8%, transparent);
+  color: var(--n-primary-color);
+  white-space: nowrap;
+}
+
+.mobile-session-drawer-scope:hover,
+.mobile-session-drawer-scope:focus-visible,
+.mobile-session-drawer-new-session:hover,
+.mobile-session-drawer-new-session:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 42%, var(--n-border-color));
+  outline: none;
+}
+
+.mobile-session-drawer-scope-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .agent-select {
@@ -16214,7 +15938,7 @@ defineExpose({
 }
 
 .composer.is-mobile .composer-mobile-toggle {
-  padding: 6px 8px;
+  padding: 5px 7px;
 }
 
 .composer.is-mobile .composer-footer.is-mobile {
@@ -16235,59 +15959,58 @@ defineExpose({
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 16%, transparent);
 }
 
-.composer-mobile-panel-toggle-shell {
-  position: absolute;
-  top: -22px;
-  right: 12px;
-  z-index: 2;
+.composer-mobile-toolbar {
+  width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  pointer-events: none;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.composer-mobile-toolbar.is-collapsed {
+  justify-content: flex-end;
+  margin-bottom: 0;
+}
+
+.composer-mobile-toolbar.is-settings-expanded {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 2;
+  width: auto;
+  margin-bottom: 0;
 }
 
 .composer-mobile-panel-toggle {
   box-sizing: border-box;
-  min-width: 44px;
-  height: 36px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, var(--n-primary-color) 18%);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%);
+  width: 36px;
+  min-width: 36px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 72%, var(--n-primary-color) 28%);
+  border-radius: 8px;
+  background: var(--app-surface-color, #fff);
   color: var(--n-text-color-2);
-  padding: 0 10px;
+  padding: 0;
   appearance: none;
   -webkit-appearance: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
   cursor: pointer;
-  opacity: 0.92;
-  box-shadow:
-    0 6px 18px color-mix(in srgb, #000 12%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--app-surface-color, #fff) 85%, transparent);
-  pointer-events: auto;
+  opacity: 0.96;
   transition:
     opacity 0.18s ease,
     color 0.18s ease,
     background-color 0.18s ease,
     border-color 0.18s ease,
-    box-shadow 0.18s ease,
     transform 0.18s ease;
 }
 
 .composer-mobile-panel-toggle.is-collapsed {
-  min-width: 78px;
   border-color: color-mix(in srgb, var(--n-primary-color) 48%, var(--n-border-color));
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%),
-    color-mix(in srgb, var(--app-surface-color, #fff) 84%, var(--n-primary-color) 16%)
-  );
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 84%, var(--n-primary-color) 16%);
   color: var(--n-primary-color);
-  box-shadow:
-    0 8px 22px color-mix(in srgb, var(--n-primary-color) 20%, transparent),
-    0 3px 10px color-mix(in srgb, #000 14%, transparent);
 }
 
 .composer-mobile-panel-toggle:hover,
@@ -16297,9 +16020,6 @@ defineExpose({
   color: var(--n-primary-color);
   border-color: color-mix(in srgb, var(--n-primary-color) 58%, var(--n-border-color));
   background: color-mix(in srgb, var(--app-surface-color, #fff) 86%, var(--n-primary-color) 14%);
-  box-shadow:
-    0 8px 22px color-mix(in srgb, var(--n-primary-color) 18%, transparent),
-    0 3px 10px color-mix(in srgb, #000 14%, transparent);
 }
 
 .composer-mobile-panel-toggle:focus-visible {
@@ -16311,17 +16031,10 @@ defineExpose({
   transform: translateY(1px);
 }
 
-.composer-mobile-panel-toggle-text {
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
 .composer-mobile-panel-toggle-arrow {
   flex-shrink: 0;
-  font-size: 15px;
+  font-size: 17px;
+  transform: rotate(0deg);
   transition: transform 0.2s ease;
 }
 
@@ -16330,27 +16043,45 @@ defineExpose({
 }
 
 .composer-mobile-summary {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-bottom: 4px;
+  margin-bottom: 0;
+}
+
+.composer-mobile-summary.is-expanded {
+  flex: 0 0 36px;
+  width: 36px;
 }
 
 .composer-mobile-toggle {
   width: 100%;
   border: 1px solid color-mix(in srgb, var(--n-border-color) 84%, transparent);
-  border-radius: 10px;
+  border-radius: 6px;
   background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%);
   color: inherit;
-  padding: 8px 10px;
+  padding: 6px 8px;
   appearance: none;
   -webkit-appearance: none;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 6px;
   text-align: left;
   cursor: pointer;
+}
+
+.composer-mobile-toggle.is-compact {
+  box-sizing: border-box;
+  width: 36px;
+  min-width: 36px;
+  height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  justify-content: center;
+  gap: 0;
 }
 
 .composer-mobile-toggle-copy {
@@ -16361,7 +16092,7 @@ defineExpose({
 .composer-mobile-toggle-chips {
   display: flex;
   flex-wrap: nowrap;
-  gap: 6px;
+  gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -16373,18 +16104,23 @@ defineExpose({
 .composer-mobile-toggle-chip {
   display: inline-flex;
   align-items: center;
-  max-width: 100%;
-  padding: 2px 8px;
-  border-radius: 999px;
+  min-height: 20px;
+  max-width: min(42vw, 160px);
+  padding: 1px 6px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
   color: var(--n-text-color-2);
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
 }
 
 .composer-mobile-toggle-arrow {
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: 0;
   transition: transform 0.2s ease;
 }
 
@@ -17715,31 +17451,6 @@ defineExpose({
     padding-right: 10px;
   }
 
-  .composer-select {
-    width: calc(50% - 4px);
-  }
-
-  .claude-runtime-select {
-    width: 72px;
-  }
-
-  .composer-mode-switch {
-    width: auto;
-  }
-
-  .composer-mode-switch :deep(.n-button) {
-    flex: 1;
-  }
-
-  .permission-select {
-    width: 148px;
-  }
-
-  .composer-mode-row {
-    width: 100%;
-    justify-content: space-between;
-  }
-
   .pending-inputs {
     gap: 5px;
   }
@@ -17757,19 +17468,11 @@ defineExpose({
   }
 
   .composer-mobile-summary {
-    margin-bottom: 2px;
-  }
-
-  .composer-mobile-panel-toggle {
-    padding: 0 9px;
-  }
-
-  .composer-mobile-panel-toggle.is-collapsed {
-    min-width: 72px;
+    margin-bottom: 0;
   }
 
   .composer-mobile-toggle {
-    padding: 8px 9px;
+    padding: 5px 7px;
   }
 
   .composer-mobile-panel-toggle-title,
@@ -17783,17 +17486,60 @@ defineExpose({
   }
 
   .composer-config.is-mobile .composer-config-row {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 38px minmax(0, 118px) minmax(0, 96px) minmax(0, 1fr);
+    align-items: center;
+    column-gap: 6px;
+    row-gap: 8px;
+  }
+
+  .composer-config.is-mobile .model-select {
+    width: 118px !important;
+    min-width: 0;
+  }
+
+  .composer-config.is-mobile .reasoning-select,
+  .composer-config.is-mobile .claude-runtime-select {
+    width: 96px !important;
+    min-width: 0;
+  }
+
+  .composer-config.is-mobile .composer-mode-row {
+    width: auto;
+    min-width: 0;
+    grid-column: 1 / -1;
+    display: flex;
+    justify-self: start;
+    gap: 6px;
+  }
+
+  .composer-config.is-mobile .composer-mode-switch {
+    width: 112px;
+    min-width: 112px;
+  }
+
+  .composer-config.is-mobile .permission-select {
+    width: 132px;
+    min-width: 132px;
+  }
+
+  .composer-config.is-mobile .composer-mode-switch :deep(.n-button) {
+    min-width: 0;
+    flex: 1;
   }
 
   .composer-config.is-mobile .composer-path {
-    flex-basis: 100%;
+    width: auto;
+    min-width: 0;
+    grid-column: 1 / 3;
     text-align: left;
-    order: 10;
   }
 
   .composer-config.is-mobile .composer-settings {
-    margin-left: auto;
+    min-width: 0;
+    margin-left: 0;
+    grid-column: 3 / -1;
+    justify-self: end;
   }
 
   .composer-config.is-mobile .composer-sub-agent-trigger {
@@ -17809,6 +17555,21 @@ defineExpose({
   .live-card,
   .approval-card {
     border-radius: 10px;
+  }
+}
+
+@media (max-width: 359px) {
+  .composer.is-mobile-settings-expanded .composer-config.is-mobile .composer-config-row {
+    grid-template-columns: 38px minmax(0, 96px) minmax(0, 72px) minmax(0, 1fr);
+  }
+
+  .composer.is-mobile-settings-expanded .composer-config.is-mobile .model-select {
+    width: 96px !important;
+  }
+
+  .composer.is-mobile-settings-expanded .composer-config.is-mobile .reasoning-select,
+  .composer.is-mobile-settings-expanded .composer-config.is-mobile .claude-runtime-select {
+    width: 72px !important;
   }
 }
 

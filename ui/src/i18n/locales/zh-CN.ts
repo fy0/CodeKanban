@@ -709,6 +709,7 @@ export default {
   },
   webSession: {
     switchProject: '切换项目',
+    switchSession: '切换会话',
     emptyTitle: '暂无会话',
     emptyDescription: '创建一个 Claude 或 Codex 会话，开始对话。',
     draftTitle: '新建会话',

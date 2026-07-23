@@ -4,6 +4,7 @@ import {
   DEFAULT_MOBILE_VIEW,
   mobileViewToRouteTab,
   normalizeMobileView,
+  resolveMobileProjectSelectionAction,
   resolveMobileProjectSourceViewChange,
   routeTabToMobileView,
   restorePersistedMobileView,
@@ -108,5 +109,27 @@ describe('projectWorkspaceMobileView', () => {
         nextView: 'projects',
       })
     ).toBe('');
+  });
+
+  it('opens web sessions when selecting a project without a previous workspace view', () => {
+    expect(resolveMobileProjectSelectionAction('')).toEqual({
+      type: 'navigate',
+      targetView: 'webSession',
+    });
+    expect(resolveMobileProjectSelectionAction('projects')).toEqual({
+      type: 'navigate',
+      targetView: 'webSession',
+    });
+  });
+
+  it('preserves the return prompt when project selection came from another view', () => {
+    expect(resolveMobileProjectSelectionAction('terminal')).toEqual({
+      type: 'prompt-return',
+      sourceView: 'terminal',
+    });
+    expect(resolveMobileProjectSelectionAction('webSession')).toEqual({
+      type: 'prompt-return',
+      sourceView: 'webSession',
+    });
   });
 });

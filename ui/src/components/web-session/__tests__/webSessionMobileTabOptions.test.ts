@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   buildWebSessionMobileTabDescriptors,
   MOBILE_ARCHIVED_LOAD_MORE_OPTION_KEY,
-  MOBILE_NEW_SESSION_OPTION_KEY,
 } from '@/components/web-session/webSessionMobileTabOptions';
 
 function makeSessions(ids: string[]) {
@@ -11,7 +10,7 @@ function makeSessions(ids: string[]) {
 }
 
 describe('webSessionMobileTabOptions', () => {
-  it('appends new-session after current sessions', () => {
+  it('only includes current sessions in the virtualized list', () => {
     const descriptors = buildWebSessionMobileTabDescriptors({
       section: 'current',
       sessions: makeSessions(['session-1', 'session-2']),
@@ -21,11 +20,10 @@ describe('webSessionMobileTabOptions', () => {
       'mobile-session-switcher:current',
       'session-1',
       'session-2',
-      MOBILE_NEW_SESSION_OPTION_KEY,
     ]);
   });
 
-  it('keeps current empty state ahead of the new-session action', () => {
+  it('keeps the current empty state in the virtualized list', () => {
     const descriptors = buildWebSessionMobileTabDescriptors({
       section: 'current',
       sessions: [],
@@ -45,10 +43,6 @@ describe('webSessionMobileTabOptions', () => {
         kind: 'empty',
         key: 'mobile-session-empty:current',
       },
-      {
-        kind: 'new-session',
-        key: MOBILE_NEW_SESSION_OPTION_KEY,
-      },
     ]);
   });
 
@@ -64,10 +58,9 @@ describe('webSessionMobileTabOptions', () => {
       'archived-1',
       MOBILE_ARCHIVED_LOAD_MORE_OPTION_KEY,
     ]);
-    expect(descriptors.some(item => item.key === MOBILE_NEW_SESSION_OPTION_KEY)).toBe(false);
   });
 
-  it('does not add new-session to archived empty states', () => {
+  it('keeps archived empty states in the virtualized list', () => {
     const descriptors = buildWebSessionMobileTabDescriptors({
       section: 'archived',
       sessions: [],
@@ -102,6 +95,33 @@ describe('webSessionMobileTabOptions', () => {
       key: MOBILE_ARCHIVED_LOAD_MORE_OPTION_KEY,
       loading: true,
       section: 'archived',
+    });
+  });
+
+  it('inserts date group headings before grouped current sessions', () => {
+    const sessions = makeSessions(['today-1', 'today-2', 'earlier-1']);
+    const descriptors = buildWebSessionMobileTabDescriptors({
+      section: 'current',
+      sessions,
+      sessionGroups: [
+        { key: 'today', label: 'Today', sessions: sessions.slice(0, 2) },
+        { key: 'yesterday', label: 'Yesterday', sessions: [] },
+        { key: 'earlier', label: 'Earlier', sessions: sessions.slice(2) },
+      ],
+    });
+
+    expect(descriptors.map(item => item.key)).toEqual([
+      'mobile-session-switcher:current',
+      'mobile-session-date-group:today',
+      'today-1',
+      'today-2',
+      'mobile-session-date-group:earlier',
+      'earlier-1',
+    ]);
+    expect(descriptors[1]).toMatchObject({
+      kind: 'date-group',
+      label: 'Today',
+      count: 2,
     });
   });
 });

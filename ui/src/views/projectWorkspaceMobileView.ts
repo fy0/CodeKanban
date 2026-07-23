@@ -21,6 +21,9 @@ const MOBILE_ROUTE_TABS = [
 export type MobileView = (typeof MOBILE_VIEWS)[number];
 export type MobileRouteTab = (typeof MOBILE_ROUTE_TABS)[number];
 export type MobileProjectSourceView = Exclude<MobileView, 'kanban' | 'projects'>;
+export type MobileProjectSelectionAction =
+  | { type: 'navigate'; targetView: 'webSession' }
+  | { type: 'prompt-return'; sourceView: MobileProjectSourceView };
 
 export function normalizeMobileView(value: unknown): MobileView {
   if (value === 'kanban') {
@@ -78,6 +81,15 @@ export function routeTabToMobileView(value: unknown): MobileView {
 export function normalizeMobileProjectSourceView(value: unknown): MobileProjectSourceView | '' {
   const normalizedView = normalizeMobileView(value);
   return normalizedView !== 'kanban' && normalizedView !== 'projects' ? normalizedView : '';
+}
+
+export function resolveMobileProjectSelectionAction(
+  sourceView: unknown
+): MobileProjectSelectionAction {
+  const normalizedSourceView = normalizeMobileProjectSourceView(sourceView);
+  return normalizedSourceView
+    ? { type: 'prompt-return', sourceView: normalizedSourceView }
+    : { type: 'navigate', targetView: 'webSession' };
 }
 
 export function resolveMobileProjectSourceViewChange(options: {

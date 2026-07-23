@@ -164,7 +164,7 @@
       </n-space>
     </div>
 
-    <n-spin :show="projectStore.loading">
+    <n-spin :show="projectStore.projectsLoading">
       <transition-group
         v-if="filteredAndSortedProjects.length > 0"
         name="project-list"
@@ -321,7 +321,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import {
@@ -361,7 +361,6 @@ import type { Project } from '@/types/models';
 
 type ProjectOption = DropdownOption & { project?: Project };
 type SortType = 'name' | 'created' | 'updated' | 'accessed';
-const MOBILE_PROJECT_SWITCH_DELAY_MS = 240;
 
 interface UpdateInfo {
   currentVersion: string;
@@ -411,8 +410,6 @@ const respectPriority = ref(true);
 
 const terminalCounts = terminalStore.terminalCounts;
 const webSessionCounts = webSessionStore.sessionCounts;
-const switchingProjectId = ref('');
-let projectSwitchTimer: number | null = null;
 
 const sortTypeOptions = computed(() => [
   { label: t('project.sortByAccessed'), value: 'accessed' },
@@ -550,28 +547,12 @@ function isCurrentProject(projectId: string): boolean {
 function getProjectCardClass(projectId: string) {
   return {
     'is-current': isCurrentProject(projectId),
-    'is-switching-target': switchingProjectId.value === projectId,
   };
 }
 
-function clearProjectSwitchTimer() {
-  if (projectSwitchTimer != null) {
-    window.clearTimeout(projectSwitchTimer);
-    projectSwitchTimer = null;
-  }
-}
-
-async function runMobileWorkspaceProjectSwitch(projectId: string) {
-  clearProjectSwitchTimer();
-  switchingProjectId.value = projectId;
+function runMobileWorkspaceProjectSwitch(projectId: string) {
   projectStore.addRecentProject(projectId);
-  await nextTick();
-
-  projectSwitchTimer = window.setTimeout(() => {
-    projectSwitchTimer = null;
-    emit('mobile-project-select', { projectId });
-    switchingProjectId.value = '';
-  }, MOBILE_PROJECT_SWITCH_DELAY_MS);
+  emit('mobile-project-select', { projectId });
 }
 
 async function goToProject(id: string) {
@@ -580,7 +561,7 @@ async function goToProject(id: string) {
     if (!normalizedProjectId) {
       return;
     }
-    await runMobileWorkspaceProjectSwitch(normalizedProjectId);
+    runMobileWorkspaceProjectSwitch(normalizedProjectId);
     return;
   }
 
@@ -735,10 +716,6 @@ onMounted(() => {
   setTimeout(checkForUpdates, 2000);
 });
 
-onBeforeUnmount(() => {
-  clearProjectSwitchTimer();
-});
-
 watch(showEditDialog, value => {
   if (!value) {
     editingProject.value = null;
@@ -880,13 +857,6 @@ watch(showEditDialog, value => {
     box-shadow 0.22s var(--project-browser-switch-ease),
     border-color 0.22s var(--project-browser-switch-ease),
     background 0.22s var(--project-browser-switch-ease);
-}
-
-.project-card.is-switching-target {
-  transform: translateY(-10px) scale(1.015);
-  box-shadow:
-    0 18px 36px rgba(15, 23, 42, 0.12),
-    0 6px 14px rgba(15, 23, 42, 0.08);
 }
 
 .project-card.is-current {
