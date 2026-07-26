@@ -5,6 +5,7 @@ import "strings"
 const (
 	codexCyberPolicyErrorCode       = "cyber_policy"
 	codexCyberPolicyFallbackText    = "This request has been flagged for possible cybersecurity risk."
+	codexCyberPolicyMessageFragment = "flagged for possible cybersecurity risk"
 	codexModelCapacityErrorCode     = "model_at_capacity"
 	codexModelCapacityErrorFragment = "selected model is at capacity"
 )
@@ -38,7 +39,15 @@ func codexErrorInfo(record map[string]any) string {
 }
 
 func isCodexCyberPolicyError(record map[string]any) bool {
-	return codexErrorInfo(record) == codexCyberPolicyErrorCode
+	return codexErrorInfo(record) == codexCyberPolicyErrorCode ||
+		isCodexCyberPolicyMessage(codexErrorMessage(record))
+}
+
+func isCodexCyberPolicyMessage(message string) bool {
+	return strings.Contains(
+		strings.ToLower(strings.TrimSpace(message)),
+		codexCyberPolicyMessageFragment,
+	)
 }
 
 func isCodexModelCapacityError(code string, message string) bool {

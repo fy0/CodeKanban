@@ -3009,7 +3009,7 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	}
 }
 
-func TestCodexAppServerPersistsCyberPolicyFailureWithoutRetry(t *testing.T) {
+func TestRunFailureReclassifiesMessageOnlyCyberPolicyError(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -3032,29 +3032,20 @@ func TestCodexAppServerPersistsCyberPolicyFailureWithoutRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	run := &activeRun{runID: "run-cyber-policy", agent: AgentCodex}
-	outcome, handleErr := manager.handleCodexAppServerMessage(
+	run := &activeRun{
+		runID:         "run-cyber-policy",
+		agent:         AgentCodex,
+		lastErrorCode: codexRuntimeErrorCode,
+	}
+	manager.handleRunFailureWithCode(
+		created.ID,
 		session,
 		run,
-		nil,
-		codexTurnScope{threadID: "thread_test", turnID: "turn_test"},
-		codexAppServerIncoming{
-			Method: "error",
-			Params: json.RawMessage(`{
-				"threadId":"thread_test",
-				"turnId":"turn_test",
-				"error":{
-					"message":"This content was flagged for possible cybersecurity risk.",
-					"codexErrorInfo":"cyber_policy"
-				},
-				"willRetry":false
-			}`),
-		},
+		codexRuntimeErrorCode,
+		errors.New(
+			"This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request.",
+		),
 	)
-	if outcome != codexTurnOutcomeFailed || handleErr == nil {
-		t.Fatalf("expected failed cyber policy outcome, got outcome=%v err=%v", outcome, handleErr)
-	}
-	manager.handleRunFailureWithCode(created.ID, session, run, run.lastErrorCode, handleErr)
 
 	record, err := manager.GetSession(context.Background(), created.ID)
 	if err != nil {

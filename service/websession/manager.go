@@ -409,7 +409,7 @@ var autoRetryRateLimitFailureKeywords = []string{
 func shouldAutoRetryFailure(scope AutoRetryScope, code string, message string) bool {
 	normalizedScope := normalizeAutoRetryScope(scope)
 	normalizedCode := normalizeCodexErrorInfo(code)
-	if normalizedCode == codexCyberPolicyErrorCode {
+	if normalizedCode == codexCyberPolicyErrorCode || isCodexCyberPolicyMessage(message) {
 		return false
 	}
 	if isCodexModelCapacityError(normalizedCode, message) {
@@ -3665,7 +3665,7 @@ func (m *Manager) handleRunFailureWithCode(
 		code = strings.TrimSpace(run.lastErrorCode)
 	}
 	normalizedCode := normalizeCodexErrorInfo(code)
-	if normalizedCode == codexCyberPolicyErrorCode {
+	if normalizedCode == codexCyberPolicyErrorCode || isCodexCyberPolicyMessage(message) {
 		code = codexCyberPolicyErrorCode
 	} else if isCodexModelCapacityError(normalizedCode, message) {
 		code = codexModelCapacityErrorCode

@@ -33,6 +33,73 @@ func TestCodexErrorInfoSupportsRolloutAndAppServerShapes(t *testing.T) {
 	}
 }
 
+func TestCodexCyberPolicyErrorFallsBackToOfficialMessage(t *testing.T) {
+	tests := []struct {
+		name   string
+		record map[string]any
+		want   bool
+	}{
+		{
+			name: "rollout content message",
+			record: map[string]any{
+				"message": "This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request.",
+			},
+			want: true,
+		},
+		{
+			name: "nested app server request message",
+			record: map[string]any{
+				"error": map[string]any{
+					"message": "THIS REQUEST HAS BEEN FLAGGED FOR POSSIBLE CYBERSECURITY RISK.",
+				},
+			},
+			want: true,
+		},
+		{
+			name:   "unrelated security failure",
+			record: map[string]any{"message": "request failed during a security review"},
+			want:   false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isCodexCyberPolicyError(test.record); got != test.want {
+				t.Fatalf("isCodexCyberPolicyError returned %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCodexTurnParsersInferCyberPolicyFromOfficialMessage(t *testing.T) {
+	message := "This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request."
+	errorMessage, errorCode := parseCodexTurnError(json.RawMessage(`{
+		"error": {
+			"message": "This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request."
+		}
+	}`))
+	if errorMessage != message || errorCode != codexCyberPolicyErrorCode {
+		t.Fatalf("unexpected error notification classification: message=%q code=%q", errorMessage, errorCode)
+	}
+
+	status, completionMessage, completionCode := parseCodexTurnCompletion(json.RawMessage(`{
+		"turn": {
+			"status": "failed",
+			"error": {
+				"message": "This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request."
+			}
+		}
+	}`))
+	if status != "failed" || completionMessage != message || completionCode != codexCyberPolicyErrorCode {
+		t.Fatalf(
+			"unexpected turn completion classification: status=%q message=%q code=%q",
+			status,
+			completionMessage,
+			completionCode,
+		)
+	}
+}
+
 func TestShouldAutoRetryFailureNeverRetriesCyberPolicy(t *testing.T) {
 	for _, scope := range []AutoRetryScope{
 		AutoRetryScopeNetworkOnly,
@@ -41,6 +108,9 @@ func TestShouldAutoRetryFailureNeverRetriesCyberPolicy(t *testing.T) {
 	} {
 		if shouldAutoRetryFailure(scope, codexCyberPolicyErrorCode, "temporarily unavailable") {
 			t.Fatalf("expected cyber policy failure not to retry for scope %q", scope)
+		}
+		if shouldAutoRetryFailure(scope, codexRuntimeErrorCode, codexCyberPolicyFallbackText) {
+			t.Fatalf("expected message-only cyber policy failure not to retry for scope %q", scope)
 		}
 	}
 }

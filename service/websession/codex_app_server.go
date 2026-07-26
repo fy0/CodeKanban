@@ -1724,6 +1724,9 @@ func parseCodexTurnError(raw json.RawMessage) (message string, code string) {
 	errorMap := decodeRawObject(payload["error"])
 	message = firstNonEmpty(codexErrorMessage(errorMap), codexErrorMessage(payload))
 	code = firstNonEmpty(codexErrorInfo(errorMap), codexErrorInfo(payload))
+	if code == "" && isCodexCyberPolicyMessage(message) {
+		code = codexCyberPolicyErrorCode
+	}
 	return message, code
 }
 
@@ -1734,6 +1737,9 @@ func parseCodexTurnCompletion(raw json.RawMessage) (status string, errMessage st
 	errorMap := decodeRawObject(turn["error"])
 	errMessage = codexErrorMessage(errorMap)
 	errCode = codexErrorInfo(errorMap)
+	if errCode == "" && isCodexCyberPolicyMessage(errMessage) {
+		errCode = codexCyberPolicyErrorCode
+	}
 	return status, errMessage, errCode
 }
 
