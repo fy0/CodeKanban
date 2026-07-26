@@ -368,7 +368,7 @@ import { storeToRefs } from 'pinia';
 import { useLocale } from '@/composables/useLocale';
 import { useResponsive } from '@/composables/useResponsive';
 import { useProjectStore } from '@/stores/project';
-import { useFileManagerStore } from '@/stores/fileManager';
+import { useFileManagerStore, type FileManagerOpenRequest } from '@/stores/fileManager';
 import { fileManagerApi } from '@/api/fileManager';
 import { renderMarkdown } from '@/utils/markdown';
 import FilePreviewSurface from '@/components/files/FilePreviewSurface.vue';
@@ -818,33 +818,39 @@ function toggleTreeMetaField(field: TreeMetaField) {
   );
 }
 
-async function handleRowClick(entry: FileManagerEntry) {
-  if (entry.kind === 'directory') {
+async function openFilePath(path: string, scopeId: string) {
+  if (!scopeId || !path) {
     return;
   }
   if (useMobilePreview.value) {
     mobilePreviewVisible.value = true;
   }
   const requestToken = ++previewRequestToken;
-  previewPath.value = entry.path;
+  const targetDirectoryPath = parentDirectoryPath(path);
+  const scopeChanged = activeScope.value?.id !== scopeId;
+  if (scopeChanged) {
+    treeNodeMap.value = {};
+    treeRoots.value = [];
+    clearSearchState();
+  }
+  previewPath.value = scopeChanged ? '' : path;
   previewResult.value = null;
   previewLoading.value = true;
   previewError.value = '';
   previewFallbackText.value = '';
   try {
-    const targetDirectoryPath = parentDirectoryPath(entry.path);
-    if (activeScope.value && targetDirectoryPath !== currentPath.value) {
+    if (scopeChanged || targetDirectoryPath !== currentPath.value) {
       const result = await fileManagerStore.loadDirectory(props.projectId, {
-        scopeId: activeScope.value.id,
+        scopeId,
         path: targetDirectoryPath,
       });
+      if (requestToken !== previewRequestToken) {
+        return;
+      }
       syncTreeFromList(result);
     }
-    const result = await fileManagerApi.preview(
-      props.projectId,
-      activeScope.value?.id ?? '',
-      entry.path
-    );
+    previewPath.value = path;
+    const result = await fileManagerApi.preview(props.projectId, scopeId, path);
     if (requestToken !== previewRequestToken) {
       return;
     }
@@ -874,6 +880,28 @@ async function handleRowClick(entry: FileManagerEntry) {
       previewLoading.value = false;
     }
   }
+}
+
+async function handleRowClick(entry: FileManagerEntry) {
+  if (entry.kind === 'directory' || !activeScope.value) {
+    return;
+  }
+  await openFilePath(entry.path, activeScope.value.id);
+}
+
+async function openRequestedFile(request: FileManagerOpenRequest) {
+  selectedPaths.value = [];
+  if (!request.path) {
+    const result = await fileManagerStore.loadDirectory(props.projectId, {
+      scopeId: request.scopeId,
+      path: '',
+    });
+    syncTreeFromList(result);
+    clearPreviewState();
+    clearSearchState();
+    return;
+  }
+  await openFilePath(request.path, request.scopeId);
 }
 
 async function toggleTreeNode(node: VisibleTreeNode) {
@@ -1411,7 +1439,28 @@ watch(
     if (!projectId || !isActive) {
       return;
     }
+    if (fileManagerStore.getOpenRequest(projectId)) {
+      return;
+    }
     await ensureLoaded();
+  },
+  { immediate: true }
+);
+
+watch(
+  () =>
+    [props.projectId, props.isActive, fileManagerStore.getOpenRequest(props.projectId)] as const,
+  async ([projectId, isActive, request]) => {
+    if (!projectId || !isActive || !request) {
+      return;
+    }
+    try {
+      await openRequestedFile(request);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    } finally {
+      fileManagerStore.consumeFileOpenRequest(projectId, request.id);
+    }
   },
   { immediate: true }
 );

@@ -33,6 +33,12 @@ type DownloadRuntime = {
 
 type TransferRuntime = UploadRuntime | DownloadRuntime;
 
+export interface FileManagerOpenRequest {
+  id: number;
+  scopeId: string;
+  path: string;
+}
+
 const UPLOAD_CONCURRENCY = 2;
 const DOWNLOAD_CONCURRENCY = 2;
 const UPLOAD_RETRY_LIMIT = 3;
@@ -94,9 +100,11 @@ export const useFileManagerStore = defineStore('fileManager', () => {
   const currentPathByScope = ref<Record<string, string>>({});
   const loadingByProject = ref<Record<string, boolean>>({});
   const errorByProject = ref<Record<string, string>>({});
+  const openRequestByProject = ref<Record<string, FileManagerOpenRequest | undefined>>({});
   const transferTasks = ref<FileTransferTask[]>([]);
 
   const runtimes = new Map<string, TransferRuntime>();
+  let openRequestSequence = 0;
   let uploadPumpActive = false;
   let downloadPumpActive = false;
 
@@ -158,6 +166,33 @@ export const useFileManagerStore = defineStore('fileManager', () => {
 
   function getError(projectId: string) {
     return errorByProject.value[projectId] ?? '';
+  }
+
+  function getOpenRequest(projectId: string) {
+    return openRequestByProject.value[projectId] ?? null;
+  }
+
+  function requestFileOpen(projectId: string, target: { scopeId: string; path: string }) {
+    openRequestSequence += 1;
+    const request: FileManagerOpenRequest = {
+      id: openRequestSequence,
+      scopeId: target.scopeId,
+      path: target.path,
+    };
+    openRequestByProject.value = {
+      ...openRequestByProject.value,
+      [projectId]: request,
+    };
+    return request;
+  }
+
+  function consumeFileOpenRequest(projectId: string, requestId: number) {
+    if (getOpenRequest(projectId)?.id !== requestId) {
+      return;
+    }
+    const nextRequests = { ...openRequestByProject.value };
+    delete nextRequests[projectId];
+    openRequestByProject.value = nextRequests;
   }
 
   function getTransferTasks(projectId?: string) {
@@ -919,7 +954,9 @@ export const useFileManagerStore = defineStore('fileManager', () => {
     getActiveScope,
     getLoading,
     getError,
+    getOpenRequest,
     getTransferTasks,
+    ensureScopes,
     loadDirectory,
     refreshProject,
     createDirectory,
@@ -935,5 +972,7 @@ export const useFileManagerStore = defineStore('fileManager', () => {
     cancelTask,
     removeTask,
     clearFinishedTasks,
+    requestFileOpen,
+    consumeFileOpenRequest,
   };
 });

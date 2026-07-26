@@ -136,6 +136,26 @@ describe('fileManager upload retries', () => {
     cancelUploadMock.mockReset();
   });
 
+  it('stores and conditionally consumes file open requests', () => {
+    const store = useFileManagerStore();
+    const firstRequest = store.requestFileOpen('project-1', {
+      scopeId: 'scope-1',
+      path: 'docs/README.md',
+    });
+
+    expect(store.getOpenRequest('project-1')).toEqual(firstRequest);
+
+    const secondRequest = store.requestFileOpen('project-1', {
+      scopeId: 'scope-2',
+      path: 'src/main.ts',
+    });
+    store.consumeFileOpenRequest('project-1', firstRequest.id);
+    expect(store.getOpenRequest('project-1')).toEqual(secondRequest);
+
+    store.consumeFileOpenRequest('project-1', secondRequest.id);
+    expect(store.getOpenRequest('project-1')).toBeNull();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });

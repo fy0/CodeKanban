@@ -2946,6 +2946,7 @@ import { useLocale } from '@/composables/useLocale';
 import { useMobileKeyboard } from '@/composables/useMobileKeyboard';
 import { useResponsive } from '@/composables/useResponsive';
 import { systemApi } from '@/api/project';
+import { useFileManagerStore } from '@/stores/fileManager';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import {
@@ -2989,6 +2990,10 @@ import {
   getClickedMarkdownLinkCopyHref,
   resolveNavigableHref,
 } from '@/utils/messageLinkNavigation';
+import {
+  isPotentialMessageFileHref,
+  resolveMessageFileTarget,
+} from '@/utils/messageFileNavigation';
 import {
   buildImagePlaceholder,
   buildImageViewPreviewUrl,
@@ -3355,6 +3360,7 @@ function isAbortLikeError(error: unknown) {
 }
 
 const webSessionStore = useWebSessionStore();
+const fileManagerStore = useFileManagerStore();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const route = useRoute();
@@ -12044,7 +12050,56 @@ function restoreHistoryAnchor() {
   return true;
 }
 
-function handleTimelineLinkClick(event: MouseEvent) {
+async function tryOpenTimelineFileLink(rawHref: string) {
+  if (!isPotentialMessageFileHref(rawHref, window.location.href)) {
+    return false;
+  }
+
+  const sourceSession = currentSession.value;
+  const sourceProjectId = props.projectId;
+  const targetProjectId = sourceSession?.projectId || sourceProjectId;
+  if (!targetProjectId) {
+    return false;
+  }
+
+  let scopes;
+  try {
+    scopes = await fileManagerStore.ensureScopes(targetProjectId);
+  } catch {
+    return false;
+  }
+
+  const sessionWorktreeId = sourceSession?.worktreeId ?? '';
+  const preferredScopeId =
+    scopes.find(scope => scope.worktreeId === sessionWorktreeId)?.id ??
+    fileManagerStore.getActiveScope(targetProjectId)?.id ??
+    '';
+  const target = resolveMessageFileTarget(rawHref, window.location.href, scopes, {
+    workingDirectory: sourceSession?.cwd,
+    preferredScopeId,
+  });
+  if (!target) {
+    return false;
+  }
+
+  const request = fileManagerStore.requestFileOpen(targetProjectId, target);
+  try {
+    await router.push({
+      name: 'project',
+      params: { id: targetProjectId },
+      query: buildWorkspaceRouteQuery(
+        targetProjectId === sourceProjectId ? route.query : {},
+        'files'
+      ),
+    });
+  } catch (error) {
+    fileManagerStore.consumeFileOpenRequest(targetProjectId, request.id);
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+  return true;
+}
+
+async function handleTimelineLinkClick(event: MouseEvent) {
   if (event.defaultPrevented || typeof window === 'undefined') {
     return;
   }
@@ -12077,7 +12132,12 @@ function handleTimelineLinkClick(event: MouseEvent) {
   }
 
   event.preventDefault();
-  const href = resolveNavigableHref(anchor.getAttribute('href') ?? '', window.location.href);
+  const rawHref = anchor.getAttribute('href') ?? '';
+  if (await tryOpenTimelineFileLink(rawHref)) {
+    return;
+  }
+
+  const href = resolveNavigableHref(rawHref, window.location.href);
   if (!href) {
     message.warning(t('common.invalidLink'));
     return;
