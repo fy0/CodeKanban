@@ -14,6 +14,7 @@ function buildFileChangeBlock(
     groupItems?: Array<Record<string, unknown>>;
     status?: 'running' | 'done' | 'error';
     timestamp?: number;
+    sourceThreadId?: string;
   } = {}
 ): WebSessionBlock {
   const timestamp = options.timestamp ?? Date.UTC(2026, 3, 20, 12, 0, 0);
@@ -25,6 +26,7 @@ function buildFileChangeBlock(
     itemType: 'file_change',
     text: '',
     timestamp,
+    sourceThreadId: options.sourceThreadId,
     attachments: [],
     tool: {
       id,
@@ -68,6 +70,7 @@ function buildCommandBlock(
     count?: number;
     status?: 'running' | 'done' | 'error';
     timestamp?: number;
+    sourceThreadId?: string;
   } = {}
 ): WebSessionBlock {
   const command = options.command ?? id;
@@ -80,6 +83,7 @@ function buildCommandBlock(
     itemType: 'command_execution',
     text: '',
     timestamp,
+    sourceThreadId: options.sourceThreadId,
     attachments: [],
     tool: {
       id,
@@ -250,6 +254,25 @@ describe('webSessionCompactTimeline', () => {
     expect(projected[2].tool?.commandGroup?.id).toBe('fc-group-c');
     expect(projected[2].tool?.commandGroup?.count).toBe(2);
     expect(projected[3].tool?.kind).toBe('command_execution');
+  });
+
+  it('does not merge adjacent compact tools from different agent threads', () => {
+    const projected = projectWebSessionCompactTimelineBlocks([
+      buildCommandBlock('agent-a-command', {
+        orderIndex: 1,
+        command: 'git status',
+        sourceThreadId: 'thread-agent-a',
+      }),
+      buildCommandBlock('agent-b-command', {
+        orderIndex: 2,
+        command: 'git diff',
+        sourceThreadId: 'thread-agent-b',
+      }),
+    ]);
+
+    expect(projected).toHaveLength(2);
+    expect(projected[0].sourceThreadId).toBe('thread-agent-a');
+    expect(projected[1].sourceThreadId).toBe('thread-agent-b');
   });
 
   it('deduplicates merged group detail items by tool id while keeping the latest state', () => {

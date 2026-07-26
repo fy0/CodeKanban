@@ -308,16 +308,46 @@ func (m *Manager) applyEventToHistoryCache(
 ) (*HistoryItem, error) {
 	payload := cloneMap(event.Payload)
 	agent := m.sessionAgent(sessionID)
+	sourceThreadID := nilIfEmptyHistory(event.ThreadID)
+	sourceTurnID := nilIfEmptyHistory(event.TurnID)
 	switch event.Type {
+	case "sub_agent_state":
+		return nil, nil
+	case "sub_agent_activity":
+		agentThreadID := strings.TrimSpace(firstNonEmpty(
+			stringValue(payload["agentThreadId"]),
+			stringValue(payload["threadId"]),
+			event.ThreadID,
+		))
+		path := strings.TrimSpace(stringValue(payload["path"]))
+		kind := strings.TrimSpace(stringValue(payload["kind"]))
+		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+			SourceThreadID: nilIfEmptyHistory(agentThreadID),
+			SourceTurnID:   sourceTurnID,
+			SourceItemID:   nilIfEmptyHistory(stringValue(payload["itemId"])),
+			Kind:           "system",
+			ItemType:       "sub_agent_activity",
+			Text:           subAgentActivityText(kind, path, agentThreadID),
+			Timestamp:      ptr(event.Timestamp),
+			ObservedAt:     ptr(event.Timestamp),
+			Level:          "info",
+			Payload:        payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
 	case "msg_u":
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			Kind:        "user",
-			ItemType:    "user_message",
-			Text:        stringValue(payload["txt"]),
-			Timestamp:   ptr(event.Timestamp),
-			ObservedAt:  ptr(event.Timestamp),
-			Attachments: historyAttachmentsFromEventPayload(payload),
-			Payload:     payload,
+			SourceThreadID: sourceThreadID,
+			SourceTurnID:   sourceTurnID,
+			Kind:           "user",
+			ItemType:       "user_message",
+			Text:           stringValue(payload["txt"]),
+			Timestamp:      ptr(event.Timestamp),
+			ObservedAt:     ptr(event.Timestamp),
+			Attachments:    historyAttachmentsFromEventPayload(payload),
+			Payload:        payload,
 		})
 		if err != nil {
 			return nil, err
@@ -327,7 +357,9 @@ func (m *Manager) applyEventToHistoryCache(
 		return nil, nil
 	case "txt_d":
 		messageID := strings.TrimSpace(firstNonEmpty(stringValue(payload["mid"]), event.ParentID, event.ID))
-		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "assistant:"+messageID, func(next *HistoryItem) {
+		item, err := m.upsertHistoryItemBySourceIdentity(ctx, sessionID, event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
+			next.SourceThreadID = sourceThreadID
+			next.SourceTurnID = sourceTurnID
 			next.Kind = "assistant"
 			next.ItemType = "agent_message"
 			next.Text = next.Text + stringValue(payload["txt"])
@@ -344,7 +376,9 @@ func (m *Manager) applyEventToHistoryCache(
 		return &item, nil
 	case "txt_end":
 		messageID := strings.TrimSpace(firstNonEmpty(stringValue(payload["mid"]), event.ParentID, event.ID))
-		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "assistant:"+messageID, func(next *HistoryItem) {
+		item, err := m.upsertHistoryItemBySourceIdentity(ctx, sessionID, event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
+			next.SourceThreadID = sourceThreadID
+			next.SourceTurnID = sourceTurnID
 			next.Kind = "assistant"
 			next.ItemType = "agent_message"
 			next.ObservedAt = ptr(event.Timestamp)
@@ -364,12 +398,14 @@ func (m *Manager) applyEventToHistoryCache(
 		toolKey := resolveToolHistoryKey(payload, event.ID)
 		sourceKey := historyToolSourceKey(toolKey)
 		if group := parseHistoryToolCommandGroup(decodeRawObject(payload["meta"])["commandGroup"]); group != nil {
-			if err := m.ensureCompactGroupHistorySourceKey(ctx, sessionID, sourceKey, group.ID); err != nil {
+			if err := m.ensureCompactGroupHistorySourceKey(ctx, sessionID, event.ThreadID, sourceKey, group.ID); err != nil {
 				return nil, err
 			}
 		}
-		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, sourceKey, func(next *HistoryItem) {
+		item, err := m.upsertHistoryItemBySourceIdentity(ctx, sessionID, event.ThreadID, sourceKey, func(next *HistoryItem) {
 			existingPayload := cloneMap(next.Payload)
+			next.SourceThreadID = sourceThreadID
+			next.SourceTurnID = sourceTurnID
 			next.Kind = "tool"
 			next.ItemType = firstNonEmpty(stringValue(payload["kind"]), "tool")
 			next.Tool = historyToolFromEventPayload(payload, "running")
@@ -398,7 +434,7 @@ func (m *Manager) applyEventToHistoryCache(
 		toolKey := resolveToolHistoryKey(payload, event.ID)
 		sourceKey := historyToolSourceKey(toolKey)
 		if group := parseHistoryToolCommandGroup(decodeRawObject(payload["meta"])["commandGroup"]); group != nil {
-			if err := m.ensureCompactGroupHistorySourceKey(ctx, sessionID, sourceKey, group.ID); err != nil {
+			if err := m.ensureCompactGroupHistorySourceKey(ctx, sessionID, event.ThreadID, sourceKey, group.ID); err != nil {
 				return nil, err
 			}
 		}
@@ -406,8 +442,10 @@ func (m *Manager) applyEventToHistoryCache(
 		if payload["ok"] == false {
 			status = "error"
 		}
-		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, sourceKey, func(next *HistoryItem) {
+		item, err := m.upsertHistoryItemBySourceIdentity(ctx, sessionID, event.ThreadID, sourceKey, func(next *HistoryItem) {
 			existingPayload := cloneMap(next.Payload)
+			next.SourceThreadID = sourceThreadID
+			next.SourceTurnID = sourceTurnID
 			mergedPayload := mergeHistoryToolPayload(existingPayload, payload)
 			next.Kind = "tool"
 			next.ItemType = firstNonEmpty(stringValue(mergedPayload["kind"]), next.ItemType, "tool")
@@ -434,13 +472,15 @@ func (m *Manager) applyEventToHistoryCache(
 	case "approval_req":
 		itemID := stringValue(payload["iid"])
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			SourceItemID: nilIfEmptyHistory(itemID),
-			Kind:         "system",
-			ItemType:     "approval_request",
-			Text:         firstNonEmpty(stringValue(payload["prompt"]), "Approval required"),
-			Timestamp:    ptr(event.Timestamp),
-			ObservedAt:   ptr(event.Timestamp),
-			Level:        "warn",
+			SourceThreadID: sourceThreadID,
+			SourceTurnID:   sourceTurnID,
+			SourceItemID:   nilIfEmptyHistory(itemID),
+			Kind:           "system",
+			ItemType:       "approval_request",
+			Text:           firstNonEmpty(stringValue(payload["prompt"]), "Approval required"),
+			Timestamp:      ptr(event.Timestamp),
+			ObservedAt:     ptr(event.Timestamp),
+			Level:          "warn",
 			Detail: &HistoryDetail{
 				Type:         "approval_request",
 				Prompt:       stringValue(payload["prompt"]),
@@ -462,12 +502,14 @@ func (m *Manager) applyEventToHistoryCache(
 			level = "warn"
 		}
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			Kind:       "system",
-			ItemType:   "approval_response",
-			Text:       text,
-			Timestamp:  ptr(event.Timestamp),
-			ObservedAt: ptr(event.Timestamp),
-			Level:      level,
+			SourceThreadID: sourceThreadID,
+			SourceTurnID:   sourceTurnID,
+			Kind:           "system",
+			ItemType:       "approval_response",
+			Text:           text,
+			Timestamp:      ptr(event.Timestamp),
+			ObservedAt:     ptr(event.Timestamp),
+			Level:          level,
 			Detail: &HistoryDetail{
 				Type:   "approval_response",
 				Prompt: stringValue(payload["prompt"]),
@@ -482,13 +524,15 @@ func (m *Manager) applyEventToHistoryCache(
 	case "user_input_req":
 		questions := decodeToolQuestions(payload["qs"])
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			SourceItemID: nilIfEmptyHistory(stringValue(payload["iid"])),
-			Kind:         "system",
-			ItemType:     "user_input_request",
-			Text:         firstNonEmpty(stringValue(payload["txt"]), summarizeHistoryQuestions(questions)),
-			Timestamp:    ptr(event.Timestamp),
-			ObservedAt:   ptr(event.Timestamp),
-			Level:        "warn",
+			SourceThreadID: sourceThreadID,
+			SourceTurnID:   sourceTurnID,
+			SourceItemID:   nilIfEmptyHistory(stringValue(payload["iid"])),
+			Kind:           "system",
+			ItemType:       "user_input_request",
+			Text:           firstNonEmpty(stringValue(payload["txt"]), summarizeHistoryQuestions(questions)),
+			Timestamp:      ptr(event.Timestamp),
+			ObservedAt:     ptr(event.Timestamp),
+			Level:          "warn",
 			Detail: &HistoryDetail{
 				Type:      "user_input_request",
 				Prompt:    firstNonEmpty(stringValue(payload["txt"]), summarizeHistoryQuestions(questions)),
@@ -526,13 +570,15 @@ func (m *Manager) applyEventToHistoryCache(
 			level = "warn"
 		}
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			SourceItemID: nilIfEmptyHistory(itemID),
-			Kind:         "system",
-			ItemType:     "user_input_response",
-			Text:         text,
-			Timestamp:    ptr(event.Timestamp),
-			ObservedAt:   ptr(event.Timestamp),
-			Level:        level,
+			SourceThreadID: sourceThreadID,
+			SourceTurnID:   sourceTurnID,
+			SourceItemID:   nilIfEmptyHistory(itemID),
+			Kind:           "system",
+			ItemType:       "user_input_response",
+			Text:           text,
+			Timestamp:      ptr(event.Timestamp),
+			ObservedAt:     ptr(event.Timestamp),
+			Level:          level,
 			Detail: &HistoryDetail{
 				Type:    "user_input_response",
 				Answers: answerEntries,
@@ -546,13 +592,15 @@ func (m *Manager) applyEventToHistoryCache(
 	case "note":
 		level := firstNonEmpty(stringValue(payload["lvl"]), "info")
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			Kind:       "system",
-			ItemType:   "note",
-			Text:       stringValue(payload["txt"]),
-			Timestamp:  ptr(event.Timestamp),
-			ObservedAt: ptr(event.Timestamp),
-			Level:      level,
-			Payload:    payload,
+			SourceThreadID: sourceThreadID,
+			SourceTurnID:   sourceTurnID,
+			Kind:           "system",
+			ItemType:       "note",
+			Text:           stringValue(payload["txt"]),
+			Timestamp:      ptr(event.Timestamp),
+			ObservedAt:     ptr(event.Timestamp),
+			Level:          level,
+			Payload:        payload,
 		})
 		if err != nil {
 			return nil, err
@@ -560,13 +608,15 @@ func (m *Manager) applyEventToHistoryCache(
 		return &item, nil
 	case "run_fail":
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			Kind:       "system",
-			ItemType:   "run_fail",
-			Text:       firstNonEmpty(stringValue(payload["msg"]), "Run failed"),
-			Timestamp:  ptr(event.Timestamp),
-			ObservedAt: ptr(event.Timestamp),
-			Level:      "error",
-			Payload:    payload,
+			SourceThreadID: sourceThreadID,
+			SourceTurnID:   sourceTurnID,
+			Kind:           "system",
+			ItemType:       "run_fail",
+			Text:           firstNonEmpty(stringValue(payload["msg"]), "Run failed"),
+			Timestamp:      ptr(event.Timestamp),
+			ObservedAt:     ptr(event.Timestamp),
+			Level:          "error",
+			Payload:        payload,
 		})
 		if err != nil {
 			return nil, err
@@ -574,13 +624,15 @@ func (m *Manager) applyEventToHistoryCache(
 		return &item, nil
 	case "run_abort":
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			Kind:       "system",
-			ItemType:   "run_abort",
-			Text:       firstNonEmpty(stringValue(payload["msg"]), "Run aborted"),
-			Timestamp:  ptr(event.Timestamp),
-			ObservedAt: ptr(event.Timestamp),
-			Level:      "info",
-			Payload:    payload,
+			SourceThreadID: sourceThreadID,
+			SourceTurnID:   sourceTurnID,
+			Kind:           "system",
+			ItemType:       "run_abort",
+			Text:           firstNonEmpty(stringValue(payload["msg"]), "Run aborted"),
+			Timestamp:      ptr(event.Timestamp),
+			ObservedAt:     ptr(event.Timestamp),
+			Level:          "info",
+			Payload:        payload,
 		})
 		if err != nil {
 			return nil, err

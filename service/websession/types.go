@@ -339,21 +339,22 @@ type HistoryAttachment struct {
 }
 
 type HistoryItem struct {
-	ID           string              `json:"id"`
-	SourceTurnID *string             `json:"sourceTurnId,omitempty"`
-	SourceItemID *string             `json:"sourceItemId,omitempty"`
-	OrderIndex   int64               `json:"orderIndex"`
-	Kind         string              `json:"kind"`
-	ItemType     string              `json:"itemType"`
-	Text         string              `json:"text"`
-	Timestamp    *time.Time          `json:"timestamp,omitempty"`
-	ObservedAt   *time.Time          `json:"observedAt,omitempty"`
-	Attachments  []HistoryAttachment `json:"attachments,omitempty"`
-	Tool         *HistoryTool        `json:"tool,omitempty"`
-	Level        string              `json:"level,omitempty"`
-	Done         bool                `json:"done,omitempty"`
-	Detail       *HistoryDetail      `json:"detail,omitempty"`
-	Payload      map[string]any      `json:"payload,omitempty"`
+	ID             string              `json:"id"`
+	SourceThreadID *string             `json:"sourceThreadId,omitempty"`
+	SourceTurnID   *string             `json:"sourceTurnId,omitempty"`
+	SourceItemID   *string             `json:"sourceItemId,omitempty"`
+	OrderIndex     int64               `json:"orderIndex"`
+	Kind           string              `json:"kind"`
+	ItemType       string              `json:"itemType"`
+	Text           string              `json:"text"`
+	Timestamp      *time.Time          `json:"timestamp,omitempty"`
+	ObservedAt     *time.Time          `json:"observedAt,omitempty"`
+	Attachments    []HistoryAttachment `json:"attachments,omitempty"`
+	Tool           *HistoryTool        `json:"tool,omitempty"`
+	Level          string              `json:"level,omitempty"`
+	Done           bool                `json:"done,omitempty"`
+	Detail         *HistoryDetail      `json:"detail,omitempty"`
+	Payload        map[string]any      `json:"payload,omitempty"`
 }
 
 type HistoryWindow struct {
@@ -409,24 +410,26 @@ type PendingApproval struct {
 }
 
 type SessionSnapshot struct {
-	Revision         string            `json:"revision"`
-	Session          SessionSummary    `json:"session"`
-	History          HistoryWindow     `json:"history"`
-	PendingInputs    []PendingInput    `json:"pendingInputs"`
-	ScheduledInputs  []ScheduledInput  `json:"scheduledInputs"`
-	PendingApproval  *PendingApproval  `json:"pendingApproval,omitempty"`
-	PendingUserInput *PendingUserInput `json:"pendingUserInput,omitempty"`
+	Revision         string               `json:"revision"`
+	Session          SessionSummary       `json:"session"`
+	History          HistoryWindow        `json:"history"`
+	PendingInputs    []PendingInput       `json:"pendingInputs"`
+	ScheduledInputs  []ScheduledInput     `json:"scheduledInputs"`
+	PendingApproval  *PendingApproval     `json:"pendingApproval,omitempty"`
+	PendingUserInput *PendingUserInput    `json:"pendingUserInput,omitempty"`
+	SubAgents        []WebSessionSubAgent `json:"subAgents"`
 }
 
 type SessionSnapshotResponse struct {
-	Revision         string            `json:"revision"`
-	Unchanged        bool              `json:"unchanged"`
-	Session          *SessionSummary   `json:"session,omitempty"`
-	History          *HistoryWindow    `json:"history,omitempty"`
-	PendingInputs    []PendingInput    `json:"pendingInputs,omitempty"`
-	ScheduledInputs  []ScheduledInput  `json:"scheduledInputs,omitempty"`
-	PendingApproval  *PendingApproval  `json:"pendingApproval,omitempty"`
-	PendingUserInput *PendingUserInput `json:"pendingUserInput,omitempty"`
+	Revision         string               `json:"revision"`
+	Unchanged        bool                 `json:"unchanged"`
+	Session          *SessionSummary      `json:"session,omitempty"`
+	History          *HistoryWindow       `json:"history,omitempty"`
+	PendingInputs    []PendingInput       `json:"pendingInputs,omitempty"`
+	ScheduledInputs  []ScheduledInput     `json:"scheduledInputs,omitempty"`
+	PendingApproval  *PendingApproval     `json:"pendingApproval,omitempty"`
+	PendingUserInput *PendingUserInput    `json:"pendingUserInput,omitempty"`
+	SubAgents        []WebSessionSubAgent `json:"subAgents"`
 }
 
 func NewSessionSnapshotResponse(snapshot SessionSnapshot) SessionSnapshotResponse {
@@ -438,17 +441,47 @@ func NewSessionSnapshotResponse(snapshot SessionSnapshot) SessionSnapshotRespons
 		ScheduledInputs:  snapshot.ScheduledInputs,
 		PendingApproval:  snapshot.PendingApproval,
 		PendingUserInput: snapshot.PendingUserInput,
+		SubAgents:        snapshot.SubAgents,
 	}
 }
 
+type WebSessionSubAgentStatus string
+
+const (
+	WebSessionSubAgentPendingInit WebSessionSubAgentStatus = "pending_init"
+	WebSessionSubAgentRunning     WebSessionSubAgentStatus = "running"
+	WebSessionSubAgentInterrupted WebSessionSubAgentStatus = "interrupted"
+	WebSessionSubAgentCompleted   WebSessionSubAgentStatus = "completed"
+	WebSessionSubAgentErrored     WebSessionSubAgentStatus = "errored"
+	WebSessionSubAgentShutdown    WebSessionSubAgentStatus = "shutdown"
+	WebSessionSubAgentNotFound    WebSessionSubAgentStatus = "not_found"
+)
+
+type WebSessionSubAgent struct {
+	ThreadID         string                   `json:"threadId"`
+	ParentThreadID   *string                  `json:"parentThreadId,omitempty"`
+	Path             string                   `json:"path,omitempty"`
+	Nickname         string                   `json:"nickname,omitempty"`
+	Role             string                   `json:"role,omitempty"`
+	Status           WebSessionSubAgentStatus `json:"status"`
+	Summary          string                   `json:"summary,omitempty"`
+	CurrentTurnID    *string                  `json:"currentTurnId,omitempty"`
+	LatestItemID     *string                  `json:"latestItemId,omitempty"`
+	LatestOrderIndex int64                    `json:"latestOrderIndex,omitempty"`
+	StartedAt        *time.Time               `json:"startedAt,omitempty"`
+	LastActivityAt   *time.Time               `json:"lastActivityAt,omitempty"`
+	EndedAt          *time.Time               `json:"endedAt,omitempty"`
+}
+
 type ImportResult struct {
-	Session         SessionSummary   `json:"session"`
-	History         HistoryWindow    `json:"history"`
-	PendingInputs   []PendingInput   `json:"pendingInputs"`
-	ScheduledInputs []ScheduledInput `json:"scheduledInputs"`
-	Created         bool             `json:"created"`
-	Reused          bool             `json:"reused"`
-	Synced          bool             `json:"synced"`
+	Session         SessionSummary       `json:"session"`
+	History         HistoryWindow        `json:"history"`
+	PendingInputs   []PendingInput       `json:"pendingInputs"`
+	ScheduledInputs []ScheduledInput     `json:"scheduledInputs"`
+	SubAgents       []WebSessionSubAgent `json:"subAgents"`
+	Created         bool                 `json:"created"`
+	Reused          bool                 `json:"reused"`
+	Synced          bool                 `json:"synced"`
 }
 
 type ImportSourceSummary struct {
@@ -476,6 +509,8 @@ type Event struct {
 	Type      string         `json:"type"`
 	RunID     string         `json:"runId,omitempty"`
 	ParentID  string         `json:"parentId,omitempty"`
+	ThreadID  string         `json:"threadId,omitempty"`
+	TurnID    string         `json:"turnId,omitempty"`
 	Timestamp time.Time      `json:"timestamp"`
 	Payload   map[string]any `json:"payload,omitempty"`
 }

@@ -2253,6 +2253,33 @@ describe('webSession loading behavior', () => {
               },
             },
           },
+          {
+            id: 'wait-timeout',
+            oi: 6,
+            kd: 'tool',
+            tp: 'sub_agent_tool_call',
+            ts2: Date.parse('2026-04-09T10:00:05.000Z'),
+            tl: {
+              id: 'wait-timeout-call',
+              name: 'Sub Agent',
+              kind: 'collabAgentToolCall',
+              st: 'done',
+              in: {
+                receiverThreadIds: ['agent-1', 'agent-2', 'agent-3'],
+                agentsStates: {},
+              },
+              out: JSON.stringify({
+                receiverThreadIds: [],
+                agentsStates: {},
+                timedOut: true,
+              }),
+              meta: {
+                kind: 'sub_agent_tool_call',
+                title: 'Sub Agent',
+                subtitle: '',
+              },
+            },
+          },
         ],
         hasMore: false,
         total: 5,
@@ -2284,6 +2311,89 @@ describe('webSession loading behavior', () => {
         },
       ],
     });
+  });
+
+  it('uses the authoritative sub-agent registry and ignores child tools for root live state', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-authoritative-sub-agents',
+      nativeSessionId: 'thread-root',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 2,
+      turnCount: 1,
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          {
+            id: 'child-command',
+            sourceThreadId: 'thread-child-running',
+            sourceTurnId: 'turn-child',
+            orderIndex: 1,
+            kind: 'tool',
+            itemType: 'command_execution',
+            text: '',
+            timestamp: '2026-04-09T10:00:01.000Z',
+            attachments: [],
+            tool: {
+              id: 'child-command',
+              name: 'CommandExecution',
+              kind: 'command_execution',
+              status: 'running',
+              input: { command: 'sleep 30' },
+            },
+          },
+        ],
+        hasMore: false,
+        total: 1,
+      },
+      pendingInputs: [],
+      subAgents: [
+        {
+          threadId: 'thread-child-running',
+          nickname: 'Atlas',
+          role: 'worker',
+          status: 'running',
+          summary: 'Inspecting the repository',
+        },
+        {
+          threadId: 'thread-child-done',
+          nickname: 'Nova',
+          role: 'reviewer',
+          status: 'completed',
+          summary: 'Review complete',
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getSubAgents(session.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'thread-child-running',
+          title: 'Atlas [worker]',
+          status: 'running',
+        }),
+        expect.objectContaining({
+          id: 'thread-child-done',
+          title: 'Nova [reviewer]',
+          status: 'completed',
+        }),
+      ])
+    );
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'starting',
+      activeSubAgentCount: 1,
+      activeSubAgents: [{ id: 'thread-child-running', title: 'Atlas [worker]' }],
+    });
+    expect(store.getLiveState(session.id).tool).toBeUndefined();
+    expect(store.getBlocks(session.id)[0]?.sourceThreadId).toBe('thread-child-running');
   });
 
   it('suppresses completion notifications while pending inputs remain queued', async () => {

@@ -3,6 +3,7 @@ package websession
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,13 +11,17 @@ import (
 )
 
 type codexThreadSummary struct {
-	ID        string
-	Preview   string
-	Path      string
-	Cwd       string
-	Status    string
-	CreatedAt *time.Time
-	UpdatedAt *time.Time
+	ID             string
+	ParentThreadID string
+	AgentPath      string
+	Nickname       string
+	Role           string
+	Preview        string
+	Path           string
+	Cwd            string
+	Status         string
+	CreatedAt      *time.Time
+	UpdatedAt      *time.Time
 }
 
 type codexThreadReadResult struct {
@@ -114,11 +119,15 @@ func (m *Manager) withCodexQueryClient(
 func parseCodexThreadSummary(raw any) codexThreadSummary {
 	thread := decodeRawObject(raw)
 	summary := codexThreadSummary{
-		ID:      stringValue(thread["id"]),
-		Preview: stringValue(thread["preview"]),
-		Path:    stringValue(thread["path"]),
-		Cwd:     stringValue(thread["cwd"]),
-		Status:  stringValue(thread["status"]),
+		ID:             stringValue(thread["id"]),
+		ParentThreadID: stringValue(thread["parentThreadId"]),
+		AgentPath:      codexThreadAgentPath(thread),
+		Nickname:       stringValue(thread["agentNickname"]),
+		Role:           stringValue(thread["agentRole"]),
+		Preview:        stringValue(thread["preview"]),
+		Path:           stringValue(thread["path"]),
+		Cwd:            stringValue(thread["cwd"]),
+		Status:         codexThreadStatusValue(thread["status"]),
 	}
 	if createdAt := int64(numberValue(thread["createdAt"])); createdAt > 0 {
 		value := time.Unix(createdAt, 0)
@@ -143,20 +152,10 @@ func (m *Manager) readCodexThread(
 
 	var result codexThreadReadResult
 	err := m.withCodexQueryClient(ctx, session.Cwd, func(client *codexAppServerClient) error {
-		response, err := client.request(ctx, "thread/read", map[string]any{
-			"threadId":     threadID,
-			"includeTurns": true,
-		})
+		var err error
+		result, err = readCodexThreadWithClient(ctx, client, threadID)
 		if err != nil {
 			return err
-		}
-		payload := decodeRawObject(response.Result)
-		thread := decodeRawObject(payload["thread"])
-		result.Summary = parseCodexThreadSummary(thread)
-		turns := decodeRawArray(thread["turns"])
-		result.Turns = make([]map[string]any, 0, len(turns))
-		for _, turn := range turns {
-			result.Turns = append(result.Turns, decodeRawObject(turn))
 		}
 		goalResponse, err := client.request(ctx, "thread/goal/get", map[string]any{
 			"threadId": threadID,
@@ -168,6 +167,160 @@ func (m *Manager) readCodexThread(
 		return nil
 	})
 	return result, err
+}
+
+func readCodexThreadWithClient(
+	ctx context.Context,
+	client *codexAppServerClient,
+	threadID string,
+) (codexThreadReadResult, error) {
+	response, err := client.request(ctx, "thread/read", map[string]any{
+		"threadId":     strings.TrimSpace(threadID),
+		"includeTurns": true,
+	})
+	if err != nil {
+		return codexThreadReadResult{}, err
+	}
+	payload := decodeRawObject(response.Result)
+	thread := decodeRawObject(payload["thread"])
+	result := codexThreadReadResult{Summary: parseCodexThreadSummary(thread)}
+	turns := decodeRawArray(thread["turns"])
+	result.Turns = make([]map[string]any, 0, len(turns))
+	for _, turn := range turns {
+		result.Turns = append(result.Turns, decodeRawObject(turn))
+	}
+	return result, nil
+}
+
+func listCodexThreadRelationWithClient(
+	ctx context.Context,
+	client *codexAppServerClient,
+	relationKey string,
+	threadID string,
+) (map[string]codexThreadSummary, error) {
+	result := make(map[string]codexThreadSummary)
+	for _, archived := range []bool{false, true} {
+		cursor := ""
+		for {
+			params := map[string]any{
+				"archived":  archived,
+				"limit":     100,
+				relationKey: strings.TrimSpace(threadID),
+			}
+			if cursor != "" {
+				params["cursor"] = cursor
+			}
+			response, err := client.request(ctx, "thread/list", params)
+			if err != nil {
+				return nil, err
+			}
+			payload := decodeRawObject(response.Result)
+			for _, item := range decodeRawArray(payload["data"]) {
+				summary := parseCodexThreadSummary(item)
+				if summary.ID != "" {
+					result[summary.ID] = summary
+				}
+			}
+			cursor = strings.TrimSpace(stringValue(payload["nextCursor"]))
+			if cursor == "" {
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func listCodexDescendantsWithClient(
+	ctx context.Context,
+	client *codexAppServerClient,
+	rootThreadID string,
+) (map[string]codexThreadSummary, error) {
+	descendants, ancestorErr := listCodexThreadRelationWithClient(
+		ctx,
+		client,
+		"ancestorThreadId",
+		rootThreadID,
+	)
+	if ancestorErr == nil {
+		return descendants, nil
+	}
+
+	result := make(map[string]codexThreadSummary)
+	queue := []string{strings.TrimSpace(rootThreadID)}
+	seenParents := make(map[string]struct{})
+	for len(queue) > 0 {
+		parentID := queue[0]
+		queue = queue[1:]
+		if parentID == "" {
+			continue
+		}
+		if _, seen := seenParents[parentID]; seen {
+			continue
+		}
+		seenParents[parentID] = struct{}{}
+		children, err := listCodexThreadRelationWithClient(ctx, client, "parentThreadId", parentID)
+		if err != nil {
+			return nil, fmt.Errorf("descendant listing is unsupported (ancestor: %v; parent: %w)", ancestorErr, err)
+		}
+		for childID, summary := range children {
+			if _, exists := result[childID]; exists {
+				continue
+			}
+			result[childID] = summary
+			queue = append(queue, childID)
+		}
+	}
+	return result, nil
+}
+
+func (m *Manager) readCodexDescendantThreads(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	rootThreadID string,
+) ([]codexThreadReadResult, error) {
+	results := make([]codexThreadReadResult, 0)
+	err := m.withCodexQueryClient(ctx, session.Cwd, func(client *codexAppServerClient) error {
+		summaries, err := listCodexDescendantsWithClient(ctx, client, rootThreadID)
+		if err != nil {
+			return err
+		}
+		ordered := make([]codexThreadSummary, 0, len(summaries))
+		for _, summary := range summaries {
+			ordered = append(ordered, summary)
+		}
+		sort.SliceStable(ordered, func(i, j int) bool {
+			left := ordered[i].CreatedAt
+			right := ordered[j].CreatedAt
+			if left != nil && right != nil && !left.Equal(*right) {
+				return left.Before(*right)
+			}
+			return ordered[i].ID < ordered[j].ID
+		})
+		for _, summary := range ordered {
+			read, err := readCodexThreadWithClient(ctx, client, summary.ID)
+			if err != nil {
+				return err
+			}
+			if read.Summary.ParentThreadID == "" {
+				read.Summary.ParentThreadID = summary.ParentThreadID
+			}
+			if read.Summary.AgentPath == "" {
+				read.Summary.AgentPath = summary.AgentPath
+			}
+			if read.Summary.Nickname == "" {
+				read.Summary.Nickname = summary.Nickname
+			}
+			if read.Summary.Role == "" {
+				read.Summary.Role = summary.Role
+			}
+			results = append(results, read)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func (m *Manager) listCodexThreadsByCwd(

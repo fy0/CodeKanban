@@ -2,8 +2,10 @@ package websession
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -370,7 +372,10 @@ func TestSyncSessionFromLogSourceReplacesCacheAndMarksDeepSync(t *testing.T) {
 		t.Fatalf("failed to update web session: %v", err)
 	}
 
-	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: filepath.Join(t.TempDir(), "missing-codex"),
+	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
@@ -521,7 +526,10 @@ func TestSyncSessionFromLogSourceCachesPlanToolFromCompletedEvent(t *testing.T) 
 		t.Fatalf("failed to update web session: %v", err)
 	}
 
-	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: filepath.Join(t.TempDir(), "missing-codex"),
+	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
@@ -672,6 +680,124 @@ func TestShouldPreserveExistingHistoryOnFastSync(t *testing.T) {
 	}
 }
 
+func TestSyncSessionFromLogSourceMergesDescendantRollouts(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Deep Sync With Agent", 1000)
+	rootThreadID := "thread_deep_root"
+	childThreadID := "thread_deep_child"
+	rootPath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-26T12:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"delegate the review","images":[]}}`,
+		`{"timestamp":"2026-07-26T12:00:04Z","type":"event_msg","payload":{"type":"agent_message","message":"root complete"}}`,
+	})
+	childPath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-26T12:00:01Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"git status\"}","call_id":"child_command"}}`,
+		`{"timestamp":"2026-07-26T12:00:02Z","type":"response_item","payload":{"type":"function_call_output","call_id":"child_command","output":"clean"}}`,
+		`{"timestamp":"2026-07-26T12:00:03Z","type":"event_msg","payload":{"type":"agent_message","message":"child review complete"}}`,
+	})
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Updates(map[string]any{
+			"native_session_id": rootThreadID,
+			"thread_path":       rootPath,
+			"cwd":               project.Path,
+		}).Error; err != nil {
+		t.Fatalf("update deep-sync session: %v", err)
+	}
+
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeCodexDescendantQueryCLI(t, rootThreadID, childThreadID, childPath),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	refreshed, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	snapshot, err := manager.syncSessionFromLogSource(context.Background(), refreshed, true, false)
+	if err != nil {
+		t.Fatalf("syncSessionFromLogSource returned error: %v", err)
+	}
+	if len(snapshot.History.Items) != 4 {
+		t.Fatalf("expected merged root and child history, got %#v", snapshot.History.Items)
+	}
+	wantThreads := []string{rootThreadID, childThreadID, childThreadID, rootThreadID}
+	for index, wantThreadID := range wantThreads {
+		item := snapshot.History.Items[index]
+		if item.SourceThreadID == nil || *item.SourceThreadID != wantThreadID {
+			t.Fatalf("history item %d has wrong source thread: %#v", index, item)
+		}
+	}
+	if snapshot.History.Items[1].Tool == nil || snapshot.History.Items[1].Tool.ID != "child_command" {
+		t.Fatalf("expected child command in merged timeline, got %#v", snapshot.History.Items[1])
+	}
+	if len(snapshot.SubAgents) != 1 {
+		t.Fatalf("expected one discovered sub-agent, got %#v", snapshot.SubAgents)
+	}
+	agent := snapshot.SubAgents[0]
+	if agent.ThreadID != childThreadID || agent.ParentThreadID == nil || *agent.ParentThreadID != rootThreadID ||
+		agent.Nickname != "Atlas" || agent.Role != "reviewer" || agent.Status != WebSessionSubAgentCompleted ||
+		agent.LatestOrderIndex != 3 || agent.Summary != "child review complete" {
+		t.Fatalf("unexpected deep-sync sub-agent registry: %#v", agent)
+	}
+}
+
+func TestSyncSessionFromLogSourcePreservesRegistryWhenDescendantDiscoveryIsUnsupported(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Deep Sync Preserves Agent", 1000)
+	rootThreadID := "thread_preserve_root"
+	rootPath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-26T13:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"refresh history","images":[]}}`,
+		`{"timestamp":"2026-07-26T13:00:01Z","type":"event_msg","payload":{"type":"agent_message","message":"history refreshed"}}`,
+	})
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Updates(map[string]any{
+			"native_session_id": rootThreadID,
+			"thread_path":       rootPath,
+			"cwd":               project.Path,
+		}).Error; err != nil {
+		t.Fatalf("update deep-sync session: %v", err)
+	}
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: filepath.Join(t.TempDir(), "missing-codex"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if err := manager.replaceSessionSubAgents(context.Background(), session.ID, []WebSessionSubAgent{
+		{
+			ThreadID:       "thread_cached_child",
+			ParentThreadID: &rootThreadID,
+			Nickname:       "Cached Agent",
+			Status:         WebSessionSubAgentCompleted,
+			Summary:        "Preserve this registry entry",
+		},
+	}, true); err != nil {
+		t.Fatalf("seed cached sub-agent registry: %v", err)
+	}
+	refreshed, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	snapshot, err := manager.syncSessionFromLogSource(context.Background(), refreshed, true, false)
+	if err != nil {
+		t.Fatalf("syncSessionFromLogSource returned error: %v", err)
+	}
+	if len(snapshot.SubAgents) != 1 || snapshot.SubAgents[0].ThreadID != "thread_cached_child" ||
+		snapshot.SubAgents[0].Summary != "Preserve this registry entry" {
+		t.Fatalf("unsupported descendant discovery must preserve cached registry, got %#v", snapshot.SubAgents)
+	}
+}
+
 func writeCodexDeepHistoryTempFile(t *testing.T, lines []string) string {
 	t.Helper()
 	filePath := filepath.Join(t.TempDir(), "codex-deep-history.jsonl")
@@ -680,4 +806,96 @@ func writeCodexDeepHistoryTempFile(t *testing.T, lines []string) string {
 		t.Fatalf("failed to write temp history: %v", err)
 	}
 	return filePath
+}
+
+func writeCodexDescendantQueryCLI(
+	t *testing.T,
+	rootThreadID string,
+	childThreadID string,
+	childPath string,
+) string {
+	t.Helper()
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "fake-codex-descendants.js")
+	script := fmt.Sprintf(`#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  process.stdout.write('codex 0.137.0\n');
+  process.exit(0);
+}
+const readline = require('readline');
+const rootThreadId = %q;
+const childThreadId = %q;
+const childPath = %q;
+function send(value) {
+  process.stdout.write(JSON.stringify(value) + '\n');
+}
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+rl.on('line', line => {
+  if (!line.trim()) return;
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ id: message.id, result: { userAgent: 'fake-codex-descendants' } });
+    return;
+  }
+  if (message.method === 'thread/list') {
+    const params = message.params || {};
+    const matches = params.ancestorThreadId === rootThreadId && !params.archived && !params.cursor;
+    send({
+      id: message.id,
+      result: {
+        data: matches
+          ? [{
+              id: childThreadId,
+              parentThreadId: rootThreadId,
+              agentPath: 'review/atlas',
+              agentNickname: 'Atlas',
+              agentRole: 'reviewer',
+              preview: 'Reviewing the repository',
+              path: childPath,
+              status: 'idle',
+              createdAt: 1785067201,
+              updatedAt: 1785067203,
+            }]
+          : [],
+        nextCursor: '',
+      },
+    });
+    return;
+  }
+  if (message.method === 'thread/read') {
+    send({
+      id: message.id,
+      result: {
+        thread: {
+          id: childThreadId,
+          parentThreadId: rootThreadId,
+          agentPath: 'review/atlas',
+          agentNickname: 'Atlas',
+          agentRole: 'reviewer',
+          preview: 'Reviewing the repository',
+          path: childPath,
+          status: 'idle',
+          createdAt: 1785067201,
+          updatedAt: 1785067203,
+          turns: [{ id: 'turn_child', status: 'completed', items: [] }],
+        },
+      },
+    });
+    return;
+  }
+  send({ id: message.id, error: { code: -32601, message: 'unsupported method' } });
+});
+`, rootThreadID, childThreadID, filepath.ToSlash(childPath))
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake descendant query CLI: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		return scriptPath
+	}
+	wrapperPath := filepath.Join(dir, "fake-codex-descendants.cmd")
+	wrapper := "@echo off\r\nnode \"%~dp0fake-codex-descendants.js\" %*\r\nexit /b %ERRORLEVEL%\r\n"
+	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o755); err != nil {
+		t.Fatalf("write fake descendant query wrapper: %v", err)
+	}
+	return wrapperPath
 }

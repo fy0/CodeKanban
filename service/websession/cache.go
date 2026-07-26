@@ -102,21 +102,22 @@ func mapHistoryItemRow(row tables.WebSessionItemTable) HistoryItem {
 	decodeJSONText(row.PayloadJSON, &payload)
 
 	return HistoryItem{
-		ID:           row.ID,
-		SourceTurnID: row.SourceTurnID,
-		SourceItemID: row.SourceItemID,
-		OrderIndex:   row.OrderIndex,
-		Kind:         row.ItemKind,
-		ItemType:     row.ItemType,
-		Text:         row.Text,
-		Timestamp:    row.Timestamp,
-		ObservedAt:   row.ObservedAt,
-		Attachments:  attachments,
-		Tool:         tool,
-		Level:        row.Level,
-		Done:         row.Done,
-		Detail:       detail,
-		Payload:      payload,
+		ID:             row.ID,
+		SourceThreadID: row.SourceThreadID,
+		SourceTurnID:   row.SourceTurnID,
+		SourceItemID:   row.SourceItemID,
+		OrderIndex:     row.OrderIndex,
+		Kind:           row.ItemKind,
+		ItemType:       row.ItemType,
+		Text:           row.Text,
+		Timestamp:      row.Timestamp,
+		ObservedAt:     row.ObservedAt,
+		Attachments:    attachments,
+		Tool:           tool,
+		Level:          row.Level,
+		Done:           row.Done,
+		Detail:         detail,
+		Payload:        payload,
 	}
 }
 
@@ -133,6 +134,7 @@ func applyHistoryItemToRow(row *tables.WebSessionItemTable, sessionID string, it
 		return
 	}
 	row.WebSessionID = sessionID
+	row.SourceThreadID = item.SourceThreadID
 	row.SourceTurnID = item.SourceTurnID
 	row.SourceItemID = item.SourceItemID
 	row.OrderIndex = item.OrderIndex
@@ -204,6 +206,16 @@ func (m *Manager) upsertHistoryItemBySourceID(
 	sourceItemID string,
 	mutate func(*HistoryItem),
 ) (HistoryItem, error) {
+	return m.upsertHistoryItemBySourceIdentity(ctx, sessionID, "", sourceItemID, mutate)
+}
+
+func (m *Manager) upsertHistoryItemBySourceIdentity(
+	ctx context.Context,
+	sessionID string,
+	sourceThreadID string,
+	sourceItemID string,
+	mutate func(*HistoryItem),
+) (HistoryItem, error) {
 	db := model.GetDB()
 	if db == nil {
 		return HistoryItem{}, model.ErrDBNotInitialized
@@ -214,9 +226,13 @@ func (m *Manager) upsertHistoryItemBySourceID(
 	}
 
 	var row tables.WebSessionItemTable
-	err := db.WithContext(ctx).
-		Where("web_session_id = ? AND source_item_id = ?", sessionID, sourceItemID).
-		First(&row).Error
+	query := db.WithContext(ctx).Where("web_session_id = ? AND source_item_id = ?", sessionID, sourceItemID)
+	if sourceThreadID = strings.TrimSpace(sourceThreadID); sourceThreadID != "" {
+		query = query.Where("source_thread_id = ?", sourceThreadID)
+	} else {
+		query = query.Where("source_thread_id IS NULL OR source_thread_id = ''")
+	}
+	err := query.First(&row).Error
 	if err != nil && err != gorm.ErrRecordNotFound {
 		return HistoryItem{}, err
 	}
@@ -231,14 +247,18 @@ func (m *Manager) upsertHistoryItemBySourceID(
 		}
 		row.Init()
 		item = HistoryItem{
-			ID:           row.ID,
-			SourceItemID: ptr(strings.TrimSpace(sourceItemID)),
-			OrderIndex:   nextOrder,
+			ID:             row.ID,
+			SourceThreadID: nilIfEmptyHistory(sourceThreadID),
+			SourceItemID:   ptr(strings.TrimSpace(sourceItemID)),
+			OrderIndex:     nextOrder,
 		}
 	}
 	mutate(&item)
 	if item.SourceItemID == nil {
 		item.SourceItemID = ptr(sourceItemID)
+	}
+	if item.SourceThreadID == nil {
+		item.SourceThreadID = nilIfEmptyHistory(sourceThreadID)
 	}
 	applyHistoryItemToRow(&row, sessionID, item)
 	if err == gorm.ErrRecordNotFound {
@@ -256,6 +276,7 @@ func (m *Manager) upsertHistoryItemBySourceID(
 func (m *Manager) ensureCompactGroupHistorySourceKey(
 	ctx context.Context,
 	sessionID string,
+	sourceThreadID string,
 	sourceKey string,
 	groupID string,
 ) error {
@@ -271,8 +292,13 @@ func (m *Manager) ensureCompactGroupHistorySourceKey(
 
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var rows []tables.WebSessionItemTable
-		if err := tx.
-			Where("web_session_id = ? AND item_kind = ?", sessionID, "tool").
+		query := tx.Where("web_session_id = ? AND item_kind = ?", sessionID, "tool")
+		if sourceThreadID = strings.TrimSpace(sourceThreadID); sourceThreadID != "" {
+			query = query.Where("source_thread_id = ?", sourceThreadID)
+		} else {
+			query = query.Where("source_thread_id IS NULL OR source_thread_id = ''")
+		}
+		if err := query.
 			Order("order_index ASC").
 			Find(&rows).Error; err != nil {
 			return err

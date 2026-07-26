@@ -48,7 +48,11 @@ export function projectWebSessionCompactTimelineBlocks(
 
     while (nextIndex < blocks.length) {
       const candidate = blocks[nextIndex];
-      if (!isCompactToolBlock(candidate) || getCompactToolKind(candidate) !== kind) {
+      if (
+        !isCompactToolBlock(candidate) ||
+        getCompactToolKind(candidate) !== kind ||
+        getSourceThreadId(candidate) !== getSourceThreadId(block)
+      ) {
         break;
       }
 
@@ -68,6 +72,10 @@ export function projectWebSessionCompactTimelineBlocks(
   }
 
   return projected;
+}
+
+function getSourceThreadId(block: WebSessionBlock): string {
+  return String(block.sourceThreadId ?? '').trim();
 }
 
 function isCompactToolBlock(block: WebSessionBlock): boolean {

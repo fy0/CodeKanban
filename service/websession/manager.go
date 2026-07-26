@@ -1258,6 +1258,7 @@ func (m *Manager) importCodexSessionResolved(
 			History:         snapshot.History,
 			PendingInputs:   snapshot.PendingInputs,
 			ScheduledInputs: snapshot.ScheduledInputs,
+			SubAgents:       snapshot.SubAgents,
 			Created:         false,
 			Reused:          true,
 			Synced:          false,
@@ -1283,6 +1284,7 @@ func (m *Manager) importCodexSessionResolved(
 		History:         snapshot.History,
 		PendingInputs:   snapshot.PendingInputs,
 		ScheduledInputs: snapshot.ScheduledInputs,
+		SubAgents:       snapshot.SubAgents,
 		Created:         true,
 		Reused:          false,
 		Synced:          true,
@@ -1452,6 +1454,10 @@ func (m *Manager) loadSnapshotLocal(
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
+	subAgents, err := m.sessionSubAgents(ctx, record.ID)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
 	return SessionSnapshot{
 		Revision:         summary.Revision,
 		Session:          summary,
@@ -1460,6 +1466,7 @@ func (m *Manager) loadSnapshotLocal(
 		ScheduledInputs:  scheduledInputs,
 		PendingApproval:  m.pendingApprovalSnapshot(record),
 		PendingUserInput: pendingUserInputFromHistory(history.Items),
+		SubAgents:        subAgents,
 	}, nil
 }
 
@@ -2090,6 +2097,10 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 		return err
 	}
 	if err := db.WithContext(ctx).Unscoped().Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
+		eventState.closed = false
+		return err
+	}
+	if err := db.WithContext(ctx).Unscoped().Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionSubAgentTable{}).Error; err != nil {
 		eventState.closed = false
 		return err
 	}
@@ -4355,11 +4366,27 @@ func (m *Manager) appendAndBroadcastNow(ctx context.Context, sessionID string, r
 		return Event{}, err
 	}
 
+	if event.Type == "sub_agent_state" {
+		agent, changed, stateErr := m.applySubAgentStateEvent(ctx, sessionID, event)
+		if stateErr != nil {
+			return Event{}, stateErr
+		}
+		if changed {
+			m.broadcast(newSubAgentFrame(sessionID, agent, m.summaryForBroadcast(ctx, sessionID)))
+		}
+		return event, nil
+	}
+
 	cachedItem, cacheErr := m.applyEventToHistoryCache(ctx, sessionID, event)
 	if cacheErr != nil {
 		return Event{}, cacheErr
 	}
 	if cachedItem != nil {
+		if subAgent, changed, stateErr := m.applySubAgentHistoryItem(ctx, record, event, *cachedItem); stateErr != nil {
+			return Event{}, stateErr
+		} else if changed {
+			m.broadcast(newSubAgentFrame(sessionID, subAgent, m.summaryForBroadcast(ctx, sessionID)))
+		}
 		m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, m.summaryForBroadcast(ctx, sessionID)))
 	}
 	if event.Type == "tool_end" {
@@ -4936,6 +4963,8 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 			Type:      "approval_res",
 			RunID:     run.runID,
 			ParentID:  run.assistantMessageID,
+			ThreadID:  pending.ThreadID,
+			TurnID:    pending.TurnID,
 			Timestamp: now,
 			Payload: map[string]any{
 				"act":    action,
@@ -5064,6 +5093,8 @@ func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[strin
 		Type:      "user_input_res",
 		RunID:     run.runID,
 		ParentID:  run.assistantMessageID,
+		ThreadID:  pending.ThreadID,
+		TurnID:    pending.TurnID,
 		Timestamp: now,
 		Payload: map[string]any{
 			"iid": pending.ItemID,
@@ -5179,7 +5210,7 @@ func shouldSendFrameToClient(client *client, frame wireFrame) bool {
 		return focusedSessionID != "" && focusedSessionID == strings.TrimSpace(frame.SessionID)
 	case "evt":
 		switch strings.ToLower(strings.TrimSpace(frame.Operation)) {
-		case "hist_item", "hist_page", "pending":
+		case "hist_item", "hist_page", "pending", "sub_agent":
 			return focusedSessionID != "" && focusedSessionID == strings.TrimSpace(frame.SessionID)
 		default:
 			return true

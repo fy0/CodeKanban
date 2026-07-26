@@ -7,6 +7,7 @@ import {
   type WebSessionImportResult,
   type WebSessionSnapshot,
   type WebSessionPendingApprovalRecord,
+  type WebSessionSubAgentRecord,
 } from '@/api/webSession';
 import type {
   WebSessionAttachment,
@@ -147,6 +148,7 @@ type WireScheduledInput = {
 
 type WireHistoryItem = {
   id: string;
+  sthid?: string | null;
   stid?: string | null;
   siid?: string | null;
   oi: number;
@@ -193,6 +195,22 @@ type WireHistoryItem = {
   pl?: Record<string, unknown>;
 };
 
+type WireSubAgent = {
+  tid?: string;
+  ptid?: string | null;
+  p?: string;
+  nn?: string;
+  rl?: string;
+  st?: string;
+  sm?: string;
+  ctid?: string | null;
+  liid?: string | null;
+  loi?: number;
+  sa?: number | null;
+  la?: number | null;
+  ea?: number | null;
+};
+
 type WireFrame = {
   v: number;
   k: WireFrameKind;
@@ -211,6 +229,8 @@ type WireFrame = {
     tot: number;
   };
   i?: WireHistoryItem;
+  ags?: WireSubAgent[];
+  ag?: WireSubAgent;
   pi?: WirePendingInput[];
   si?: WireScheduledInput[];
   pa?: {
@@ -252,6 +272,28 @@ export interface WebSessionLiveSubAgent {
   startedAt?: number;
 }
 
+export type WebSessionSubAgentStatus =
+  | 'pending_init'
+  | 'running'
+  | 'interrupted'
+  | 'completed'
+  | 'errored'
+  | 'shutdown'
+  | 'not_found';
+
+export interface WebSessionSubAgent extends WebSessionLiveSubAgent {
+  parentThreadId?: string | null;
+  path: string;
+  nickname: string;
+  role: string;
+  status: WebSessionSubAgentStatus;
+  currentTurnId?: string | null;
+  latestItemId?: string | null;
+  latestOrderIndex: number;
+  lastActivityAt?: number;
+  endedAt?: number;
+}
+
 export interface WebSessionHistoryAnswerEntry {
   id: string;
   label: string;
@@ -272,6 +314,7 @@ export interface WebSessionHistoryDetail {
 export interface WebSessionBlock {
   key: string;
   id: string;
+  sourceThreadId?: string | null;
   sourceTurnId?: string | null;
   sourceItemId?: string | null;
   orderIndex: number;
@@ -415,6 +458,8 @@ type RuntimeAccumulator = {
   activeTool: WebSessionLiveState['tool'];
   activeSubAgents: Map<string, WebSessionLiveSubAgent>;
   knownSubAgents: Map<string, WebSessionLiveSubAgent>;
+  authoritativeSubAgents: boolean;
+  rootThreadId: string;
   sawAssistantOutput: boolean;
   assistantDone: boolean;
   firstAssistantOutputAt?: number;
@@ -860,6 +905,99 @@ function parseHistoryTimeValue(value: unknown): number | null {
   return null;
 }
 
+function normalizeSubAgentStatus(value: unknown): WebSessionSubAgentStatus {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[-_]/g, '');
+  switch (normalized) {
+    case 'running':
+    case 'active':
+      return 'running';
+    case 'interrupted':
+    case 'aborted':
+      return 'interrupted';
+    case 'completed':
+    case 'done':
+      return 'completed';
+    case 'errored':
+    case 'error':
+    case 'failed':
+    case 'systemerror':
+      return 'errored';
+    case 'shutdown':
+    case 'closed':
+      return 'shutdown';
+    case 'notfound':
+      return 'not_found';
+    default:
+      return 'pending_init';
+  }
+}
+
+function subAgentDisplayTitle(input: {
+  nickname?: string;
+  role?: string;
+  path?: string;
+  id: string;
+}) {
+  if (input.nickname && input.role) {
+    return `${input.nickname} [${input.role}]`;
+  }
+  if (input.nickname) {
+    return input.nickname;
+  }
+  const pathParts = String(input.path ?? '')
+    .split('/')
+    .map(part => part.trim())
+    .filter(Boolean);
+  const pathName = pathParts[pathParts.length - 1];
+  if (pathName) {
+    return pathName;
+  }
+  if (input.role) {
+    return `[${input.role}]`;
+  }
+  return input.id.slice(0, 12) || 'Sub Agent';
+}
+
+function normalizeSubAgent(
+  value: WebSessionSubAgentRecord | WireSubAgent | null | undefined
+): WebSessionSubAgent | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const id = String(record.tid ?? record.threadId ?? '').trim();
+  if (!id) {
+    return null;
+  }
+  const nickname = String(record.nn ?? record.nickname ?? '').trim();
+  const role = String(record.rl ?? record.role ?? '').trim();
+  const path = String(record.p ?? record.path ?? '').trim();
+  const startedAt = parseHistoryTimeValue(record.sa ?? record.startedAt) ?? undefined;
+  return {
+    id,
+    parentThreadId: String(record.ptid ?? record.parentThreadId ?? '').trim() || null,
+    path,
+    nickname,
+    role,
+    status: normalizeSubAgentStatus(record.st ?? record.status),
+    title: subAgentDisplayTitle({ id, nickname, role, path }),
+    summary: String(record.sm ?? record.summary ?? '').trim(),
+    currentTurnId: String(record.ctid ?? record.currentTurnId ?? '').trim() || null,
+    latestItemId: String(record.liid ?? record.latestItemId ?? '').trim() || null,
+    latestOrderIndex: Number(record.loi ?? record.latestOrderIndex ?? 0) || 0,
+    startedAt,
+    lastActivityAt: parseHistoryTimeValue(record.la ?? record.lastActivityAt) ?? undefined,
+    endedAt: parseHistoryTimeValue(record.ea ?? record.endedAt) ?? undefined,
+  };
+}
+
+function isActiveSubAgent(agent: WebSessionSubAgent) {
+  return agent.status === 'pending_init' || agent.status === 'running';
+}
+
 function normalizePendingApproval(
   value: WebSessionPendingApprovalRecord | WireFrame['pa'] | null | undefined
 ): WebSessionApprovalState | null {
@@ -1084,16 +1222,18 @@ function normalizeSubAgentReceiverIds(
       ? value.map(item => String(item ?? '').trim()).filter((item): item is string => Boolean(item))
       : [];
 
-  const direct = fromValue(input?.receiverThreadIds);
-  if (direct.length > 0) {
-    return direct;
-  }
   const outputIds = fromValue(output?.receiverThreadIds);
   if (outputIds.length > 0) {
     return outputIds;
   }
+  const direct = fromValue(input?.receiverThreadIds);
+  if (direct.length > 0) {
+    return direct;
+  }
 
-  const states = asRecord(input?.agentsStates) ?? asRecord(output?.agentsStates);
+  const outputStates = asRecord(output?.agentsStates);
+  const inputStates = asRecord(input?.agentsStates);
+  const states = outputStates && Object.keys(outputStates).length > 0 ? outputStates : inputStates;
   if (!states) {
     return [];
   }
@@ -1106,7 +1246,9 @@ function normalizeSubAgentStateMap(
   input?: Record<string, unknown>,
   output?: Record<string, unknown>
 ) {
-  const source = asRecord(input?.agentsStates) ?? asRecord(output?.agentsStates);
+  const outputStates = asRecord(output?.agentsStates);
+  const inputStates = asRecord(input?.agentsStates);
+  const source = outputStates && Object.keys(outputStates).length > 0 ? outputStates : inputStates;
   const stateMap = new Map<
     string,
     {
@@ -1325,8 +1467,23 @@ function syncActiveSubAgentLifecycle(
     return;
   }
 
-  const ids = activeSubAgentIDsForBlock(block, registry);
-  ids.forEach(id => {
+  const stateMap = normalizeSubAgentStateMap(input, output);
+  if (stateMap.size === 0) {
+    return;
+  }
+  stateMap.forEach((state, id) => {
+    if (!state.status) {
+      return;
+    }
+    const normalizedStatus = normalizeSubAgentStatus(state.status);
+    if (normalizedStatus === 'pending_init' || normalizedStatus === 'running') {
+      const known = registry.get(id);
+      const fallback = agents.find(agent => agent.id === id);
+      if (known || fallback) {
+        active.set(id, known ?? fallback!);
+      }
+      return;
+    }
     active.delete(id);
   });
 }
@@ -1354,9 +1511,6 @@ function withActiveSubAgents<T extends WebSessionLiveState>(
   state: T,
   activeSubAgents: WebSessionLiveSubAgent[]
 ): T {
-  if (!state.running) {
-    return state;
-  }
   const uniqueItems = uniqueActiveSubAgents(activeSubAgents);
   if (uniqueItems.length === 0) {
     return state;
@@ -1568,6 +1722,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
   const scheduledInputsBySession = ref<Record<string, WebSessionScheduledInput[]>>({});
   const snapshotApprovalsBySession = ref<Record<string, WebSessionApprovalState>>({});
+  const subAgentsBySession = ref<Record<string, WebSessionSubAgent[]>>({});
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
   const cachedCounts = reactive(new Map<string, number>());
@@ -2026,9 +2181,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     pendingAutoRetryDispatchOverrides.delete(sessionId);
   }
 
-  function applyPendingAutoRetryDispatchOverride(
-    summary: WebSessionSummary
-  ): WebSessionSummary {
+  function applyPendingAutoRetryDispatchOverride(summary: WebSessionSummary): WebSessionSummary {
     const pendingOverride = pendingAutoRetryDispatchOverrides.get(summary.id);
     if (!pendingOverride) {
       return summary;
@@ -2107,6 +2260,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     },
     options?: {
       preserveArchivedPosition?: boolean;
+      subAgents?: WebSessionSubAgent[];
     }
   ) {
     upsertSession(summary, options);
@@ -2114,6 +2268,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     resetSessionEvents(sessionId, items);
     setPendingInputs(sessionId, pendingInputs);
     setScheduledInputs(sessionId, scheduledInputs);
+    if (options && Object.prototype.hasOwnProperty.call(options, 'subAgents')) {
+      setSubAgents(sessionId, options.subAgents ?? []);
+    }
     historyBySession.value = {
       ...historyBySession.value,
       [sessionId]: {
@@ -2744,6 +2901,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return {
       key: `${String(record.id ?? '')}:${Number(record.oi ?? record.orderIndex ?? 0)}`,
       id: String(record.id ?? ''),
+      sourceThreadId:
+        typeof record.sthid === 'string'
+          ? record.sthid
+          : typeof record.sourceThreadId === 'string'
+            ? record.sourceThreadId
+            : null,
       sourceTurnId:
         typeof record.stid === 'string'
           ? record.stid
@@ -3098,6 +3261,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextSnapshotApprovals = { ...snapshotApprovalsBySession.value };
     delete nextSnapshotApprovals[sessionId];
     snapshotApprovalsBySession.value = nextSnapshotApprovals;
+    const nextSubAgents = { ...subAgentsBySession.value };
+    delete nextSubAgents[sessionId];
+    subAgentsBySession.value = nextSubAgents;
     runtimeProjectionCacheBySession.delete(sessionId);
     eventIndexBySession.delete(sessionId);
     const nextPendingInputs = { ...pendingInputsBySession.value };
@@ -3232,9 +3398,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
-  function approvalStateFromHistoryBlock(
-    block: WebSessionBlock
-  ): WebSessionApprovalState | null {
+  function approvalStateFromHistoryBlock(block: WebSessionBlock): WebSessionApprovalState | null {
     if (block.detail?.type !== 'approval_request') {
       return null;
     }
@@ -3269,6 +3433,42 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function invalidateRuntimeProjection(sessionId: string) {
     runtimeProjectionCacheBySession.delete(sessionId);
+  }
+
+  function getSubAgents(sessionId: string) {
+    return subAgentsBySession.value[sessionId] ?? [];
+  }
+
+  function hasAuthoritativeSubAgents(sessionId: string) {
+    return Object.prototype.hasOwnProperty.call(subAgentsBySession.value, sessionId);
+  }
+
+  function setSubAgents(sessionId: string, items: WebSessionSubAgent[]) {
+    const normalized = [...items].sort((left, right) => {
+      const leftTime = left.startedAt ?? 0;
+      const rightTime = right.startedAt ?? 0;
+      if (leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+      return left.id.localeCompare(right.id);
+    });
+    subAgentsBySession.value = {
+      ...subAgentsBySession.value,
+      [sessionId]: normalized,
+    };
+    invalidateRuntimeProjection(sessionId);
+  }
+
+  function upsertSubAgent(sessionId: string, agent: WebSessionSubAgent) {
+    const current = getSubAgents(sessionId);
+    const index = current.findIndex(item => item.id === agent.id);
+    const next = [...current];
+    if (index >= 0) {
+      next[index] = agent;
+    } else {
+      next.push(agent);
+    }
+    setSubAgents(sessionId, next);
   }
 
   function sortEventBlocks(items: WebSessionBlock[]) {
@@ -3429,12 +3629,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
       session?.assistantState === 'waiting_approval'
         ? (snapshotApprovalsBySession.value[session.id] ?? null)
         : null;
+    const authoritativeSubAgents = Boolean(session && hasAuthoritativeSubAgents(session.id));
+    const registry = session ? getSubAgents(session.id) : [];
+    const knownSubAgents = new Map<string, WebSessionLiveSubAgent>();
+    const activeSubAgents = new Map<string, WebSessionLiveSubAgent>();
+    registry.forEach(agent => {
+      knownSubAgents.set(agent.id, agent);
+      if (isActiveSubAgent(agent)) {
+        activeSubAgents.set(agent.id, agent);
+      }
+    });
     return {
       pendingApproval: snapshotApproval,
       pendingUserInput: null,
       activeTool: undefined,
-      activeSubAgents: new Map(),
-      knownSubAgents: new Map(),
+      activeSubAgents,
+      knownSubAgents,
+      authoritativeSubAgents,
+      rootThreadId: session?.nativeSessionId?.trim() ?? '',
       sawAssistantOutput: false,
       assistantDone: false,
       errorMessage: '',
@@ -3497,6 +3709,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
       accumulator.pendingUserInput = null;
     }
 
+    const sourceThreadId = String(block.sourceThreadId ?? '').trim();
+    const isChildThreadBlock = Boolean(
+      sourceThreadId &&
+        (accumulator.knownSubAgents.has(sourceThreadId) ||
+          (accumulator.rootThreadId && sourceThreadId !== accumulator.rootThreadId))
+    );
+    if (isChildThreadBlock) {
+      return;
+    }
+
     accumulator.updatedAt = block.observedAt || block.timestamp || accumulator.updatedAt;
     if (block.kind === 'assistant') {
       accumulator.sawAssistantOutput = true;
@@ -3517,8 +3739,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       accumulator.assistantDone = false;
       accumulator.firstAssistantOutputAt = undefined;
       accumulator.activeTool = undefined;
-      accumulator.activeSubAgents = new Map();
-      accumulator.knownSubAgents = new Map();
+      if (!accumulator.authoritativeSubAgents) {
+        accumulator.activeSubAgents = new Map();
+        accumulator.knownSubAgents = new Map();
+      }
       accumulator.errorMessage = '';
     }
     const retryPayload = getTransportRetryPayload(block.payload);
@@ -3543,8 +3767,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
         return;
       }
       if (normalizedToolKind === 'sub_agent_tool_call') {
-        rememberKnownSubAgents(block, accumulator.knownSubAgents);
-        syncActiveSubAgentLifecycle(block, accumulator.knownSubAgents, accumulator.activeSubAgents);
+        if (!accumulator.authoritativeSubAgents) {
+          rememberKnownSubAgents(block, accumulator.knownSubAgents);
+          syncActiveSubAgentLifecycle(
+            block,
+            accumulator.knownSubAgents,
+            accumulator.activeSubAgents
+          );
+        }
         accumulator.retryState = undefined;
         return;
       }
@@ -3559,12 +3789,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (block.itemType === 'run_fail') {
       accumulator.errorMessage = block.text || 'Run failed';
       accumulator.activeTool = undefined;
-      accumulator.activeSubAgents = new Map();
+      if (!accumulator.authoritativeSubAgents) {
+        accumulator.activeSubAgents = new Map();
+      }
       accumulator.retryState = undefined;
     }
     if (block.itemType === 'run_abort') {
       accumulator.activeTool = undefined;
-      accumulator.activeSubAgents = new Map();
+      if (!accumulator.authoritativeSubAgents) {
+        accumulator.activeSubAgents = new Map();
+      }
     }
   }
 
@@ -3693,26 +3927,35 @@ export const useWebSessionStore = defineStore('web-session', () => {
         );
       }
     } else if (session?.status === 'done') {
-      liveState = {
-        phase: 'done',
-        running: false,
-        updatedAt: accumulator.updatedAt,
-        startedAt: accumulator.runStartedAt,
-      };
+      liveState = withActiveSubAgents(
+        {
+          phase: 'done',
+          running: false,
+          updatedAt: accumulator.updatedAt,
+          startedAt: accumulator.runStartedAt,
+        },
+        [...accumulator.activeSubAgents.values()]
+      );
     } else if (session?.status === 'err') {
-      liveState = {
-        phase: 'error',
-        running: false,
-        updatedAt: accumulator.updatedAt,
-        startedAt: accumulator.runStartedAt,
-        errorMessage: accumulator.errorMessage,
-      };
+      liveState = withActiveSubAgents(
+        {
+          phase: 'error',
+          running: false,
+          updatedAt: accumulator.updatedAt,
+          startedAt: accumulator.runStartedAt,
+          errorMessage: accumulator.errorMessage,
+        },
+        [...accumulator.activeSubAgents.values()]
+      );
     } else {
-      liveState = {
-        phase: 'idle',
-        running: false,
-        updatedAt: accumulator.updatedAt,
-      };
+      liveState = withActiveSubAgents(
+        {
+          phase: 'idle',
+          running: false,
+          updatedAt: accumulator.updatedAt,
+        },
+        [...accumulator.activeSubAgents.values()]
+      );
     }
 
     return {
@@ -4170,7 +4413,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
           hasMore: frame.h?.hm ?? false,
           beforeCursor: frame.h?.bc ?? '',
           total: historyTotal,
-        }
+        },
+        Array.isArray(frame.ags)
+          ? {
+              subAgents: frame.ags
+                .map(item => normalizeSubAgent(item))
+                .filter((item): item is WebSessionSubAgent => item != null),
+            }
+          : undefined
       );
       return;
     }
@@ -4239,6 +4489,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 .filter((item): item is WebSessionScheduledInput => item != null)
             : []
         );
+        emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
+        rememberAppliedRevision(frame.sid, frame.rev);
+        return;
+      }
+
+      if (frame.op === 'sub_agent' && frame.ag) {
+        const agent = normalizeSubAgent(frame.ag);
+        if (agent) {
+          upsertSubAgent(frame.sid, agent);
+        }
         emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
         rememberAppliedRevision(frame.sid, frame.rev);
         return;
@@ -4863,6 +5123,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
           },
           {
             preserveArchivedPosition: options?.preserveArchivedPosition === true,
+            ...(Array.isArray(snapshot.subAgents)
+              ? {
+                  subAgents: snapshot.subAgents
+                    .map(item => normalizeSubAgent(item))
+                    .filter((item): item is WebSessionSubAgent => item != null),
+                }
+              : {}),
           }
         );
       } else {
@@ -4943,7 +5210,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
           hasMore: Boolean(result.history?.hasMore),
           beforeCursor: String(result.history?.beforeCursor ?? ''),
           total: Number(result.history?.total ?? 0),
-        }
+        },
+        Array.isArray(result.subAgents)
+          ? {
+              subAgents: result.subAgents
+                .map(item => normalizeSubAgent(item))
+                .filter((item): item is WebSessionSubAgent => item != null),
+            }
+          : undefined
       );
       rememberActiveSession(projectId, result.session.id);
     }
@@ -4982,7 +5256,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
         hasMore: Boolean(snapshot.history.hasMore),
         beforeCursor: String(snapshot.history.beforeCursor ?? ''),
         total: Number(snapshot.history.total ?? 0),
-      }
+      },
+      Array.isArray(snapshot.subAgents)
+        ? {
+            subAgents: snapshot.subAgents
+              .map(item => normalizeSubAgent(item))
+              .filter((item): item is WebSessionSubAgent => item != null),
+          }
+        : undefined
     );
     rememberActiveSession(projectId, branchId);
     emitter.emit('web-session:created', {
@@ -5032,7 +5313,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
             hasMore: Boolean(snapshot?.history?.hasMore),
             beforeCursor: String(snapshot?.history?.beforeCursor ?? ''),
             total: Number(snapshot?.history?.total ?? 0),
-          }
+          },
+          Array.isArray(snapshot.subAgents)
+            ? {
+                subAgents: snapshot.subAgents
+                  .map(item => normalizeSubAgent(item))
+                  .filter((item): item is WebSessionSubAgent => item != null),
+              }
+            : undefined
         );
       }
       if (rememberActive) {
@@ -5797,15 +6085,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const session = findSessionById(sessionId);
     const optimisticUpdatedAt = new Date().toISOString();
     const previous =
-      session && !session.archivedAt
-        ? session.autoRetryDispatchPendingOnFailure === true
-        : null;
+      session && !session.archivedAt ? session.autoRetryDispatchPendingOnFailure === true : null;
     if (previous !== null) {
-      setPendingAutoRetryDispatchOverride(
-        sessionId,
-        enabled,
-        Date.parse(optimisticUpdatedAt)
-      );
+      setPendingAutoRetryDispatchOverride(sessionId, enabled, Date.parse(optimisticUpdatedAt));
       updateSessionStatus(sessionId, current => ({
         ...current,
         autoRetryDispatchPendingOnFailure: enabled === true,
@@ -5915,10 +6197,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       throw new Error('clipboard image source is required');
     }
 
-    const attachment = await webSessionApi.importClipboardAttachment(
-      normalizedProjectId,
-      source
-    );
+    const attachment = await webSessionApi.importClipboardAttachment(normalizedProjectId, source);
     updateDraft(normalizedProjectId, normalizedSessionId, draft => ({
       ...draft,
       attachments: [...draft.attachments, attachment],
@@ -5987,6 +6266,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getPendingInputs,
     getScheduledInputs,
     getHistoryMeta,
+    getSubAgents,
     getAppliedRevision,
     isSessionSnapshotCurrent,
     getBlocks,

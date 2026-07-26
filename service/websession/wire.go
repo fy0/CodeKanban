@@ -45,6 +45,8 @@ type wireFrame struct {
 	Scheduled        []wireScheduledInput  `json:"si,omitempty"`
 	PendingApproval  *wirePendingApproval  `json:"pa,omitempty"`
 	PendingUserInput *wirePendingUserInput `json:"ui,omitempty"`
+	SubAgents        *[]wireSubAgent       `json:"ags,omitempty"`
+	SubAgent         *wireSubAgent         `json:"ag,omitempty"`
 	Code             string                `json:"code,omitempty"`
 	Message          string                `json:"msg,omitempty"`
 	Retry            bool                  `json:"retry,omitempty"`
@@ -135,21 +137,38 @@ type wireHist struct {
 }
 
 type wireHistItem struct {
-	ID           string              `json:"id"`
-	SourceTurnID *string             `json:"stid,omitempty"`
-	SourceItemID *string             `json:"siid,omitempty"`
-	OrderIndex   int64               `json:"oi"`
-	Kind         string              `json:"kd"`
-	ItemType     string              `json:"tp"`
-	Text         string              `json:"txt,omitempty"`
-	Timestamp    *int64              `json:"ts2,omitempty"`
-	ObservedAt   *int64              `json:"obs,omitempty"`
-	Attachments  []wireHistoryAttach `json:"atts,omitempty"`
-	Tool         *wireHistoryTool    `json:"tl,omitempty"`
-	Level        string              `json:"lvl,omitempty"`
-	Done         bool                `json:"dn,omitempty"`
-	Detail       *wireHistoryDetail  `json:"dt,omitempty"`
-	Payload      map[string]any      `json:"pl,omitempty"`
+	ID             string              `json:"id"`
+	SourceThreadID *string             `json:"sthid,omitempty"`
+	SourceTurnID   *string             `json:"stid,omitempty"`
+	SourceItemID   *string             `json:"siid,omitempty"`
+	OrderIndex     int64               `json:"oi"`
+	Kind           string              `json:"kd"`
+	ItemType       string              `json:"tp"`
+	Text           string              `json:"txt,omitempty"`
+	Timestamp      *int64              `json:"ts2,omitempty"`
+	ObservedAt     *int64              `json:"obs,omitempty"`
+	Attachments    []wireHistoryAttach `json:"atts,omitempty"`
+	Tool           *wireHistoryTool    `json:"tl,omitempty"`
+	Level          string              `json:"lvl,omitempty"`
+	Done           bool                `json:"dn,omitempty"`
+	Detail         *wireHistoryDetail  `json:"dt,omitempty"`
+	Payload        map[string]any      `json:"pl,omitempty"`
+}
+
+type wireSubAgent struct {
+	ThreadID         string  `json:"tid"`
+	ParentThreadID   *string `json:"ptid,omitempty"`
+	Path             string  `json:"p,omitempty"`
+	Nickname         string  `json:"nn,omitempty"`
+	Role             string  `json:"rl,omitempty"`
+	Status           string  `json:"st"`
+	Summary          string  `json:"sm,omitempty"`
+	CurrentTurnID    *string `json:"ctid,omitempty"`
+	LatestItemID     *string `json:"liid,omitempty"`
+	LatestOrderIndex int64   `json:"loi,omitempty"`
+	StartedAt        *int64  `json:"sa,omitempty"`
+	LastActivityAt   *int64  `json:"la,omitempty"`
+	EndedAt          *int64  `json:"ea,omitempty"`
 }
 
 type wireHistoryAttach struct {
@@ -296,6 +315,7 @@ func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
 		Scheduled:        mapWireScheduledInputs(snap.ScheduledInputs),
 		PendingApproval:  mapWirePendingApproval(snap.PendingApproval),
 		PendingUserInput: mapWirePendingUserInput(snap.PendingUserInput),
+		SubAgents:        ptr(mapWireSubAgents(snap.SubAgents)),
 	}
 }
 
@@ -327,6 +347,21 @@ func newHistoryItemFrame(sessionID string, item HistoryItem, summary *SessionSum
 		Timestamp: nowUnixMilli(),
 		Operation: "hist_item",
 		Item:      ptr(mapWireHistoryItem(item)),
+	}
+	if summary != nil {
+		frame.Session = mapWireSession(*summary)
+	}
+	return frame
+}
+
+func newSubAgentFrame(sessionID string, agent WebSessionSubAgent, summary *SessionSummary) wireFrame {
+	frame := wireFrame{
+		Version:   protocolVersion,
+		Kind:      "evt",
+		SessionID: sessionID,
+		Timestamp: nowUnixMilli(),
+		Operation: "sub_agent",
+		SubAgent:  ptr(mapWireSubAgent(agent)),
 	}
 	if summary != nil {
 		frame.Session = mapWireSession(*summary)
@@ -607,22 +642,60 @@ func mapWireHistoryItem(item HistoryItem) wireHistItem {
 		})
 	}
 	return wireHistItem{
-		ID:           item.ID,
-		SourceTurnID: item.SourceTurnID,
-		SourceItemID: item.SourceItemID,
-		OrderIndex:   item.OrderIndex,
-		Kind:         item.Kind,
-		ItemType:     item.ItemType,
-		Text:         item.Text,
-		Timestamp:    timestamp,
-		ObservedAt:   observedAt,
-		Attachments:  attachments,
-		Tool:         mapWireHistoryTool(item.Tool),
-		Level:        item.Level,
-		Done:         item.Done,
-		Detail:       mapWireHistoryDetail(item.Detail),
-		Payload:      item.Payload,
+		ID:             item.ID,
+		SourceThreadID: item.SourceThreadID,
+		SourceTurnID:   item.SourceTurnID,
+		SourceItemID:   item.SourceItemID,
+		OrderIndex:     item.OrderIndex,
+		Kind:           item.Kind,
+		ItemType:       item.ItemType,
+		Text:           item.Text,
+		Timestamp:      timestamp,
+		ObservedAt:     observedAt,
+		Attachments:    attachments,
+		Tool:           mapWireHistoryTool(item.Tool),
+		Level:          item.Level,
+		Done:           item.Done,
+		Detail:         mapWireHistoryDetail(item.Detail),
+		Payload:        item.Payload,
 	}
+}
+
+func mapWireSubAgents(items []WebSessionSubAgent) []wireSubAgent {
+	if len(items) == 0 {
+		return []wireSubAgent{}
+	}
+	result := make([]wireSubAgent, 0, len(items))
+	for _, item := range items {
+		result = append(result, mapWireSubAgent(item))
+	}
+	return result
+}
+
+func mapWireSubAgent(item WebSessionSubAgent) wireSubAgent {
+	return wireSubAgent{
+		ThreadID:         item.ThreadID,
+		ParentThreadID:   item.ParentThreadID,
+		Path:             item.Path,
+		Nickname:         item.Nickname,
+		Role:             item.Role,
+		Status:           string(item.Status),
+		Summary:          item.Summary,
+		CurrentTurnID:    item.CurrentTurnID,
+		LatestItemID:     item.LatestItemID,
+		LatestOrderIndex: item.LatestOrderIndex,
+		StartedAt:        unixMilliPtr(item.StartedAt),
+		LastActivityAt:   unixMilliPtr(item.LastActivityAt),
+		EndedAt:          unixMilliPtr(item.EndedAt),
+	}
+}
+
+func unixMilliPtr(value *time.Time) *int64 {
+	if value == nil {
+		return nil
+	}
+	result := value.UnixMilli()
+	return &result
 }
 
 func parseBeforeCursor(raw json.RawMessage) (*int64, error) {

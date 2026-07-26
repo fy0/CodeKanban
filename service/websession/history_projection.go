@@ -29,6 +29,8 @@ type toolSnapshot struct {
 type commandExecutionProjectionGroup struct {
 	groupID         string
 	kind            string
+	threadID        string
+	turnID          string
 	firstSeq        int64
 	lastSeq         int64
 	count           int
@@ -48,6 +50,7 @@ type commandExecutionProjectionGroup struct {
 type commandExecutionDetailAccumulator struct {
 	groupID    string
 	kind       string
+	threadID   string
 	title      string
 	summary    string
 	firstSeq   int64
@@ -180,8 +183,9 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 
 	for _, event := range events {
 		toolID := eventToolID(event)
+		toolScopeKey := scopedHistoryToolKey(event.ThreadID, toolID)
 		if event.Type == "tool_st" && toolID != "" {
-			activeTools[toolID] = snapshotToolEvent(event)
+			activeTools[toolScopeKey] = snapshotToolEvent(event)
 		}
 
 		if isCompactToolEvent(event) {
@@ -191,30 +195,32 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 			if currentGroup != nil {
 				_, toolAlreadyInGroup = currentGroup.toolIDs[toolID]
 			}
-			if currentGroup != nil && currentGroup.kind == kind && toolAlreadyInGroup {
+			if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind && toolAlreadyInGroup {
 				groupID = currentGroup.groupID
-			} else if currentGroup != nil && currentGroup.kind == kind && transparentSinceCompact {
+			} else if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind && transparentSinceCompact {
 				groupID = currentGroup.groupID
 			} else if groupID == "" {
-				if currentGroup != nil && currentGroup.kind == kind {
+				if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind {
 					groupID = currentGroup.groupID
 				} else {
 					groupID = commandExecutionGroupID(toolID)
 				}
 			}
-			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind) {
+			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind || currentGroup.threadID != event.ThreadID) {
 				flushGroup()
 			}
 			if currentGroup == nil {
 				currentGroup = &commandExecutionProjectionGroup{
-					groupID: groupID,
-					kind:    kind,
-					toolIDs: make(map[string]struct{}),
+					groupID:  groupID,
+					kind:     kind,
+					threadID: event.ThreadID,
+					turnID:   event.TurnID,
+					toolIDs:  make(map[string]struct{}),
 				}
 			}
-			currentGroup.applyEvent(event, activeTools[toolID])
+			currentGroup.applyEvent(event, activeTools[toolScopeKey])
 			if event.Type == "tool_end" && toolID != "" {
-				delete(activeTools, toolID)
+				delete(activeTools, toolScopeKey)
 			}
 			transparentSinceCompact = false
 			continue
@@ -228,7 +234,7 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 				projected = append(projected, event)
 			}
 			if event.Type == "tool_end" && toolID != "" {
-				delete(activeTools, toolID)
+				delete(activeTools, toolScopeKey)
 			}
 			continue
 		}
@@ -244,7 +250,7 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 		flushGroup()
 		projected = append(projected, event)
 		if event.Type == "tool_end" && toolID != "" {
-			delete(activeTools, toolID)
+			delete(activeTools, toolScopeKey)
 		}
 	}
 
@@ -260,8 +266,9 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 
 	for _, event := range events {
 		toolID := eventToolID(event)
+		toolScopeKey := scopedHistoryToolKey(event.ThreadID, toolID)
 		if event.Type == "tool_st" && toolID != "" {
-			activeTools[toolID] = snapshotToolEvent(event)
+			activeTools[toolScopeKey] = snapshotToolEvent(event)
 		}
 
 		if isCompactToolEvent(event) {
@@ -271,18 +278,18 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 			if currentGroup != nil {
 				_, toolAlreadyInGroup = currentGroup.itemIndex[toolID]
 			}
-			if currentGroup != nil && currentGroup.kind == kind && toolAlreadyInGroup {
+			if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind && toolAlreadyInGroup {
 				groupID = currentGroup.groupID
-			} else if currentGroup != nil && currentGroup.kind == kind && transparentSinceCompact {
+			} else if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind && transparentSinceCompact {
 				groupID = currentGroup.groupID
 			} else if groupID == "" {
-				if currentGroup != nil && currentGroup.kind == kind {
+				if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind {
 					groupID = currentGroup.groupID
 				} else {
 					groupID = commandExecutionGroupID(toolID)
 				}
 			}
-			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind) {
+			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind || currentGroup.threadID != event.ThreadID) {
 				currentGroup = nil
 				transparentSinceCompact = false
 			}
@@ -290,13 +297,14 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 				currentGroup = &commandExecutionDetailAccumulator{
 					groupID:   groupID,
 					kind:      kind,
+					threadID:  event.ThreadID,
 					itemIndex: make(map[string]int),
 				}
 				groups[groupID] = currentGroup
 			}
-			currentGroup.applyEvent(event, activeTools[toolID])
+			currentGroup.applyEvent(event, activeTools[toolScopeKey])
 			if event.Type == "tool_end" && toolID != "" {
-				delete(activeTools, toolID)
+				delete(activeTools, toolScopeKey)
 			}
 			transparentSinceCompact = false
 			continue
@@ -307,7 +315,7 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 				currentGroup = nil
 			}
 			if event.Type == "tool_end" && toolID != "" {
-				delete(activeTools, toolID)
+				delete(activeTools, toolScopeKey)
 			}
 			continue
 		}
@@ -322,7 +330,7 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 		currentGroup = nil
 		transparentSinceCompact = false
 		if event.Type == "tool_end" && toolID != "" {
-			delete(activeTools, toolID)
+			delete(activeTools, toolScopeKey)
 		}
 	}
 
@@ -360,6 +368,8 @@ func (g *commandExecutionProjectionGroup) applyEvent(event Event, snapshot toolS
 	g.latestTimestamp = event.Timestamp
 	g.latestRunID = event.RunID
 	g.latestParentID = event.ParentID
+	g.threadID = event.ThreadID
+	g.turnID = event.TurnID
 
 	name := firstNonEmpty(
 		eventToolName(event),
@@ -432,6 +442,8 @@ func (g *commandExecutionProjectionGroup) toEvent() Event {
 		Type:      eventType,
 		RunID:     g.latestRunID,
 		ParentID:  g.latestParentID,
+		ThreadID:  g.threadID,
+		TurnID:    g.turnID,
 		Timestamp: g.latestTimestamp,
 		Payload:   payload,
 	}
@@ -646,6 +658,13 @@ func commandExecutionGroupID(toolID string) string {
 		return commandExecutionGroupPrefix + utils.NewID()
 	}
 	return commandExecutionGroupPrefix + normalized
+}
+
+func scopedHistoryToolKey(threadID, toolID string) string {
+	if strings.TrimSpace(threadID) == "" {
+		return toolID
+	}
+	return threadID + "\x00" + toolID
 }
 
 func commandFromInput(input any) string {

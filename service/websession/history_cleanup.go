@@ -121,6 +121,10 @@ func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupPa
 				Delete(&tables.WebSessionItemTable{}).Error; err != nil {
 				return err
 			}
+			if err := tx.Unscoped().Where("web_session_id IN ?", ids).
+				Delete(&tables.WebSessionSubAgentTable{}).Error; err != nil {
+				return err
+			}
 		}
 		for _, ids := range chunkHistoryCleanupIDs(plan.resetSessionIDs) {
 			if err := tx.Model(&tables.WebSessionTable{}).

@@ -272,6 +272,8 @@ export function normalizeWebSessionHistoryItem(value) {
     isoFromUnixMilli(value?.ts2) || isoFromUnixMilli(value?.obs);
   return {
     id: trimmedString(value?.id),
+    sourceThreadId:
+      trimmedString(value?.sthid ?? value?.sourceThreadId) || null,
     sourceTurnId: trimmedString(value?.stid) || null,
     sourceItemId: trimmedString(value?.siid) || null,
     orderIndex: numberValue(value?.oi, 0),
@@ -289,6 +291,39 @@ export function normalizeWebSessionHistoryItem(value) {
     detail: normalizeHistoryDetail(value?.dt),
     payload: value?.pl && typeof value.pl === "object" ? value.pl : null,
     updatedAt: updatedTimestamp,
+  };
+}
+
+export function normalizeWebSessionSubAgent(value) {
+  const threadId = trimmedString(value?.tid ?? value?.threadId);
+  if (!threadId) {
+    return null;
+  }
+  const startedAt = value?.sa ?? value?.startedAt;
+  const lastActivityAt = value?.la ?? value?.lastActivityAt;
+  const endedAt = value?.ea ?? value?.endedAt;
+  return {
+    threadId,
+    parentThreadId: trimmedString(value?.ptid ?? value?.parentThreadId) || null,
+    path: trimmedString(value?.p ?? value?.path),
+    nickname: trimmedString(value?.nn ?? value?.nickname),
+    role: trimmedString(value?.rl ?? value?.role),
+    status: trimmedString(value?.st ?? value?.status) || "pending_init",
+    summary: trimmedString(value?.sm ?? value?.summary),
+    currentTurnId: trimmedString(value?.ctid ?? value?.currentTurnId) || null,
+    latestItemId: trimmedString(value?.liid ?? value?.latestItemId) || null,
+    latestOrderIndex: numberValue(value?.loi ?? value?.latestOrderIndex, 0),
+    startedAt:
+      isoFromUnixMilli(startedAt) ||
+      (typeof startedAt === "string" ? trimmedString(startedAt) || null : null),
+    lastActivityAt:
+      isoFromUnixMilli(lastActivityAt) ||
+      (typeof lastActivityAt === "string"
+        ? trimmedString(lastActivityAt) || null
+        : null),
+    endedAt:
+      isoFromUnixMilli(endedAt) ||
+      (typeof endedAt === "string" ? trimmedString(endedAt) || null : null),
   };
 }
 
@@ -364,6 +399,9 @@ export function normalizeWebSessionSnapshotFromWire(frame) {
       : [],
     pendingApproval: normalizePendingApprovalState(frame?.pa),
     pendingUserInput: normalizePendingUserInputState(frame?.ui),
+    subAgents: Array.isArray(frame?.ags)
+      ? frame.ags.map(normalizeWebSessionSubAgent).filter(Boolean)
+      : [],
   };
 }
 
@@ -559,6 +597,9 @@ export function analyzeWebSession(snapshot) {
   const pendingInputs = Array.isArray(snapshot?.pendingInputs)
     ? snapshot.pendingInputs.filter(Boolean)
     : [];
+  const subAgents = Array.isArray(snapshot?.subAgents)
+    ? snapshot.subAgents.map(normalizeWebSessionSubAgent).filter(Boolean)
+    : [];
   const items = Array.isArray(history.items) ? history.items : [];
   const pendingApproval =
     normalizePendingApprovalState(snapshot?.pendingApproval) ||
@@ -635,6 +676,10 @@ export function analyzeWebSession(snapshot) {
     pendingApproval,
     pendingUserInput,
     pendingInputs,
+    subAgents,
+    activeSubAgents: subAgents.filter(
+      (agent) => agent.status === "pending_init" || agent.status === "running",
+    ),
     latestPlan,
     lastAssistantMessage,
     session,
@@ -644,6 +689,7 @@ export function analyzeWebSession(snapshot) {
       pendingInputs,
       pendingApproval,
       pendingUserInput,
+      subAgents,
     },
   };
 }
@@ -729,6 +775,16 @@ export function normalizeWebSessionFrame(rawFrame) {
         ...base,
         type: "historyItem",
         item: normalizeWebSessionHistoryItem(rawFrame.i),
+        session: rawFrame?.s
+          ? normalizeWebSessionSummaryFromWire(rawFrame.s)
+          : null,
+      };
+    }
+    if (rawFrame?.op === "sub_agent" && rawFrame?.ag) {
+      return {
+        ...base,
+        type: "subAgent",
+        subAgent: normalizeWebSessionSubAgent(rawFrame.ag),
         session: rawFrame?.s
           ? normalizeWebSessionSummaryFromWire(rawFrame.s)
           : null,

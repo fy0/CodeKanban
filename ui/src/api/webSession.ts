@@ -122,6 +122,30 @@ export type WebSessionPendingApprovalRecord = {
   actionable?: boolean;
 };
 
+export type WebSessionSubAgentRecord = {
+  threadId?: string;
+  parentThreadId?: string | null;
+  path?: string;
+  nickname?: string;
+  role?: string;
+  status?:
+    | 'pending_init'
+    | 'running'
+    | 'interrupted'
+    | 'completed'
+    | 'errored'
+    | 'shutdown'
+    | 'not_found'
+    | string;
+  summary?: string;
+  currentTurnId?: string | null;
+  latestItemId?: string | null;
+  latestOrderIndex?: number;
+  startedAt?: string | number | null;
+  lastActivityAt?: string | number | null;
+  endedAt?: string | number | null;
+};
+
 export type WebSessionSnapshot = {
   revision?: string;
   unchanged?: boolean;
@@ -130,6 +154,7 @@ export type WebSessionSnapshot = {
   pendingInputs?: WebSessionPendingInputRecord[];
   scheduledInputs?: WebSessionScheduledInputRecord[];
   pendingApproval?: WebSessionPendingApprovalRecord | null;
+  subAgents?: WebSessionSubAgentRecord[];
 };
 
 export type WebSessionImportResult = Omit<

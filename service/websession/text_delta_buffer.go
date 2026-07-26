@@ -121,6 +121,8 @@ func (m *Manager) enqueueTextDelta(
 func samePendingTextDeltaKey(left, right Event) bool {
 	return left.RunID == right.RunID &&
 		left.ParentID == right.ParentID &&
+		left.ThreadID == right.ThreadID &&
+		left.TurnID == right.TurnID &&
 		stringValue(left.Payload["mid"]) == stringValue(right.Payload["mid"])
 }
 

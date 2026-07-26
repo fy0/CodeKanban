@@ -305,7 +305,6 @@ func TestImportCodexSessionCreatesBoundSessionAndSyncsHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-
 	result, err := manager.ImportCodexSession(context.Background(), project.ID, aiSession.ID, SyncModeFast)
 	if err != nil {
 		t.Fatalf("ImportCodexSession returned error: %v", err)
@@ -434,6 +433,16 @@ func TestImportCodexSessionReusesExistingSessionWithoutResync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
+	if err := manager.replaceSessionSubAgents(context.Background(), existing.ID, []WebSessionSubAgent{
+		{
+			ThreadID: "thread_import_child",
+			Nickname: "Imported Agent",
+			Status:   WebSessionSubAgentCompleted,
+			Summary:  "Cached child result",
+		},
+	}, true); err != nil {
+		t.Fatalf("seed imported sub-agent registry: %v", err)
+	}
 
 	result, err := manager.ImportCodexSession(context.Background(), project.ID, aiSession.ID, SyncModeFast)
 	if err != nil {
@@ -453,6 +462,9 @@ func TestImportCodexSessionReusesExistingSessionWithoutResync(t *testing.T) {
 	}
 	if result.History.Total != 1 || len(result.History.Items) != 1 || result.History.Items[0].Text != "cached history" {
 		t.Fatalf("expected cached history to remain untouched, got %#v", result.History.Items)
+	}
+	if len(result.SubAgents) != 1 || result.SubAgents[0].ThreadID != "thread_import_child" {
+		t.Fatalf("expected reused import to return its sub-agent registry, got %#v", result.SubAgents)
 	}
 
 	record, err := manager.GetSession(context.Background(), existing.ID)
@@ -2934,6 +2946,13 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	if record.NativeSessionID == nil || *record.NativeSessionID != "thread_test" {
 		t.Fatalf("expected child thread start to preserve root native session id, got %#v", record.NativeSessionID)
 	}
+	agents, err := manager.sessionSubAgents(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("sessionSubAgents returned error: %v", err)
+	}
+	if len(agents) != 1 || agents[0].ThreadID != "thread_child" {
+		t.Fatalf("expected registry to exclude the root thread, got %#v", agents)
+	}
 	if !manager.hasActiveRun(created.ID) {
 		t.Fatal("expected active run to remain registered after child completion")
 	}
@@ -3006,6 +3025,224 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	}
 	if !sawRootAnswer {
 		t.Fatal("expected root answer after sub-agent completion")
+	}
+}
+
+func TestCodexSubAgentRegistrySurvivesEmptyWaitTimeout(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Sub Agent registry", 1000)
+	rootThreadID := "thread_root"
+	session.NativeSessionID = ptr(rootThreadID)
+	if err := model.GetDB().Save(session).Error; err != nil {
+		t.Fatalf("save root thread id: %v", err)
+	}
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	run := &activeRun{runID: "run_sub_agent", agent: AgentCodex}
+	rootScope := codexTurnScope{threadID: rootThreadID, turnID: "turn_root"}
+	params := func(value map[string]any) json.RawMessage {
+		encoded, marshalErr := json.Marshal(value)
+		if marshalErr != nil {
+			t.Fatalf("marshal app-server params: %v", marshalErr)
+		}
+		return encoded
+	}
+
+	_, err = manager.handleCodexAppServerMessage(*session, run, nil, rootScope, codexAppServerIncoming{
+		Method: "item/completed",
+		Params: params(map[string]any{
+			"threadId": rootThreadID,
+			"turnId":   "turn_root",
+			"item": map[string]any{
+				"type":              "collabAgentToolCall",
+				"id":                "spawn_1",
+				"tool":              "spawnAgent",
+				"status":            "completed",
+				"senderThreadId":    rootThreadID,
+				"receiverThreadIds": []any{"thread_child"},
+				"agentsStates": map[string]any{
+					"thread_child": map[string]any{"status": "pendingInit"},
+				},
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("handle spawn completion: %v", err)
+	}
+
+	agents, err := manager.sessionSubAgents(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("sessionSubAgents after spawn: %v", err)
+	}
+	if len(agents) != 1 || agents[0].ThreadID != "thread_child" || !webSessionSubAgentIsActive(agents[0].Status) {
+		t.Fatalf("expected one active child after spawn, got %#v", agents)
+	}
+
+	_, err = manager.handleCodexAppServerMessage(*session, run, nil, rootScope, codexAppServerIncoming{
+		Method: "item/completed",
+		Params: params(map[string]any{
+			"threadId": rootThreadID,
+			"turnId":   "turn_root",
+			"item": map[string]any{
+				"type":              "collabAgentToolCall",
+				"id":                "wait_1",
+				"tool":              "wait",
+				"status":            "completed",
+				"senderThreadId":    rootThreadID,
+				"receiverThreadIds": []any{},
+				"agentsStates":      map[string]any{},
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("handle wait timeout completion: %v", err)
+	}
+	agents, err = manager.sessionSubAgents(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("sessionSubAgents after wait timeout: %v", err)
+	}
+	if len(agents) != 1 || !webSessionSubAgentIsActive(agents[0].Status) {
+		t.Fatalf("empty wait timeout must preserve active child, got %#v", agents)
+	}
+
+	_, err = manager.handleCodexAppServerMessage(*session, run, nil, rootScope, codexAppServerIncoming{
+		Method: "item/started",
+		Params: params(map[string]any{
+			"threadId": "thread_child",
+			"turnId":   "turn_child",
+			"item": map[string]any{
+				"type":    "commandExecution",
+				"id":      "child_command",
+				"command": "pwd",
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("handle child command: %v", err)
+	}
+	snapshot, err := manager.Snapshot(context.Background(), session.ID, 20)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	var childCommand *HistoryItem
+	for index := range snapshot.History.Items {
+		item := &snapshot.History.Items[index]
+		if item.Tool != nil && item.Tool.ID == "child_command" {
+			childCommand = item
+			break
+		}
+	}
+	if childCommand == nil || childCommand.SourceThreadID == nil || *childCommand.SourceThreadID != "thread_child" {
+		t.Fatalf("expected child command thread attribution, got %#v", childCommand)
+	}
+
+	_, err = manager.handleCodexAppServerMessage(*session, run, nil, rootScope, codexAppServerIncoming{
+		Method: "turn/completed",
+		Params: params(map[string]any{
+			"threadId": "thread_child",
+			"turn": map[string]any{
+				"id":     "turn_child",
+				"status": "completed",
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("handle child completion: %v", err)
+	}
+	agents, err = manager.sessionSubAgents(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("sessionSubAgents after child completion: %v", err)
+	}
+	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentCompleted {
+		t.Fatalf("expected completed child, got %#v", agents)
+	}
+}
+
+func TestCodexV2SubAgentActivityUpdatesRegistryAndHistory(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "V2 Sub Agent activity", 1000)
+	rootThreadID := "thread_root"
+	session.NativeSessionID = ptr(rootThreadID)
+	if err := model.GetDB().Save(session).Error; err != nil {
+		t.Fatalf("save root thread id: %v", err)
+	}
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	run := &activeRun{runID: "run_v2_sub_agent", agent: AgentCodex}
+	rootScope := codexTurnScope{threadID: rootThreadID, turnID: "turn_root"}
+	params := func(kind string) json.RawMessage {
+		encoded, marshalErr := json.Marshal(map[string]any{
+			"threadId": rootThreadID,
+			"turnId":   "turn_root",
+			"item": map[string]any{
+				"type":          "subAgentActivity",
+				"id":            "activity_" + kind,
+				"kind":          kind,
+				"agentThreadId": "thread_child",
+				"agentPath":     "review/atlas",
+			},
+		})
+		if marshalErr != nil {
+			t.Fatalf("marshal app-server params: %v", marshalErr)
+		}
+		return encoded
+	}
+
+	_, err = manager.handleCodexAppServerMessage(*session, run, nil, rootScope, codexAppServerIncoming{
+		Method: "item/completed",
+		Params: params("started"),
+	})
+	if err != nil {
+		t.Fatalf("handle started activity: %v", err)
+	}
+	agents, err := manager.sessionSubAgents(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("sessionSubAgents after started activity: %v", err)
+	}
+	if len(agents) != 1 || agents[0].ThreadID != "thread_child" ||
+		agents[0].ParentThreadID == nil || *agents[0].ParentThreadID != rootThreadID ||
+		agents[0].Path != "review/atlas" || agents[0].Status != WebSessionSubAgentRunning {
+		t.Fatalf("unexpected registry after started activity: %#v", agents)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), session.ID, 20)
+	if err != nil {
+		t.Fatalf("Snapshot after started activity: %v", err)
+	}
+	if len(snapshot.History.Items) != 1 {
+		t.Fatalf("expected one semantic activity item, got %#v", snapshot.History.Items)
+	}
+	activity := snapshot.History.Items[0]
+	if activity.ItemType != "sub_agent_activity" ||
+		activity.SourceThreadID == nil || *activity.SourceThreadID != "thread_child" ||
+		activity.SourceTurnID == nil || *activity.SourceTurnID != "turn_root" ||
+		activity.SourceItemID == nil || *activity.SourceItemID != "activity_started" {
+		t.Fatalf("unexpected semantic activity history item: %#v", activity)
+	}
+
+	_, err = manager.handleCodexAppServerMessage(*session, run, nil, rootScope, codexAppServerIncoming{
+		Method: "item/completed",
+		Params: params("interrupted"),
+	})
+	if err != nil {
+		t.Fatalf("handle interrupted activity: %v", err)
+	}
+	agents, err = manager.sessionSubAgents(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("sessionSubAgents after interrupted activity: %v", err)
+	}
+	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentInterrupted || agents[0].EndedAt == nil {
+		t.Fatalf("expected interrupted child with terminal timestamp, got %#v", agents)
 	}
 }
 

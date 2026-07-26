@@ -3,10 +3,13 @@ package websession
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"code-kanban/model/tables"
+
+	"go.uber.org/zap"
 )
 
 const cacheSyncReadTimeout = 10 * time.Second
@@ -264,6 +267,33 @@ func (m *Manager) mapThreadReadItem(
 			},
 		}
 		return result, nil
+	case "collabAgentToolCall", "subAgentToolCall":
+		status := syncedToolStatus(stringValue(item["status"]))
+		result.Kind = "tool"
+		result.Tool = &HistoryTool{
+			ID:     firstNonEmpty(sourceItemID, fmt.Sprintf("sub_agent_%d", orderIndex)),
+			Name:   "Sub Agent",
+			Kind:   "sub_agent_tool_call",
+			Input:  cloneMap(item),
+			Output: mustJSONText(item),
+			Status: status,
+			Meta: map[string]any{
+				"title":    "Sub Agent",
+				"kind":     "sub_agent_tool_call",
+				"subtitle": subAgentToolCallSummary(item),
+			},
+		}
+		return result, nil
+	case "subAgentActivity":
+		agentThreadID := strings.TrimSpace(stringValue(item["agentThreadId"]))
+		path := strings.TrimSpace(stringValue(item["agentPath"]))
+		kind := strings.TrimSpace(stringValue(item["kind"]))
+		result.SourceThreadID = nilIfEmptyHistory(agentThreadID)
+		result.Kind = "system"
+		result.ItemType = "sub_agent_activity"
+		result.Text = subAgentActivityText(kind, path, agentThreadID)
+		result.Level = "info"
+		return result, nil
 	case "webSearch":
 		result.Kind = "tool"
 		result.Tool = &HistoryTool{
@@ -371,11 +401,19 @@ func compactSyncedHistoryItems(items []HistoryItem) []HistoryItem {
 		}
 
 		kind := current.Tool.Kind
+		threadID := ""
+		if current.SourceThreadID != nil {
+			threadID = strings.TrimSpace(*current.SourceThreadID)
+		}
 		group := []HistoryItem{current}
 		nextIndex := index + 1
 		for nextIndex < len(items) {
 			next := items[nextIndex]
-			if !isCompactHistoryTool(next) || next.Tool.Kind != kind {
+			nextThreadID := ""
+			if next.SourceThreadID != nil {
+				nextThreadID = strings.TrimSpace(*next.SourceThreadID)
+			}
+			if !isCompactHistoryTool(next) || next.Tool.Kind != kind || nextThreadID != threadID {
 				break
 			}
 			group = append(group, next)
@@ -416,6 +454,68 @@ func compactSyncedHistoryItems(items []HistoryItem) []HistoryItem {
 		result[index].OrderIndex = int64(index + 1)
 	}
 	return result
+}
+
+func sortSyncedHistoryItems(items []HistoryItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		left := historyItemObservedTimestamp(items[i])
+		right := historyItemObservedTimestamp(items[j])
+		if left != nil && right != nil && !left.Equal(*right) {
+			return left.Before(*right)
+		}
+		if left != nil && right == nil {
+			return true
+		}
+		if left == nil && right != nil {
+			return false
+		}
+		return false
+	})
+	for index := range items {
+		items[index].OrderIndex = int64(index + 1)
+	}
+}
+
+func subAgentsFromCodexThreads(threads []codexThreadReadResult) []WebSessionSubAgent {
+	agents := make([]WebSessionSubAgent, 0, len(threads))
+	for _, thread := range threads {
+		agent := webSessionSubAgentFromThread(thread.Summary, thread.Turns)
+		if strings.TrimSpace(agent.ThreadID) == "" {
+			continue
+		}
+		agent.Summary = strings.TrimSpace(thread.Summary.Preview)
+		agents = append(agents, agent)
+	}
+	sortWebSessionSubAgents(agents)
+	return agents
+}
+
+func updateSubAgentsFromHistory(agents []WebSessionSubAgent, items []HistoryItem) {
+	indices := make(map[string]int, len(agents))
+	for index := range agents {
+		indices[strings.TrimSpace(agents[index].ThreadID)] = index
+	}
+	for _, item := range items {
+		if item.SourceThreadID == nil {
+			continue
+		}
+		index, ok := indices[strings.TrimSpace(*item.SourceThreadID)]
+		if !ok {
+			continue
+		}
+		agents[index].LatestItemID = ptr(item.ID)
+		agents[index].LatestOrderIndex = item.OrderIndex
+		if summary := historyItemSubAgentSummary(item); summary != "" {
+			agents[index].Summary = summary
+		}
+		if observedAt := historyItemObservedTimestamp(item); observedAt != nil {
+			agents[index].LastActivityAt = observedAt
+		}
+	}
+}
+
+func scopedSourceTurnKey(threadID string, turnID string) string {
+	return strings.TrimSpace(threadID) + "\x00" + strings.TrimSpace(turnID)
 }
 
 func (m *Manager) defaultCodexSyncMode() SyncMode {
@@ -499,6 +599,16 @@ func (m *Manager) syncSessionFromThreadSource(
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
+	descendants, descendantsErr := m.readCodexDescendantThreads(ctx, session, remote.Summary.ID)
+	descendantsDiscovered := descendantsErr == nil
+	if descendantsErr != nil && m.logger != nil {
+		m.logger.Warn(
+			"codex descendant discovery unavailable; preserving cached sub agents",
+			zap.String("sessionId", session.ID),
+			zap.Error(descendantsErr),
+		)
+	}
+	subAgents := subAgentsFromCodexThreads(descendants)
 
 	metadataUpdates := map[string]any{
 		"source_kind":       string(defaultSessionBackend(AgentCodex)),
@@ -518,6 +628,11 @@ func (m *Manager) syncSessionFromThreadSource(
 	}
 
 	if !clearExisting && m.shouldPreserveExistingHistoryOnFastSync(session) {
+		if descendantsDiscovered {
+			if err := m.replaceSessionSubAgents(ctx, session.ID, subAgents, true); err != nil {
+				return SessionSnapshot{}, err
+			}
+		}
 		if err := m.updateRuntimeState(ctx, session.ID, metadataUpdates); err != nil {
 			return SessionSnapshot{}, err
 		}
@@ -528,57 +643,70 @@ func (m *Manager) syncSessionFromThreadSource(
 		return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow, false)
 	}
 
+	allThreads := make([]codexThreadReadResult, 0, len(descendants)+1)
+	allThreads = append(allThreads, remote)
+	allThreads = append(allThreads, descendants...)
 	turnRows := make([]tables.WebSessionTurnTable, 0, len(remote.Turns))
 	historyItems := make([]HistoryItem, 0)
-
-	for turnIndex, turn := range remote.Turns {
-		if isCodexCyberPolicyError(turn) {
-			metadataUpdates["cyber_policy_flagged"] = true
-		}
-		turnRow := tables.WebSessionTurnTable{}
-		turnRow.Init()
-		turnRow.WebSessionID = session.ID
-		turnID := strings.TrimSpace(stringValue(turn["id"]))
-		turnRow.SourceTurnID = nilIfEmptyHistory(turnID)
-		turnRow.OrderIndex = int64(turnIndex + 1)
-		turnRow.Status = firstNonEmpty(stringValue(turn["status"]), "completed")
-		turnRow.ErrorJSON = mustJSONText(turn["error"])
-		turnRow.SourceCreated = true
-		turnRows = append(turnRows, turnRow)
-
-		items := decodeRawArray(turn["items"])
-		for _, rawItem := range items {
-			historyItem, itemErr := m.mapThreadReadItem(rawItem, 0)
-			if itemErr != nil {
-				return SessionSnapshot{}, itemErr
+	var turnOrder int64
+	for _, thread := range allThreads {
+		threadID := strings.TrimSpace(thread.Summary.ID)
+		for _, turn := range thread.Turns {
+			if threadID == remote.Summary.ID && isCodexCyberPolicyError(turn) {
+				metadataUpdates["cyber_policy_flagged"] = true
 			}
-			if strings.TrimSpace(historyItem.ID) == "" &&
-				strings.TrimSpace(historyItem.Kind) == "" &&
-				strings.TrimSpace(historyItem.ItemType) == "" &&
-				strings.TrimSpace(historyItem.Text) == "" &&
-				historyItem.Tool == nil &&
-				len(historyItem.Attachments) == 0 {
-				continue
+			turnOrder++
+			turnRow := tables.WebSessionTurnTable{}
+			turnRow.Init()
+			turnRow.WebSessionID = session.ID
+			turnID := strings.TrimSpace(stringValue(turn["id"]))
+			turnRow.SourceThreadID = nilIfEmptyHistory(threadID)
+			turnRow.SourceTurnID = nilIfEmptyHistory(turnID)
+			turnRow.OrderIndex = turnOrder
+			turnRow.Status = firstNonEmpty(stringValue(turn["status"]), "completed")
+			turnRow.ErrorJSON = mustJSONText(turn["error"])
+			turnRow.SourceCreated = true
+			turnRows = append(turnRows, turnRow)
+
+			items := decodeRawArray(turn["items"])
+			for _, rawItem := range items {
+				historyItem, itemErr := m.mapThreadReadItem(rawItem, 0)
+				if itemErr != nil {
+					return SessionSnapshot{}, itemErr
+				}
+				if strings.TrimSpace(historyItem.ID) == "" &&
+					strings.TrimSpace(historyItem.Kind) == "" &&
+					strings.TrimSpace(historyItem.ItemType) == "" &&
+					strings.TrimSpace(historyItem.Text) == "" &&
+					historyItem.Tool == nil &&
+					len(historyItem.Attachments) == 0 {
+					continue
+				}
+				if historyItem.SourceThreadID == nil {
+					historyItem.SourceThreadID = nilIfEmptyHistory(threadID)
+				}
+				historyItem.SourceTurnID = nilIfEmptyHistory(turnID)
+				historyItems = append(historyItems, historyItem)
 			}
-			historyItem.SourceTurnID = nilIfEmptyHistory(turnID)
-			historyItems = append(historyItems, historyItem)
 		}
 	}
 
+	sortSyncedHistoryItems(historyItems)
 	historyItems = compactSyncedHistoryItems(historyItems)
+	updateSubAgentsFromHistory(subAgents, historyItems)
 	itemRows := make([]tables.WebSessionItemTable, 0, len(historyItems))
 	turnIDToRowID := make(map[string]string, len(turnRows))
 	for _, turnRow := range turnRows {
-		if turnRow.SourceTurnID != nil {
-			turnIDToRowID[*turnRow.SourceTurnID] = turnRow.ID
+		if turnRow.SourceThreadID != nil && turnRow.SourceTurnID != nil {
+			turnIDToRowID[scopedSourceTurnKey(*turnRow.SourceThreadID, *turnRow.SourceTurnID)] = turnRow.ID
 		}
 	}
 	for _, historyItem := range historyItems {
 		row := tables.WebSessionItemTable{}
 		row.Init()
 		row.WebSessionID = session.ID
-		if historyItem.SourceTurnID != nil {
-			if rowID, ok := turnIDToRowID[*historyItem.SourceTurnID]; ok {
+		if historyItem.SourceThreadID != nil && historyItem.SourceTurnID != nil {
+			if rowID, ok := turnIDToRowID[scopedSourceTurnKey(*historyItem.SourceThreadID, *historyItem.SourceTurnID)]; ok {
 				row.WebTurnID = &rowID
 			}
 		}
@@ -599,6 +727,11 @@ func (m *Manager) syncSessionFromThreadSource(
 	}
 	if err := m.replaceSessionHistoryCache(ctx, session, turnRows, itemRows, updates); err != nil {
 		return SessionSnapshot{}, err
+	}
+	if descendantsDiscovered {
+		if err := m.replaceSessionSubAgents(ctx, session.ID, subAgents, true); err != nil {
+			return SessionSnapshot{}, err
+		}
 	}
 	refreshed, err := m.GetSession(ctx, session.ID)
 	if err != nil {

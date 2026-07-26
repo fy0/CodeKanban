@@ -1,7 +1,7 @@
 -- 数据库建表语句
--- 生成时间: 2026-05-14 03:54:13
+-- 生成时间: 2026-07-26 22:41:41
 -- 数据库方言: sqlite
--- 总共 88 条语句
+-- 总共 103 条语句
 
 
 CREATE TABLE "users" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"nickname" text,"avatar" text,"brief" text,"username" text NOT NULL,"password" text NOT NULL,"salt" text NOT NULL,"disabled" numeric NOT NULL DEFAULT false,PRIMARY KEY ("id"));
@@ -80,24 +80,38 @@ CREATE INDEX "idx_web_session_scheduled_inputs_web_session_id" ON "web_session_s
 CREATE INDEX "idx_web_session_scheduled_inputs_deleted_at" ON "web_session_scheduled_inputs"("deleted_at");
 
 
-CREATE TABLE "web_session_turns" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"source_turn_id" text,"order_index" integer NOT NULL,"status" text NOT NULL DEFAULT "completed","error_json" text,"source_created" boolean NOT NULL DEFAULT false,PRIMARY KEY ("id"));
+CREATE TABLE "web_session_turns" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"source_thread_id" text,"source_turn_id" text,"order_index" integer NOT NULL,"status" text NOT NULL DEFAULT "completed","error_json" text,"source_created" boolean NOT NULL DEFAULT false,PRIMARY KEY ("id"));
 CREATE INDEX "idx_web_session_turns_source_turn_id" ON "web_session_turns"("source_turn_id");
-CREATE INDEX "idx_web_session_turns_web_session_id" ON "web_session_turns"("web_session_id");
+CREATE INDEX "idx_web_session_turns_source_thread_id" ON "web_session_turns"("source_thread_id");
+CREATE INDEX "idx_web_session_turn_source" ON "web_session_turns"("web_session_id","source_thread_id");
 CREATE INDEX "idx_web_session_turn_order" ON "web_session_turns"("web_session_id","order_index");
 CREATE INDEX "idx_web_session_turns_deleted_at" ON "web_session_turns"("deleted_at");
 
 
-CREATE TABLE "web_session_items" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"web_turn_id" text,"source_turn_id" text,"source_item_id" text,"order_index" integer NOT NULL,"item_kind" text NOT NULL,"item_type" text NOT NULL,"role" text,"status" text,"level" text,"text" text,"done" boolean NOT NULL DEFAULT false,"timestamp" datetime,"observed_at" datetime,"attachments_json" text,"tool_json" text,"detail_json" text,"payload_json" text,PRIMARY KEY ("id"));
+CREATE TABLE "web_session_items" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"web_turn_id" text,"source_thread_id" text,"source_turn_id" text,"source_item_id" text,"order_index" integer NOT NULL,"item_kind" text NOT NULL,"item_type" text NOT NULL,"role" text,"status" text,"level" text,"text" text,"done" boolean NOT NULL DEFAULT false,"timestamp" datetime,"observed_at" datetime,"attachments_json" text,"tool_json" text,"detail_json" text,"payload_json" text,PRIMARY KEY ("id"));
 CREATE INDEX "idx_web_session_items_observed_at" ON "web_session_items"("observed_at");
 CREATE INDEX "idx_web_session_items_timestamp" ON "web_session_items"("timestamp");
 CREATE INDEX "idx_web_session_items_item_type" ON "web_session_items"("item_type");
 CREATE INDEX "idx_web_session_items_item_kind" ON "web_session_items"("item_kind");
 CREATE INDEX "idx_web_session_items_source_item_id" ON "web_session_items"("source_item_id");
 CREATE INDEX "idx_web_session_items_source_turn_id" ON "web_session_items"("source_turn_id");
+CREATE INDEX "idx_web_session_items_source_thread_id" ON "web_session_items"("source_thread_id");
 CREATE INDEX "idx_web_session_items_web_turn_id" ON "web_session_items"("web_turn_id");
 CREATE INDEX "idx_web_session_items_web_session_id" ON "web_session_items"("web_session_id");
+CREATE INDEX "idx_web_session_item_source" ON "web_session_items"("web_session_id","source_thread_id","source_item_id");
 CREATE INDEX "idx_web_session_item_order" ON "web_session_items"("web_session_id","order_index");
 CREATE INDEX "idx_web_session_items_deleted_at" ON "web_session_items"("deleted_at");
+
+
+CREATE TABLE "web_session_sub_agents" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"thread_id" text NOT NULL,"parent_thread_id" text,"agent_path" text,"nickname" text,"role" text,"status" text NOT NULL,"summary" text,"current_turn_id" text,"latest_item_id" text,"latest_order_index" integer NOT NULL DEFAULT 0,"last_event_seq" integer NOT NULL DEFAULT 0,"started_at" datetime,"last_activity_at" datetime,"ended_at" datetime,PRIMARY KEY ("id"));
+CREATE INDEX "idx_web_session_sub_agents_last_activity_at" ON "web_session_sub_agents"("last_activity_at");
+CREATE INDEX "idx_web_session_sub_agents_current_turn_id" ON "web_session_sub_agents"("current_turn_id");
+CREATE INDEX "idx_web_session_sub_agents_status" ON "web_session_sub_agents"("status");
+CREATE INDEX "idx_web_session_sub_agents_parent_thread_id" ON "web_session_sub_agents"("parent_thread_id");
+CREATE INDEX "idx_web_session_sub_agents_thread_id" ON "web_session_sub_agents"("thread_id");
+CREATE INDEX "idx_web_session_sub_agents_web_session_id" ON "web_session_sub_agents"("web_session_id");
+CREATE UNIQUE INDEX "idx_web_session_sub_agent_thread" ON "web_session_sub_agents"("web_session_id","thread_id");
+CREATE INDEX "idx_web_session_sub_agents_deleted_at" ON "web_session_sub_agents"("deleted_at");
 
 
 CREATE TABLE "task_ai_sessions" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"task_id" text NOT NULL,"ai_session_id" text NOT NULL,PRIMARY KEY ("id"));

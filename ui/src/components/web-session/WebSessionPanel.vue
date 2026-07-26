@@ -421,6 +421,33 @@
               @touchcancel.passive="handleTimelineTouchEnd"
             >
               <div ref="timelineListRef" class="timeline-list">
+                <div v-if="hasKnownSubAgents" class="timeline-agent-toolbar">
+                  <n-select
+                    v-model:value="selectedSubAgentThreadId"
+                    class="timeline-agent-filter"
+                    size="small"
+                    :options="subAgentFilterOptions"
+                    :placeholder="t('webSession.subAgentFilterAll')"
+                  />
+                  <n-tooltip trigger="hover" placement="bottom" :delay="100">
+                    <template #trigger>
+                      <n-button
+                        quaternary
+                        circle
+                        size="small"
+                        :disabled="!selectedSubAgent"
+                        :title="t('webSession.subAgentLocate')"
+                        :aria-label="t('webSession.subAgentLocate')"
+                        @click="locateSelectedSubAgent"
+                      >
+                        <template #icon>
+                          <n-icon><LocateOutline /></n-icon>
+                        </template>
+                      </n-button>
+                    </template>
+                    {{ t('webSession.subAgentLocate') }}
+                  </n-tooltip>
+                </div>
                 <div v-if="historyMeta.loading" class="history-loading">
                   {{
                     currentRealSession?.syncState === 'syncing'
@@ -432,6 +459,7 @@
                 <div
                   v-if="
                     visibleBlocks.length === 0 &&
+                    !selectedSubAgentThreadId &&
                     !historyMeta.loading &&
                     currentRealSession?.syncState !== 'syncing'
                   "
@@ -445,9 +473,18 @@
                 </div>
 
                 <div
+                  v-else-if="
+                    visibleBlocks.length === 0 && selectedSubAgentThreadId && !historyMeta.loading
+                  "
+                  class="history-loading"
+                >
+                  {{ t('webSession.subAgentNoTimelineActivity') }}
+                </div>
+
+                <div
                   v-for="item in visibleBlocks"
                   :key="item.key"
-                  :ref="element => setTimelineUserMessageRef(element, item)"
+                  :ref="element => setTimelineBlockRef(element, item)"
                   class="timeline-item"
                   :class="`kind-${item.kind}`"
                 >
@@ -1586,8 +1623,8 @@
                       <n-icon size="18"><IconGoal /></n-icon>
                     </button>
                     <n-popover
-                      v-if="hasActiveSubAgents"
-                      trigger="hover"
+                      v-if="hasKnownSubAgents"
+                      trigger="click"
                       placement="top-end"
                       :show-arrow="true"
                     >
@@ -1595,33 +1632,48 @@
                         <button
                           type="button"
                           class="composer-sub-agent-trigger"
-                          :title="t('webSession.liveSubAgentCount', { count: activeSubAgentCount })"
-                          :aria-label="
-                            t('webSession.liveSubAgentCount', { count: activeSubAgentCount })
-                          "
+                          :class="{ 'is-idle': !hasActiveSubAgents }"
+                          :title="subAgentTriggerTitle"
+                          :aria-label="subAgentTriggerTitle"
                         >
-                          <span class="composer-sub-agent-trigger-pulse"></span>
+                          <span
+                            v-if="hasActiveSubAgents"
+                            class="composer-sub-agent-trigger-pulse"
+                          ></span>
                           <span class="composer-sub-agent-trigger-count">{{
-                            activeSubAgentCount
+                            hasActiveSubAgents ? activeSubAgentCount : knownSubAgents.length
                           }}</span>
                         </button>
                       </template>
                       <div class="live-sub-agent-popover">
                         <div class="live-sub-agent-popover-title">
                           {{
-                            t('webSession.liveSubAgentPopoverTitle', { count: activeSubAgentCount })
+                            t('webSession.subAgentPopoverTitle', {
+                              count: knownSubAgents.length,
+                              active: activeSubAgentCount,
+                            })
                           }}
                         </div>
                         <div class="live-sub-agent-list">
-                          <div
-                            v-for="agent in activeSubAgents"
+                          <button
+                            v-for="agent in knownSubAgents"
                             :key="agent.id"
+                            type="button"
                             class="live-sub-agent-item"
+                            :class="{
+                              'is-active':
+                                agent.status === 'pending_init' || agent.status === 'running',
+                              'is-selected': selectedSubAgentThreadId === agent.id,
+                            }"
+                            @click="selectAndLocateSubAgent(agent)"
                           >
                             <span class="live-sub-agent-dot"></span>
                             <div class="live-sub-agent-copy">
                               <div class="live-sub-agent-title" :title="agent.title">
                                 {{ agent.title }}
+                                <span class="live-sub-agent-status">{{
+                                  subAgentStatusLabel(agent.status)
+                                }}</span>
                               </div>
                               <div
                                 class="live-sub-agent-summary"
@@ -1630,7 +1682,7 @@
                                 {{ agent.summary || t('webSession.liveSubAgentNoSummary') }}
                               </div>
                             </div>
-                          </div>
+                          </button>
                         </div>
                       </div>
                     </n-popover>
@@ -2877,6 +2929,7 @@ import {
   Flag as FlagIcon,
   FunnelOutline,
   ImageOutline,
+  LocateOutline,
   RadioOutline,
   RefreshCircleOutline,
   RefreshOutline,
@@ -2902,6 +2955,8 @@ import {
   type WebSessionLiveState,
   type WebSessionPendingInput,
   type WebSessionScheduledInput,
+  type WebSessionSubAgent,
+  type WebSessionSubAgentStatus,
   type WebSessionUserInputOption,
   type WebSessionUserInputQuestion,
 } from '@/stores/webSession';
@@ -3430,6 +3485,8 @@ const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const timelineListRef = ref<HTMLDivElement | null>(null);
 const timelineUserMessageElements = new Map<string, HTMLElement>();
+const timelineBlockElements = new Map<string, HTMLElement>();
+const selectedSubAgentThreadId = ref('');
 const userMessageNavigationPending = ref<{
   key: string;
   direction: WebSessionUserMessageNavigationDirection;
@@ -4473,6 +4530,41 @@ const currentRunStartIndex = computed(() => {
   return -1;
 });
 
+const knownSubAgents = computed<WebSessionSubAgent[]>(() =>
+  currentRealSession.value ? webSessionStore.getSubAgents(currentRealSession.value.id) : []
+);
+const subAgentByThreadId = computed(
+  () => new Map(knownSubAgents.value.map(agent => [agent.id, agent] as const))
+);
+const hasKnownSubAgents = computed(() => knownSubAgents.value.length > 0);
+const selectedSubAgent = computed(
+  () => subAgentByThreadId.value.get(selectedSubAgentThreadId.value) ?? null
+);
+watch(subAgentByThreadId, agents => {
+  if (selectedSubAgentThreadId.value && !agents.has(selectedSubAgentThreadId.value)) {
+    selectedSubAgentThreadId.value = '';
+  }
+});
+const subAgentFilterOptions = computed(() => [
+  {
+    label: t('webSession.subAgentFilterAll'),
+    value: '',
+  },
+  ...knownSubAgents.value.map(agent => ({
+    label: agent.title,
+    value: agent.id,
+  })),
+]);
+
+function subAgentStatusLabel(status: WebSessionSubAgentStatus) {
+  return t(`webSession.subAgentStatus.${status}`);
+}
+
+function timelineSubAgent(item: WebSessionBlock) {
+  const threadId = String(item.sourceThreadId ?? '').trim();
+  return threadId ? (subAgentByThreadId.value.get(threadId) ?? null) : null;
+}
+
 function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) {
   if (block.kind !== 'tool' || !block.tool) {
     return true;
@@ -4496,6 +4588,12 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) 
 
 const filteredTimelineBlocks = computed(() =>
   blocks.value.filter((block, index) => {
+    if (
+      selectedSubAgentThreadId.value &&
+      String(block.sourceThreadId ?? '').trim() !== selectedSubAgentThreadId.value
+    ) {
+      return false;
+    }
     if (
       !showWebSessionReasoning.value &&
       isReasoningBlock(block) &&
@@ -4766,6 +4864,11 @@ const activeSubAgentCount = computed(
   () => displayLiveState.value.activeSubAgentCount ?? activeSubAgents.value.length
 );
 const hasActiveSubAgents = computed(() => activeSubAgentCount.value > 0);
+const subAgentTriggerTitle = computed(() =>
+  hasActiveSubAgents.value
+    ? t('webSession.liveSubAgentCount', { count: activeSubAgentCount.value })
+    : t('webSession.subAgentKnownCount', { count: knownSubAgents.value.length })
+);
 const isSubmittingPlanExecution = computed(() => currentSubmitEntry.value?.kind === 'execute_plan');
 const showRuntimeStrip = computed(() => {
   if (pendingApproval.value || pendingUserInput.value) {
@@ -4801,15 +4904,53 @@ const historyMeta = computed(() =>
     : { hasMore: false, beforeCursor: '', total: 0, loading: false }
 );
 
-function setTimelineUserMessageRef(element: unknown, block: WebSessionBlock) {
-  if (block.kind !== 'user') {
-    return;
-  }
+function setTimelineBlockRef(element: unknown, block: WebSessionBlock) {
   if (element instanceof HTMLElement) {
-    timelineUserMessageElements.set(block.key, element);
+    timelineBlockElements.set(block.key, element);
+    if (block.kind === 'user') {
+      timelineUserMessageElements.set(block.key, element);
+    }
     return;
   }
+  timelineBlockElements.delete(block.key);
   timelineUserMessageElements.delete(block.key);
+}
+
+function scrollToTimelineBlock(targetKey: string) {
+  const container = timelineScrollRef.value;
+  const element = timelineBlockElements.get(targetKey);
+  if (!container || !element) {
+    return;
+  }
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const targetTop = container.scrollTop + (elementRect.top - containerRect.top) - 12;
+  autoFollowBottom.value = false;
+  showJumpToBottom.value = true;
+  lastTimelineScrollTop.value = container.scrollTop;
+  container.scrollTo({
+    top: Math.max(0, targetTop),
+    behavior: 'smooth',
+  });
+}
+
+async function selectAndLocateSubAgent(agent: WebSessionSubAgent) {
+  selectedSubAgentThreadId.value = agent.id;
+  await nextTick();
+  const target =
+    visibleBlocks.value.find(block => block.id === agent.latestItemId) ??
+    [...visibleBlocks.value]
+      .reverse()
+      .find(block => String(block.sourceThreadId ?? '').trim() === agent.id);
+  if (target) {
+    scrollToTimelineBlock(target.key);
+  }
+}
+
+async function locateSelectedSubAgent() {
+  if (selectedSubAgent.value) {
+    await selectAndLocateSubAgent(selectedSubAgent.value);
+  }
 }
 
 const timelineUserMessageEditTitle = computed(() =>
@@ -9133,6 +9274,9 @@ function shouldHideTimelineMeta(item: WebSessionBlock) {
   if (!Number.isFinite(item.timestamp) || item.timestamp <= 0) {
     return true;
   }
+  if (timelineSubAgent(item)) {
+    return false;
+  }
   return item.kind === 'tool' && item.tool ? isCompactTool(item.tool) : false;
 }
 
@@ -9475,6 +9619,10 @@ function toolStateLabel(tool: { status: 'running' | 'done' | 'error' }) {
 }
 
 function timelineRoleLabel(item: WebSessionBlock) {
+  const agent = timelineSubAgent(item);
+  if (agent) {
+    return t('webSession.timelineAgentRole', { name: agent.title });
+  }
   if (item.kind === 'user') {
     return t('terminal.user');
   }
@@ -12896,6 +13044,8 @@ watch(
     pendingHistoryAnchor.value = null;
     userMessageNavigationPending.value = null;
     timelineUserMessageElements.clear();
+    timelineBlockElements.clear();
+    selectedSubAgentThreadId.value = '';
     handleCommandExecutionDetailVisibilityChange(false);
     rawTimelineBlocks.value = {};
     activeRawTimelineBlockKey.value = '';
@@ -13265,6 +13415,7 @@ onBeforeUnmount(() => {
   realSessionSnapshotLoadController.cancel();
   streamingMarkdownController.clear();
   timelineUserMessageElements.clear();
+  timelineBlockElements.clear();
   userMessageNavigationPending.value = null;
   if (liveStateClockTimer != null) {
     window.clearInterval(liveStateClockTimer);
@@ -14617,6 +14768,28 @@ defineExpose({
 .timeline-list {
   min-height: 100%;
   padding: 24px 24px 28px;
+}
+
+.timeline-agent-toolbar {
+  position: sticky;
+  top: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin: 0 0 14px auto;
+  width: min(320px, 100%);
+  padding: 4px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.timeline-agent-filter {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .history-loading {
@@ -16875,6 +17048,12 @@ defineExpose({
   transform: translateY(1px);
 }
 
+.composer-sub-agent-trigger.is-idle {
+  color: var(--n-text-color-2);
+  border-color: var(--n-border-color);
+  background: var(--app-surface-color, #fff);
+}
+
 .composer-sub-agent-trigger-pulse {
   width: 8px;
   height: 8px;
@@ -16915,6 +17094,21 @@ defineExpose({
   align-items: flex-start;
   gap: 8px;
   min-width: 0;
+  width: 100%;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-sub-agent-item:hover,
+.live-sub-agent-item.is-selected {
+  border-color: var(--n-border-color);
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 88%, var(--n-primary-color) 12%);
 }
 
 .live-sub-agent-dot {
@@ -16923,6 +17117,10 @@ defineExpose({
   margin-top: 6px;
   border-radius: 999px;
   flex: 0 0 auto;
+  background: var(--n-text-color-3);
+}
+
+.live-sub-agent-item.is-active .live-sub-agent-dot {
   background: color-mix(in srgb, var(--n-primary-color) 85%, white);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
 }
@@ -16943,6 +17141,13 @@ defineExpose({
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.live-sub-agent-status {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--n-text-color-3);
 }
 
 .live-sub-agent-summary {

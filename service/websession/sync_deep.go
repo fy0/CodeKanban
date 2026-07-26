@@ -13,6 +13,8 @@ import (
 	"code-kanban/model/tables"
 	"code-kanban/utils"
 	"code-kanban/utils/ai_assistant2/log_watcher"
+
+	"go.uber.org/zap"
 )
 
 type codexLogSource struct {
@@ -71,8 +73,57 @@ func (m *Manager) syncSessionFromLogSource(
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
+	rootThreadID := ""
+	if session.NativeSessionID != nil {
+		rootThreadID = strings.TrimSpace(*session.NativeSessionID)
+	}
 	items := parseResult.Items
+	for index := range items {
+		if items[index].SourceThreadID == nil {
+			items[index].SourceThreadID = nilIfEmptyHistory(rootThreadID)
+		}
+	}
+	descendants := make([]codexThreadReadResult, 0)
+	descendantsDiscovered := false
+	if rootThreadID != "" {
+		var descendantsErr error
+		descendants, descendantsErr = m.readCodexDescendantThreads(ctx, session, rootThreadID)
+		descendantsDiscovered = descendantsErr == nil
+		if descendantsErr != nil && m.logger != nil {
+			m.logger.Warn(
+				"codex descendant discovery unavailable during deep sync; preserving cached sub agents",
+				zap.String("sessionId", session.ID),
+				zap.Error(descendantsErr),
+			)
+		}
+	}
+	for _, descendant := range descendants {
+		path := strings.TrimSpace(descendant.Summary.Path)
+		if path == "" {
+			if m.logger != nil {
+				m.logger.Warn(
+					"codex descendant has no rollout path during deep sync",
+					zap.String("sessionId", session.ID),
+					zap.String("threadId", descendant.Summary.ID),
+				)
+			}
+			continue
+		}
+		childResult, childErr := m.parseCodexDeepHistoryWithStats(path)
+		if childErr != nil {
+			return SessionSnapshot{}, fmt.Errorf("parse descendant %s: %w", descendant.Summary.ID, childErr)
+		}
+		for index := range childResult.Items {
+			if childResult.Items[index].SourceThreadID == nil {
+				childResult.Items[index].SourceThreadID = nilIfEmptyHistory(descendant.Summary.ID)
+			}
+		}
+		items = append(items, childResult.Items...)
+	}
+	sortSyncedHistoryItems(items)
 	items = compactSyncedHistoryItems(items)
+	subAgents := subAgentsFromCodexThreads(descendants)
+	updateSubAgentsFromHistory(subAgents, items)
 
 	itemRows := make([]tables.WebSessionItemTable, 0, len(items))
 	for _, item := range items {
@@ -134,6 +185,11 @@ func (m *Manager) syncSessionFromLogSource(
 	}
 	if err := m.replaceSessionHistoryCache(ctx, session, nil, itemRows, updates); err != nil {
 		return SessionSnapshot{}, err
+	}
+	if descendantsDiscovered {
+		if err := m.replaceSessionSubAgents(ctx, session.ID, subAgents, true); err != nil {
+			return SessionSnapshot{}, err
+		}
 	}
 	refreshed, err := m.GetSession(ctx, session.ID)
 	if err != nil {
@@ -1093,6 +1149,8 @@ func deepSyncToolKind(toolName string) string {
 		return "command_execution"
 	case "apply_patch":
 		return "file_change"
+	case "spawn_agent", "send_input", "wait_agent", "interrupt_agent", "close_agent", "resume_agent":
+		return "sub_agent_tool_call"
 	default:
 		return "dynamic_tool_call"
 	}
@@ -1106,6 +1164,8 @@ func deepSyncToolDisplayName(toolName string, kind string) string {
 		if strings.TrimSpace(toolName) == "apply_patch" {
 			return "FileChange"
 		}
+	case "sub_agent_tool_call":
+		return "Sub Agent"
 	}
 	return firstNonEmpty(strings.TrimSpace(toolName), "DynamicToolCall")
 }
@@ -1127,8 +1187,34 @@ func deepSyncToolInput(toolName string, input any) any {
 			}
 		}
 		return input
+	case "spawn_agent", "send_input", "wait_agent", "interrupt_agent", "close_agent", "resume_agent":
+		result := cloneMap(record)
+		if result == nil {
+			result = map[string]any{}
+		}
+		result["tool"] = deepSyncCollabToolName(toolName)
+		return result
 	default:
 		return input
+	}
+}
+
+func deepSyncCollabToolName(toolName string) string {
+	switch strings.TrimSpace(toolName) {
+	case "spawn_agent":
+		return "spawnAgent"
+	case "send_input":
+		return "sendInput"
+	case "wait_agent":
+		return "wait"
+	case "interrupt_agent":
+		return "interruptAgent"
+	case "close_agent":
+		return "closeAgent"
+	case "resume_agent":
+		return "resumeAgent"
+	default:
+		return strings.TrimSpace(toolName)
 	}
 }
 
@@ -1140,6 +1226,8 @@ func deepSyncToolMeta(toolName string, kind string, input any) map[string]any {
 		subtitle = firstNonEmpty(stringValue(record["cmd"]), stringValue(record["command"]), stringValue(record["workdir"]))
 	case "file_change":
 		subtitle = deepSyncFirstPatchPath(input)
+	case "sub_agent_tool_call":
+		subtitle = subAgentToolCallSummary(input)
 	default:
 		subtitle = firstNonEmpty(stringValue(record["header"]), stringValue(record["question"]))
 	}

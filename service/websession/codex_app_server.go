@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -96,6 +97,8 @@ type toolRequestQuestion struct {
 type pendingServerRequest struct {
 	RawID       json.RawMessage
 	Kind        pendingServerRequestKind
+	ThreadID    string
+	TurnID      string
 	ItemID      string
 	Prompt      string
 	Command     string
@@ -111,6 +114,8 @@ func (r *pendingServerRequest) clone() *pendingServerRequest {
 	clone := &pendingServerRequest{
 		RawID:       append(json.RawMessage(nil), r.RawID...),
 		Kind:        r.Kind,
+		ThreadID:    r.ThreadID,
+		TurnID:      r.TurnID,
 		ItemID:      r.ItemID,
 		Prompt:      r.Prompt,
 		Command:     r.Command,
@@ -436,6 +441,7 @@ func (m *Manager) runCodexAppServerSession(
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
 	}
+	session.NativeSessionID = ptr(threadID)
 	run.transportRemoteURL = readCodexRemoteURL(ctx, client, session.Cwd, modelProvider)
 
 	turnResponse, err := client.request(ctx, "turn/start", codexTurnStartParams(session, threadID, text, attachments))
@@ -766,12 +772,15 @@ func (m *Manager) handleCodexAppServerMessage(
 	rootScope codexTurnScope,
 	message codexAppServerIncoming,
 ) (codexTurnOutcome, error) {
+	threadID := codexNotificationThreadID(message.Params)
+	turnID := codexNotificationTurnID(message.Params)
 	isRootEvent := rootScope.contains(message.Params)
 	switch strings.TrimSpace(message.Method) {
 	case "":
 		return codexTurnOutcomeNone, nil
 	case "thread/started":
 		if !isRootEvent {
+			m.appendCodexSubAgentState(session, run, threadID, turnID, codexThreadStartedSubAgentPayload(message.Params))
 			return codexTurnOutcomeNone, nil
 		}
 		if threadID := parseCodexThreadID(message.Params); threadID != "" {
@@ -783,6 +792,10 @@ func (m *Manager) handleCodexAppServerMessage(
 		return codexTurnOutcomeNone, nil
 	case "turn/started":
 		if !isRootEvent {
+			m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
+				"status": string(WebSessionSubAgentRunning),
+				"turnId": turnID,
+			})
 			return codexTurnOutcomeNone, nil
 		}
 		if turnID := parseCodexTurnID(message.Params); turnID != "" {
@@ -822,6 +835,11 @@ func (m *Manager) handleCodexAppServerMessage(
 		return codexTurnOutcomeNone, nil
 	case "error":
 		if !isRootEvent {
+			errMessage, _ := parseCodexTurnError(message.Params)
+			m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
+				"status":  string(WebSessionSubAgentErrored),
+				"summary": errMessage,
+			})
 			return codexTurnOutcomeNone, nil
 		}
 		run.lastError, run.lastErrorCode = parseCodexTurnError(message.Params)
@@ -841,6 +859,11 @@ func (m *Manager) handleCodexAppServerMessage(
 		return codexTurnOutcomeFailed, fmt.Errorf("%s", firstNonEmpty(run.lastError, "codex app-server turn failed"))
 	case "turn/completed":
 		if !isRootEvent {
+			status, errMessage, _ := parseCodexTurnCompletion(message.Params)
+			m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
+				"status":  string(codexTurnSubAgentStatus(status)),
+				"summary": errMessage,
+			})
 			return codexTurnOutcomeNone, nil
 		}
 		status, errMessage, errCode := parseCodexTurnCompletion(message.Params)
@@ -869,7 +892,21 @@ func (m *Manager) handleCodexAppServerMessage(
 			return codexTurnOutcomeFailed, err
 		}
 		return codexTurnOutcomeNone, nil
-	case "configWarning", "account/rateLimits/updated", "serverRequest/resolved", "thread/status/changed",
+	case "thread/closed":
+		if !isRootEvent {
+			m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
+				"status": string(WebSessionSubAgentShutdown),
+			})
+		}
+		return codexTurnOutcomeNone, nil
+	case "thread/status/changed":
+		if !isRootEvent && codexThreadStatusType(message.Params) == "systemerror" {
+			m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
+				"status": string(WebSessionSubAgentErrored),
+			})
+		}
+		return codexTurnOutcomeNone, nil
+	case "configWarning", "account/rateLimits/updated", "serverRequest/resolved",
 		"item/plan/delta", "turn/plan/updated", "item/commandExecution/outputDelta",
 		"item/fileChange/outputDelta", "item/reasoning/summaryTextDelta",
 		"item/reasoning/summaryPartAdded", "item/reasoning/textDelta", "rawResponseItem/completed":
@@ -1040,6 +1077,8 @@ func (m *Manager) handleCodexAppServerItemStarted(
 ) {
 	payload := decodeRawObject(params)
 	item := decodeRawObject(payload["item"])
+	threadID := codexNotificationThreadID(params)
+	turnID := codexNotificationTurnID(params)
 	itemType := normalizeCodexItemType(stringValue(item["type"]))
 	switch itemType {
 	case "user_message":
@@ -1056,6 +1095,8 @@ func (m *Manager) handleCodexAppServerItemStarted(
 			Type:      "msg_a_st",
 			RunID:     run.runID,
 			ParentID:  messageID,
+			ThreadID:  threadID,
+			TurnID:    turnID,
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"mid": messageID,
@@ -1076,6 +1117,8 @@ func (m *Manager) handleCodexAppServerItemStarted(
 			Type:      "tool_st",
 			RunID:     run.runID,
 			ParentID:  parentID,
+			ThreadID:  threadID,
+			TurnID:    turnID,
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
@@ -1098,6 +1141,8 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 	isRootEvent bool,
 ) {
 	payload := decodeRawObject(params)
+	threadID := codexNotificationThreadID(params)
+	turnID := codexNotificationTurnID(params)
 	fallbackMessageID := ""
 	if isRootEvent {
 		fallbackMessageID = run.assistantMessageID
@@ -1111,6 +1156,8 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 			Type:      "msg_a_st",
 			RunID:     run.runID,
 			ParentID:  messageID,
+			ThreadID:  threadID,
+			TurnID:    turnID,
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"mid": messageID,
@@ -1128,6 +1175,8 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 		Type:      "txt_d",
 		RunID:     run.runID,
 		ParentID:  messageID,
+		ThreadID:  threadID,
+		TurnID:    turnID,
 		Timestamp: time.Now(),
 		Payload: map[string]any{
 			"mid": messageID,
@@ -1152,7 +1201,16 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 ) {
 	payload := decodeRawObject(params)
 	item := decodeRawObject(payload["item"])
+	threadID := codexNotificationThreadID(params)
+	turnID := codexNotificationTurnID(params)
+	if strings.TrimSpace(stringValue(item["type"])) == "subAgentActivity" {
+		m.handleCodexSubAgentActivity(session, run, threadID, turnID, item)
+		return
+	}
 	itemType := normalizeCodexItemType(stringValue(item["type"]))
+	if itemType == "sub_agent_tool_call" {
+		m.handleCodexCollabAgentCompletion(session, run, threadID, turnID, item)
+	}
 	switch itemType {
 	case "user_message":
 		return
@@ -1178,6 +1236,8 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 					Type:      "txt_d",
 					RunID:     run.runID,
 					ParentID:  messageID,
+					ThreadID:  threadID,
+					TurnID:    turnID,
 					Timestamp: time.Now(),
 					Payload: map[string]any{
 						"mid": messageID,
@@ -1192,6 +1252,8 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			Type:      "txt_end",
 			RunID:     run.runID,
 			ParentID:  messageID,
+			ThreadID:  threadID,
+			TurnID:    turnID,
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"mid": messageID,
@@ -1223,6 +1285,8 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			Type:      "tool_end",
 			RunID:     run.runID,
 			ParentID:  parentID,
+			ThreadID:  threadID,
+			TurnID:    turnID,
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
@@ -1236,6 +1300,196 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			m.trackActiveCodexToolComplete(run, toolID)
 		}
 	}
+}
+
+func (m *Manager) appendCodexSubAgentState(
+	session tables.WebSessionTable,
+	run *activeRun,
+	threadID string,
+	turnID string,
+	payload map[string]any,
+) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return
+	}
+	nextPayload := cloneMap(payload)
+	if nextPayload == nil {
+		nextPayload = map[string]any{}
+	}
+	nextPayload["threadId"] = threadID
+	if strings.TrimSpace(turnID) != "" {
+		nextPayload["turnId"] = strings.TrimSpace(turnID)
+	}
+	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+		ID:        utils.NewID(),
+		Type:      "sub_agent_state",
+		RunID:     run.runID,
+		ThreadID:  threadID,
+		TurnID:    strings.TrimSpace(turnID),
+		Timestamp: time.Now(),
+		Payload:   nextPayload,
+	})
+}
+
+func codexThreadStartedSubAgentPayload(raw json.RawMessage) map[string]any {
+	payload := decodeRawObject(raw)
+	thread := decodeRawObject(payload["thread"])
+	result := map[string]any{
+		"parentThreadId": stringValue(thread["parentThreadId"]),
+		"nickname":       stringValue(thread["agentNickname"]),
+		"role":           stringValue(thread["agentRole"]),
+		"path":           codexThreadAgentPath(thread),
+		"status":         string(WebSessionSubAgentPendingInit),
+	}
+	if status := strings.ToLower(strings.TrimSpace(codexThreadStatusValue(thread["status"]))); status == "active" {
+		result["status"] = string(WebSessionSubAgentRunning)
+	} else if status == "systemerror" {
+		result["status"] = string(WebSessionSubAgentErrored)
+	}
+	return result
+}
+
+func codexThreadStatusValue(raw any) string {
+	if value := strings.TrimSpace(stringValue(raw)); value != "" {
+		return value
+	}
+	record := decodeRawObject(raw)
+	return strings.TrimSpace(firstNonEmpty(stringValue(record["type"]), stringValue(record["status"])))
+}
+
+func codexThreadStatusType(raw json.RawMessage) string {
+	payload := decodeRawObject(raw)
+	return strings.ToLower(strings.TrimSpace(codexThreadStatusValue(payload["status"])))
+}
+
+func codexThreadAgentPath(thread map[string]any) string {
+	if value := strings.TrimSpace(firstNonEmpty(
+		stringValue(thread["agentPath"]),
+		stringValue(thread["agent_path"]),
+	)); value != "" {
+		return value
+	}
+	return findNestedCodexString(thread["source"], "agentPath", "agent_path")
+}
+
+func findNestedCodexString(raw any, keys ...string) string {
+	var visit func(any) string
+	visit = func(value any) string {
+		switch typed := value.(type) {
+		case map[string]any:
+			for _, key := range keys {
+				if result := strings.TrimSpace(stringValue(typed[key])); result != "" {
+					return result
+				}
+			}
+			for _, child := range typed {
+				if result := visit(child); result != "" {
+					return result
+				}
+			}
+		case []any:
+			for _, child := range typed {
+				if result := visit(child); result != "" {
+					return result
+				}
+			}
+		}
+		return ""
+	}
+	return visit(raw)
+}
+
+func (m *Manager) handleCodexCollabAgentCompletion(
+	session tables.WebSessionTable,
+	run *activeRun,
+	parentThreadID string,
+	turnID string,
+	item map[string]any,
+) {
+	states := decodeRawObject(item["agentsStates"])
+	threadIDs := make([]string, 0, len(states))
+	for threadID := range states {
+		if normalized := strings.TrimSpace(threadID); normalized != "" {
+			threadIDs = append(threadIDs, normalized)
+		}
+	}
+	sort.Strings(threadIDs)
+	for _, threadID := range threadIDs {
+		state := states[threadID]
+		status, message := codexSubAgentState(state)
+		if status == "" {
+			continue
+		}
+		stateRecord := decodeRawObject(state)
+		m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
+			"parentThreadId": parentThreadID,
+			"nickname":       firstNonEmpty(stringValue(stateRecord["agentNickname"]), stringValue(stateRecord["nickname"])),
+			"role":           firstNonEmpty(stringValue(stateRecord["agentRole"]), stringValue(stateRecord["role"])),
+			"status":         string(status),
+			"summary":        firstNonEmpty(message, stringValue(item["prompt"])),
+		})
+	}
+
+	if len(states) != 0 || !strings.EqualFold(strings.TrimSpace(stringValue(item["tool"])), "spawnAgent") {
+		return
+	}
+	toolStatus := strings.ToLower(strings.TrimSpace(stringValue(item["status"])))
+	if toolStatus != "completed" {
+		return
+	}
+	for _, receiver := range decodeStringArray(item["receiverThreadIds"]) {
+		m.appendCodexSubAgentState(session, run, receiver, turnID, map[string]any{
+			"parentThreadId": parentThreadID,
+			"status":         string(WebSessionSubAgentPendingInit),
+			"summary":        stringValue(item["prompt"]),
+		})
+	}
+}
+
+func (m *Manager) handleCodexSubAgentActivity(
+	session tables.WebSessionTable,
+	run *activeRun,
+	parentThreadID string,
+	turnID string,
+	item map[string]any,
+) {
+	agentThreadID := strings.TrimSpace(stringValue(item["agentThreadId"]))
+	if agentThreadID == "" {
+		return
+	}
+	kind := strings.ToLower(strings.TrimSpace(stringValue(item["kind"])))
+	status := WebSessionSubAgentStatus("")
+	switch kind {
+	case "started", "interacted":
+		status = WebSessionSubAgentRunning
+	case "interrupted":
+		status = WebSessionSubAgentInterrupted
+	}
+	path := strings.TrimSpace(stringValue(item["agentPath"]))
+	statePayload := map[string]any{
+		"parentThreadId": parentThreadID,
+		"path":           path,
+	}
+	if status != "" {
+		statePayload["status"] = string(status)
+	}
+	m.appendCodexSubAgentState(session, run, agentThreadID, turnID, statePayload)
+
+	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+		ID:        utils.NewID(),
+		Type:      "sub_agent_activity",
+		RunID:     run.runID,
+		ThreadID:  strings.TrimSpace(parentThreadID),
+		TurnID:    strings.TrimSpace(turnID),
+		Timestamp: time.Now(),
+		Payload: map[string]any{
+			"itemId":        stringValue(item["id"]),
+			"agentThreadId": agentThreadID,
+			"path":          path,
+			"kind":          kind,
+		},
+	})
 }
 
 func shouldContinueIncompleteCodexTurn(session tables.WebSessionTable, run *activeRun) bool {
@@ -1439,6 +1693,8 @@ func (m *Manager) handleCodexAppServerUserInputRequest(
 	request := &pendingServerRequest{
 		RawID:     append(json.RawMessage(nil), message.ID...),
 		Kind:      pendingServerRequestUserInput,
+		ThreadID:  codexNotificationThreadID(message.Params),
+		TurnID:    codexNotificationTurnID(message.Params),
 		ItemID:    itemID,
 		Prompt:    summarizeToolQuestions(questions),
 		Questions: questions,
@@ -1452,6 +1708,8 @@ func (m *Manager) handleCodexAppServerUserInputRequest(
 		Type:      "user_input_req",
 		RunID:     run.runID,
 		ParentID:  run.assistantMessageID,
+		ThreadID:  request.ThreadID,
+		TurnID:    request.TurnID,
 		Timestamp: now,
 		Payload: map[string]any{
 			"iid": itemID,
@@ -1488,6 +1746,8 @@ func (m *Manager) handleCodexAppServerApprovalRequest(
 		Type:      "approval_req",
 		RunID:     run.runID,
 		ParentID:  run.assistantMessageID,
+		ThreadID:  request.ThreadID,
+		TurnID:    request.TurnID,
 		Timestamp: now,
 		Payload: map[string]any{
 			"iid":     request.ItemID,
@@ -1514,9 +1774,11 @@ func decodePendingApprovalRequest(message codexAppServerIncoming) *pendingServer
 	itemID := stringValue(payload["itemId"])
 
 	request := &pendingServerRequest{
-		RawID:   append(json.RawMessage(nil), message.ID...),
-		ItemID:  itemID,
-		Command: stringValue(payload["command"]),
+		RawID:    append(json.RawMessage(nil), message.ID...),
+		ThreadID: codexNotificationThreadID(message.Params),
+		TurnID:   codexNotificationTurnID(message.Params),
+		ItemID:   itemID,
+		Command:  stringValue(payload["command"]),
 	}
 
 	switch message.Method {
