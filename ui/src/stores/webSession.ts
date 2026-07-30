@@ -534,9 +534,11 @@ export interface WebSessionPlanExecutionTarget {
   executeOptionLabel?: string;
 }
 
-export type WebSessionPlanSchedule =
+export type WebSessionSchedule =
   | { scheduleKind: 'at_time'; scheduledFor: number }
   | { scheduleKind: 'when_idle'; scheduledFor?: null };
+
+export type WebSessionPlanSchedule = WebSessionSchedule;
 
 type RuntimeMutationStateSnapshot = {
   blockCount: number;
@@ -2758,8 +2760,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!mode || !status) {
       return null;
     }
-    const scheduleKind =
-      action === 'execute_plan' && item.scheduleKind === 'when_idle' ? 'when_idle' : 'at_time';
+    const scheduleKind = item.scheduleKind === 'when_idle' ? 'when_idle' : 'at_time';
     const parsedScheduledFor =
       typeof item.scheduledFor === 'number'
         ? item.scheduledFor
@@ -5490,18 +5491,23 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sessionId: string,
     text: string,
     attachmentIds: string[],
-    scheduledFor: number,
+    scheduledForOrSchedule: number | WebSessionSchedule,
     mode: 'send' | 'interrupt' | 'queue' = 'send'
   ) {
     const session = findSessionById(sessionId);
     if (session?.archivedAt) {
       throw new Error('session is archived');
     }
+    const schedule: WebSessionSchedule =
+      typeof scheduledForOrSchedule === 'number'
+        ? { scheduleKind: 'at_time', scheduledFor: scheduledForOrSchedule }
+        : scheduledForOrSchedule;
     const frame = await sendCommand('schedule_send', sessionId, {
       txt: text,
       atts: attachmentIds,
       mode,
-      at: scheduledFor,
+      sk: schedule.scheduleKind,
+      ...(schedule.scheduleKind === 'at_time' ? { at: schedule.scheduledFor } : {}),
     });
     const payload = asRecord(frame.p);
     const created = normalizeScheduledInput({
@@ -5515,11 +5521,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
       attachmentIds: Array.isArray(payload?.atts)
         ? payload.atts.filter((value): value is string => typeof value === 'string')
         : attachmentIds,
-      scheduleKind: typeof payload?.sk === 'string' ? payload.sk : 'at_time',
-      scheduledFor: typeof payload?.sf === 'number' ? payload.sf : scheduledFor,
-      idleSince: null,
-      blockingReasons: [],
-      conditionError: '',
+      scheduleKind: typeof payload?.sk === 'string' ? payload.sk : schedule.scheduleKind,
+      scheduledFor:
+        typeof payload?.sf === 'number'
+          ? payload.sf
+          : schedule.scheduleKind === 'at_time'
+            ? schedule.scheduledFor
+            : null,
+      idleSince:
+        typeof payload?.is === 'number' || typeof payload?.is === 'string' ? payload.is : null,
+      blockingReasons: Array.isArray(payload?.br)
+        ? payload.br.filter((value): value is string => typeof value === 'string')
+        : [],
+      conditionError: typeof payload?.ce === 'string' ? payload.ce : '',
       createdAt:
         typeof payload?.ca === 'number' || typeof payload?.ca === 'string' ? payload.ca : null,
       updatedAt:
@@ -5543,14 +5557,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   async function schedulePlanExecution(
     sessionId: string,
-    scheduledForOrSchedule: number | WebSessionPlanSchedule,
+    scheduledForOrSchedule: number | WebSessionSchedule,
     target: WebSessionPlanExecutionTarget
   ) {
     const session = findSessionById(sessionId);
     if (session?.archivedAt) {
       throw new Error('session is archived');
     }
-    const schedule: WebSessionPlanSchedule =
+    const schedule: WebSessionSchedule =
       typeof scheduledForOrSchedule === 'number'
         ? { scheduleKind: 'at_time', scheduledFor: scheduledForOrSchedule }
         : scheduledForOrSchedule;

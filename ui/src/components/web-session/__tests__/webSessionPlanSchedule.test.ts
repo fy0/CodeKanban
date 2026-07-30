@@ -24,6 +24,14 @@ describe('webSession plan scheduling', () => {
     expect(webSessionPanelSource).toContain("{ scheduleKind: 'when_idle' }");
   });
 
+  it('offers the shared idle condition and its definition for delayed messages', () => {
+    expect(webSessionPanelSource).toContain('name="scheduled-schedule-kind"');
+    expect(webSessionPanelSource).toContain('v-if="scheduledScheduleKind === \'when_idle\'"');
+    expect(webSessionPanelSource).toContain("t('webSession.scheduleWhenIdleDescription')");
+    expect(webSessionPanelSource).toContain('webSessionStore.scheduleMessage');
+    expect(webSessionPanelSource).toContain('const scheduleKind = scheduledScheduleKind.value;');
+  });
+
   it('binds a scheduled action to the current plan and hides duplicate actions', () => {
     expect(webSessionPanelSource).toContain('const planItemId = latestPlanItemId.value;');
     expect(webSessionPanelSource).toContain(

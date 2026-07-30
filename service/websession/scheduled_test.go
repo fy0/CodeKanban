@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -121,6 +122,63 @@ func TestScheduledInputDispatchesAtDueTime(t *testing.T) {
 	}
 	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "Run this later" {
 		t.Fatalf("expected scheduled message to dispatch once, got %#v", got)
+	}
+}
+
+func TestScheduledInputWhenIdleDispatchesAfterStableCleanPeriod(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	initScheduledTestGitRepository(t, project.Path)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	previousPollInterval := scheduledIdlePollInterval
+	previousStablePeriod := scheduledIdleStablePeriod
+	scheduledIdlePollInterval = 10 * time.Millisecond
+	scheduledIdleStablePeriod = 50 * time.Millisecond
+	defer func() {
+		manager.cancelScheduledIdleMonitor()
+		scheduledIdlePollInterval = previousPollInterval
+		scheduledIdleStablePeriod = previousStablePeriod
+	}()
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	item, err := manager.ScheduleInputWhenIdle(
+		context.Background(),
+		created.ID,
+		"Run this when idle",
+		nil,
+		ScheduledInputModeSend,
+	)
+	if err != nil {
+		t.Fatalf("ScheduleInputWhenIdle returned error: %v", err)
+	}
+	if item.ScheduleKind != ScheduledInputScheduleWhenIdle || item.ScheduledFor != nil {
+		t.Fatalf("expected when-idle schedule without timestamp, got %#v", item)
+	}
+
+	waitForUserMessageCount(t, manager, created.ID, 1)
+	waitForSessionToSettle(t, manager, created.ID)
+	waitForScheduledInputCount(t, manager, created.ID, 0)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "Run this when idle" {
+		t.Fatalf("expected idle message to dispatch once, got %#v", got)
 	}
 }
 
@@ -255,6 +313,157 @@ func TestUpdateScheduledInputInvalidatesOldTimerAndDispatchesUpdatedMessage(t *t
 	}
 	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != updatedText {
 		t.Fatalf("expected updated message to dispatch once, got %q", got)
+	}
+}
+
+func TestUpdateScheduledMessageSwitchesBetweenAtTimeAndWhenIdle(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.cancelScheduledInputTimersForSession(created.ID)
+		manager.cancelScheduledIdleMonitor()
+	})
+	item, err := manager.ScheduleInput(
+		context.Background(),
+		created.ID,
+		"Switch this message",
+		nil,
+		ScheduledInputModeQueue,
+		time.Now().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("ScheduleInput returned error: %v", err)
+	}
+
+	whenIdle := ScheduledInputScheduleWhenIdle
+	text := item.Text
+	mode := item.Mode
+	updated, err := manager.UpdateScheduledInput(context.Background(), created.ID, item.ID, scheduledInputUpdate{
+		Text:         &text,
+		Mode:         &mode,
+		ScheduleKind: &whenIdle,
+	})
+	if err != nil {
+		t.Fatalf("switch message to when-idle returned error: %v", err)
+	}
+	if updated.ScheduleKind != ScheduledInputScheduleWhenIdle || updated.ScheduledFor != nil ||
+		updated.Text != text || updated.Mode != mode {
+		t.Fatalf("expected when-idle message schedule, got %#v", updated)
+	}
+
+	atTime := ScheduledInputScheduleAtTime
+	nextTime := time.Now().Add(2 * time.Hour)
+	updated, err = manager.UpdateScheduledInput(context.Background(), created.ID, item.ID, scheduledInputUpdate{
+		Text:         &text,
+		Mode:         &mode,
+		ScheduleKind: &atTime,
+		ScheduledFor: nextTime,
+	})
+	if err != nil {
+		t.Fatalf("switch message to at-time returned error: %v", err)
+	}
+	if updated.ScheduleKind != ScheduledInputScheduleAtTime || updated.ScheduledFor == nil ||
+		updated.ScheduledFor.UnixMilli() != nextTime.UnixMilli() {
+		t.Fatalf("expected at-time message schedule, got %#v", updated)
+	}
+}
+
+func TestHandleScheduleSendCommandSupportsLegacyAtTimeAndWhenIdle(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.cancelScheduledInputTimersForSession(created.ID)
+		manager.cancelScheduledIdleMonitor()
+	})
+
+	conn := &captureWSConn{}
+	commandClient := &client{conn: conn, logger: zap.NewNop()}
+	handle := func(requestID string, payload map[string]any) {
+		t.Helper()
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal schedule payload: %v", err)
+		}
+		if err := manager.handleScheduleSendCommand(context.Background(), commandClient, wireCommandFrame{
+			Version:   protocolVersion,
+			Kind:      "cmd",
+			RequestID: requestID,
+			SessionID: created.ID,
+			Operation: "schedule_send",
+			Payload:   encoded,
+		}); err != nil {
+			t.Fatalf("handleScheduleSendCommand returned error: %v", err)
+		}
+	}
+
+	legacyTime := time.Now().Add(time.Hour).UnixMilli()
+	handle("legacy-at-time", map[string]any{
+		"txt":  "Legacy timed message",
+		"atts": []string{},
+		"mode": string(ScheduledInputModeSend),
+		"at":   legacyTime,
+	})
+	handle("when-idle", map[string]any{
+		"txt":  "Idle message",
+		"atts": []string{},
+		"mode": string(ScheduledInputModeQueue),
+		"sk":   string(ScheduledInputScheduleWhenIdle),
+	})
+
+	items, err := manager.scheduledInputsSnapshot(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("scheduledInputsSnapshot returned error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected two scheduled messages, got %#v", items)
+	}
+	byText := make(map[string]ScheduledInput, len(items))
+	for _, item := range items {
+		byText[item.Text] = item
+	}
+	legacy := byText["Legacy timed message"]
+	if legacy.ScheduleKind != ScheduledInputScheduleAtTime || legacy.ScheduledFor == nil ||
+		legacy.ScheduledFor.UnixMilli() != legacyTime {
+		t.Fatalf("expected legacy payload to remain at-time, got %#v", legacy)
+	}
+	idle := byText["Idle message"]
+	if idle.ScheduleKind != ScheduledInputScheduleWhenIdle || idle.ScheduledFor != nil {
+		t.Fatalf("expected idle payload without timestamp, got %#v", idle)
+	}
+	if len(conn.frames) != 2 || conn.frames[0].Kind != "ack" || conn.frames[1].Kind != "ack" {
+		t.Fatalf("expected schedule acknowledgements, got %#v", conn.frames)
 	}
 }
 

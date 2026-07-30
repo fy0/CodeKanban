@@ -1214,6 +1214,7 @@ describe('webSession loading behavior', () => {
         txt: 'Later message',
         atts: [],
         mode: 'interrupt',
+        sk: 'at_time',
         at: scheduledAt,
       },
     });
@@ -1270,6 +1271,88 @@ describe('webSession loading behavior', () => {
         canceledAt: null,
       },
     ]);
+  });
+
+  it('stores when-idle messages without a scheduled timestamp', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-schedule-message-idle',
+      status: 'idle',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const schedulePromise = store.scheduleMessage(
+      session.id,
+      'Send when idle',
+      [],
+      { scheduleKind: 'when_idle' },
+      'queue'
+    );
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    const sent = commandSocket?.sent.at(-1) as
+      | { rid?: string; p?: Record<string, unknown> }
+      | undefined;
+    expect(sent).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'schedule_send',
+      p: {
+        txt: 'Send when idle',
+        atts: [],
+        mode: 'queue',
+        sk: 'when_idle',
+      },
+    });
+    expect(sent?.p).not.toHaveProperty('at');
+
+    const createdAt = Date.parse('2026-04-09T10:00:00.000Z');
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: String(sent?.rid ?? ''),
+      sid: session.id,
+      ts: Date.now(),
+      op: 'schedule_send',
+      ok: 1,
+      p: {
+        id: 'scheduled-message-idle',
+        a: 'message',
+        m: 'queue',
+        sk: 'when_idle',
+        st: 'scheduled',
+        txt: 'Send when idle',
+        atts: [],
+        br: ['git_dirty'],
+        ce: '',
+        ca: createdAt,
+        ua: createdAt,
+      },
+    });
+
+    await expect(schedulePromise).resolves.toMatchObject({
+      id: 'scheduled-message-idle',
+      action: 'message',
+      scheduleKind: 'when_idle',
+      scheduledFor: null,
+      blockingReasons: ['git_dirty'],
+    });
+    expect(store.getScheduledInputs(session.id)[0]).toMatchObject({
+      id: 'scheduled-message-idle',
+      action: 'message',
+      mode: 'queue',
+      scheduleKind: 'when_idle',
+      scheduledFor: null,
+    });
   });
 
   it('stores scheduled plan executions with their bound plan target', async () => {
