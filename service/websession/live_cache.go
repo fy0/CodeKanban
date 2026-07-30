@@ -691,8 +691,11 @@ func (m *Manager) summaryForBroadcast(ctx context.Context, sessionID string) *Se
 	if record.ArchivedAt != nil {
 		return nil
 	}
-	summary := m.mapSessionSummary(record)
-	return &summary
+	summaries := []SessionSummary{m.mapSessionSummary(record)}
+	if err := m.decorateScheduledPlanExecutionState(ctx, summaries); err != nil {
+		return nil
+	}
+	return &summaries[0]
 }
 
 func (m *Manager) maybeSyncSessionAfterRun(session tables.WebSessionTable) {

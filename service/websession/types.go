@@ -226,6 +226,7 @@ type SessionSummary struct {
 	Cwd                               string                     `json:"cwd"`
 	NativeSessionID                   *string                    `json:"nativeSessionId,omitempty"`
 	CyberPolicyFlagged                bool                       `json:"cyberPolicyFlagged"`
+	HasScheduledPlanExecution         bool                       `json:"hasScheduledPlanExecution,omitempty"`
 	Status                            Status                     `json:"status"`
 	AssistantState                    AssistantState             `json:"assistantState,omitempty"`
 	HasUnread                         bool                       `json:"hasUnread"`

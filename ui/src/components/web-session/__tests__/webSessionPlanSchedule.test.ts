@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
 const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
+const webSessionSidebarRowPath = fileURLToPath(
+  new URL('../WebSessionSidebarRow.vue', import.meta.url)
+);
+const webSessionSidebarRowSource = readFileSync(webSessionSidebarRowPath, 'utf8');
 
 describe('webSession plan scheduling', () => {
   it('keeps immediate implementation on the primary button and only delays in the menu', () => {
@@ -38,5 +42,19 @@ describe('webSession plan scheduling', () => {
       '!activeScheduledPlanTargetIds.value.has(latestPlanItemId.value)'
     );
     expect(webSessionPanelSource).toContain('webSessionStore.schedulePlanExecution');
+  });
+
+  it('uses the amber scheduled state for every plan flag surface', () => {
+    expect(webSessionPanelSource.match(/hasScheduledPlanExecution/g)?.length).toBeGreaterThan(4);
+    expect(webSessionPanelSource).toContain(
+      'var(--web-session-scheduled-plan-flag-color, #d97706)'
+    );
+    expect(webSessionPanelSource).toContain('.tab-workflow-plan-flag.is-scheduled');
+    expect(webSessionPanelSource).toContain('.mobile-tab-trigger-plan-badge.is-scheduled');
+    expect(webSessionPanelSource).toContain('.mobile-session-drawer-plan-badge.is-scheduled');
+    expect(webSessionSidebarRowSource).toContain("'is-scheduled': row.hasScheduledPlanExecution");
+    expect(webSessionSidebarRowSource).toContain(
+      'var(--web-session-scheduled-plan-flag-color, #d97706)'
+    );
   });
 });

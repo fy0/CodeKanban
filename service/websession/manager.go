@@ -658,6 +658,9 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 	for _, record := range records {
 		items = append(items, m.mapSessionSummary(record))
 	}
+	if err := m.decorateScheduledPlanExecutionState(ctx, items); err != nil {
+		return nil, err
+	}
 	return items, nil
 }
 
@@ -759,6 +762,9 @@ func (m *Manager) ListArchivedSessions(
 	items := make([]SessionSummary, 0, len(records))
 	for _, record := range records {
 		items = append(items, m.mapSessionSummary(record))
+	}
+	if err := m.decorateScheduledPlanExecutionState(ctx, items); err != nil {
+		return ArchivedQueryResult{}, err
 	}
 
 	nextOffset := offset + len(items)
@@ -1516,13 +1522,14 @@ func (m *Manager) loadSnapshotLocal(
 		}
 	}
 
-	summary := m.mapSessionSummary(record)
-	if clearUnread {
-		summary.HasUnread = false
-	}
 	scheduledInputs, err := m.scheduledInputsSnapshot(ctx, record.ID)
 	if err != nil {
 		return SessionSnapshot{}, err
+	}
+	summary := m.mapSessionSummary(record)
+	summary.HasScheduledPlanExecution = scheduledInputsHavePendingPlanExecution(scheduledInputs)
+	if clearUnread {
+		summary.HasUnread = false
 	}
 	subAgents, err := m.sessionSubAgents(ctx, record.ID)
 	if err != nil {

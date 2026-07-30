@@ -63,6 +63,7 @@ type WireSession = {
   cwd: string;
   nsid?: string | null;
   cpf?: boolean;
+  spe?: boolean;
   st: SessionStatus;
   ast?: SessionAssistantState | null;
   unr: boolean;
@@ -2622,6 +2623,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       cwd: session.cwd,
       nativeSessionId: session.nsid ?? null,
       cyberPolicyFlagged: session.cpf === true,
+      hasScheduledPlanExecution: session.spe === true,
       status: session.st,
       assistantState: normalizeAssistantStateValue(session.ast) || null,
       hasUnread: session.unr,
@@ -3393,6 +3395,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
       nextScheduledInputs[sessionId] = sortScheduledInputs(items);
     }
     scheduledInputsBySession.value = nextScheduledInputs;
+    const hasScheduledPlanExecution = items.some(
+      item => item.action === 'execute_plan' && item.status === 'scheduled'
+    );
+    updateSessionStatus(
+      sessionId,
+      current => ({
+        ...current,
+        hasScheduledPlanExecution,
+      }),
+      { preserveOrder: true }
+    );
   }
 
   function setSnapshotApproval(
@@ -4181,7 +4194,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function updateSessionStatus(
     sessionId: string,
-    updater: (current: WebSessionSummary) => WebSessionSummary
+    updater: (current: WebSessionSummary) => WebSessionSummary,
+    options?: { preserveOrder?: boolean }
   ) {
     const indexedProjectId = currentSessionProjectById.get(sessionId);
     const projectId =
@@ -4195,7 +4209,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (index >= 0) {
         const nextSessions = [...sessions];
         nextSessions.splice(index, 1, updater(sessions[index]!));
-        replaceProjectSessions(projectId, sortSessions(nextSessions));
+        replaceProjectSessions(
+          projectId,
+          options?.preserveOrder ? nextSessions : sortSessions(nextSessions)
+        );
         return;
       }
       currentSessionProjectById.delete(sessionId);
@@ -4207,7 +4224,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
         ...archivedSessionsById.value,
         [sessionId]: updater(archived),
       };
-      sortArchivedScopeContainingSession(sessionId);
+      if (!options?.preserveOrder) {
+        sortArchivedScopeContainingSession(sessionId);
+      }
     }
   }
 
@@ -4871,7 +4890,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
       const sessions = items.map(item => {
         observeSessionRevision(item.id, item.revision);
         const session = applyPendingActiveCallTimeoutOverride(
-          applyPendingAutoRetryDispatchOverride(applyPendingAutoRetryOverride(item))
+          applyPendingAutoRetryDispatchOverride(
+            applyPendingAutoRetryOverride({
+              ...item,
+              hasScheduledPlanExecution: item.hasScheduledPlanExecution === true,
+            })
+          )
         );
         const current = currentById.get(session.id);
         return current && compareWebSessionRevisions(current.revision, session.revision) === 1

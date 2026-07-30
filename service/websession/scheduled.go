@@ -299,6 +299,60 @@ func (m *Manager) scheduledInputsSnapshot(ctx context.Context, sessionID string)
 	return items, nil
 }
 
+func scheduledInputsHavePendingPlanExecution(items []ScheduledInput) bool {
+	for _, item := range items {
+		if item.Action == ScheduledInputActionExecutePlan && item.Status == ScheduledInputStatusScheduled {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) decorateScheduledPlanExecutionState(
+	ctx context.Context,
+	summaries []SessionSummary,
+) error {
+	if len(summaries) == 0 {
+		return nil
+	}
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	sessionIDs := make([]string, 0, len(summaries))
+	for _, summary := range summaries {
+		if sessionID := strings.TrimSpace(summary.ID); sessionID != "" {
+			sessionIDs = append(sessionIDs, sessionID)
+		}
+	}
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+
+	var scheduledSessionIDs []string
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionScheduledInputTable{}).
+		Distinct("web_session_id").
+		Where(
+			"web_session_id IN ? AND action = ? AND status = ?",
+			sessionIDs,
+			string(ScheduledInputActionExecutePlan),
+			string(ScheduledInputStatusScheduled),
+		).
+		Pluck("web_session_id", &scheduledSessionIDs).Error; err != nil {
+		return err
+	}
+
+	pendingBySession := make(map[string]struct{}, len(scheduledSessionIDs))
+	for _, sessionID := range scheduledSessionIDs {
+		pendingBySession[strings.TrimSpace(sessionID)] = struct{}{}
+	}
+	for index := range summaries {
+		_, summaries[index].HasScheduledPlanExecution = pendingBySession[summaries[index].ID]
+	}
+	return nil
+}
+
 func (m *Manager) ScheduleInput(
 	ctx context.Context,
 	sessionID string,

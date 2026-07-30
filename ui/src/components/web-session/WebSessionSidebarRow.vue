@@ -22,7 +22,12 @@
     <button type="button" class="session-sidebar-main">
       <span class="session-sidebar-agent-wrap" aria-hidden="true">
         <span class="session-sidebar-agent-icon" v-html="row.iconHtml"></span>
-        <n-icon v-if="row.hasWorkflowPlanBadge" class="session-sidebar-plan-flag" size="9">
+        <n-icon
+          v-if="row.hasWorkflowPlanBadge"
+          class="session-sidebar-plan-flag"
+          :class="{ 'is-scheduled': row.hasScheduledPlanExecution }"
+          size="9"
+        >
           <FlagIcon />
         </n-icon>
       </span>
@@ -250,6 +255,10 @@ onBeforeUnmount(clearLongPressTimer);
 
 .session-sidebar-plan-flag :deep(svg) {
   display: block;
+}
+
+.session-sidebar-plan-flag.is-scheduled {
+  color: var(--web-session-scheduled-plan-flag-color, #d97706);
 }
 
 .session-sidebar-main {

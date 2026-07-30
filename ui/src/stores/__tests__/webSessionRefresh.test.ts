@@ -125,6 +125,7 @@ function toWireSession(session: WebSessionSummary) {
     cwd: session.cwd,
     nsid: session.nativeSessionId,
     cpf: session.cyberPolicyFlagged === true,
+    spe: session.hasScheduledPlanExecution === true,
     st: session.status,
     ast: session.assistantState ?? undefined,
     unr: session.hasUnread,
@@ -782,6 +783,7 @@ describe('webSession loading behavior', () => {
         canceledAt: null,
       },
     ]);
+    expect(store.getSessions(session.projectId)[0]?.hasScheduledPlanExecution).toBe(false);
   });
 
   it('removes pending inputs via the backend command channel and pending events', async () => {
@@ -1564,6 +1566,7 @@ describe('webSession loading behavior', () => {
       text: 'Implement the plan.',
       scheduleKind: 'at_time',
     });
+    expect(store.getSessions(session.projectId)[0]?.hasScheduledPlanExecution).toBe(true);
   });
 
   it('stores when-idle plan schedules without a scheduled timestamp', async () => {
@@ -1630,6 +1633,7 @@ describe('webSession loading behavior', () => {
       scheduledFor: null,
       blockingReasons: ['git_dirty'],
     });
+    expect(store.getSessions(session.projectId)[0]?.hasScheduledPlanExecution).toBe(true);
   });
 
   it('updates and immediately dispatches scheduled inputs through commands', async () => {
@@ -1777,6 +1781,29 @@ describe('webSession loading behavior', () => {
       op: 'scheduled',
       si: [
         {
+          id: 'scheduled-evt-active',
+          a: 'execute_plan',
+          tid: 'plan-item-active',
+          m: 'send',
+          st: 'scheduled',
+          txt: 'Implement the plan.',
+          atts: [],
+          sk: 'when_idle',
+          ca: Date.parse('2026-04-09T10:00:00.000Z'),
+          ua: Date.parse('2026-04-09T10:00:00.000Z'),
+        },
+      ],
+    });
+    expect(store.getSessions(session.projectId)[0]?.hasScheduledPlanExecution).toBe(true);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'scheduled',
+      si: [
+        {
           id: 'scheduled-evt-1',
           a: 'execute_plan',
           tid: 'plan-item-expired',
@@ -1813,6 +1840,7 @@ describe('webSession loading behavior', () => {
         canceledAt: null,
       },
     ]);
+    expect(store.getSessions(session.projectId)[0]?.hasScheduledPlanExecution).toBe(false);
 
     const removePromise = store.removeScheduledInput(session.id, 'scheduled-evt-1');
     let commandSocket = findSocket('/api/v1/web-sessions/ws');
@@ -1857,6 +1885,7 @@ describe('webSession loading behavior', () => {
 
     await removePromise;
     expect(store.getScheduledInputs(session.id)).toEqual([]);
+    expect(store.getSessions(session.projectId)[0]?.hasScheduledPlanExecution).toBe(false);
   });
 
   it('hydrates first sends from command-channel snapshots before falling back to HTTP snapshots', async () => {

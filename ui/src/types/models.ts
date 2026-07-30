@@ -404,6 +404,7 @@ export interface WebSessionSummary {
   cwd: string;
   nativeSessionId?: string | null;
   cyberPolicyFlagged?: boolean;
+  hasScheduledPlanExecution?: boolean;
   status: 'idle' | 'running' | 'waiting_approval' | 'done' | 'err' | 'aborting';
   assistantState?:
     | 'working'

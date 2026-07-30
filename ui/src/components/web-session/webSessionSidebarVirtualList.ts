@@ -14,6 +14,7 @@ export type WebSessionSidebarRowView = {
   archived: boolean;
   archiving: boolean;
   hasWorkflowPlanBadge: boolean;
+  hasScheduledPlanExecution: boolean;
   singleProject: boolean;
   projectBadge?: ProjectBadge;
   currentIndicatorTitle: string;

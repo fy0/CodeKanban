@@ -129,6 +129,7 @@
                     <n-icon
                       v-if="shouldShowSessionWorkflowPlanBadge(item.session)"
                       class="mobile-session-drawer-plan-badge"
+                      :class="{ 'is-scheduled': hasScheduledPlanExecution(item.session) }"
                       size="9"
                       aria-hidden="true"
                     >
@@ -263,6 +264,7 @@
                   <n-icon
                     v-if="activeSessionHasWorkflowPlanBadge"
                     class="mobile-tab-trigger-plan-badge"
+                    :class="{ 'is-scheduled': activeSessionHasScheduledPlanExecution }"
                     size="12"
                     aria-hidden="true"
                   >
@@ -297,6 +299,7 @@
                       <n-icon
                         v-if="shouldShowSessionWorkflowPlanBadge(session)"
                         class="tab-workflow-plan-flag"
+                        :class="{ 'is-scheduled': hasScheduledPlanExecution(session) }"
                         size="12"
                         aria-hidden="true"
                       >
@@ -6431,6 +6434,9 @@ const activeSessionAttentionStateClass = computed(() =>
 );
 const activeSessionHasWorkflowPlanBadge = computed(() =>
   shouldShowSessionWorkflowPlanBadge(currentSession.value)
+);
+const activeSessionHasScheduledPlanExecution = computed(() =>
+  hasScheduledPlanExecution(currentSession.value)
 );
 const sidebarScope = computed<WebSessionSidebarScope>({
   get: () => normalizeWebSessionSidebarScope(persistedSidebarScope.value),
@@ -12887,6 +12893,12 @@ function shouldShowSessionWorkflowPlanBadge(
   return session?.workflowMode === 'plan';
 }
 
+function hasScheduledPlanExecution(
+  session: Pick<WebSessionSummary, 'hasScheduledPlanExecution'> | null | undefined
+) {
+  return session?.hasScheduledPlanExecution === true;
+}
+
 function createTabProps(session: (typeof sessions.value)[number]): HTMLAttributes {
   const isActive = activeTabSessionId.value === session.id;
   const theme = activeTheme.value;
@@ -13109,6 +13121,7 @@ function buildSidebarSessionRow(
     archived,
     archiving: !archived && isSessionArchiving(session.id),
     hasWorkflowPlanBadge: shouldShowSessionWorkflowPlanBadge(session),
+    hasScheduledPlanExecution: hasScheduledPlanExecution(session),
     singleProject: isSingleSidebarProject.value,
     projectBadge: item.projectBadge,
     currentIndicatorTitle: t('terminal.currentActiveSession'),
@@ -14305,6 +14318,10 @@ defineExpose({
   display: block;
 }
 
+.tab-workflow-plan-flag.is-scheduled {
+  color: var(--web-session-scheduled-plan-flag-color, #d97706);
+}
+
 .panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.n-tabs-tab--active) {
   background-color: var(--kanban-terminal-tab-active-bg, #e8e8e8) !important;
   color: var(--n-tab-text-color-active);
@@ -14626,6 +14643,10 @@ defineExpose({
   color: #6366f1;
 }
 
+.mobile-tab-trigger-plan-badge.is-scheduled {
+  color: var(--web-session-scheduled-plan-flag-color, #d97706);
+}
+
 .mobile-tab-arrow {
   transition: transform 0.2s ease;
 }
@@ -14876,6 +14897,10 @@ defineExpose({
   z-index: 2;
   color: #6366f1;
   pointer-events: none;
+}
+
+.mobile-session-drawer-plan-badge.is-scheduled {
+  color: var(--web-session-scheduled-plan-flag-color, #d97706);
 }
 
 .mobile-session-drawer-item-title {

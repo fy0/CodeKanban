@@ -77,6 +77,9 @@ func TestScheduleInputIncludesScheduledInputsInSnapshot(t *testing.T) {
 	if !got.ScheduledFor.Equal(scheduledFor) {
 		t.Fatalf("expected scheduled time %v, got %v", scheduledFor, got.ScheduledFor)
 	}
+	if snapshot.Session.HasScheduledPlanExecution {
+		t.Fatalf("expected a delayed message not to mark the session as a scheduled plan, got %#v", snapshot.Session)
+	}
 }
 
 func TestScheduledInputDispatchesAtDueTime(t *testing.T) {
@@ -595,6 +598,29 @@ func TestSchedulePlanExecutionIncludesTargetAndRejectsDuplicate(t *testing.T) {
 	if len(snapshot.ScheduledInputs) != 1 || snapshot.ScheduledInputs[0].Action != ScheduledInputActionExecutePlan {
 		t.Fatalf("expected scheduled plan in snapshot, got %#v", snapshot.ScheduledInputs)
 	}
+	if !snapshot.Session.HasScheduledPlanExecution {
+		t.Fatalf("expected snapshot summary to mark the scheduled plan, got %#v", snapshot.Session)
+	}
+	sessions, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(sessions) != 1 || !sessions[0].HasScheduledPlanExecution {
+		t.Fatalf("expected list summary to mark the scheduled plan, got %#v", sessions)
+	}
+	if wire := mapWireSession(sessions[0]); !wire.HasScheduledPlanExecution {
+		t.Fatalf("expected compact session payload to mark the scheduled plan, got %#v", wire)
+	}
+	if err := manager.expireScheduledInputByID(context.Background(), item.ID, "test expiration"); err != nil {
+		t.Fatalf("expireScheduledInputByID returned error: %v", err)
+	}
+	sessions, err = manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions after expiration returned error: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].HasScheduledPlanExecution {
+		t.Fatalf("expected expired plan to restore the ordinary summary state, got %#v", sessions)
+	}
 }
 
 func TestScheduledPlanWhenIdleDispatchesAfterStableCleanPeriod(t *testing.T) {
@@ -640,6 +666,13 @@ func TestScheduledPlanWhenIdleDispatchesAfterStableCleanPeriod(t *testing.T) {
 	}
 	if item.ScheduleKind != ScheduledInputScheduleWhenIdle || item.ScheduledFor != nil {
 		t.Fatalf("expected when-idle schedule without timestamp, got %#v", item)
+	}
+	sessions, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(sessions) != 1 || !sessions[0].HasScheduledPlanExecution {
+		t.Fatalf("expected when-idle plan to mark the session summary, got %#v", sessions)
 	}
 
 	waitForUserMessageCount(t, manager, created.ID, 1)
