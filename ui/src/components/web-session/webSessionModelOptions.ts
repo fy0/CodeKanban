@@ -1,4 +1,16 @@
-import type { WebSessionReasoningEffort } from '@/types/models';
+import type {
+  WebSessionCodexDefaultPermissionLevel,
+  WebSessionCodexDefaultReasoningEffort,
+  WebSessionReasoningEffort,
+} from '@/types/models';
+import {
+  DEFAULT_WEB_SESSION_CODEX_MODEL,
+  DEFAULT_WEB_SESSION_CODEX_PERMISSION_LEVEL,
+  DEFAULT_WEB_SESSION_CODEX_REASONING_EFFORT,
+  EFFECTIVE_DEFAULT_WEB_SESSION_CODEX_MODEL,
+  EFFECTIVE_DEFAULT_WEB_SESSION_CODEX_PERMISSION_LEVEL,
+  EFFECTIVE_DEFAULT_WEB_SESSION_CODEX_REASONING_EFFORT,
+} from '@/constants/webSessionDefaults';
 
 export type WebSessionAgentOption = 'claude' | 'codex';
 export type WebSessionClaudeRuntimeOption = 'claude' | 'ccr';
@@ -69,6 +81,42 @@ export function resolveCodexReasoningEfforts(
   return fallback ? [...fallback] : null;
 }
 
-export function defaultModelForAgent(agent: WebSessionAgentOption) {
-  return agent === 'claude' ? 'opus' : 'gpt-5.5';
+export function defaultModelForAgent(
+  agent: WebSessionAgentOption,
+  configuredCodexModel = DEFAULT_WEB_SESSION_CODEX_MODEL
+) {
+  if (agent === 'claude') {
+    return 'opus';
+  }
+  const configured = configuredCodexModel.trim();
+  return !configured || configured.toLowerCase() === DEFAULT_WEB_SESSION_CODEX_MODEL
+    ? EFFECTIVE_DEFAULT_WEB_SESSION_CODEX_MODEL
+    : configured;
+}
+
+export function defaultReasoningEffortForAgent(
+  agent: WebSessionAgentOption,
+  configuredCodexEffort: WebSessionCodexDefaultReasoningEffort = DEFAULT_WEB_SESSION_CODEX_REASONING_EFFORT
+): WebSessionReasoningEffort {
+  if (agent === 'claude' || configuredCodexEffort === 'model_default') {
+    return 'default';
+  }
+  return configuredCodexEffort === 'default'
+    ? EFFECTIVE_DEFAULT_WEB_SESSION_CODEX_REASONING_EFFORT
+    : configuredCodexEffort;
+}
+
+export function defaultPermissionLevelForAgent(
+  agent: WebSessionAgentOption,
+  configuredCodexPermission: WebSessionCodexDefaultPermissionLevel = DEFAULT_WEB_SESSION_CODEX_PERMISSION_LEVEL
+): 'default' | 'elevated' | 'yolo' {
+  if (agent === 'claude') {
+    return 'elevated';
+  }
+  if (configuredCodexPermission === 'standard') {
+    return 'default';
+  }
+  return configuredCodexPermission === 'default'
+    ? EFFECTIVE_DEFAULT_WEB_SESSION_CODEX_PERMISSION_LEVEL
+    : configuredCodexPermission;
 }

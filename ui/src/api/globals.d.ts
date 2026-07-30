@@ -161,6 +161,9 @@ export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
   enableTerminalStateSnapshot: boolean;
   renameSessionTitleEachCommand: boolean;
+  webSessionCodexDefaultModel: string;
+  webSessionCodexDefaultPermissionLevel: string;
+  webSessionCodexDefaultReasoningEffort: string;
   webSessionCodexDefaultSyncMode: string;
   webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig;
 }
@@ -4217,6 +4220,9 @@ declare global {
        *     enableTerminalScrollback: boolean
        *     enableTerminalStateSnapshot: boolean
        *     renameSessionTitleEachCommand: boolean
+       *     webSessionCodexDefaultModel: string
+       *     webSessionCodexDefaultPermissionLevel: string
+       *     webSessionCodexDefaultReasoningEffort: string
        *     webSessionCodexDefaultSyncMode: string
        *     webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig
        *   }
@@ -4243,6 +4249,9 @@ declare global {
        *   enableTerminalScrollback: boolean
        *   enableTerminalStateSnapshot: boolean
        *   renameSessionTitleEachCommand: boolean
+       *   webSessionCodexDefaultModel: string
+       *   webSessionCodexDefaultPermissionLevel: string
+       *   webSessionCodexDefaultReasoningEffort: string
        *   webSessionCodexDefaultSyncMode: string
        *   webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig
        * }

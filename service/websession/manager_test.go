@@ -131,8 +131,156 @@ func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	if created.PermissionLevel != PermissionLevelElevated {
 		t.Fatalf("expected elevated permission level, got %q", created.PermissionLevel)
 	}
+	if created.Model != utils.DefaultWebSessionCodexModel {
+		t.Fatalf("expected default model %q, got %q", utils.DefaultWebSessionCodexModel, created.Model)
+	}
+	if created.ReasoningEffort != ReasoningEffortXHigh {
+		t.Fatalf("expected default reasoning effort %q, got %q", ReasoningEffortXHigh, created.ReasoningEffort)
+	}
 	if created.AutoRetryDispatchPendingOnFailure {
 		t.Fatal("expected retry failure pending dispatch to default to disabled")
+	}
+}
+
+func TestManagerCreateSessionUsesConfiguredCodexDefaultsAndExplicitOverrides(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	configuredModel := "gpt-5.6-luna"
+	configuredEffort := ReasoningEffortHigh
+	configuredPermission := utils.WebSessionCodexStandardPermission
+	manager, err := NewManager(Config{
+		DataDir: t.TempDir(),
+		DefaultCodexModel: func() string {
+			return configuredModel
+		},
+		DefaultCodexReasoningEffort: func() ReasoningEffort {
+			return configuredEffort
+		},
+		DefaultCodexPermissionLevel: func() string {
+			return configuredPermission
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	first, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if first.Model != configuredModel || first.ReasoningEffort != configuredEffort ||
+		first.PermissionLevel != PermissionLevelDefault {
+		t.Fatalf("expected configured defaults, got model=%q effort=%q permission=%q", first.Model, first.ReasoningEffort, first.PermissionLevel)
+	}
+
+	configuredModel = "gpt-5.6-terra"
+	configuredEffort = ReasoningEffortMax
+	configuredPermission = string(PermissionLevelYolo)
+	second, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession after config update returned error: %v", err)
+	}
+	if second.Model != configuredModel || second.ReasoningEffort != configuredEffort ||
+		second.PermissionLevel != PermissionLevelYolo {
+		t.Fatalf("expected refreshed defaults, got model=%q effort=%q permission=%q", second.Model, second.ReasoningEffort, second.PermissionLevel)
+	}
+	if first.Model == second.Model || first.ReasoningEffort == second.ReasoningEffort ||
+		first.PermissionLevel == second.PermissionLevel {
+		t.Fatalf("existing session defaults changed unexpectedly: first=%#v second=%#v", first, second)
+	}
+
+	explicit, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:       project.ID,
+		Agent:           AgentCodex,
+		Model:           "gpt-5.5",
+		ReasoningEffort: ReasoningEffortDefault,
+		PermissionLevel: PermissionLevelElevated,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession with explicit values returned error: %v", err)
+	}
+	if explicit.Model != "gpt-5.5" || explicit.ReasoningEffort != ReasoningEffortDefault ||
+		explicit.PermissionLevel != PermissionLevelElevated {
+		t.Fatalf("expected explicit values to win, got model=%q effort=%q permission=%q", explicit.Model, explicit.ReasoningEffort, explicit.PermissionLevel)
+	}
+}
+
+func TestManagerCreateSessionResolvesCodexDefaultSentinels(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	configuredModel := utils.WebSessionCodexDefaultSetting
+	configuredEffort := ReasoningEffort(utils.WebSessionCodexDefaultSetting)
+	configuredPermission := utils.WebSessionCodexDefaultSetting
+	manager, err := NewManager(Config{
+		DataDir: t.TempDir(),
+		DefaultCodexModel: func() string {
+			return configuredModel
+		},
+		DefaultCodexReasoningEffort: func() ReasoningEffort {
+			return configuredEffort
+		},
+		DefaultCodexPermissionLevel: func() string {
+			return configuredPermission
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	versionDefault, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if versionDefault.Model != utils.DefaultWebSessionCodexModel ||
+		versionDefault.ReasoningEffort != ReasoningEffort(utils.DefaultWebSessionCodexReasoningEffort) ||
+		versionDefault.PermissionLevel != PermissionLevel(utils.DefaultWebSessionCodexPermissionLevel) {
+		t.Fatalf("expected effective version defaults, got %#v", versionDefault)
+	}
+
+	configuredModel = "custom-model"
+	configuredEffort = ReasoningEffort(utils.WebSessionCodexModelDefaultEffort)
+	configuredPermission = utils.WebSessionCodexStandardPermission
+	modelDefaults, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession with explicit global settings returned error: %v", err)
+	}
+	if modelDefaults.Model != configuredModel ||
+		modelDefaults.ReasoningEffort != ReasoningEffortDefault ||
+		modelDefaults.PermissionLevel != PermissionLevelDefault {
+		t.Fatalf("expected model-default reasoning and standard permission, got %#v", modelDefaults)
+	}
+}
+
+func TestManagerDefaultCodexSyncModeResolvesSentinel(t *testing.T) {
+	configured := SyncMode(utils.WebSessionCodexDefaultSetting)
+	manager := &Manager{cfg: Config{
+		DefaultCodexSyncMode: func() SyncMode {
+			return configured
+		},
+	}}
+
+	if got := manager.defaultCodexSyncMode(); got != SyncMode(utils.DefaultWebSessionCodexSyncMode) {
+		t.Fatalf("expected effective sync default %q, got %q", utils.DefaultWebSessionCodexSyncMode, got)
+	}
+	configured = SyncModeDeep
+	if got := manager.defaultCodexSyncMode(); got != SyncModeDeep {
+		t.Fatalf("expected explicit deep sync mode, got %q", got)
 	}
 }
 
@@ -1625,7 +1773,7 @@ func TestManagerListSessionsIncludesConfiguredContextWindow(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(configDir, "config.toml"),
-		[]byte("model = \"gpt-5.5\"\nmodel_context_window = 1000000\n"),
+		[]byte(fmt.Sprintf("model = %q\nmodel_context_window = 1000000\n", utils.DefaultWebSessionCodexModel)),
 		0o644,
 	); err != nil {
 		t.Fatalf("write config failed: %v", err)
@@ -1653,8 +1801,8 @@ func TestManagerListSessionsIncludesConfiguredContextWindow(t *testing.T) {
 		t.Fatalf("expected contextWindowSource %q, got %q", ContextWindowSourceConfig, items[0].ContextWindowSource)
 	}
 	config := manager.GetCodexRuntimeConfig()
-	if config.Model != "gpt-5.5" {
-		t.Fatalf("expected runtime model gpt-5.5, got %q", config.Model)
+	if config.Model != utils.DefaultWebSessionCodexModel {
+		t.Fatalf("expected runtime model %q, got %q", utils.DefaultWebSessionCodexModel, config.Model)
 	}
 	if config.ContextWindowTokens != 1000000 {
 		t.Fatalf("expected runtime context window 1000000, got %d", config.ContextWindowTokens)

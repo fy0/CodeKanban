@@ -2947,6 +2947,7 @@ import { systemApi } from '@/api/project';
 import { useFileManagerStore } from '@/stores/fileManager';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
+import { useDeveloperConfigStore } from '@/stores/developerConfig';
 import {
   useWebSessionStore,
   type WebSessionBlock,
@@ -3039,7 +3040,9 @@ import {
   CODEX_PRIMARY_MODEL_OPTIONS,
   CUSTOM_MODEL_VALUE,
   MORE_MODELS_VALUE,
-  defaultModelForAgent,
+  defaultModelForAgent as resolveDefaultModelForAgent,
+  defaultPermissionLevelForAgent as resolveDefaultPermissionLevelForAgent,
+  defaultReasoningEffortForAgent as resolveDefaultReasoningEffortForAgent,
   resolveCodexReasoningEfforts,
   type WebSessionClaudeRuntimeOption,
 } from '@/components/web-session/webSessionModelOptions';
@@ -3402,7 +3405,17 @@ const {
 
 const globalActiveCallTimeoutEnabled = ref(true);
 const globalActiveCallTimeoutSeconds = ref(DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS);
-let composerDeveloperConfigLoadPromise: Promise<boolean> | null = null;
+const developerConfigStore = useDeveloperConfigStore();
+const { config: developerConfig } = storeToRefs(developerConfigStore);
+
+watch(
+  developerConfig,
+  config => {
+    globalActiveCallTimeoutEnabled.value = resolveGlobalActiveCallTimeoutEnabled(config);
+    globalActiveCallTimeoutSeconds.value = resolveGlobalActiveCallTimeoutSeconds(config);
+  },
+  { deep: true, immediate: true }
+);
 
 function resolveGlobalActiveCallTimeoutEnabled(config?: DeveloperConfig | null) {
   const mode = config?.webSessionActiveCallTimeout?.enabledMode;
@@ -3429,27 +3442,16 @@ function formatActiveCallTimeoutDuration(seconds: number) {
   return t('webSession.activeCallTimeoutDurationSeconds', { seconds: normalizedSeconds });
 }
 
-async function loadComposerDeveloperConfig() {
-  if (composerDeveloperConfigLoadPromise) {
-    return composerDeveloperConfigLoadPromise;
+async function loadComposerDeveloperConfig(force = false) {
+  try {
+    const config = await developerConfigStore.load(force);
+    globalActiveCallTimeoutEnabled.value = resolveGlobalActiveCallTimeoutEnabled(config);
+    globalActiveCallTimeoutSeconds.value = resolveGlobalActiveCallTimeoutSeconds(config);
+    return true;
+  } catch (error) {
+    console.error('[Web Session] Failed to load developer config for composer settings', error);
+    return false;
   }
-  composerDeveloperConfigLoadPromise = (async () => {
-    try {
-      const response = await http
-        .Get<ItemResponse<DeveloperConfig>>('/system/developer-config', { cacheFor: 0 })
-        .send();
-      const config = response?.item;
-      globalActiveCallTimeoutEnabled.value = resolveGlobalActiveCallTimeoutEnabled(config);
-      globalActiveCallTimeoutSeconds.value = resolveGlobalActiveCallTimeoutSeconds(config);
-      return true;
-    } catch (error) {
-      console.error('[Web Session] Failed to load developer config for composer settings', error);
-      return false;
-    } finally {
-      composerDeveloperConfigLoadPromise = null;
-    }
-  })();
-  return composerDeveloperConfigLoadPromise;
 }
 
 function resolveInheritedActiveCallTimeoutEnabled(
@@ -3656,9 +3658,13 @@ const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 const draftAgent = ref<'claude' | 'codex'>('codex');
 const draftClaudeRuntime = ref<WebSessionClaudeRuntimeOption>('claude');
 const draftModel = ref(defaultModelForAgent('codex'));
-const draftReasoningEffort = ref<WebSessionReasoningEffort>('xhigh');
+const draftReasoningEffort = ref<WebSessionReasoningEffort>(
+  defaultReasoningEffortForAgent('codex')
+);
 const draftWorkflowMode = ref<'default' | 'plan'>('default');
-const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>('elevated');
+const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>(
+  defaultPermissionLevelForAgent('codex')
+);
 const draftSessions = ref<DraftSessionTab[]>([]);
 const activeDraftSessionId = ref('');
 const activeArchivedPreviewId = ref('');
@@ -4250,6 +4256,7 @@ function handleWebSessionWindowFocus() {
     return;
   }
   refreshTabHeaderLayout();
+  void loadComposerDeveloperConfig(true);
   void loadCodexRuntimeConfig();
   scheduleWebSessionCatchUp('window-focus');
 }
@@ -4259,6 +4266,7 @@ function handleWebSessionWindowPageShow() {
     return;
   }
   refreshTabHeaderLayout();
+  void loadComposerDeveloperConfig(true);
   void loadCodexRuntimeConfig();
   scheduleWebSessionCatchUp('window-pageshow');
 }
@@ -7013,7 +7021,7 @@ function normalizeDraftSession(
       session.permissionLevel === 'elevated' ||
       session.permissionLevel === 'yolo'
         ? session.permissionLevel
-        : 'elevated',
+        : defaultPermissionLevelForAgent(agent),
     activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(session, agent),
     autoRetryEnabled: session.autoRetryEnabled === true,
     autoRetryScope:
@@ -7482,16 +7490,10 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
     agent: nextAgent,
     claudeRuntime: source?.claudeRuntime === 'ccr' ? 'ccr' : draftClaudeRuntime.value,
     title: buildDraftTitle(nextAgent),
-    model: source?.model || draftModel.value || defaultModelForAgent(nextAgent),
-    reasoningEffort:
-      source?.reasoningEffort ||
-      draftReasoningEffort.value ||
-      defaultReasoningEffortForAgent(nextAgent),
+    model: defaultModelForAgent(nextAgent),
+    reasoningEffort: defaultReasoningEffortForAgent(nextAgent),
     workflowMode: source?.workflowMode || draftWorkflowMode.value,
-    permissionLevel:
-      (source?.permissionLevel === 'default' && nextAgent === 'claude'
-        ? 'elevated'
-        : source?.permissionLevel) || draftPermissionLevel.value,
+    permissionLevel: defaultPermissionLevelForAgent(nextAgent),
     activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, nextAgent),
     autoRetryEnabled: source?.autoRetryEnabled === true,
     autoRetryScope:
@@ -8480,8 +8482,24 @@ function resolveModelSelectWidth(label: string) {
   return clamp(MODEL_SELECT_MIN_WIDTH, width, MODEL_SELECT_MAX_WIDTH);
 }
 
+function defaultModelForAgent(agent: 'claude' | 'codex') {
+  return resolveDefaultModelForAgent(agent, developerConfig.value.webSessionCodexDefaultModel);
+}
+
 function defaultReasoningEffortForAgent(agent: 'claude' | 'codex'): WebSessionReasoningEffort {
-  return agent === 'codex' ? 'xhigh' : 'default';
+  return resolveDefaultReasoningEffortForAgent(
+    agent,
+    developerConfig.value.webSessionCodexDefaultReasoningEffort
+  );
+}
+
+function defaultPermissionLevelForAgent(
+  agent: 'claude' | 'codex'
+): 'default' | 'elevated' | 'yolo' {
+  return resolveDefaultPermissionLevelForAgent(
+    agent,
+    developerConfig.value.webSessionCodexDefaultPermissionLevel
+  );
 }
 
 function reasoningEffortLabel(effort: WebSessionReasoningEffort) {
@@ -8619,20 +8637,16 @@ const selectedAgent = computed({
   get: () => currentSession.value?.agent ?? draftAgent.value,
   set: value => {
     const next = value as 'claude' | 'codex';
+    const nextModel = defaultModelForAgent(next);
+    const nextReasoningEffort = defaultReasoningEffortForAgent(next);
+    const nextPermissionLevel = defaultPermissionLevelForAgent(next);
     draftAgent.value = next;
     if (next === 'codex') {
       draftClaudeRuntime.value = 'claude';
     }
-    if (next === 'claude' && draftModel.value.startsWith('gpt-')) {
-      draftModel.value = defaultModelForAgent(next);
-    }
-    if (next === 'codex' && !draftModel.value.startsWith('gpt-')) {
-      draftModel.value = defaultModelForAgent(next);
-    }
-    draftReasoningEffort.value = defaultReasoningEffortForAgent(next);
-    if (next === 'claude' && draftPermissionLevel.value === 'default') {
-      draftPermissionLevel.value = 'elevated';
-    }
+    draftModel.value = nextModel;
+    draftReasoningEffort.value = nextReasoningEffort;
+    draftPermissionLevel.value = nextPermissionLevel;
     if (isDraftSession(currentSession.value)) {
       updateActiveDraftSession(current => ({
         ...current,
@@ -8643,17 +8657,9 @@ const selectedAgent = computed({
               ? 'ccr'
               : draftClaudeRuntime.value
             : 'claude',
-        model:
-          next === 'claude' && current.model.startsWith('gpt-')
-            ? defaultModelForAgent(next)
-            : next === 'codex' && !current.model.startsWith('gpt-')
-              ? defaultModelForAgent(next)
-              : current.model,
-        reasoningEffort: defaultReasoningEffortForAgent(next),
-        permissionLevel:
-          next === 'claude' && current.permissionLevel === 'default'
-            ? 'elevated'
-            : current.permissionLevel,
+        model: nextModel,
+        reasoningEffort: nextReasoningEffort,
+        permissionLevel: nextPermissionLevel,
         updatedAt: new Date().toISOString(),
       }));
       return;
@@ -9754,6 +9760,10 @@ async function initializeProjectSessions(projectId: string) {
   isProjectSessionInitializing.value = true;
   realSessionSnapshotLoadController.cancel();
   try {
+    await loadComposerDeveloperConfig();
+    if (!isCurrentInitialization()) {
+      return;
+    }
     clearArchivedPreviewSession();
     activeArchivedPreviewId.value = '';
     tabOrderIds.value = loadPersistedTabOrderIds(projectId);
@@ -10269,6 +10279,7 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
 }
 
 async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
+  await loadComposerDeveloperConfig();
   const anchorId = underlyingTabSessionId.value;
   const decision = resolveStartDraftSessionDecision(draftSessions.value, {
     activeDraftId: activeDraftSessionId.value,

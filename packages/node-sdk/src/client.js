@@ -41,20 +41,8 @@ const RETRYABLE_HTTP_STATUS_CODES = new Set([
 const DEFAULT_WEB_SESSION_AUTO_RETRY_SCOPE = "network_only";
 const DEFAULT_WEB_SESSION_AUTO_RETRY_PRESET = "gentle_stop";
 
-function defaultWebSessionModel(agent) {
-  return agent === "claude" ? "opus" : "gpt-5.5";
-}
-
-function defaultWebSessionReasoningEffort(agent) {
-  return agent === "claude" ? "default" : "xhigh";
-}
-
 function defaultWebSessionWorkflowMode(permissionMode) {
   return permissionMode === "plan" ? "plan" : "default";
-}
-
-function defaultWebSessionPermissionLevel(permissionMode) {
-  return permissionMode === "yolo" ? "yolo" : "elevated";
 }
 
 function normalizeWebSessionAutoRetryScope(scope) {
@@ -991,6 +979,9 @@ export class CodeKanbanClient {
     const permissionMode = ensureOptionalString(
       input.permissionMode,
     ).toLowerCase();
+    const model = ensureOptionalString(input.model);
+    const reasoningEffort = ensureOptionalString(input.reasoningEffort);
+    const permissionLevel = ensureOptionalString(input.permissionLevel);
     const worktree = await this.resolveWorktree({
       projectId,
       worktreeId: input.worktreeId,
@@ -1004,17 +995,12 @@ export class CodeKanbanClient {
           worktreeId: ensureString(worktree?.id, "worktreeId"),
           agent,
           claudeRuntime: ensureOptionalString(input.claudeRuntime) || "claude",
-          model:
-            ensureOptionalString(input.model) || defaultWebSessionModel(agent),
-          reasoningEffort:
-            ensureOptionalString(input.reasoningEffort) ||
-            defaultWebSessionReasoningEffort(agent),
+          ...(model ? { model } : {}),
+          ...(reasoningEffort ? { reasoningEffort } : {}),
           workflowMode:
             ensureOptionalString(input.workflowMode) ||
             defaultWebSessionWorkflowMode(permissionMode),
-          permissionLevel:
-            ensureOptionalString(input.permissionLevel) ||
-            defaultWebSessionPermissionLevel(permissionMode),
+          ...(permissionLevel ? { permissionLevel } : {}),
           autoRetryEnabled: input.autoRetryEnabled === true,
           autoRetryScope: normalizeWebSessionAutoRetryScope(
             input.autoRetryScope,

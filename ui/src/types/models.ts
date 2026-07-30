@@ -261,7 +261,10 @@ export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
   renameSessionTitleEachCommand: boolean;
   enableTerminalStateSnapshot: boolean;
-  webSessionCodexDefaultSyncMode: 'fast' | 'deep';
+  webSessionCodexDefaultModel: string;
+  webSessionCodexDefaultReasoningEffort: WebSessionCodexDefaultReasoningEffort;
+  webSessionCodexDefaultPermissionLevel: WebSessionCodexDefaultPermissionLevel;
+  webSessionCodexDefaultSyncMode: 'default' | 'fast' | 'deep';
   webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig;
 }
 
@@ -324,6 +327,10 @@ export type WebSessionReasoningEffort =
   | 'xhigh'
   | 'max'
   | 'ultra';
+
+export type WebSessionCodexDefaultReasoningEffort = WebSessionReasoningEffort | 'model_default';
+
+export type WebSessionCodexDefaultPermissionLevel = 'default' | 'standard' | 'elevated' | 'yolo';
 
 export interface WebSessionCodexModelInfo {
   model: string;

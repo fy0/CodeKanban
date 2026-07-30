@@ -9,6 +9,8 @@ import {
   CUSTOM_MODEL_VALUE,
   MORE_MODELS_VALUE,
   defaultModelForAgent,
+  defaultPermissionLevelForAgent,
+  defaultReasoningEffortForAgent,
   resolveCodexReasoningEfforts,
 } from '@/components/web-session/webSessionModelOptions';
 
@@ -82,9 +84,18 @@ describe('webSessionModelOptions', () => {
     expect(MORE_MODELS_VALUE).toBe('__more_models__');
   });
 
-  it('uses gpt-5.5 as the codex default model', () => {
-    expect(defaultModelForAgent('codex')).toBe('gpt-5.5');
+  it('uses configurable Codex defaults without changing Claude defaults', () => {
+    expect(defaultModelForAgent('codex')).toBe('gpt-5.6-sol');
+    expect(defaultModelForAgent('codex', 'custom-codex-model')).toBe('custom-codex-model');
     expect(defaultModelForAgent('claude')).toBe('opus');
+    expect(defaultReasoningEffortForAgent('codex')).toBe('xhigh');
+    expect(defaultReasoningEffortForAgent('codex', 'high')).toBe('high');
+    expect(defaultReasoningEffortForAgent('codex', 'model_default')).toBe('default');
+    expect(defaultReasoningEffortForAgent('claude', 'high')).toBe('default');
+    expect(defaultPermissionLevelForAgent('codex')).toBe('elevated');
+    expect(defaultPermissionLevelForAgent('codex', 'standard')).toBe('default');
+    expect(defaultPermissionLevelForAgent('codex', 'yolo')).toBe('yolo');
+    expect(defaultPermissionLevelForAgent('claude', 'standard')).toBe('elevated');
   });
 
   it('uses model-specific reasoning efforts from the Codex catalog', () => {

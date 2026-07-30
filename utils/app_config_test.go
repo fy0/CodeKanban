@@ -83,8 +83,21 @@ func TestNormalizeWebSessionQuickInputConfigEmpty(t *testing.T) {
 
 func TestNormalizeDeveloperConfigDefaultsActiveCallTimeout(t *testing.T) {
 	got := NormalizeDeveloperConfig(DeveloperConfig{})
-	if got.WebSessionCodexDefaultSyncMode != "fast" {
-		t.Fatalf("expected default sync mode fast, got %q", got.WebSessionCodexDefaultSyncMode)
+	if got.WebSessionCodexDefaultModel != WebSessionCodexDefaultSetting {
+		t.Fatalf("expected Codex model sentinel %q, got %q", WebSessionCodexDefaultSetting, got.WebSessionCodexDefaultModel)
+	}
+	if got.WebSessionCodexDefaultReasoningEffort != WebSessionCodexDefaultSetting {
+		t.Fatalf(
+			"expected Codex reasoning sentinel %q, got %q",
+			WebSessionCodexDefaultSetting,
+			got.WebSessionCodexDefaultReasoningEffort,
+		)
+	}
+	if got.WebSessionCodexDefaultPermissionLevel != WebSessionCodexDefaultSetting {
+		t.Fatalf("expected Codex permission sentinel %q, got %q", WebSessionCodexDefaultSetting, got.WebSessionCodexDefaultPermissionLevel)
+	}
+	if got.WebSessionCodexDefaultSyncMode != WebSessionCodexDefaultSetting {
+		t.Fatalf("expected Codex sync sentinel %q, got %q", WebSessionCodexDefaultSetting, got.WebSessionCodexDefaultSyncMode)
 	}
 	if got.WebSessionActiveCallTimeout.EnabledMode != SettingModeDefault {
 		t.Fatalf("expected enabled mode default, got %q", got.WebSessionActiveCallTimeout.EnabledMode)
@@ -109,6 +122,57 @@ func TestNormalizeDeveloperConfigDefaultsActiveCallTimeout(t *testing.T) {
 		got.WebSessionActiveCallTimeout.CallKinds.Command ||
 		!got.WebSessionActiveCallTimeout.CallKinds.Tool {
 		t.Fatalf("expected default call kinds to exclude command, got %#v", got.WebSessionActiveCallTimeout.CallKinds)
+	}
+}
+
+func TestNormalizeDeveloperConfigPreservesCustomCodexDefaults(t *testing.T) {
+	got := NormalizeDeveloperConfig(DeveloperConfig{
+		WebSessionCodexDefaultModel:           "  custom-codex-model  ",
+		WebSessionCodexDefaultReasoningEffort: " HIGH ",
+		WebSessionCodexDefaultPermissionLevel: " YOLO ",
+		WebSessionCodexDefaultSyncMode:        " DEEP ",
+	})
+	if got.WebSessionCodexDefaultModel != "custom-codex-model" {
+		t.Fatalf("expected trimmed custom model, got %q", got.WebSessionCodexDefaultModel)
+	}
+	if got.WebSessionCodexDefaultReasoningEffort != "high" {
+		t.Fatalf("expected normalized high effort, got %q", got.WebSessionCodexDefaultReasoningEffort)
+	}
+	if got.WebSessionCodexDefaultPermissionLevel != "yolo" {
+		t.Fatalf("expected normalized yolo permission, got %q", got.WebSessionCodexDefaultPermissionLevel)
+	}
+	if got.WebSessionCodexDefaultSyncMode != "deep" {
+		t.Fatalf("expected normalized deep sync mode, got %q", got.WebSessionCodexDefaultSyncMode)
+	}
+
+	invalid := NormalizeDeveloperConfig(DeveloperConfig{
+		WebSessionCodexDefaultReasoningEffort: "unsupported",
+		WebSessionCodexDefaultPermissionLevel: "unsupported",
+		WebSessionCodexDefaultSyncMode:        "unsupported",
+	})
+	if invalid.WebSessionCodexDefaultReasoningEffort != WebSessionCodexDefaultSetting {
+		t.Fatalf(
+			"expected invalid effort to fall back to %q, got %q",
+			WebSessionCodexDefaultSetting,
+			invalid.WebSessionCodexDefaultReasoningEffort,
+		)
+	}
+	if invalid.WebSessionCodexDefaultPermissionLevel != WebSessionCodexDefaultSetting ||
+		invalid.WebSessionCodexDefaultSyncMode != WebSessionCodexDefaultSetting {
+		t.Fatalf("expected invalid Codex settings to use sentinels, got %#v", invalid)
+	}
+
+	sentinels := NormalizeDeveloperConfig(DeveloperConfig{
+		WebSessionCodexDefaultModel:           " DEFAULT ",
+		WebSessionCodexDefaultReasoningEffort: WebSessionCodexModelDefaultEffort,
+		WebSessionCodexDefaultPermissionLevel: WebSessionCodexStandardPermission,
+		WebSessionCodexDefaultSyncMode:        WebSessionCodexDefaultSetting,
+	})
+	if sentinels.WebSessionCodexDefaultModel != WebSessionCodexDefaultSetting ||
+		sentinels.WebSessionCodexDefaultReasoningEffort != WebSessionCodexModelDefaultEffort ||
+		sentinels.WebSessionCodexDefaultPermissionLevel != WebSessionCodexStandardPermission ||
+		sentinels.WebSessionCodexDefaultSyncMode != WebSessionCodexDefaultSetting {
+		t.Fatalf("expected explicit sentinel settings to survive normalization, got %#v", sentinels)
 	}
 }
 
@@ -169,7 +233,10 @@ func TestEffectiveWebSessionActiveCallTimeoutSecondsUsesDefaultTier(t *testing.T
 
 func TestMergeDeveloperConfigPreservesNestedTimeoutConfigForLegacyPayloads(t *testing.T) {
 	current := NormalizeDeveloperConfig(DeveloperConfig{
-		WebSessionCodexDefaultSyncMode: "deep",
+		WebSessionCodexDefaultModel:           "custom-model",
+		WebSessionCodexDefaultReasoningEffort: "medium",
+		WebSessionCodexDefaultPermissionLevel: "yolo",
+		WebSessionCodexDefaultSyncMode:        "deep",
 		WebSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig{
 			EnabledMode:          SettingModeOff,
 			TimeoutMode:          WebSessionActiveCallTimeoutModeCustom,
@@ -192,6 +259,12 @@ func TestMergeDeveloperConfigPreservesNestedTimeoutConfigForLegacyPayloads(t *te
 	}
 	if merged.WebSessionActiveCallTimeout != current.WebSessionActiveCallTimeout {
 		t.Fatalf("expected nested timeout config to be preserved, got %#v", merged.WebSessionActiveCallTimeout)
+	}
+	if merged.WebSessionCodexDefaultModel != current.WebSessionCodexDefaultModel ||
+		merged.WebSessionCodexDefaultReasoningEffort != current.WebSessionCodexDefaultReasoningEffort ||
+		merged.WebSessionCodexDefaultPermissionLevel != current.WebSessionCodexDefaultPermissionLevel ||
+		merged.WebSessionCodexDefaultSyncMode != current.WebSessionCodexDefaultSyncMode {
+		t.Fatalf("expected Codex defaults to be preserved for a legacy payload, got %#v", merged)
 	}
 }
 

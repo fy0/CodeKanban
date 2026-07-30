@@ -51,7 +51,10 @@ describe('settingsBackup helpers', () => {
               enableTerminalScrollback: false,
               renameSessionTitleEachCommand: false,
               enableTerminalStateSnapshot: true,
-              webSessionCodexDefaultSyncMode: 'fast',
+              webSessionCodexDefaultModel: 'default',
+              webSessionCodexDefaultReasoningEffort: 'default',
+              webSessionCodexDefaultPermissionLevel: 'default',
+              webSessionCodexDefaultSyncMode: 'default',
               webSessionActiveCallTimeout: {
                 enabledMode: 'default',
                 timeoutMode: 'default',

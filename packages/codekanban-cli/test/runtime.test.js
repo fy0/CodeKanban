@@ -143,8 +143,9 @@ test('CLI web-session create prints the created session JSON', { concurrency: fa
       assert.equal(body.agent, 'codex');
       assert.equal(body.workflowMode, 'plan');
       assert.equal(body.worktreeId, 'w-main');
-      assert.equal(body.model, 'gpt-5.5');
-      assert.equal(body.reasoningEffort, 'xhigh');
+      assert.equal(Object.hasOwn(body, 'model'), false);
+      assert.equal(Object.hasOwn(body, 'reasoningEffort'), false);
+      assert.equal(Object.hasOwn(body, 'permissionLevel'), false);
       assert.equal(body.autoRetryEnabled, false);
       assert.equal(body.autoRetryScope, 'network_only');
       assert.equal(body.autoRetryPreset, 'gentle_stop');

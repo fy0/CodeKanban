@@ -116,4 +116,17 @@ describe('webSessionApi.search', () => {
     );
     expect(result.session?.id).toBe('session-branch');
   });
+
+  it('omits unspecified session defaults so the server can resolve global settings', async () => {
+    postSendMock.mockResolvedValueOnce({
+      item: { id: 'session-created' },
+    });
+
+    await webSessionApi.create('project-1', { agent: 'codex' });
+
+    const requestBody = postMethodMock.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(requestBody).not.toHaveProperty('model');
+    expect(requestBody).not.toHaveProperty('reasoningEffort');
+    expect(requestBody).not.toHaveProperty('permissionLevel');
+  });
 });

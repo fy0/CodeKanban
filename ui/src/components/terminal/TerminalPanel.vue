@@ -509,6 +509,7 @@ import {
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
+import { useDeveloperConfigStore } from '@/stores/developerConfig';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useTerminalSessionSnapshotStore } from '@/stores/terminalSessionSnapshot';
@@ -526,8 +527,6 @@ import {
 } from '@/constants/terminalRenderMode';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { useLocale } from '@/composables/useLocale';
-import { http } from '@/api/http';
-import type { DeveloperConfig } from '@/types/models';
 import type {
   EditorPreference,
   TerminalQuickAction,
@@ -538,10 +537,7 @@ import {
   calculateCardTabIndicatorStyle,
   hiddenCardTabIndicatorStyle,
 } from '@/utils/cardTabIndicator';
-
-type ItemResponse<T> = {
-  item?: T;
-};
+import { cloneDeveloperConfig } from '@/utils/developerConfig';
 
 const props = defineProps<{
   projectId: string;
@@ -581,52 +577,10 @@ const panelSize = reactive({
 });
 const isResizing = ref(false);
 const shouldAutoFocusTerminal = ref(true);
-const DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS = 120;
-const DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS = {
-  useDefault: true,
-  mcp: true,
-  command: false,
-  tool: true,
-} as const;
-const developerConfigState = reactive<DeveloperConfig>({
-  enableTerminalScrollback: false,
-  renameSessionTitleEachCommand: false,
-  enableTerminalStateSnapshot: false,
-  webSessionCodexDefaultSyncMode: 'fast',
-  webSessionActiveCallTimeout: {
-    enabledMode: 'default',
-    timeoutMode: 'default',
-    customTimeoutSeconds: DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS,
-    promptTemplate:
-      'The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue.',
-    callKinds: { ...DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS },
-  },
-});
-const developerConfigLoaded = ref(false);
-const developerConfigLoading = ref(false);
+const developerConfigStore = useDeveloperConfigStore();
+const { config: developerConfigState, loading: developerConfigLoading } =
+  storeToRefs(developerConfigStore);
 const renameTitleToggleLoading = ref(false);
-let developerConfigLoadPromise: Promise<boolean> | null = null;
-
-function cloneDeveloperConfigState(): DeveloperConfig {
-  return {
-    enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
-    renameSessionTitleEachCommand: developerConfigState.renameSessionTitleEachCommand,
-    enableTerminalStateSnapshot: developerConfigState.enableTerminalStateSnapshot,
-    webSessionCodexDefaultSyncMode: developerConfigState.webSessionCodexDefaultSyncMode,
-    webSessionActiveCallTimeout: {
-      enabledMode: developerConfigState.webSessionActiveCallTimeout.enabledMode,
-      timeoutMode: developerConfigState.webSessionActiveCallTimeout.timeoutMode,
-      customTimeoutSeconds: developerConfigState.webSessionActiveCallTimeout.customTimeoutSeconds,
-      promptTemplate: developerConfigState.webSessionActiveCallTimeout.promptTemplate,
-      callKinds: {
-        useDefault: developerConfigState.webSessionActiveCallTimeout.callKinds.useDefault,
-        mcp: developerConfigState.webSessionActiveCallTimeout.callKinds.mcp,
-        command: developerConfigState.webSessionActiveCallTimeout.callKinds.command,
-        tool: developerConfigState.webSessionActiveCallTimeout.callKinds.tool,
-      },
-    },
-  };
-}
 
 // 右键菜单相关状态
 const contextMenuTab = ref<string | null>(null);
@@ -685,7 +639,9 @@ function resolveTabTaskId(tab: TerminalTabState | null | undefined) {
   return tab.taskId || getLinkedTaskId(tab.id);
 }
 
-const snapshotModeSupported = computed(() => developerConfigState.enableTerminalStateSnapshot);
+const snapshotModeSupported = computed(
+  () => developerConfigState.value.enableTerminalStateSnapshot
+);
 
 function formatSnapshotIntervalLabel(intervalMs: number | null | undefined) {
   return formatTerminalSnapshotInterval(intervalMs);
@@ -915,7 +871,7 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
       {
         label: t('terminal.renameTitleEachCommand'),
         key: 'rename-title-each-command',
-        icon: developerConfigState.renameSessionTitleEachCommand
+        icon: developerConfigState.value.renameSessionTitleEachCommand
           ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
           : undefined,
         disabled: developerConfigLoading.value || renameTitleToggleLoading.value,
@@ -924,88 +880,31 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
   },
 ]);
 
-async function ensureDeveloperConfigLoaded() {
-  if (developerConfigLoaded.value) {
+async function ensureDeveloperConfigLoaded(force = false) {
+  try {
+    await developerConfigStore.load(force);
     return true;
+  } catch (error) {
+    console.error('Failed to load developer config', error);
+    message.error(t('common.loadFailed'));
+    return false;
   }
-  if (developerConfigLoadPromise) {
-    return developerConfigLoadPromise;
-  }
-  developerConfigLoadPromise = (async () => {
-    developerConfigLoading.value = true;
-    try {
-      const response = await http
-        .Get<ItemResponse<DeveloperConfig>>('/system/developer-config', { cacheFor: 0 })
-        .send();
-      const config = response?.item;
-      developerConfigState.enableTerminalScrollback = config?.enableTerminalScrollback ?? false;
-      developerConfigState.renameSessionTitleEachCommand =
-        config?.renameSessionTitleEachCommand ?? false;
-      developerConfigState.enableTerminalStateSnapshot =
-        config?.enableTerminalStateSnapshot ?? false;
-      developerConfigState.webSessionCodexDefaultSyncMode =
-        config?.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast';
-      developerConfigState.webSessionActiveCallTimeout.enabledMode =
-        config?.webSessionActiveCallTimeout?.enabledMode === 'on' ||
-        config?.webSessionActiveCallTimeout?.enabledMode === 'off'
-          ? config.webSessionActiveCallTimeout.enabledMode
-          : 'default';
-      developerConfigState.webSessionActiveCallTimeout.timeoutMode =
-        config?.webSessionActiveCallTimeout?.timeoutMode === 'custom' ? 'custom' : 'default';
-      developerConfigState.webSessionActiveCallTimeout.customTimeoutSeconds = Math.max(
-        10,
-        Number(config?.webSessionActiveCallTimeout?.customTimeoutSeconds) ||
-          DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS
-      );
-      developerConfigState.webSessionActiveCallTimeout.promptTemplate =
-        config?.webSessionActiveCallTimeout?.promptTemplate?.trim() ||
-        developerConfigState.webSessionActiveCallTimeout.promptTemplate;
-      developerConfigState.webSessionActiveCallTimeout.callKinds.useDefault =
-        config?.webSessionActiveCallTimeout?.callKinds?.useDefault !== false;
-      if (developerConfigState.webSessionActiveCallTimeout.callKinds.useDefault) {
-        developerConfigState.webSessionActiveCallTimeout.callKinds.mcp =
-          DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS.mcp;
-        developerConfigState.webSessionActiveCallTimeout.callKinds.command =
-          DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS.command;
-        developerConfigState.webSessionActiveCallTimeout.callKinds.tool =
-          DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS.tool;
-      } else {
-        developerConfigState.webSessionActiveCallTimeout.callKinds.mcp =
-          config?.webSessionActiveCallTimeout?.callKinds?.mcp !== false;
-        developerConfigState.webSessionActiveCallTimeout.callKinds.command =
-          config?.webSessionActiveCallTimeout?.callKinds?.command === true;
-        developerConfigState.webSessionActiveCallTimeout.callKinds.tool =
-          config?.webSessionActiveCallTimeout?.callKinds?.tool !== false;
-      }
-      developerConfigLoaded.value = true;
-      return true;
-    } catch (error) {
-      console.error('Failed to load developer config', error);
-      message.error(t('common.loadFailed'));
-      return false;
-    } finally {
-      developerConfigLoading.value = false;
-      developerConfigLoadPromise = null;
-    }
-  })();
-  return developerConfigLoadPromise;
 }
 
 async function toggleRenameTitleEachCommandSetting() {
   if (renameTitleToggleLoading.value) {
     return;
   }
-  const ready = await ensureDeveloperConfigLoaded();
+  const ready = await ensureDeveloperConfigLoaded(true);
   if (!ready) {
     return;
   }
   renameTitleToggleLoading.value = true;
-  const nextValue = !developerConfigState.renameSessionTitleEachCommand;
+  const nextValue = !developerConfigState.value.renameSessionTitleEachCommand;
   try {
-    const payload = cloneDeveloperConfigState();
+    const payload = cloneDeveloperConfig(developerConfigState.value);
     payload.renameSessionTitleEachCommand = nextValue;
-    await http.Post('/system/developer-config/update', payload).send();
-    developerConfigState.renameSessionTitleEachCommand = nextValue;
+    await developerConfigStore.update(payload);
     message.success(t('common.saveSuccess'));
   } catch (error) {
     console.error('Failed to update rename title setting', error);
@@ -2352,8 +2251,9 @@ function normalizeTerminalEnter(value: string) {
 
 function resolveQuickActionCommand(id: string) {
   return (
-    terminalQuickActions.value.find(action => action.id === id && action.enabled)?.command?.trim() ??
-    ''
+    terminalQuickActions.value
+      .find(action => action.id === id && action.enabled)
+      ?.command?.trim() ?? ''
   );
 }
 

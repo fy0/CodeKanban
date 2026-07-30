@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"code-kanban/model/tables"
+	"code-kanban/utils"
 
 	"go.uber.org/zap"
 )
@@ -519,10 +520,16 @@ func scopedSourceTurnKey(threadID string, turnID string) string {
 }
 
 func (m *Manager) defaultCodexSyncMode() SyncMode {
+	configured := utils.WebSessionCodexDefaultSetting
 	if m.cfg.DefaultCodexSyncMode != nil {
-		return normalizeSyncMode(string(m.cfg.DefaultCodexSyncMode()))
+		if value := strings.TrimSpace(string(m.cfg.DefaultCodexSyncMode())); value != "" {
+			configured = value
+		}
 	}
-	return SyncModeFast
+	if strings.EqualFold(configured, utils.WebSessionCodexDefaultSetting) {
+		return normalizeSyncMode(utils.DefaultWebSessionCodexSyncMode)
+	}
+	return normalizeSyncMode(configured)
 }
 
 func (m *Manager) shouldPreserveExistingHistoryOnFastSync(session tables.WebSessionTable) bool {

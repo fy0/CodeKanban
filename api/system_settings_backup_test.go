@@ -179,6 +179,21 @@ func TestSystemSettingsBackupPreviewWarnsOnVersionDifference(t *testing.T) {
 	if !foundBreakingWarning {
 		t.Fatalf("expected breaking version warning, got %#v", payload.Item.Warnings)
 	}
+	foundPermissionSetting := false
+	for _, section := range payload.Item.Sections {
+		if section.Key != "server.developer" {
+			continue
+		}
+		for _, key := range section.ChangedKeys {
+			if key == "webSessionCodexDefaultPermissionLevel" {
+				foundPermissionSetting = true
+				break
+			}
+		}
+	}
+	if !foundPermissionSetting {
+		t.Fatalf("expected developer backup preview to include the Codex permission setting, got %#v", payload.Item.Sections)
+	}
 }
 
 func TestSystemSettingsBackupPreviewRejectsInvalidShell(t *testing.T) {
@@ -312,10 +327,13 @@ terminal:
 					Copilot:    true,
 				}),
 				Developer: loPtr(utils.DeveloperConfig{
-					EnableTerminalScrollback:       true,
-					RenameSessionTitleEachCommand:  true,
-					EnableTerminalStateSnapshot:    true,
-					WebSessionCodexDefaultSyncMode: "deep",
+					EnableTerminalScrollback:              true,
+					RenameSessionTitleEachCommand:         true,
+					EnableTerminalStateSnapshot:           true,
+					WebSessionCodexDefaultModel:           "custom-codex-model",
+					WebSessionCodexDefaultReasoningEffort: "high",
+					WebSessionCodexDefaultPermissionLevel: "yolo",
+					WebSessionCodexDefaultSyncMode:        "deep",
 					WebSessionActiveCallTimeout: utils.WebSessionActiveCallTimeoutConfig{
 						EnabledMode:          utils.SettingModeOn,
 						TimeoutMode:          utils.WebSessionActiveCallTimeoutModeCustom,

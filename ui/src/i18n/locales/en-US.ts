@@ -1456,7 +1456,21 @@ export default {
     renameSessionTitleEachCommand: 'Auto-update tab title on every instruction',
     renameSessionTitleEachCommandTip:
       'When enabled, each captured AI command refreshes the terminal title; when disabled, only the first captured command updates the title.',
+    webSessionCodexDefaultModel: 'Default Codex Model',
+    webSessionCodexDefaultModelOption: 'Default (GPT-5.6 Sol)',
+    webSessionCodexDefaultModelTip:
+      'Used for newly created Codex sessions. Choose a built-in model or enter a custom model name.',
+    webSessionCodexDefaultReasoningEffort: 'Default Codex Reasoning Effort',
+    webSessionCodexDefaultReasoningEffortOption: 'Default (Xhigh)',
+    webSessionCodexModelDefaultReasoningEffort: 'Model Default',
+    webSessionCodexDefaultReasoningEffortTip:
+      'Used for newly created Codex sessions. Available efforts follow the selected model capabilities.',
+    webSessionCodexDefaultPermissionLevel: 'Default Codex Permission',
+    webSessionCodexDefaultPermissionOption: 'Default (Elevated Access)',
+    webSessionCodexStandardPermission: 'Standard Access',
+    webSessionCodexDefaultPermissionLevelTip: 'Used for newly created Codex sessions.',
     webSessionCodexDefaultSyncMode: 'Default Codex Sync Mode',
+    webSessionCodexDefaultSyncModeOption: 'Default (Fast Sync)',
     webSessionCodexDefaultSyncModeTip:
       'Fast sync keeps using app-server for lower latency. Deep sync rebuilds the timeline from ai_session rollout logs and preserves tool calls and timestamps.',
     webSessionActiveCallTimeout: 'Timed-out active call recovery',

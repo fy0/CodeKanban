@@ -99,15 +99,18 @@ func persistedEventFromError(err error, eventID string) (Event, bool) {
 }
 
 type Config struct {
-	DataDir                 string
-	AttachmentSizeLimit     int64
-	RemoteAttachmentClient  *http.Client
-	ClaudePath              string
-	CCRPath                 string
-	CCRConfigPath           string
-	CodexPath               string
-	DefaultCodexSyncMode    func() SyncMode
-	ActiveCallTimeoutConfig func() utils.WebSessionActiveCallTimeoutConfig
+	DataDir                     string
+	AttachmentSizeLimit         int64
+	RemoteAttachmentClient      *http.Client
+	ClaudePath                  string
+	CCRPath                     string
+	CCRConfigPath               string
+	CodexPath                   string
+	DefaultCodexModel           func() string
+	DefaultCodexReasoningEffort func() ReasoningEffort
+	DefaultCodexPermissionLevel func() string
+	DefaultCodexSyncMode        func() SyncMode
+	ActiveCallTimeoutConfig     func() utils.WebSessionActiveCallTimeoutConfig
 }
 
 type Manager struct {
@@ -762,7 +765,9 @@ func (m *Manager) ListArchivedSessions(
 }
 
 func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (SessionSummary, error) {
-	if err := validateWebSessionPermissionLevel(params.Agent, params.PermissionLevel); err != nil {
+	agent := normalizeAgent(params.Agent)
+	permissionLevel := m.resolveSessionPermissionLevel(agent, params.PermissionLevel)
+	if err := validateWebSessionPermissionLevel(agent, permissionLevel); err != nil {
 		return SessionSummary{}, err
 	}
 	project, worktreeID, cwd, err := m.resolveContext(ctx, params.ProjectID, params.WorktreeID)
@@ -780,20 +785,22 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		return SessionSummary{}, err
 	}
 
+	modelName := m.resolveSessionModel(agent, params.Model)
+	reasoningEffort := m.resolveSessionReasoningEffort(agent, modelName, params.ReasoningEffort)
 	now := time.Now()
 	record := tables.WebSessionTable{
 		ProjectID:                         project.Id,
 		WorktreeID:                        nilIfEmpty(worktreeID),
 		OrderIndex:                        orderIndex,
-		Agent:                             string(normalizeAgent(params.Agent)),
+		Agent:                             string(agent),
 		ClaudeRuntime:                     string(normalizeClaudeRuntime(params.ClaudeRuntime)),
-		Backend:                           string(normalizeSessionBackend(params.Backend, normalizeAgent(params.Agent))),
+		Backend:                           string(normalizeSessionBackend(params.Backend, agent)),
 		Title:                             title,
 		TitleAuto:                         strings.TrimSpace(params.Title) == "",
-		Model:                             defaultModel(normalizeAgent(params.Agent), params.Model),
-		ReasoningEffort:                   string(defaultReasoningEffort(normalizeAgent(params.Agent), params.ReasoningEffort)),
+		Model:                             modelName,
+		ReasoningEffort:                   string(reasoningEffort),
 		WorkflowMode:                      string(normalizeWorkflowMode(params.WorkflowMode)),
-		PermissionLevel:                   string(normalizePermissionLevel(params.PermissionLevel)),
+		PermissionLevel:                   string(permissionLevel),
 		ActiveCallTimeoutEnabled:          params.ActiveCallTimeoutEnabled,
 		AutoRetryEnabled:                  params.AutoRetryEnabled,
 		AutoRetryScope:                    string(normalizeAutoRetryScope(params.AutoRetryScope)),
@@ -919,6 +926,7 @@ func (m *Manager) createImportedCodexSession(
 	}
 
 	now := time.Now()
+	modelName := m.resolveSessionModel(AgentCodex, source.Model)
 	record := tables.WebSessionTable{
 		ProjectID:                         project.Id,
 		WorktreeID:                        nil,
@@ -927,10 +935,10 @@ func (m *Manager) createImportedCodexSession(
 		Backend:                           string(defaultSessionBackend(AgentCodex)),
 		Title:                             title,
 		TitleAuto:                         titleAuto,
-		Model:                             defaultModel(AgentCodex, source.Model),
-		ReasoningEffort:                   string(defaultReasoningEffort(AgentCodex, "")),
+		Model:                             modelName,
+		ReasoningEffort:                   string(m.resolveSessionReasoningEffort(AgentCodex, modelName, "")),
 		WorkflowMode:                      string(WorkflowModeDefault),
-		PermissionLevel:                   string(PermissionLevelElevated),
+		PermissionLevel:                   string(m.resolveSessionPermissionLevel(AgentCodex, "")),
 		AutoRetryEnabled:                  false,
 		AutoRetryScope:                    string(AutoRetryScopeNetworkOnly),
 		AutoRetryPreset:                   string(AutoRetryPresetGentleStop),
@@ -1948,20 +1956,14 @@ func (m *Manager) UpdateAutoRetryDispatchPendingOnFailure(
 
 func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent) (SessionSummary, error) {
 	normalized := normalizeAgent(agent)
-	record, err := m.GetSession(ctx, sessionID)
-	if err != nil {
-		return SessionSummary{}, err
-	}
-	permissionLevel := effectivePermissionLevel(record)
-	if normalized == AgentClaude && permissionLevel == PermissionLevelDefault {
-		permissionLevel = PermissionLevelElevated
-	}
+	permissionLevel := m.resolveSessionPermissionLevel(normalized, "")
+	modelName := m.resolveSessionModel(normalized, "")
 	return m.updateFields(ctx, sessionID, map[string]any{
 		"agent":                              string(normalized),
 		"claude_runtime":                     string(defaultClaudeRuntime(normalized)),
 		"backend":                            string(defaultSessionBackend(normalized)),
-		"model":                              defaultModel(normalized, ""),
-		"reasoning_effort":                   string(defaultReasoningEffort(normalized, "")),
+		"model":                              modelName,
+		"reasoning_effort":                   string(m.resolveSessionReasoningEffort(normalized, modelName, "")),
 		"permission_level":                   string(permissionLevel),
 		"native_session_id":                  nil,
 		"source_kind":                        defaultSourceKind(normalized),
@@ -5839,19 +5841,92 @@ func defaultModel(agent Agent, provided string) string {
 		return strings.TrimSpace(provided)
 	}
 	if normalizeAgent(agent) == AgentCodex {
-		return "gpt-5.5"
+		return utils.DefaultWebSessionCodexModel
 	}
 	return "opus"
 }
 
 func defaultReasoningEffort(agent Agent, provided ReasoningEffort) ReasoningEffort {
-	if normalized := normalizeReasoningEffort(provided); normalized != ReasoningEffortDefault {
-		return normalized
+	raw := strings.ToLower(strings.TrimSpace(string(provided)))
+	if raw == string(ReasoningEffortDefault) {
+		return ReasoningEffortDefault
+	}
+	if raw != "" {
+		if normalized := normalizeReasoningEffort(provided); normalized != ReasoningEffortDefault {
+			return normalized
+		}
 	}
 	if normalizeAgent(agent) == AgentCodex {
-		return ReasoningEffortXHigh
+		return ReasoningEffort(utils.DefaultWebSessionCodexReasoningEffort)
 	}
 	return ReasoningEffortDefault
+}
+
+func (m *Manager) resolveSessionModel(agent Agent, provided string) string {
+	if strings.TrimSpace(provided) != "" || normalizeAgent(agent) != AgentCodex {
+		return defaultModel(agent, provided)
+	}
+	if m != nil && m.cfg.DefaultCodexModel != nil {
+		if configured := strings.TrimSpace(m.cfg.DefaultCodexModel()); configured != "" {
+			if strings.EqualFold(configured, utils.WebSessionCodexDefaultSetting) {
+				return defaultModel(agent, "")
+			}
+			return configured
+		}
+	}
+	return defaultModel(agent, "")
+}
+
+func (m *Manager) resolveSessionReasoningEffort(
+	agent Agent,
+	modelName string,
+	provided ReasoningEffort,
+) ReasoningEffort {
+	if strings.TrimSpace(string(provided)) != "" || normalizeAgent(agent) != AgentCodex {
+		return defaultReasoningEffort(agent, provided)
+	}
+	configured := strings.TrimSpace(utils.WebSessionCodexDefaultSetting)
+	if m != nil && m.cfg.DefaultCodexReasoningEffort != nil {
+		if value := strings.TrimSpace(string(m.cfg.DefaultCodexReasoningEffort())); value != "" {
+			configured = strings.ToLower(value)
+		}
+	}
+	switch configured {
+	case utils.WebSessionCodexDefaultSetting:
+		return normalizeCodexReasoningEffort(
+			modelName,
+			ReasoningEffort(utils.DefaultWebSessionCodexReasoningEffort),
+		)
+	case utils.WebSessionCodexModelDefaultEffort:
+		return ReasoningEffortDefault
+	default:
+		return normalizeCodexReasoningEffort(modelName, ReasoningEffort(configured))
+	}
+}
+
+func (m *Manager) resolveSessionPermissionLevel(
+	agent Agent,
+	provided PermissionLevel,
+) PermissionLevel {
+	if strings.TrimSpace(string(provided)) != "" || normalizeAgent(agent) != AgentCodex {
+		return normalizePermissionLevel(provided)
+	}
+	configured := utils.WebSessionCodexDefaultSetting
+	if m != nil && m.cfg.DefaultCodexPermissionLevel != nil {
+		if value := strings.TrimSpace(m.cfg.DefaultCodexPermissionLevel()); value != "" {
+			configured = strings.ToLower(value)
+		}
+	}
+	switch configured {
+	case utils.WebSessionCodexStandardPermission:
+		return PermissionLevelDefault
+	case string(PermissionLevelYolo):
+		return PermissionLevelYolo
+	case string(PermissionLevelElevated), utils.WebSessionCodexDefaultSetting:
+		return PermissionLevelElevated
+	default:
+		return PermissionLevel(utils.DefaultWebSessionCodexPermissionLevel)
+	}
 }
 
 func defaultSessionBackend(agent Agent) SessionBackend {

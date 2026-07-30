@@ -106,8 +106,8 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
         worktreeId: 'w-main',
         agent: 'codex',
         claudeRuntime: 'claude',
-        model: 'gpt-5.5',
-        reasoningEffort: 'xhigh',
+        model: 'gpt-5.4',
+        reasoningEffort: 'high',
         workflowMode: 'plan',
         permissionLevel: 'elevated',
         autoRetryEnabled: false,
@@ -220,6 +220,8 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
   const created = await client.createWebSession({
     projectId: 'p1',
     agent: 'codex',
+    model: 'gpt-5.4',
+    reasoningEffort: 'high',
     workflowMode: 'plan',
     permissionLevel: 'elevated',
   });
@@ -332,7 +334,7 @@ test('CodeKanbanClient createWebSession resolves projectName for remote-friendly
   assert.equal(created.worktreeId, 'w-main');
 });
 
-test('CodeKanbanClient createWebSession auto-selects main worktree and required defaults without fetching project metadata', async () => {
+test('CodeKanbanClient createWebSession auto-selects main worktree and delegates optional defaults to the server', async () => {
   const handlers = new Map([
     ['GET /api/v1/projects/p1/worktrees', () =>
       createJsonResponse({
@@ -346,10 +348,7 @@ test('CodeKanbanClient createWebSession auto-selects main worktree and required 
         worktreeId: 'w-main',
         agent: 'codex',
         claudeRuntime: 'claude',
-        model: 'gpt-5.5',
-        reasoningEffort: 'xhigh',
         workflowMode: 'default',
-        permissionLevel: 'elevated',
         autoRetryEnabled: false,
         autoRetryScope: 'network_only',
         autoRetryPreset: 'gentle_stop',

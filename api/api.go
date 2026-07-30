@@ -97,6 +97,15 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	webSessionManager, err := websession.NewManager(websession.Config{
 		DataDir:             utils.GetDataDir(),
 		AttachmentSizeLimit: cfg.AttachmentSizeLimit * 1024,
+		DefaultCodexModel: func() string {
+			return cfg.Developer.WebSessionCodexDefaultModel
+		},
+		DefaultCodexReasoningEffort: func() websession.ReasoningEffort {
+			return websession.ReasoningEffort(cfg.Developer.WebSessionCodexDefaultReasoningEffort)
+		},
+		DefaultCodexPermissionLevel: func() string {
+			return cfg.Developer.WebSessionCodexDefaultPermissionLevel
+		},
 		DefaultCodexSyncMode: func() websession.SyncMode {
 			return websession.SyncMode(cfg.Developer.WebSessionCodexDefaultSyncMode)
 		},

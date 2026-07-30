@@ -660,13 +660,59 @@
                   data-search-key="webSessionAutoRetryDispatchPendingOnFailure"
                 >
                   <n-space vertical size="small">
-                    <n-checkbox
-                      v-model:checked="webSessionAutoRetryDispatchPendingOnFailureValue"
-                    >
+                    <n-checkbox v-model:checked="webSessionAutoRetryDispatchPendingOnFailureValue">
                       {{ t('settings.webSessionAutoRetryDispatchPendingOnFailureEnabled') }}
                     </n-checkbox>
                     <span class="form-tip">{{
                       t('settings.webSessionAutoRetryDispatchPendingOnFailureTip')
+                    }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.webSessionCodexDefaultModel')"
+                  data-search-key="webSessionCodexDefaultModel"
+                >
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="developerForm.webSessionCodexDefaultModel"
+                      :options="webSessionCodexDefaultModelOptions"
+                      :disabled="developerLoading"
+                      filterable
+                      tag
+                      style="max-width: 320px"
+                    />
+                    <span class="form-tip">{{ t('settings.webSessionCodexDefaultModelTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.webSessionCodexDefaultReasoningEffort')"
+                  data-search-key="webSessionCodexDefaultReasoningEffort"
+                >
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="developerForm.webSessionCodexDefaultReasoningEffort"
+                      :options="webSessionCodexDefaultReasoningEffortOptions"
+                      :disabled="developerLoading"
+                      style="max-width: 320px"
+                    />
+                    <span class="form-tip">{{
+                      t('settings.webSessionCodexDefaultReasoningEffortTip')
+                    }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.webSessionCodexDefaultPermissionLevel')"
+                  data-search-key="webSessionCodexDefaultPermissionLevel"
+                >
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="developerForm.webSessionCodexDefaultPermissionLevel"
+                      :options="webSessionCodexDefaultPermissionLevelOptions"
+                      :disabled="developerLoading"
+                      style="max-width: 320px"
+                    />
+                    <span class="form-tip">{{
+                      t('settings.webSessionCodexDefaultPermissionLevelTip')
                     }}</span>
                   </n-space>
                 </n-form-item>
@@ -679,6 +725,7 @@
                       v-model:value="developerForm.webSessionCodexDefaultSyncMode"
                       :options="webSessionSyncModeOptions"
                       :disabled="developerLoading"
+                      style="max-width: 320px"
                     />
                     <span class="form-tip">{{
                       t('settings.webSessionCodexDefaultSyncModeTip')
@@ -1958,6 +2005,7 @@ import {
 import { useLocale } from '@/composables/useLocale';
 import { useResponsive } from '@/composables/useResponsive';
 import { useAuthStore, type AuthAccessConfig } from '@/stores/auth';
+import { useDeveloperConfigStore } from '@/stores/developerConfig';
 import { sanitizeSettingsSectionId, type SettingsSectionId } from '@/stores/settingsUi';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import {
@@ -2005,6 +2053,7 @@ import {
 } from '@/utils/themeMaintenanceWarning';
 import Apis from '@/api';
 import { http } from '@/api/http';
+import { webSessionApi } from '@/api/webSession';
 import { useReq, useInit } from '@/api/composable';
 import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
 import WebSessionHistoryCleanup from '@/components/settings/WebSessionHistoryCleanup.vue';
@@ -2012,9 +2061,24 @@ import type {
   AIAssistantStatusConfig,
   DeveloperConfig,
   AvailableShellsResponse,
-  WebSessionActiveCallTimeoutConfig,
+  WebSessionCodexDefaultReasoningEffort,
+  WebSessionCodexModelInfo,
+  WebSessionReasoningEffort,
   WorktreeConfig,
 } from '@/types/models';
+import {
+  CODEX_MODEL_OPTIONS,
+  defaultModelForAgent,
+  resolveCodexReasoningEfforts,
+} from '@/components/web-session/webSessionModelOptions';
+import { GENERIC_CODEX_REASONING_EFFORTS } from '@/constants/webSessionDefaults';
+import {
+  DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS,
+  DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS,
+  DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT,
+  applyDeveloperConfig,
+  sanitizeDeveloperConfig,
+} from '@/utils/developerConfig';
 import {
   getDailyTips,
   selectAnotherRandomDailyTipIndex,
@@ -2045,15 +2109,6 @@ type ShortcutTarget = 'terminal' | 'notepad';
 const SHELL_AUTO_VALUE = '__auto__';
 const SHELL_CUSTOM_VALUE = '__custom__';
 const DEFAULT_AUTH_PROXY_HEADER = 'X-Forwarded-For';
-const DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS = 120;
-const DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS = {
-  useDefault: true,
-  mcp: true,
-  command: false,
-  tool: true,
-} as const;
-const DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT =
-  'The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue.';
 const DEFAULT_SETTINGS_BACKUP_EXPORT_OPTIONS: SettingsBackupExportOptions = {
   includeServer: true,
   includeClient: true,
@@ -2091,6 +2146,8 @@ const message = useMessage();
 const dialog = useDialog();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
+const developerConfigStore = useDeveloperConfigStore();
+const { loading: developerLoading, saving: developerSaving } = storeToRefs(developerConfigStore);
 const {
   pageTitle,
   pageTitleSettingsLoaded,
@@ -2443,72 +2500,64 @@ const { send: updateAIStatus, loading: saveLoading } = useReq((config: AIAssista
   Apis.system.aiAssistantStatusUpdate({ data: config })
 );
 
-function sanitizeActiveCallTimeoutConfig(
-  value?: Partial<WebSessionActiveCallTimeoutConfig> | null
-): WebSessionActiveCallTimeoutConfig {
-  const useDefaultCallKinds = value?.callKinds?.useDefault !== false;
-  return {
-    enabledMode:
-      value?.enabledMode === 'on' || value?.enabledMode === 'off' ? value.enabledMode : 'default',
-    timeoutMode: value?.timeoutMode === 'custom' ? 'custom' : 'default',
-    customTimeoutSeconds: Math.max(
-      10,
-      Number(value?.customTimeoutSeconds) || DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS
-    ),
-    promptTemplate: value?.promptTemplate?.trim() || DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT,
-    callKinds: useDefaultCallKinds
-      ? { ...DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS }
-      : {
-          useDefault: false,
-          mcp: value?.callKinds?.mcp !== false,
-          command: value?.callKinds?.command === true,
-          tool: value?.callKinds?.tool !== false,
-        },
-  };
-}
-
-function sanitizeDeveloperConfig(value?: Partial<DeveloperConfig> | null): DeveloperConfig {
-  return {
-    enableTerminalScrollback: value?.enableTerminalScrollback ?? false,
-    renameSessionTitleEachCommand: value?.renameSessionTitleEachCommand ?? false,
-    enableTerminalStateSnapshot: value?.enableTerminalStateSnapshot ?? false,
-    webSessionCodexDefaultSyncMode:
-      value?.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast',
-    webSessionActiveCallTimeout: sanitizeActiveCallTimeoutConfig(
-      value?.webSessionActiveCallTimeout
-    ),
-  };
-}
-
-function applyDeveloperConfig(target: DeveloperConfig, source: DeveloperConfig) {
-  target.enableTerminalScrollback = source.enableTerminalScrollback;
-  target.renameSessionTitleEachCommand = source.renameSessionTitleEachCommand;
-  target.enableTerminalStateSnapshot = source.enableTerminalStateSnapshot;
-  target.webSessionCodexDefaultSyncMode = source.webSessionCodexDefaultSyncMode;
-  target.webSessionActiveCallTimeout.enabledMode = source.webSessionActiveCallTimeout.enabledMode;
-  target.webSessionActiveCallTimeout.timeoutMode = source.webSessionActiveCallTimeout.timeoutMode;
-  target.webSessionActiveCallTimeout.customTimeoutSeconds =
-    source.webSessionActiveCallTimeout.customTimeoutSeconds;
-  target.webSessionActiveCallTimeout.promptTemplate =
-    source.webSessionActiveCallTimeout.promptTemplate;
-  target.webSessionActiveCallTimeout.callKinds.useDefault =
-    source.webSessionActiveCallTimeout.callKinds.useDefault;
-  target.webSessionActiveCallTimeout.callKinds.mcp =
-    source.webSessionActiveCallTimeout.callKinds.mcp;
-  target.webSessionActiveCallTimeout.callKinds.command =
-    source.webSessionActiveCallTimeout.callKinds.command;
-  target.webSessionActiveCallTimeout.callKinds.tool =
-    source.webSessionActiveCallTimeout.callKinds.tool;
-}
-
 const developerForm = reactive<DeveloperConfig>(sanitizeDeveloperConfig());
 const developerOriginal = ref<DeveloperConfig | null>(null);
+const codexModelCatalog = ref<WebSessionCodexModelInfo[]>([]);
 const developerUsesCustomActiveCallTimeout = computed(
   () => developerForm.webSessionActiveCallTimeout.timeoutMode === 'custom'
 );
 const webSessionSyncModeOptions = computed(() => [
+  { label: t('settings.webSessionCodexDefaultSyncModeOption'), value: 'default' },
   { label: t('settings.webSessionSyncModeFast'), value: 'fast' },
   { label: t('settings.webSessionSyncModeDeep'), value: 'deep' },
+]);
+const webSessionCodexDefaultModelOptions = computed(() => [
+  { label: t('settings.webSessionCodexDefaultModelOption'), value: 'default' },
+  ...CODEX_MODEL_OPTIONS.map(option => ({
+    label: option.menuLabel || option.label,
+    value: option.value,
+  })),
+]);
+
+function reasoningEffortLabel(effort: WebSessionCodexDefaultReasoningEffort) {
+  if (effort === 'default') {
+    return t('settings.webSessionCodexDefaultReasoningEffortOption');
+  }
+  if (effort === 'model_default') {
+    return t('settings.webSessionCodexModelDefaultReasoningEffort');
+  }
+  const labels: Record<Exclude<WebSessionReasoningEffort, 'default'>, string> = {
+    none: 'Off',
+    minimal: 'Minimal',
+    low: 'Low',
+    medium: 'Mid',
+    high: 'High',
+    xhigh: 'Xhigh',
+    max: 'Max',
+    ultra: 'Ultra',
+  };
+  return labels[effort];
+}
+
+function supportedDefaultReasoningEfforts(model: string): WebSessionCodexDefaultReasoningEffort[] {
+  const effectiveModel = defaultModelForAgent('codex', model);
+  const supported = resolveCodexReasoningEfforts(effectiveModel, codexModelCatalog.value);
+  const explicitEfforts =
+    supported ?? GENERIC_CODEX_REASONING_EFFORTS.filter(value => value !== 'default');
+  return ['default', 'model_default', ...explicitEfforts];
+}
+
+const webSessionCodexDefaultReasoningEffortOptions = computed(() =>
+  supportedDefaultReasoningEfforts(developerForm.webSessionCodexDefaultModel).map(value => ({
+    label: reasoningEffortLabel(value),
+    value,
+  }))
+);
+const webSessionCodexDefaultPermissionLevelOptions = computed(() => [
+  { label: t('settings.webSessionCodexDefaultPermissionOption'), value: 'default' },
+  { label: t('settings.webSessionCodexStandardPermission'), value: 'standard' },
+  { label: t('webSession.permissionElevated'), value: 'elevated' },
+  { label: t('webSession.permissionYolo'), value: 'yolo' },
 ]);
 const developerBehaviorDirty = computed(() => {
   if (!developerOriginal.value) {
@@ -2525,6 +2574,12 @@ const developerSessionDirty = computed(() => {
     return false;
   }
   return (
+    developerForm.webSessionCodexDefaultModel !==
+      developerOriginal.value.webSessionCodexDefaultModel ||
+    developerForm.webSessionCodexDefaultReasoningEffort !==
+      developerOriginal.value.webSessionCodexDefaultReasoningEffort ||
+    developerForm.webSessionCodexDefaultPermissionLevel !==
+      developerOriginal.value.webSessionCodexDefaultPermissionLevel ||
     developerForm.webSessionCodexDefaultSyncMode !==
       developerOriginal.value.webSessionCodexDefaultSyncMode ||
     JSON.stringify(developerForm.webSessionActiveCallTimeout) !==
@@ -2541,12 +2596,21 @@ const developerTerminalDirty = computed(() => {
   );
 });
 
-const { send: fetchDeveloperConfig, loading: developerLoading } = useReq(() =>
-  http.Get<ItemResponse<DeveloperConfig>>('/system/developer-config')
-);
-
-const { send: updateDeveloperConfig, loading: developerSaving } = useReq(
-  (config: DeveloperConfig) => http.Post('/system/developer-config/update', config)
+watch(
+  () => developerConfigStore.config,
+  config => {
+    if (
+      developerBehaviorDirty.value ||
+      developerSessionDirty.value ||
+      developerTerminalDirty.value
+    ) {
+      return;
+    }
+    const next = sanitizeDeveloperConfig(config);
+    applyDeveloperConfig(developerForm, next);
+    developerOriginal.value = sanitizeDeveloperConfig(next);
+  },
+  { deep: true }
 );
 
 async function loadAIStatus() {
@@ -2573,10 +2637,9 @@ async function handleSaveAIStatus() {
   }
 }
 
-async function loadDeveloperConfig() {
+async function loadDeveloperConfig(force = true) {
   try {
-    const resp = await fetchDeveloperConfig();
-    const next = sanitizeDeveloperConfig(resp?.item);
+    const next = await developerConfigStore.load(force);
     applyDeveloperConfig(developerForm, next);
     developerOriginal.value = sanitizeDeveloperConfig(next);
   } catch (error) {
@@ -2588,15 +2651,35 @@ async function loadDeveloperConfig() {
 async function handleSaveDeveloperConfig() {
   try {
     const payload = sanitizeDeveloperConfig(developerForm);
-    await updateDeveloperConfig(payload);
-    applyDeveloperConfig(developerForm, payload);
-    developerOriginal.value = sanitizeDeveloperConfig(payload);
+    const saved = await developerConfigStore.update(payload);
+    applyDeveloperConfig(developerForm, saved);
+    developerOriginal.value = sanitizeDeveloperConfig(saved);
     message.success(t('common.saveSuccess'));
   } catch (error) {
     console.error('Failed to save developer config:', error);
     message.error(t('common.saveFailed'));
   }
 }
+
+async function loadCodexModelCatalog() {
+  try {
+    const config = await webSessionApi.runtimeConfig();
+    codexModelCatalog.value = config.models ?? [];
+  } catch {
+    codexModelCatalog.value = [];
+  }
+}
+
+watch(
+  [() => developerForm.webSessionCodexDefaultModel, () => codexModelCatalog.value],
+  ([model]) => {
+    const supported = supportedDefaultReasoningEfforts(model);
+    if (!supported.includes(developerForm.webSessionCodexDefaultReasoningEffort)) {
+      developerForm.webSessionCodexDefaultReasoningEffort = 'default';
+    }
+  },
+  { deep: true }
+);
 
 watch(
   () => developerForm.webSessionActiveCallTimeout.callKinds.useDefault,
@@ -2832,6 +2915,7 @@ const authAccessDirty = computed(() => {
 useInit(() => {
   loadAIStatus();
   loadDeveloperConfig();
+  void loadCodexModelCatalog();
   loadWorktreeSettings();
   loadShellsConfig();
   loadAuthAccessConfig();
@@ -3688,8 +3772,7 @@ const webSessionAutoContinuePresetValue = computed({
 
 const webSessionAutoRetryDispatchPendingOnFailureValue = computed({
   get: () => webSessionAutoRetryDispatchPendingOnFailure.value,
-  set: (value: boolean) =>
-    settingsStore.updateWebSessionAutoRetryDispatchPendingOnFailure(value),
+  set: (value: boolean) => settingsStore.updateWebSessionAutoRetryDispatchPendingOnFailure(value),
 });
 
 const terminalConnectionPolicyValue = computed({
@@ -4009,6 +4092,9 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
         t('settings.webSessionAutoContinuePreset'),
         t('settings.webSessionAutoRetryDispatchPendingOnFailure'),
         t('settings.webSessionQuickInputPinned'),
+        t('settings.webSessionCodexDefaultModel'),
+        t('settings.webSessionCodexDefaultReasoningEffort'),
+        t('settings.webSessionCodexDefaultPermissionLevel'),
         t('settings.webSessionCodexDefaultSyncMode'),
         t('settings.webSessionActiveCallTimeout'),
         t('settings.webSessionActiveCallTimeoutSeconds'),

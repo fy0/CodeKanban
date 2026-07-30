@@ -1390,7 +1390,21 @@ export default {
     renameSessionTitleEachCommand: '每条指令都自动更新终端标题',
     renameSessionTitleEachCommandTip:
       '开启后，每次 AI 捕获新的指令都会同步刷新终端标题；关闭时仅首次指令会更新标题',
+    webSessionCodexDefaultModel: 'Codex 默认模型',
+    webSessionCodexDefaultModelOption: '默认（GPT-5.6 Sol）',
+    webSessionCodexDefaultModelTip:
+      '用于之后新建的 Codex 会话。可选择内置模型，也可直接输入自定义模型名称。',
+    webSessionCodexDefaultReasoningEffort: 'Codex 默认推理强度',
+    webSessionCodexDefaultReasoningEffortOption: '默认（Xhigh）',
+    webSessionCodexModelDefaultReasoningEffort: '模型默认',
+    webSessionCodexDefaultReasoningEffortTip:
+      '用于之后新建的 Codex 会话；可选强度会根据当前默认模型的能力进行限制。',
+    webSessionCodexDefaultPermissionLevel: 'Codex 默认权限',
+    webSessionCodexDefaultPermissionOption: '默认（较高权限）',
+    webSessionCodexStandardPermission: '标准权限',
+    webSessionCodexDefaultPermissionLevelTip: '用于之后新建的 Codex 会话。',
     webSessionCodexDefaultSyncMode: 'Codex 会话默认同步方式',
+    webSessionCodexDefaultSyncModeOption: '默认（快速同步）',
     webSessionCodexDefaultSyncModeTip:
       '快速同步继续走 app-server，速度更快；深度同步从 ai_session 原始日志重建完整时间线，速度更慢但能保留工具调用与时间信息。',
     webSessionActiveCallTimeout: '活跃调用超时自动恢复',
