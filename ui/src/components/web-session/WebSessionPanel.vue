@@ -415,6 +415,7 @@
               @click.capture="handleTimelineLinkClick"
               @scroll="handleTimelineScroll"
               @wheel.passive="handleTimelineWheel"
+              @pointerdown.passive="handleTimelinePointerDown"
               @touchstart.passive="handleTimelineTouchStart"
               @touchmove.passive="handleTimelineTouchMove"
               @touchend.passive="handleTimelineTouchEnd"
@@ -487,6 +488,8 @@
                   :ref="element => setTimelineBlockRef(element, item)"
                   class="timeline-item"
                   :class="`kind-${item.kind}`"
+                  :data-timeline-key="item.key"
+                  :data-timeline-order-index="item.orderIndex"
                 >
                   <div v-if="!shouldHideTimelineMeta(item)" class="item-meta">
                     <span v-if="item.kind === 'user'" class="user-message-navigation">
@@ -3102,6 +3105,17 @@ import {
   type WebSessionTimelineScrollMetrics,
 } from '@/components/web-session/webSessionTimelineScroll';
 import {
+  findClosestWebSessionTimelineAnchor,
+  forgetWebSessionTimelinePosition,
+  getWebSessionTimelinePosition,
+  loadWebSessionTimelinePositionState,
+  persistWebSessionTimelinePositionState,
+  rememberWebSessionTimelinePosition,
+  resolveWebSessionTimelineAnchor,
+  resolveWebSessionTimelineRestoreScrollTop,
+  type WebSessionTimelinePosition,
+} from '@/components/web-session/webSessionTimelinePosition';
+import {
   canNavigateWebSessionUserMessage,
   resolveWebSessionUserMessageTarget,
   type WebSessionUserMessageNavigationDirection,
@@ -3229,6 +3243,9 @@ const DEFAULT_SESSION_SIDEBAR_WIDTH = 200;
 const MIN_SESSION_MAIN_WIDTH = 420;
 const WEB_SESSION_CATCH_UP_DEBOUNCE_MS = 150;
 const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
+const WEB_SESSION_TIMELINE_POSITION_DEBOUNCE_MS = 180;
+const WEB_SESSION_TIMELINE_POSITION_MAX_WAIT_MS = 600;
+const WEB_SESSION_TIMELINE_RESTORE_HISTORY_LIMIT = 120;
 const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
 const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
 const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
@@ -3540,6 +3557,12 @@ const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
 const devCyberPolicySessionId = ref('');
 const lastTimelineScrollTop = ref(0);
+const pendingTimelinePositionRestore = ref<{
+  projectId: string;
+  sessionId: string;
+  position: WebSessionTimelinePosition;
+  generation: number;
+} | null>(null);
 const expandedTools = ref<Record<string, boolean>>({});
 const imageViewPreviewSrcByToolId = ref<Record<string, string>>({});
 const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>({});
@@ -3644,6 +3667,10 @@ const pendingHistoryAnchor = ref<{
   previousTop: number;
 } | null>(null);
 const tabDragSortable = shallowRef<Sortable | null>(null);
+const timelinePositionStorage = resolveTimelinePositionStorage();
+let timelinePositionState = loadWebSessionTimelinePositionState(timelinePositionStorage);
+let timelinePositionRestoreGeneration = 0;
+let timelinePositionRestoreRunningGeneration = 0;
 let composerDragDepth = 0;
 let webSessionCatchUpTimer: number | null = null;
 let webSessionCatchUpToken = 0;
@@ -9902,9 +9929,7 @@ async function handleSessionSelect(sessionId: string) {
     return;
   }
   try {
-    if (await activateTabById(sessionId)) {
-      scrollToBottom(true);
-    }
+    await activateTabById(sessionId);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -9930,9 +9955,7 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       await router.push(buildProjectRouteLocation(item.projectId, sessionId));
       return;
     }
-    if (await activateTabById(sessionId)) {
-      scrollToBottom(true);
-    }
+    await activateTabById(sessionId);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -9958,7 +9981,6 @@ async function handleArchivedSidebarSessionSelect(item: CrossProjectSessionItem)
       return;
     }
     await openArchivedPreviewSession(item.session);
-    scrollToBottom(true);
   } catch (error) {
     clearArchivedPreviewSession();
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -10520,6 +10542,7 @@ async function performDeleteSession(sessionId: string): Promise<boolean> {
     if (!isDraftSession(session) && !isArchivedPreviewSession(session)) {
       await refreshArchivedSidebar();
     }
+    forgetTimelinePosition(session.projectId, sessionId);
     return true;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -12122,6 +12145,330 @@ async function handleAbortCurrent() {
   }
 }
 
+function resolveTimelinePositionStorage(): Storage | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function persistTimelinePositionStateNow() {
+  persistWebSessionTimelinePositionState(timelinePositionState, timelinePositionStorage);
+}
+
+const scheduleTimelinePositionPersist = useDebounceFn(
+  persistTimelinePositionStateNow,
+  WEB_SESSION_TIMELINE_POSITION_DEBOUNCE_MS,
+  { maxWait: WEB_SESSION_TIMELINE_POSITION_MAX_WAIT_MS }
+);
+
+function readRenderedTimelineAnchor(container: HTMLDivElement) {
+  const containerRect = container.getBoundingClientRect();
+  const elements = Array.from(
+    container.querySelectorAll<HTMLElement>('.timeline-item[data-timeline-key]')
+  );
+  let low = 0;
+  let high = elements.length - 1;
+  let firstVisibleIndex = -1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const rect = elements[middle].getBoundingClientRect();
+    if (rect.bottom > containerRect.top) {
+      firstVisibleIndex = middle;
+      high = middle - 1;
+    } else {
+      low = middle + 1;
+    }
+  }
+  const element = firstVisibleIndex >= 0 ? elements[firstVisibleIndex] : null;
+  if (!element) {
+    return null;
+  }
+  const key = element.dataset.timelineKey ?? '';
+  const orderIndex = Number(element.dataset.timelineOrderIndex);
+  const rect = element.getBoundingClientRect();
+  const candidates =
+    key && Number.isFinite(orderIndex)
+      ? [{ key, orderIndex, top: rect.top, bottom: rect.bottom }]
+      : [];
+  const anchor = resolveWebSessionTimelineAnchor(
+    candidates,
+    containerRect.top,
+    containerRect.bottom
+  );
+  if (!anchor) {
+    return null;
+  }
+  return {
+    key: anchor.key,
+    orderIndex: anchor.orderIndex,
+    offsetPx: anchor.top - containerRect.top,
+  };
+}
+
+function captureTimelinePosition(projectId: string, sessionId: string, persistImmediately = false) {
+  const container = timelineScrollRef.value;
+  if (!projectId || !sessionId || !container) {
+    return false;
+  }
+  const metrics = readTimelineScrollMetrics(container);
+  const followState = createWebSessionTimelineFollowState(metrics, autoFollowBottom.value);
+  const anchor = readRenderedTimelineAnchor(container);
+  timelinePositionState = rememberWebSessionTimelinePosition(
+    timelinePositionState,
+    projectId,
+    sessionId,
+    {
+      anchorKey: anchor?.key ?? '',
+      anchorOrderIndex: anchor?.orderIndex ?? null,
+      anchorOffsetPx: anchor?.offsetPx ?? 0,
+      scrollTop: Math.max(0, container.scrollTop),
+      followBottom: followState.autoFollowBottom,
+      updatedAt: Date.now(),
+    }
+  );
+  if (persistImmediately) {
+    persistTimelinePositionStateNow();
+  } else {
+    void scheduleTimelinePositionPersist();
+  }
+  return true;
+}
+
+const scheduleTimelinePositionCapture = useDebounceFn(
+  () => {
+    if (!props.isActive || pendingTimelinePositionRestore.value) {
+      return;
+    }
+    captureTimelinePosition(props.projectId, currentSession.value?.id ?? '');
+  },
+  WEB_SESSION_TIMELINE_POSITION_DEBOUNCE_MS,
+  { maxWait: WEB_SESSION_TIMELINE_POSITION_MAX_WAIT_MS }
+);
+
+function forgetTimelinePosition(projectId: string, sessionId: string) {
+  timelinePositionState = forgetWebSessionTimelinePosition(
+    timelinePositionState,
+    projectId,
+    sessionId
+  );
+  persistTimelinePositionStateNow();
+}
+
+function cancelTimelinePositionRestore() {
+  timelinePositionRestoreGeneration += 1;
+  pendingTimelinePositionRestore.value = null;
+}
+
+function cancelTimelinePositionRestoreForUserInteraction(container: HTMLDivElement) {
+  if (!pendingTimelinePositionRestore.value) {
+    return;
+  }
+  cancelTimelinePositionRestore();
+  resetBottomState(container, false);
+  resetMobileComposerScrollState(container);
+  void scheduleTimelinePositionCapture();
+}
+
+function isTimelinePositionRestoreCurrent(
+  generation: number,
+  projectId: string,
+  sessionId: string
+) {
+  return (
+    pendingTimelinePositionRestore.value?.generation === generation &&
+    timelinePositionRestoreGeneration === generation &&
+    props.projectId === projectId &&
+    currentSession.value?.id === sessionId &&
+    props.isActive
+  );
+}
+
+async function waitForTimelinePositionLayout() {
+  await nextTick();
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    return;
+  }
+  await new Promise<void>(resolve => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
+function getTimelineRestoreCandidates() {
+  return visibleBlocks.value.flatMap(block => {
+    const element = timelineBlockElements.get(block.key);
+    if (!element) {
+      return [];
+    }
+    return [{ key: block.key, orderIndex: block.orderIndex, element }];
+  });
+}
+
+function applyTimelinePositionRestore(
+  container: HTMLDivElement,
+  position: WebSessionTimelinePosition,
+  element?: HTMLElement
+) {
+  if (element) {
+    const containerRect = container.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    container.scrollTop = resolveWebSessionTimelineRestoreScrollTop(
+      container.scrollTop,
+      elementRect.top - containerRect.top,
+      position.anchorOffsetPx,
+      Math.max(0, container.scrollHeight - container.clientHeight)
+    );
+  } else {
+    container.scrollTop = Math.min(
+      Math.max(0, container.scrollHeight - container.clientHeight),
+      Math.max(0, position.scrollTop)
+    );
+  }
+  resetBottomState(container, false);
+  resetMobileComposerScrollState(container);
+}
+
+async function restorePendingTimelinePosition() {
+  const pending = pendingTimelinePositionRestore.value;
+  if (
+    !pending ||
+    timelinePositionRestoreRunningGeneration === pending.generation ||
+    !props.isActive
+  ) {
+    return;
+  }
+  const { generation, projectId, sessionId, position } = pending;
+  timelinePositionRestoreRunningGeneration = generation;
+  try {
+    await waitForTimelinePositionLayout();
+    while (isTimelinePositionRestoreCurrent(generation, projectId, sessionId)) {
+      const container = timelineScrollRef.value;
+      if (!container || container.clientHeight <= 0) {
+        return;
+      }
+      const meta = currentRealSession.value
+        ? webSessionStore.getHistoryMeta(sessionId)
+        : { hasMore: false, beforeCursor: '', total: 0, loading: false };
+      if (meta.loading) {
+        return;
+      }
+
+      const candidates = getTimelineRestoreCandidates();
+      const exact = position.anchorKey
+        ? candidates.find(candidate => candidate.key === position.anchorKey)
+        : undefined;
+      if (exact) {
+        applyTimelinePositionRestore(container, position, exact.element);
+        pendingTimelinePositionRestore.value = null;
+        void scheduleTimelinePositionCapture();
+        ensureTimelineHistoryFilled();
+        return;
+      }
+
+      const minimumOrderIndex = candidates.reduce(
+        (minimum, candidate) => Math.min(minimum, candidate.orderIndex),
+        Number.POSITIVE_INFINITY
+      );
+      const needsEarlierHistory =
+        position.anchorOrderIndex != null &&
+        (!Number.isFinite(minimumOrderIndex) || minimumOrderIndex > position.anchorOrderIndex);
+      if (needsEarlierHistory && currentRealSession.value && meta.hasMore && meta.beforeCursor) {
+        const previousCursor = meta.beforeCursor;
+        try {
+          await webSessionStore.loadMoreHistory(
+            sessionId,
+            WEB_SESSION_TIMELINE_RESTORE_HISTORY_LIMIT
+          );
+        } catch (error) {
+          console.warn('[Web Session] Failed to restore timeline history', {
+            sessionId,
+            error,
+          });
+          applyTimelinePositionRestore(container, position);
+          pendingTimelinePositionRestore.value = null;
+          void scheduleTimelinePositionCapture();
+          return;
+        }
+        if (!isTimelinePositionRestoreCurrent(generation, projectId, sessionId)) {
+          return;
+        }
+        const nextMeta = webSessionStore.getHistoryMeta(sessionId);
+        await waitForTimelinePositionLayout();
+        if (
+          nextMeta.beforeCursor === previousCursor &&
+          nextMeta.hasMore === meta.hasMore &&
+          getTimelineRestoreCandidates().length === candidates.length
+        ) {
+          const latestContainer = timelineScrollRef.value;
+          if (latestContainer) {
+            applyTimelinePositionRestore(latestContainer, position);
+          }
+          pendingTimelinePositionRestore.value = null;
+          void scheduleTimelinePositionCapture();
+          return;
+        }
+        continue;
+      }
+
+      const closest = findClosestWebSessionTimelineAnchor(
+        candidates,
+        position.anchorKey,
+        position.anchorOrderIndex
+      );
+      applyTimelinePositionRestore(container, position, closest?.element);
+      pendingTimelinePositionRestore.value = null;
+      void scheduleTimelinePositionCapture();
+      ensureTimelineHistoryFilled();
+      return;
+    }
+  } finally {
+    if (timelinePositionRestoreRunningGeneration === generation) {
+      timelinePositionRestoreRunningGeneration = 0;
+    }
+  }
+}
+
+function beginTimelinePositionRestore(projectId: string, sessionId: string) {
+  cancelTimelinePositionRestore();
+  if (!projectId || !sessionId) {
+    return;
+  }
+  const position = getWebSessionTimelinePosition(timelinePositionState, projectId, sessionId);
+  if (!position || position.followBottom) {
+    autoFollowBottom.value = true;
+    showJumpToBottom.value = false;
+    if (props.isActive) {
+      scrollToBottom(true);
+    }
+    return;
+  }
+
+  const generation = timelinePositionRestoreGeneration;
+  autoFollowBottom.value = false;
+  showJumpToBottom.value = true;
+  lastTimelineScrollTop.value = position.scrollTop;
+  pendingTimelinePositionRestore.value = {
+    projectId,
+    sessionId,
+    position,
+    generation,
+  };
+  void restorePendingTimelinePosition();
+}
+
+function handleTimelinePositionPageHide() {
+  if (!pendingTimelinePositionRestore.value) {
+    captureTimelinePosition(props.projectId, currentSession.value?.id ?? '', true);
+  }
+  persistTimelinePositionStateNow();
+}
+
 function syncScrollToBottom() {
   const container = timelineScrollRef.value;
   if (!container) {
@@ -12132,6 +12479,9 @@ function syncScrollToBottom() {
   showJumpToBottom.value = false;
   lastTimelineScrollTop.value = container.scrollTop;
   resetMobileComposerScrollState(container);
+  if (!pendingTimelinePositionRestore.value) {
+    void scheduleTimelinePositionCapture();
+  }
 }
 
 function scheduleScrollToBottom(force = false) {
@@ -12376,10 +12726,22 @@ function handleTimelineWheel(event: WheelEvent) {
   if (!container) {
     return;
   }
+  cancelTimelinePositionRestoreForUserInteraction(container);
   handleMobileTimelineBottomScroll(container, event.deltaY);
 }
 
+function handleTimelinePointerDown(event: PointerEvent) {
+  const container = event.currentTarget as HTMLDivElement | null;
+  if (container) {
+    cancelTimelinePositionRestoreForUserInteraction(container);
+  }
+}
+
 function handleTimelineTouchStart(event: TouchEvent) {
+  const container = event.currentTarget as HTMLDivElement | null;
+  if (container) {
+    cancelTimelinePositionRestoreForUserInteraction(container);
+  }
   mobileTimelineTouchY = event.touches[0]?.clientY ?? null;
 }
 
@@ -12404,9 +12766,13 @@ function handleTimelineScroll(event: Event) {
   if (!container) {
     return;
   }
+  if (!props.isActive || pendingTimelinePositionRestore.value) {
+    return;
+  }
   const nearTop = container.scrollTop < 120;
   updateBottomState(container);
   handleMobileTimelineScrollForComposer(container);
+  void scheduleTimelinePositionCapture();
   if (
     nearTop &&
     !pendingHistoryAnchor.value &&
@@ -12902,7 +13268,6 @@ async function performMobileSessionSelection(
   try {
     if (action.type === 'open-archived-preview') {
       await openArchivedPreviewSession(session);
-      scrollToBottom(true);
       return;
     }
     if (action.type === 'navigate-project') {
@@ -13290,8 +13655,17 @@ watch(
 );
 
 watch(
-  () => currentSession.value?.id,
-  sessionId => {
+  () => [props.projectId, currentSession.value?.id ?? ''] as const,
+  ([projectId, sessionId], previous) => {
+    const [previousProjectId, previousSessionId] = previous ?? ['', ''];
+    if (
+      previousProjectId &&
+      previousSessionId &&
+      (previousProjectId !== projectId || previousSessionId !== sessionId)
+    ) {
+      captureTimelinePosition(previousProjectId, previousSessionId, true);
+    }
+    cancelTimelinePositionRestore();
     stopWebSessionCatchUp('session-change');
     streamingMarkdownController.clear();
     pendingHistoryAnchor.value = null;
@@ -13319,8 +13693,7 @@ watch(
     draftWorkflowMode.value = session.workflowMode;
     draftPermissionLevel.value = session.permissionLevel;
     expandedTools.value = {};
-    autoFollowBottom.value = true;
-    scrollToBottom(true);
+    beginTimelinePositionRestore(projectId, sessionId);
     updateActiveTabIndicator();
     syncActiveTabIntoView();
     if (!isDraftSession(session)) {
@@ -13510,6 +13883,10 @@ watch(
 
 watch(timelineContentVersion, async () => {
   await nextTick();
+  if (pendingTimelinePositionRestore.value) {
+    void restorePendingTimelinePosition();
+    return;
+  }
   if (restoreHistoryAnchor()) {
     markSessionViewed(currentRealSession.value?.id);
     ensureTimelineHistoryFilled();
@@ -13527,6 +13904,18 @@ watch(timelineContentVersion, async () => {
   markSessionViewed(currentRealSession.value?.id);
   ensureTimelineHistoryFilled();
 });
+
+watch(
+  () =>
+    currentRealSession.value
+      ? `${currentRealSession.value.id}:${historyMeta.value.loading ? 1 : 0}:${historyMeta.value.beforeCursor}`
+      : '',
+  () => {
+    if (pendingTimelinePositionRestore.value && !historyMeta.value.loading) {
+      void restorePendingTimelinePosition();
+    }
+  }
+);
 
 watch(currentDraftSessionId, () => {
   clearComposerTransferError();
@@ -13565,12 +13954,18 @@ watch(
   () => props.isActive,
   active => {
     if (!active) {
+      if (!pendingTimelinePositionRestore.value) {
+        captureTimelinePosition(props.projectId, currentSession.value?.id ?? '', true);
+      }
       webSessionStore.trimInactiveSessionEvents(currentRealSession.value?.id || '');
       mobileKeyboard.reset();
       setMobileComposerFocusState(false);
       return;
     }
     refreshTabHeaderLayout();
+    if (currentSession.value?.id) {
+      beginTimelinePositionRestore(props.projectId, currentSession.value.id);
+    }
     if (!isDocumentVisible() || !currentRealSession.value?.id) {
       return;
     }
@@ -13592,12 +13987,20 @@ useResizeObserver(timelineListRef, () => {
   if (!currentSession.value) {
     return;
   }
+  if (pendingTimelinePositionRestore.value) {
+    void restorePendingTimelinePosition();
+    return;
+  }
   scheduleScrollToBottom();
 });
 
 useResizeObserver(timelineScrollRef, entries => {
   const container = entries[0]?.target as HTMLDivElement | undefined;
   if (!container || !currentSession.value) {
+    return;
+  }
+  if (pendingTimelinePositionRestore.value) {
+    void restorePendingTimelinePosition();
     return;
   }
   if (autoFollowBottom.value) {
@@ -13647,6 +14050,7 @@ onMounted(() => {
   }
   window.addEventListener('focus', handleWebSessionWindowFocus);
   window.addEventListener('pageshow', handleWebSessionWindowPageShow);
+  window.addEventListener('pagehide', handleTimelinePositionPageHide);
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', handleWebSessionDocumentVisibilityChange);
   }
@@ -13657,12 +14061,17 @@ onMounted(() => {
     updateActiveTabIndicator();
     syncActiveTabIntoView();
     if (currentSession.value) {
-      syncScrollToBottom();
+      beginTimelinePositionRestore(props.projectId, currentSession.value.id);
     }
   });
 });
 
 onBeforeUnmount(() => {
+  if (!pendingTimelinePositionRestore.value) {
+    captureTimelinePosition(props.projectId, currentSession.value?.id ?? '', true);
+  }
+  persistTimelinePositionStateNow();
+  cancelTimelinePositionRestore();
   cancelSidebarSearchRequest();
   persistActiveUserInputDraft();
   realSessionSnapshotLoadController.cancel();
@@ -13692,6 +14101,7 @@ onBeforeUnmount(() => {
   sidebarResizeObserver = null;
   window.removeEventListener('focus', handleWebSessionWindowFocus);
   window.removeEventListener('pageshow', handleWebSessionWindowPageShow);
+  window.removeEventListener('pagehide', handleTimelinePositionPageHide);
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handleWebSessionDocumentVisibilityChange);
   }
