@@ -1008,7 +1008,7 @@ func TestHandleGoalSetCommandRejectsOldCodexVersion(t *testing.T) {
 	if conn.frames[0].Kind != "err" {
 		t.Fatalf("expected error frame, got %#v", conn.frames[0])
 	}
-	expected := "Goal mode requires Codex >= 0.133.0. Current version: 0.132.9."
+	expected := "Codex web sessions require Codex >= 0.146.0. Current version: 0.132.9."
 	if conn.frames[0].Message != expected {
 		t.Fatalf("expected message %q, got %q", expected, conn.frames[0].Message)
 	}
@@ -1419,6 +1419,182 @@ func TestManagerAppendAndBroadcastPersistsArchivedHistoryWithoutRealtimeFrames(t
 	}
 }
 
+func TestManagerAppendAndBroadcastContinuesAfterDurableSeqAheadOfDatabase(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Durable event sequence", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if err := manager.store.appendEvent(session.ID, Event{
+		ID:        "evt_durable_only",
+		Seq:       7,
+		Type:      "note",
+		Timestamp: time.Now(),
+		Payload:   map[string]any{"txt": "already durable"},
+	}); err != nil {
+		t.Fatalf("append durable-only event: %v", err)
+	}
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	appended, err := manager.appendAndBroadcast(context.Background(), session.ID, record, Event{
+		ID:        "evt_after_durable",
+		Type:      "note",
+		Timestamp: time.Now(),
+		Payload:   map[string]any{"txt": "next event"},
+	})
+	if err != nil {
+		t.Fatalf("appendAndBroadcast returned error: %v", err)
+	}
+	if appended.Seq != 8 {
+		t.Fatalf("expected sequence 8 after durable sequence 7, got %d", appended.Seq)
+	}
+}
+
+func TestManagerNextEventSeqRejectsCorruptDurableTail(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Unreadable durable sequence", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if err := manager.store.ensureSessionDir(session.ID); err != nil {
+		t.Fatalf("ensure session directory: %v", err)
+	}
+
+	valid := `{"id":"evt-7","seq":7,"type":"note","timestamp":"2026-07-30T00:00:00Z"}` + "\n"
+	tests := []struct {
+		name string
+		tail string
+		want string
+	}{
+		{name: "incomplete trailing event", tail: `{"id":"evt-8","seq":8`, want: "incomplete trailing event"},
+		{name: "malformed complete event", tail: "not-json\n", want: "decode web session history tail"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.WriteFile(manager.store.historyPath(session.ID), []byte(valid+test.tail), 0o600); err != nil {
+				t.Fatalf("write corrupt durable tail: %v", err)
+			}
+			state := &sessionEventState{}
+			if _, err := manager.nextEventSeq(context.Background(), session.ID, state); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected durable sequence read error containing %q, got %v", test.want, err)
+			}
+			if state.seqInitialized {
+				t.Fatal("failed durable sequence read must not initialize event state")
+			}
+		})
+	}
+}
+
+func TestStoreLatestEventSeqReadsLargeTrailingEvent(t *testing.T) {
+	manager, session := newTextDeltaTestManager(t)
+	largeText := strings.Repeat("x", 8*1024*1024+1)
+	if err := manager.store.appendEvent(session.ID, Event{
+		ID:        "evt-large",
+		Seq:       7,
+		Type:      "note",
+		Timestamp: time.Now(),
+		Payload:   map[string]any{"txt": largeText},
+	}); err != nil {
+		t.Fatalf("append large durable event: %v", err)
+	}
+	seq, err := manager.store.latestEventSeq(session.ID)
+	if err != nil || seq != 7 {
+		t.Fatalf("latestEventSeq for large trailing event = %d, %v; want 7, nil", seq, err)
+	}
+}
+
+func TestManagerRetriesPersistedEventProjectionWithoutReappend(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Persisted projection retry", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	state := manager.sessionEventState(session.ID)
+	state.mu.Lock()
+	state.seqInitialized = true
+	state.lastSeq = 0
+	state.mu.Unlock()
+
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	appended, err := manager.appendAndBroadcast(cancelledCtx, session.ID, *session, Event{
+		ID:        "evt-projection-retry",
+		Type:      "txt_d",
+		RunID:     "run-1",
+		ParentID:  "message-1",
+		Timestamp: time.Now(),
+		Payload:   map[string]any{"mid": "message-1", "txt": "project me once"},
+	})
+	if err == nil {
+		t.Fatal("expected the cancelled projection to fail")
+	}
+	persisted, ok := persistedEventFromError(err, "evt-projection-retry")
+	if !ok || persisted.Seq != 1 || appended.ID != "" {
+		t.Fatalf("expected a classified persisted event, appended=%#v persisted=%#v ok=%v err=%v", appended, persisted, ok, err)
+	}
+
+	events, err := manager.store.readEvents(session.ID)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("expected one durable event before projection retry, events=%#v err=%v", events, err)
+	}
+
+	var window HistoryWindow
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		window, err = manager.loadHistoryWindow(context.Background(), session.ID, 10, nil)
+		if err == nil && len(window.Items) == 1 && window.Items[0].Text == "project me once" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil || len(window.Items) != 1 || window.Items[0].Text != "project me once" {
+		t.Fatalf("background projection retry did not restore the cache: window=%#v err=%v", window, err)
+	}
+
+	events, err = manager.store.readEvents(session.ID)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("projection retry must not reappend JSONL, events=%#v err=%v", events, err)
+	}
+	state.mu.Lock()
+	queued := len(state.projectionRetries)
+	timer := state.projectionTimer
+	state.mu.Unlock()
+	if queued != 0 || timer != nil {
+		t.Fatalf("projection retry did not drain cleanly: queued=%d timer=%v", queued, timer)
+	}
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil || record.LastEventSeq != 1 {
+		t.Fatalf("projection retry did not restore runtime sequence: seq=%d err=%v", record.LastEventSeq, err)
+	}
+}
+
+func TestPersistedEventFromErrorRequiresMatchingEvent(t *testing.T) {
+	persisted := Event{ID: "evt-1", Seq: 3}
+	err := eventPersistedError{event: persisted, err: errors.New("cache unavailable")}
+	if event, ok := persistedEventFromError(err, "evt-1"); !ok || event.Seq != 3 {
+		t.Fatalf("expected matching persisted event, got %#v ok=%v", event, ok)
+	}
+	if _, ok := persistedEventFromError(err, "evt-2"); ok {
+		t.Fatal("different event id must not be classified as persisted")
+	}
+}
+
 func TestParseCodexContextWindowRootLevelOnly(t *testing.T) {
 	raw := `
 model_context_window = 1000000 # root setting
@@ -1632,7 +1808,7 @@ func TestGetCodexRuntimeConfigIncludesBinaryCapabilities(t *testing.T) {
 
 	manager, err := NewManager(Config{
 		DataDir:    t.TempDir(),
-		CodexPath:  writeFakeCodexVersionCLI(t, "0.133.0"),
+		CodexPath:  writeFakeCodexVersionCLI(t, "0.146.0"),
 		ClaudePath: writeFakeClaudeStreamCLI(t),
 	}, zap.NewNop())
 	if err != nil {
@@ -1646,14 +1822,31 @@ func TestGetCodexRuntimeConfigIncludesBinaryCapabilities(t *testing.T) {
 	if !config.HasClaudeCode {
 		t.Fatal("expected hasClaudeCode true")
 	}
-	if config.CodexVersion == nil || *config.CodexVersion != "0.133.0" {
-		t.Fatalf("expected codexVersion 0.133.0, got %#v", config.CodexVersion)
+	if config.CodexVersion == nil || *config.CodexVersion != "0.146.0" {
+		t.Fatalf("expected codexVersion 0.146.0, got %#v", config.CodexVersion)
+	}
+	if !config.SupportsWebSession {
+		t.Fatal("expected supportsWebSession true")
+	}
+	if config.WebSessionMinVersion != "0.146.0" {
+		t.Fatalf("expected webSessionMinCodexVersion 0.146.0, got %q", config.WebSessionMinVersion)
 	}
 	if !config.SupportsGoalMode {
 		t.Fatal("expected supportsGoalMode true")
 	}
 	if config.GoalModeMinVersion != "0.133.0" {
 		t.Fatalf("expected goalModeMinVersion 0.133.0, got %q", config.GoalModeMinVersion)
+	}
+	raw, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("marshal runtime config: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal runtime config: %v", err)
+	}
+	if payload["supportsWebSession"] != true || payload["webSessionMinCodexVersion"] != "0.146.0" {
+		t.Fatalf("unexpected web-session capability payload: %#v", payload)
 	}
 }
 
@@ -1663,7 +1856,7 @@ func TestGetCodexRuntimeConfigGoalModeDisabledForOldVersion(t *testing.T) {
 
 	manager, err := NewManager(Config{
 		DataDir:   t.TempDir(),
-		CodexPath: writeFakeCodexVersionCLI(t, "0.132.9"),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.145.9"),
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
@@ -1673,11 +1866,79 @@ func TestGetCodexRuntimeConfigGoalModeDisabledForOldVersion(t *testing.T) {
 	if !config.HasCodex {
 		t.Fatal("expected hasCodex true")
 	}
-	if config.CodexVersion == nil || *config.CodexVersion != "0.132.9" {
-		t.Fatalf("expected codexVersion 0.132.9, got %#v", config.CodexVersion)
+	if config.CodexVersion == nil || *config.CodexVersion != "0.145.9" {
+		t.Fatalf("expected codexVersion 0.145.9, got %#v", config.CodexVersion)
+	}
+	if config.SupportsWebSession {
+		t.Fatal("expected supportsWebSession false")
 	}
 	if config.SupportsGoalMode {
 		t.Fatal("expected supportsGoalMode false")
+	}
+}
+
+func TestGetCodexRuntimeConfigWebSessionDisabledForUnknownVersion(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "unknown"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	config := manager.GetCodexRuntimeConfig()
+	if !config.HasCodex {
+		t.Fatal("expected hasCodex true")
+	}
+	if config.CodexVersion != nil {
+		t.Fatalf("expected unknown codexVersion, got %#v", config.CodexVersion)
+	}
+	if config.SupportsWebSession {
+		t.Fatal("expected supportsWebSession false")
+	}
+	if config.WebSessionMinVersion != "0.146.0" {
+		t.Fatalf("expected webSessionMinCodexVersion 0.146.0, got %q", config.WebSessionMinVersion)
+	}
+}
+
+func TestCodexWebSessionSupportErrorReportsVersionState(t *testing.T) {
+	oldVersion := "0.145.9"
+	tests := []struct {
+		name     string
+		config   CodexRuntimeConfig
+		expected string
+	}{
+		{
+			name: "detected old version",
+			config: CodexRuntimeConfig{
+				HasCodex:             true,
+				CodexVersion:         &oldVersion,
+				WebSessionMinVersion: "0.146.0",
+			},
+			expected: "Codex web sessions require Codex >= 0.146.0. Current version: 0.145.9.",
+		},
+		{
+			name: "unknown version",
+			config: CodexRuntimeConfig{
+				HasCodex:             true,
+				WebSessionMinVersion: "0.146.0",
+			},
+			expected: "Codex web sessions require Codex >= 0.146.0. The installed Codex version could not be determined.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := codexWebSessionSupportError(test.config)
+			if err == nil || err.Error() != test.expected {
+				t.Fatalf("expected error %q, got %v", test.expected, err)
+			}
+			if !errors.Is(err, ErrCodexWebSessionUnavailable) {
+				t.Fatalf("expected runtime-unavailable classification, got %v", err)
+			}
+		})
 	}
 }
 
@@ -2962,6 +3223,9 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	manager.mu.RUnlock()
 	if run == nil {
 		t.Fatal("expected active run while root turn is still running")
+	}
+	if run.codexRolloutMonitorSnapshot() == nil {
+		t.Fatal("expected a fresh Codex thread to monitor its rollout")
 	}
 	run.mu.Lock()
 	_, tracksChildCommand := run.activeCalls["child_command"]
@@ -6781,7 +7045,23 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 func writeFakeCodexVersionCLI(t *testing.T, version string) string {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "fake-codex-version.sh")
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(dir, "fake-codex-version.cmd")
+		script := fmt.Sprintf(`@echo off
+if "%%~1"=="--version" (
+  echo codex %s
+  exit /b 0
+)
+exit /b 1
+`, version)
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			t.Fatalf("write fake codex version cli failed: %v", err)
+		}
+		return path
+	}
+
+	path := filepath.Join(dir, "fake-codex-version.sh")
 	script := fmt.Sprintf(`#!/bin/sh
 if [ "$1" = "--version" ]; then
   printf 'codex %s\n'
@@ -6802,10 +7082,11 @@ exit 1
 func writeFakeCodexModelCatalogCLI(t *testing.T) string {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "fake-codex-model-catalog.js")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-codex-model-catalog.js")
 	script := `#!/usr/bin/env node
 if (process.argv.includes('--version')) {
-  process.stdout.write('codex 0.144.1\n');
+  process.stdout.write('codex 0.146.0\n');
   process.exit(0);
 }
 const readline = require('readline');
@@ -6840,6 +7121,14 @@ input.on('line', line => {
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake Codex model catalog CLI failed: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		cmdPath := filepath.Join(dir, "fake-codex-model-catalog.cmd")
+		wrapper := "@echo off\r\nnode \"%~dp0fake-codex-model-catalog.js\" %*\r\nexit /b %ERRORLEVEL%\r\n"
+		if err := os.WriteFile(cmdPath, []byte(wrapper), 0o755); err != nil {
+			t.Fatalf("write fake Codex model catalog wrapper failed: %v", err)
+		}
+		return cmdPath
 	}
 	return path
 }
@@ -6930,15 +7219,17 @@ func writeFakeCodexAppServerCLI(t *testing.T, mode string) string {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fake-codex-app-server.js")
+	rolloutPath := filepath.Join(dir, "fake-codex-rollout.jsonl")
 	script := fmt.Sprintf(`#!/usr/bin/env node
 if (process.argv.includes('--version')) {
-  process.stdout.write('codex 0.137.0\n');
+  process.stdout.write('codex 0.146.0\n');
   process.exit(0);
 }
 const readline = require('readline');
 const fs = require('fs');
 
 const mode = %q;
+const rolloutPath = %q;
 const threadId = 'thread_test';
 const turnId = 'turn_test';
 const childThreadId = 'thread_child';
@@ -6974,11 +7265,20 @@ function send(message) {
 }
 
 function respondThread(id, explicitThreadId) {
+	const responseThreadId = explicitThreadId || threadId;
+	fs.writeFileSync(
+		rolloutPath,
+		JSON.stringify({
+			timestamp: new Date().toISOString(),
+			type: 'session_meta',
+			payload: { id: responseThreadId },
+		}) + '\n',
+	);
   send({
     id,
     result: {
       modelProvider: 'TestProvider',
-      thread: { id: explicitThreadId || threadId },
+      thread: { id: responseThreadId, path: rolloutPath },
     },
   });
 }
@@ -7979,7 +8279,7 @@ process.on('exit', () => {
     fs.appendFileSync(stateFile + '.exits', '1\n');
   }
 });
-`, mode)
+`, mode, filepath.ToSlash(rolloutPath))
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex app-server cli failed: %v", err)
 	}

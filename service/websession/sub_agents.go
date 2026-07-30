@@ -184,6 +184,20 @@ func (m *Manager) applySubAgentHistoryItem(
 	event Event,
 	item HistoryItem,
 ) (WebSessionSubAgent, bool, error) {
+	db := model.GetDB()
+	if db == nil {
+		return WebSessionSubAgent{}, false, model.ErrDBNotInitialized
+	}
+	return m.applySubAgentHistoryItemDB(ctx, db, session, event, item)
+}
+
+func (m *Manager) applySubAgentHistoryItemDB(
+	ctx context.Context,
+	db *gorm.DB,
+	session tables.WebSessionTable,
+	event Event,
+	item HistoryItem,
+) (WebSessionSubAgent, bool, error) {
 	if normalizeAgent(Agent(session.Agent)) != AgentCodex {
 		return WebSessionSubAgent{}, false, nil
 	}
@@ -204,7 +218,7 @@ func (m *Manager) applySubAgentHistoryItem(
 		payload["summary"] = summary
 	}
 	event.Payload = payload
-	return m.applySubAgentStateEvent(ctx, session.ID, event)
+	return m.applySubAgentStateEventDB(ctx, db, session.ID, event)
 }
 
 func (m *Manager) applySubAgentStateEvent(
@@ -220,6 +234,19 @@ func (m *Manager) applySubAgentStateEvent(
 	if db == nil {
 		return WebSessionSubAgent{}, false, model.ErrDBNotInitialized
 	}
+	return m.applySubAgentStateEventDB(ctx, db, sessionID, event)
+}
+
+func (m *Manager) applySubAgentStateEventDB(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID string,
+	event Event,
+) (WebSessionSubAgent, bool, error) {
+	threadID := strings.TrimSpace(firstNonEmpty(stringValue(event.Payload["threadId"]), event.ThreadID))
+	if threadID == "" {
+		return WebSessionSubAgent{}, false, nil
+	}
 	var result tables.WebSessionSubAgentTable
 	changed := false
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -234,7 +261,7 @@ func (m *Manager) applySubAgentStateEvent(
 			row.ThreadID = threadID
 			row.Status = string(WebSessionSubAgentPendingInit)
 		}
-		if event.Seq > 0 && row.LastEventSeq > event.Seq {
+		if event.Seq > 0 && row.LastEventSeq >= event.Seq {
 			result = row
 			return nil
 		}

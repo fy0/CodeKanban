@@ -44,9 +44,59 @@ const (
 )
 
 var (
-	webSessionHeartbeatInterval = 15 * time.Second
-	webSessionHeartbeatTimeout  = 45 * time.Second
+	ErrCodexWebSessionUnavailable = errors.New("Codex web session runtime is unavailable")
+	webSessionHeartbeatInterval   = 15 * time.Second
+	webSessionHeartbeatTimeout    = 45 * time.Second
 )
+
+type codexWebSessionUnavailableError struct {
+	message string
+}
+
+func (e codexWebSessionUnavailableError) Error() string {
+	return e.message
+}
+
+func (e codexWebSessionUnavailableError) Is(target error) bool {
+	return target == ErrCodexWebSessionUnavailable
+}
+
+type eventPersistedError struct {
+	event Event
+	err   error
+}
+
+type eventProjectionStage uint8
+
+const (
+	eventProjectionDatabase eventProjectionStage = iota
+	eventProjectionBroadcast
+	eventProjectionDone
+)
+
+type eventProjectionRetry struct {
+	record     tables.WebSessionTable
+	event      Event
+	stage      eventProjectionStage
+	cachedItem *HistoryItem
+	subAgent   *WebSessionSubAgent
+}
+
+func (e eventPersistedError) Error() string {
+	return e.err.Error()
+}
+
+func (e eventPersistedError) Unwrap() error {
+	return e.err
+}
+
+func persistedEventFromError(err error, eventID string) (Event, bool) {
+	var persisted eventPersistedError
+	if !errors.As(err, &persisted) || persisted.event.ID != strings.TrimSpace(eventID) {
+		return Event{}, false
+	}
+	return persisted.event, true
+}
 
 type Config struct {
 	DataDir                 string
@@ -173,6 +223,9 @@ type activeRun struct {
 	activeCallPausedAt     *time.Time
 	activeCallTimer        *time.Timer
 	activeCallInFlight     bool
+	codexCollaboration     codexCollaborationTracker
+	codexRolloutMonitor    *codexRolloutMonitor
+	syncSourceAfterRun     bool
 }
 
 type attachmentMeta struct {
@@ -347,6 +400,9 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		return nil, err
 	}
 	if err := manager.backfillSessionActivityAt(context.Background()); err != nil {
+		return nil, err
+	}
+	if err := manager.recoverPersistedEventProjections(context.Background()); err != nil {
 		return nil, err
 	}
 	if err := manager.recoverInterruptedSessions(context.Background()); err != nil {
@@ -1677,6 +1733,10 @@ func (m *Manager) BootstrapSessionGoal(
 	objective string,
 	status GoalStatus,
 ) error {
+	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
+	dispatchLock.Lock()
+	defer dispatchLock.Unlock()
+
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return err
@@ -2066,6 +2126,15 @@ func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (Sessi
 }
 
 func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
+	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
+	dispatchLock.Lock()
+	defer dispatchLock.Unlock()
+
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	sessionID = record.ID
 	m.cancelAutoRetryTimer(sessionID)
 	m.clearPendingInputs(sessionID)
 	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
@@ -2108,11 +2177,22 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 		eventState.closed = false
 		return err
 	}
+	if eventState.timer != nil {
+		eventState.timer.Stop()
+		eventState.timer = nil
+	}
+	eventState.timerGeneration++
+	if eventState.projectionTimer != nil {
+		eventState.projectionTimer.Stop()
+		eventState.projectionTimer = nil
+	}
+	eventState.projectionTimerGeneration++
+	eventState.pending = nil
+	eventState.projectionRetries = nil
+	m.removeSessionEventState(sessionID, eventState)
 	if err := m.store.deleteSessionFiles(sessionID); err != nil {
-		eventState.closed = false
 		return err
 	}
-	m.removeSessionEventState(sessionID, eventState)
 	return nil
 }
 
@@ -3068,6 +3148,9 @@ func (m *Manager) ensureCodexThread(ctx context.Context, session tables.WebSessi
 	if effectiveSessionBackend(session) != SessionBackendCodexAppServer {
 		return "", fmt.Errorf("thread bootstrap is only supported for codex app-server sessions")
 	}
+	if err := m.ensureCodexWebSessionSupported(); err != nil {
+		return "", err
+	}
 
 	threadID := ""
 	err := m.withCodexQueryClient(ctx, session.Cwd, func(client *codexAppServerClient) error {
@@ -3351,9 +3434,7 @@ func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable)
 	config := m.GetCodexRuntimeConfig()
 	switch normalizeAgent(Agent(record.Agent)) {
 	case AgentCodex:
-		if !config.HasCodex {
-			return fmt.Errorf(errCodexNotInstalled)
-		}
+		return codexWebSessionSupportError(config)
 	case AgentClaude:
 		if !config.HasClaudeCode {
 			return fmt.Errorf(errClaudeCodeNotInstalled)
@@ -3362,10 +3443,38 @@ func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable)
 	return nil
 }
 
+func (m *Manager) ensureCodexWebSessionSupported() error {
+	return codexWebSessionSupportError(m.GetCodexRuntimeConfig())
+}
+
+func codexWebSessionSupportError(config CodexRuntimeConfig) error {
+	if !config.HasCodex {
+		return codexWebSessionUnavailableError{message: errCodexNotInstalled}
+	}
+	if config.SupportsWebSession {
+		return nil
+	}
+	minimumVersion := strings.TrimSpace(config.WebSessionMinVersion)
+	if minimumVersion == "" {
+		minimumVersion = webSessionMinCodexVersion.String()
+	}
+	if config.CodexVersion != nil && strings.TrimSpace(*config.CodexVersion) != "" {
+		return codexWebSessionUnavailableError{message: fmt.Sprintf(
+			"Codex web sessions require Codex >= %s. Current version: %s.",
+			minimumVersion,
+			strings.TrimSpace(*config.CodexVersion),
+		)}
+	}
+	return codexWebSessionUnavailableError{message: fmt.Sprintf(
+		"Codex web sessions require Codex >= %s. The installed Codex version could not be determined.",
+		minimumVersion,
+	)}
+}
+
 func (m *Manager) ensureSessionGoalModeSupported(record tables.WebSessionTable) error {
 	config := m.GetCodexRuntimeConfig()
-	if !config.HasCodex {
-		return fmt.Errorf(errCodexNotInstalled)
+	if err := codexWebSessionSupportError(config); err != nil {
+		return err
 	}
 	if config.SupportsGoalMode {
 		return nil
@@ -3382,12 +3491,16 @@ func (m *Manager) ensureSessionGoalModeSupported(record tables.WebSessionTable) 
 
 func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables.WebSessionTable, text string, attachments []Attachment) {
 	defer func() {
+		run.stopCodexRolloutMonitor()
+		run.codexCollaboration.clear()
 		run.resetActiveCallTracking()
 		run.closeInput()
 		run.clearPendingApproval()
 		run.clearPendingServerRequest()
 		close(run.done)
-		m.releaseActiveRun(session.ID, run)
+		if m.releaseActiveRun(session.ID, run) && run.syncSourceAfterRun && !m.hasPendingSessionWork(session.ID) {
+			m.maybeSyncSessionAfterRun(session)
+		}
 	}()
 
 	if run.backend == SessionBackendCodexAppServer && normalizeAgent(Agent(session.Agent)) == AgentCodex {
@@ -3532,7 +3645,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 	}
 	m.cancelAutoRetryTimer(session.ID)
 	m.broadcastSessionSummary(context.Background(), session.ID)
-	m.maybeSyncSessionAfterRun(session)
+	run.syncSourceAfterRun = true
 }
 
 func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, session tables.WebSessionTable) {
@@ -3650,7 +3763,7 @@ func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, se
 		}
 	}
 	m.broadcastSessionSummary(context.Background(), session.ID)
-	m.maybeSyncSessionAfterRun(session)
+	run.syncSourceAfterRun = true
 }
 
 func (m *Manager) handleRunFailure(sessionID string, session tables.WebSessionTable, run *activeRun, err error) {
@@ -3743,7 +3856,7 @@ func (m *Manager) appendRunNote(
 		Seq:       0,
 		Type:      "note",
 		RunID:     run.runID,
-		ParentID:  run.assistantMessageID,
+		ParentID:  run.assistantMessageIDSnapshot(),
 		Timestamp: time.Now(),
 		Payload:   nextPayload,
 	})
@@ -4331,11 +4444,17 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 	if err := m.flushPendingTextDeltaLocked(ctx, sessionID, eventState); err != nil {
 		return Event{}, err
 	}
-	return m.appendAndBroadcastNow(ctx, sessionID, record, event)
+	return m.appendAndBroadcastNow(ctx, sessionID, record, eventState, event)
 }
 
-func (m *Manager) appendAndBroadcastNow(ctx context.Context, sessionID string, record tables.WebSessionTable, event Event) (Event, error) {
-	seq, err := m.nextEventSeq(ctx, sessionID)
+func (m *Manager) appendAndBroadcastNow(
+	ctx context.Context,
+	sessionID string,
+	record tables.WebSessionTable,
+	eventState *sessionEventState,
+	event Event,
+) (Event, error) {
+	seq, err := m.nextEventSeq(ctx, sessionID, eventState)
 	if err != nil {
 		return Event{}, err
 	}
@@ -4351,51 +4470,123 @@ func (m *Manager) appendAndBroadcastNow(ctx context.Context, sessionID string, r
 		return Event{}, err
 	}
 
+	retry := eventProjectionRetry{
+		record: record,
+		event:  event,
+		stage:  eventProjectionDatabase,
+	}
+	if err := m.flushEventProjectionRetriesLocked(ctx, sessionID, eventState); err != nil {
+		m.queueEventProjectionRetryLocked(sessionID, eventState, retry)
+		return Event{}, eventPersistedError{event: event, err: err}
+	}
+	if err := m.projectPersistedEvent(ctx, sessionID, &retry); err != nil {
+		m.queueEventProjectionRetryLocked(sessionID, eventState, retry)
+		return Event{}, eventPersistedError{event: event, err: err}
+	}
+	return event, nil
+}
+
+func (m *Manager) projectPersistedEvent(
+	ctx context.Context,
+	sessionID string,
+	retry *eventProjectionRetry,
+) error {
+	if retry == nil {
+		return fmt.Errorf("web session event projection is nil")
+	}
+	if retry.stage <= eventProjectionDatabase {
+		if err := m.projectPersistedEventDatabase(ctx, sessionID, retry); err != nil {
+			return err
+		}
+	}
+	if retry.stage <= eventProjectionBroadcast {
+		if retry.subAgent != nil {
+			m.broadcast(newSubAgentFrame(sessionID, *retry.subAgent, m.summaryForBroadcast(ctx, sessionID)))
+		}
+		if retry.cachedItem != nil {
+			m.broadcast(newHistoryItemFrame(sessionID, *retry.cachedItem, m.summaryForBroadcast(ctx, sessionID)))
+		}
+		if retry.event.Type == "tool_end" {
+			m.maybeInterruptForRedirect(sessionID)
+		}
+		retry.stage = eventProjectionDone
+	}
+	return nil
+}
+
+func (m *Manager) projectPersistedEventDatabase(
+	ctx context.Context,
+	sessionID string,
+	retry *eventProjectionRetry,
+) error {
+	if retry == nil {
+		return fmt.Errorf("web session event projection is nil")
+	}
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	working := *retry
+	working.cachedItem = nil
+	working.subAgent = nil
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		event := working.event
+		if event.Type == "sub_agent_state" {
+			agent, changed, err := m.applySubAgentStateEventDB(ctx, tx, sessionID, event)
+			if err != nil {
+				return err
+			}
+			if changed {
+				working.subAgent = &agent
+			}
+		} else {
+			cachedItem, err := m.applyEventToHistoryCacheDB(ctx, tx, sessionID, event)
+			if err != nil {
+				return err
+			}
+			working.cachedItem = cachedItem
+			if cachedItem != nil {
+				subAgent, changed, err := m.applySubAgentHistoryItemDB(ctx, tx, working.record, event, *cachedItem)
+				if err != nil {
+					return err
+				}
+				if changed {
+					working.subAgent = &subAgent
+				}
+			}
+		}
+		if err := m.updateRuntimeStateDB(ctx, tx, sessionID, m.runtimeUpdatesForEvent(sessionID, event)); err != nil {
+			return err
+		}
+		working.stage = eventProjectionBroadcast
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	*retry = working
+	return nil
+}
+
+func (m *Manager) runtimeUpdatesForEvent(sessionID string, event Event) map[string]any {
 	update := map[string]any{
-		"last_event_seq": seq,
+		"last_event_seq": event.Seq,
 		"activity_at":    event.Timestamp,
 	}
 	if shouldMarkSessionUnreadForEvent(event) && !m.hasFocusedEventClient(sessionID) {
 		update["has_unread"] = true
 	}
 	if event.Type == "msg_u" {
-		now := time.Now()
-		update["last_message_at"] = now
+		update["last_message_at"] = event.Timestamp
 	}
-	if err := m.updateRuntimeState(ctx, sessionID, update); err != nil {
-		return Event{}, err
-	}
-
-	if event.Type == "sub_agent_state" {
-		agent, changed, stateErr := m.applySubAgentStateEvent(ctx, sessionID, event)
-		if stateErr != nil {
-			return Event{}, stateErr
-		}
-		if changed {
-			m.broadcast(newSubAgentFrame(sessionID, agent, m.summaryForBroadcast(ctx, sessionID)))
-		}
-		return event, nil
-	}
-
-	cachedItem, cacheErr := m.applyEventToHistoryCache(ctx, sessionID, event)
-	if cacheErr != nil {
-		return Event{}, cacheErr
-	}
-	if cachedItem != nil {
-		if subAgent, changed, stateErr := m.applySubAgentHistoryItem(ctx, record, event, *cachedItem); stateErr != nil {
-			return Event{}, stateErr
-		} else if changed {
-			m.broadcast(newSubAgentFrame(sessionID, subAgent, m.summaryForBroadcast(ctx, sessionID)))
-		}
-		m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, m.summaryForBroadcast(ctx, sessionID)))
-	}
-	if event.Type == "tool_end" {
-		m.maybeInterruptForRedirect(sessionID)
-	}
-	return event, nil
+	return update
 }
 
 func (m *Manager) sessionAgent(sessionID string) Agent {
+	return m.sessionAgentDB(context.Background(), model.GetDB(), sessionID)
+}
+
+func (m *Manager) sessionAgentDB(ctx context.Context, db *gorm.DB, sessionID string) Agent {
 	m.mu.RLock()
 	run := m.runs[sessionID]
 	m.mu.RUnlock()
@@ -4408,12 +4599,11 @@ func (m *Manager) sessionAgent(sessionID string) Agent {
 		}
 	}
 
-	db := model.GetDB()
 	if db == nil {
 		return AgentClaude
 	}
 	var record tables.WebSessionTable
-	if err := db.WithContext(context.Background()).
+	if err := db.WithContext(ctx).
 		Select("id", "agent").
 		First(&record, "id = ?", sessionID).Error; err != nil {
 		return AgentClaude
@@ -4562,21 +4752,54 @@ func (m *Manager) resetCommandExecutionGroup(sessionID string) {
 	run.mu.Unlock()
 }
 
-func (m *Manager) nextEventSeq(ctx context.Context, sessionID string) (int64, error) {
-	var record tables.WebSessionTable
-	if err := model.GetDB().WithContext(ctx).Select("id", "last_event_seq").First(&record, "id = ?", sessionID).Error; err != nil {
-		return 0, err
+func (m *Manager) nextEventSeq(
+	ctx context.Context,
+	sessionID string,
+	eventState *sessionEventState,
+) (int64, error) {
+	if eventState == nil {
+		return 0, fmt.Errorf("web session event state is nil")
 	}
-	return record.LastEventSeq + 1, nil
+	if !eventState.seqInitialized {
+		var record tables.WebSessionTable
+		if err := model.GetDB().WithContext(ctx).Select("id", "last_event_seq").First(&record, "id = ?", sessionID).Error; err != nil {
+			return 0, err
+		}
+		eventState.lastSeq = record.LastEventSeq
+		durableSeq, err := m.store.latestEventSeq(sessionID)
+		if err != nil {
+			return 0, fmt.Errorf("read durable web session event sequence: %w", err)
+		}
+		if durableSeq > eventState.lastSeq {
+			eventState.lastSeq = durableSeq
+		}
+		eventState.seqInitialized = true
+	}
+	eventState.lastSeq++
+	return eventState.lastSeq, nil
 }
 
 func (m *Manager) updateRuntimeState(ctx context.Context, sessionID string, updates map[string]any) error {
+	return m.updateRuntimeStateDB(ctx, model.GetDB(), sessionID, updates)
+}
+
+func (m *Manager) updateRuntimeStateDB(ctx context.Context, db *gorm.DB, sessionID string, updates map[string]any) error {
 	if len(updates) == 0 {
 		return nil
 	}
-	return model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	result := db.WithContext(ctx).Model(&tables.WebSessionTable{}).
 		Where("id = ?", sessionID).
-		Updates(withSnapshotRevisionIncrement(updates)).Error
+		Updates(withSnapshotRevisionIncrement(updates))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (m *Manager) completedRunState(ctx context.Context, session tables.WebSessionTable, run *activeRun) (Status, AssistantState) {
@@ -4891,6 +5114,10 @@ func upsertEnv(env []string, key, value string) []string {
 }
 
 func (m *Manager) respondToApproval(sessionID, action string) error {
+	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
+	dispatchLock.Lock()
+	defer dispatchLock.Unlock()
+
 	m.mu.RLock()
 	run, ok := m.runs[sessionID]
 	m.mu.RUnlock()
@@ -5019,6 +5246,10 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 }
 
 func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[string][]string) error {
+	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
+	dispatchLock.Lock()
+	defer dispatchLock.Unlock()
+
 	m.mu.RLock()
 	run, ok := m.runs[sessionID]
 	m.mu.RUnlock()
@@ -6169,6 +6400,55 @@ func (r *activeRun) recordAssistantMessageStarted(messageID string, phase string
 	r.assistantMessagePhases[messageID] = strings.ToLower(strings.TrimSpace(phase))
 }
 
+func (r *activeRun) setAssistantMessageID(messageID string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.assistantMessageID = strings.TrimSpace(messageID)
+	r.mu.Unlock()
+}
+
+func (r *activeRun) assistantMessageIDSnapshot() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.assistantMessageID
+}
+
+func (r *activeRun) setCodexRolloutMonitor(monitor *codexRolloutMonitor) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.codexRolloutMonitor = monitor
+	r.mu.Unlock()
+}
+
+func (r *activeRun) codexRolloutMonitorSnapshot() *codexRolloutMonitor {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.codexRolloutMonitor
+}
+
+func (r *activeRun) stopCodexRolloutMonitor() {
+	monitor := r.codexRolloutMonitorSnapshot()
+	if monitor == nil {
+		return
+	}
+	monitor.stopAndDrain()
+	r.mu.Lock()
+	if r.codexRolloutMonitor == monitor {
+		r.codexRolloutMonitor = nil
+	}
+	r.mu.Unlock()
+}
+
 func (r *activeRun) recordAssistantMessageDelta(messageID string, text string) {
 	if strings.TrimSpace(text) == "" {
 		return
@@ -6483,7 +6763,7 @@ func normalizeCodexItemType(value string) string {
 		return "context_compaction"
 	case "mcpToolCall":
 		return "mcp_tool_call"
-	case "collabAgentToolCall", "collab_agent_tool_call", "subAgentToolCall", "sub_agent_tool_call":
+	case "collabAgentToolCall", "collab_agent_tool_call", "sub_agent_tool_call":
 		return "sub_agent_tool_call"
 	case "fileChange":
 		return "file_change"

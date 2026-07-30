@@ -80,6 +80,9 @@ func (m *Manager) EditUserMessage(
 	case StatusRunning, StatusWaitingApproval, StatusAborting:
 		return SessionSnapshot{}, ErrMessageEditSessionActive
 	}
+	if err := m.ensureCodexWebSessionSupported(); err != nil {
+		return SessionSnapshot{}, err
+	}
 
 	target, err := m.findHistoryItemByID(ctx, source.ID, itemID)
 	if err != nil {

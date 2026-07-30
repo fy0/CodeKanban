@@ -89,6 +89,8 @@ func (m *Manager) PreviewHistoryCleanup(ctx context.Context, params HistoryClean
 func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupParams) (HistoryCleanupResult, error) {
 	m.historyCleanupMu.Lock()
 	defer m.historyCleanupMu.Unlock()
+	releaseDispatchLocks := m.lockHistoryCleanupDispatchLocks()
+	defer releaseDispatchLocks()
 
 	plan, err := m.buildHistoryCleanupPlan(ctx, params, time.Now())
 	if err != nil {
@@ -97,6 +99,19 @@ func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupPa
 	db := model.GetDB()
 	if db == nil {
 		return HistoryCleanupResult{}, model.ErrDBNotInitialized
+	}
+	lockedEventStates := m.lockHistoryCleanupEventStates(plan.clearSessionIDs)
+	cleanupSucceeded := false
+	defer func() {
+		m.releaseHistoryCleanupEventStates(lockedEventStates, cleanupSucceeded)
+	}()
+	durableEventSeqs := make(map[string]int64, len(plan.resetSessionIDs))
+	for _, sessionID := range plan.resetSessionIDs {
+		sequence, sequenceErr := m.store.latestEventSeq(sessionID)
+		if sequenceErr != nil {
+			return HistoryCleanupResult{}, sequenceErr
+		}
+		durableEventSeqs[sessionID] = sequence
 	}
 
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -132,13 +147,22 @@ func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupPa
 				Updates(withSnapshotRevisionIncrement(map[string]any{
 					"turn_count":     0,
 					"item_count":     0,
-					"last_event_seq": 0,
 					"has_unread":     false,
 					"sync_state":     SyncStateMissing,
 					"sync_error":     nil,
 					"last_sync_mode": "",
 					"last_synced_at": nil,
 				})).Error; err != nil {
+				return err
+			}
+		}
+		for sessionID, sequence := range durableEventSeqs {
+			if sequence <= 0 {
+				continue
+			}
+			if err := tx.Model(&tables.WebSessionTable{}).
+				Where("id = ? AND last_event_seq < ?", sessionID, sequence).
+				UpdateColumn("last_event_seq", sequence).Error; err != nil {
 				return err
 			}
 		}
@@ -150,7 +174,6 @@ func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupPa
 
 	fileFailureCount := 0
 	for _, sessionID := range plan.clearSessionIDs {
-		m.clearSessionEventState(sessionID)
 		if err := m.store.deleteSessionHistory(sessionID); err != nil {
 			fileFailureCount++
 			m.logger.Warn("failed to delete web session history file",
@@ -160,12 +183,89 @@ func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupPa
 	}
 	model_base.FlushWAL(db)
 	plan.stats.Storage = loadHistoryCleanupStorageStats(db)
+	cleanupSucceeded = true
 
 	return HistoryCleanupResult{
 		HistoryCleanupStats:     plan.stats,
 		ClearedSessionIDs:       append([]string(nil), plan.resetSessionIDs...),
 		HistoryFileFailureCount: fileFailureCount,
 	}, nil
+}
+
+func (m *Manager) lockHistoryCleanupDispatchLocks() func() {
+	for index := range m.sessionDispatchLocks {
+		m.sessionDispatchLocks[index].Lock()
+	}
+	return func() {
+		for index := len(m.sessionDispatchLocks) - 1; index >= 0; index-- {
+			m.sessionDispatchLocks[index].Unlock()
+		}
+	}
+}
+
+type historyCleanupEventState struct {
+	sessionID string
+	state     *sessionEventState
+}
+
+func (m *Manager) lockHistoryCleanupEventStates(sessionIDs []string) []historyCleanupEventState {
+	unique := make(map[string]struct{}, len(sessionIDs))
+	ordered := make([]string, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		sessionID = strings.TrimSpace(sessionID)
+		if sessionID == "" {
+			continue
+		}
+		if _, exists := unique[sessionID]; exists {
+			continue
+		}
+		unique[sessionID] = struct{}{}
+		ordered = append(ordered, sessionID)
+	}
+	sort.Strings(ordered)
+	locked := make([]historyCleanupEventState, 0, len(ordered))
+	for _, sessionID := range ordered {
+		state := m.sessionEventState(sessionID)
+		state.mu.Lock()
+		state.closed = true
+		if state.timer != nil {
+			state.timer.Stop()
+			state.timer = nil
+		}
+		state.timerGeneration++
+		if state.projectionTimer != nil {
+			state.projectionTimer.Stop()
+			state.projectionTimer = nil
+		}
+		state.projectionTimerGeneration++
+		locked = append(locked, historyCleanupEventState{sessionID: sessionID, state: state})
+	}
+	return locked
+}
+
+func (m *Manager) releaseHistoryCleanupEventStates(
+	locked []historyCleanupEventState,
+	succeeded bool,
+) {
+	for index := len(locked) - 1; index >= 0; index-- {
+		item := locked[index]
+		if succeeded {
+			item.state.pending = nil
+			item.state.projectionRetries = nil
+			item.state.lastSeq = 0
+			item.state.seqInitialized = false
+			m.removeSessionEventState(item.sessionID, item.state)
+		} else {
+			item.state.closed = false
+			if item.state.pending != nil {
+				m.schedulePendingTextDeltaTimerLocked(item.sessionID, item.state)
+			}
+			if len(item.state.projectionRetries) > 0 {
+				m.scheduleEventProjectionRetryLocked(item.sessionID, item.state)
+			}
+		}
+		item.state.mu.Unlock()
+	}
 }
 
 func (m *Manager) buildHistoryCleanupPlan(ctx context.Context, params HistoryCleanupParams, now time.Time) (historyCleanupPlan, error) {

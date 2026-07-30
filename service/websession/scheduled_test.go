@@ -23,7 +23,8 @@ func TestScheduleInputIncludesScheduledInputsInSnapshot(t *testing.T) {
 
 	project := seedProject(t)
 	manager, err := NewManager(Config{
-		DataDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
@@ -120,6 +121,67 @@ func TestScheduledInputDispatchesAtDueTime(t *testing.T) {
 	}
 	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "Run this later" {
 		t.Fatalf("expected scheduled message to dispatch once, got %#v", got)
+	}
+}
+
+func TestScheduledInputDispatchRechecksCodexWebSessionSupport(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	item, err := manager.ScheduleInput(
+		context.Background(),
+		created.ID,
+		"Do not dispatch on an old runtime",
+		nil,
+		ScheduledInputModeInterrupt,
+		time.Now().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("ScheduleInput returned error: %v", err)
+	}
+	manager.cancelScheduledInputTimer(item.ID)
+
+	manager.cfg.CodexPath = writeFakeCodexVersionCLI(t, "0.145.9")
+	manager.codexContextWindow.mu.Lock()
+	manager.codexContextWindow.bins = codexBinaryCapabilityCache{}
+	manager.codexContextWindow.mu.Unlock()
+
+	err = manager.DispatchScheduledInputNow(context.Background(), created.ID, item.ID)
+	expected := "Codex web sessions require Codex >= 0.146.0. Current version: 0.145.9."
+	if err == nil || err.Error() != expected {
+		t.Fatalf("expected error %q, got %v", expected, err)
+	}
+	rawEvents, readErr := manager.store.readEvents(created.ID)
+	if readErr != nil {
+		t.Fatalf("readEvents returned error: %v", readErr)
+	}
+	if messages := userMessageTexts(rawEvents); len(messages) != 0 {
+		t.Fatalf("expected dispatch gate before message side effects, got %#v", messages)
+	}
+	snapshot, snapshotErr := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if snapshotErr != nil {
+		t.Fatalf("Snapshot returned error: %v", snapshotErr)
+	}
+	if len(snapshot.ScheduledInputs) != 1 || snapshot.ScheduledInputs[0].Status != ScheduledInputStatusFailed {
+		t.Fatalf("expected failed scheduled input, got %#v", snapshot.ScheduledInputs)
+	}
+	if snapshot.ScheduledInputs[0].LastError != expected {
+		t.Fatalf("expected persisted runtime error, got %#v", snapshot.ScheduledInputs[0])
 	}
 }
 
@@ -274,7 +336,10 @@ func TestSchedulePlanExecutionIncludesTargetAndRejectsDuplicate(t *testing.T) {
 	defer cleanup()
 
 	project := seedProject(t)
-	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
+	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
@@ -388,7 +453,10 @@ func TestScheduledPlanWhenIdleResetsAfterGitChange(t *testing.T) {
 
 	project := seedProject(t)
 	initScheduledTestGitRepository(t, project.Path)
-	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
+	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
@@ -451,7 +519,10 @@ func TestScheduledPlanWhenIdleIgnoresUntrackedFiles(t *testing.T) {
 
 	project := seedProject(t)
 	initScheduledTestGitRepository(t, project.Path)
-	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
+	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
@@ -604,7 +675,10 @@ func TestRecoverPendingIdleSchedulesResetsStablePeriod(t *testing.T) {
 	defer cleanup()
 
 	project := seedProject(t)
-	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
+	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
@@ -663,7 +737,10 @@ func TestUpdateScheduledPlanSwitchesBetweenAtTimeAndWhenIdle(t *testing.T) {
 	defer cleanup()
 
 	project := seedProject(t)
-	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
+	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
@@ -825,7 +902,10 @@ func TestScheduledPlanExecutionExpiresWhenPlanIsNoLongerCurrent(t *testing.T) {
 	defer cleanup()
 
 	project := seedProject(t)
-	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
+	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}

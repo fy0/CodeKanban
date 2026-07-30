@@ -2074,7 +2074,7 @@ describe('webSession loading behavior', () => {
             tl: {
               id: 'sub-agent-2',
               name: 'Sub Agent',
-              kind: 'subAgentToolCall',
+              kind: 'sub_agent_tool_call',
               st: 'running',
               in: {
                 title: 'Patch agent',

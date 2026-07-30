@@ -164,6 +164,10 @@ func (m *Manager) nextHistoryOrderIndex(ctx context.Context, sessionID string) (
 	if db == nil {
 		return 0, model.ErrDBNotInitialized
 	}
+	return m.nextHistoryOrderIndexDB(ctx, db, sessionID)
+}
+
+func (m *Manager) nextHistoryOrderIndexDB(ctx context.Context, db *gorm.DB, sessionID string) (int64, error) {
 	var maxValue int64
 	if err := db.WithContext(ctx).
 		Model(&tables.WebSessionItemTable{}).
@@ -184,8 +188,17 @@ func (m *Manager) appendHistoryItem(
 	if db == nil {
 		return HistoryItem{}, model.ErrDBNotInitialized
 	}
+	return m.appendHistoryItemDB(ctx, db, sessionID, item)
+}
+
+func (m *Manager) appendHistoryItemDB(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID string,
+	item HistoryItem,
+) (HistoryItem, error) {
 	if item.OrderIndex <= 0 {
-		nextOrder, err := m.nextHistoryOrderIndex(ctx, sessionID)
+		nextOrder, err := m.nextHistoryOrderIndexDB(ctx, db, sessionID)
 		if err != nil {
 			return HistoryItem{}, err
 		}
@@ -220,6 +233,17 @@ func (m *Manager) upsertHistoryItemBySourceIdentity(
 	if db == nil {
 		return HistoryItem{}, model.ErrDBNotInitialized
 	}
+	return m.upsertHistoryItemBySourceIdentityDB(ctx, db, sessionID, sourceThreadID, sourceItemID, mutate)
+}
+
+func (m *Manager) upsertHistoryItemBySourceIdentityDB(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID string,
+	sourceThreadID string,
+	sourceItemID string,
+	mutate func(*HistoryItem),
+) (HistoryItem, error) {
 	sourceItemID = strings.TrimSpace(sourceItemID)
 	if sourceItemID == "" {
 		return HistoryItem{}, fmt.Errorf("source item id is required")
@@ -241,7 +265,7 @@ func (m *Manager) upsertHistoryItemBySourceIdentity(
 	if err == nil {
 		item = mapHistoryItemRowWithSession(row, sessionID)
 	} else {
-		nextOrder, nextErr := m.nextHistoryOrderIndex(ctx, sessionID)
+		nextOrder, nextErr := m.nextHistoryOrderIndexDB(ctx, db, sessionID)
 		if nextErr != nil {
 			return HistoryItem{}, nextErr
 		}
@@ -284,6 +308,17 @@ func (m *Manager) ensureCompactGroupHistorySourceKey(
 	if db == nil {
 		return model.ErrDBNotInitialized
 	}
+	return m.ensureCompactGroupHistorySourceKeyDB(ctx, db, sessionID, sourceThreadID, sourceKey, groupID)
+}
+
+func (m *Manager) ensureCompactGroupHistorySourceKeyDB(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID string,
+	sourceThreadID string,
+	sourceKey string,
+	groupID string,
+) error {
 	sourceKey = strings.TrimSpace(sourceKey)
 	groupID = strings.TrimSpace(groupID)
 	if sourceKey == "" || groupID == "" {
@@ -423,6 +458,10 @@ func (m *Manager) replaceSessionHistoryCache(
 		return model.ErrDBNotInitialized
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing tables.WebSessionTable
+		if err := tx.Select("id").First(&existing, "id = ?", session.ID).Error; err != nil {
+			return err
+		}
 		if err := tx.Unscoped().Where("web_session_id = ?", session.ID).Delete(&tables.WebSessionTurnTable{}).Error; err != nil {
 			return err
 		}

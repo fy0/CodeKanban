@@ -975,6 +975,9 @@ export default {
     composerHintUserInput: 'Agent 正在等待你补充信息，请先完成当前问题。',
     composerHintRecovered: '上次运行已因程序重启中断；可直接发送新消息继续这个会话。',
     codexNotInstalled: '未检测到 Codex，请先安装后再继续。',
+    codexWebSessionUnavailable: 'Codex 网页会话需要 Codex >= {version}，当前无法确定已安装版本。',
+    codexWebSessionUnavailableWithCurrent:
+      'Codex 网页会话需要 Codex >= {requiredVersion}，当前版本为 {currentVersion}。',
     claudeCodeNotInstalled: '未检测到 Claude Code，请先安装后再继续。',
     goalModeUnavailable: '当前 Codex 版本过低，Goal 模式需要 Codex >= {version}。',
     goalModeUnavailableWithCurrent:

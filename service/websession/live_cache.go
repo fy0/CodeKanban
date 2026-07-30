@@ -10,6 +10,7 @@ import (
 	"code-kanban/model/tables"
 
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func historyAttachmentsFromEventPayload(payload map[string]any) []HistoryAttachment {
@@ -255,12 +256,21 @@ func historyAnswerEntries(raw map[string]any, questions []toolRequestQuestion) [
 }
 
 func (m *Manager) userInputRequestQuestions(ctx context.Context, sessionID string, itemID string) []toolRequestQuestion {
-	normalizedItemID := strings.TrimSpace(itemID)
-	if normalizedItemID == "" {
-		return nil
-	}
 	db := model.GetDB()
 	if db == nil {
+		return nil
+	}
+	return m.userInputRequestQuestionsDB(ctx, db, sessionID, itemID)
+}
+
+func (m *Manager) userInputRequestQuestionsDB(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID string,
+	itemID string,
+) []toolRequestQuestion {
+	normalizedItemID := strings.TrimSpace(itemID)
+	if normalizedItemID == "" {
 		return nil
 	}
 
@@ -306,8 +316,21 @@ func (m *Manager) applyEventToHistoryCache(
 	sessionID string,
 	event Event,
 ) (*HistoryItem, error) {
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+	return m.applyEventToHistoryCacheDB(ctx, db, sessionID, event)
+}
+
+func (m *Manager) applyEventToHistoryCacheDB(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID string,
+	event Event,
+) (*HistoryItem, error) {
 	payload := cloneMap(event.Payload)
-	agent := m.sessionAgent(sessionID)
+	agent := m.sessionAgentDB(ctx, db, sessionID)
 	sourceThreadID := nilIfEmptyHistory(event.ThreadID)
 	sourceTurnID := nilIfEmptyHistory(event.TurnID)
 	switch event.Type {
@@ -321,7 +344,7 @@ func (m *Manager) applyEventToHistoryCache(
 		))
 		path := strings.TrimSpace(stringValue(payload["path"]))
 		kind := strings.TrimSpace(stringValue(payload["kind"]))
-		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: nilIfEmptyHistory(agentThreadID),
 			SourceTurnID:   sourceTurnID,
 			SourceItemID:   nilIfEmptyHistory(stringValue(payload["itemId"])),
@@ -338,7 +361,7 @@ func (m *Manager) applyEventToHistoryCache(
 		}
 		return &item, nil
 	case "msg_u":
-		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			Kind:           "user",
@@ -357,7 +380,7 @@ func (m *Manager) applyEventToHistoryCache(
 		return nil, nil
 	case "txt_d":
 		messageID := strings.TrimSpace(firstNonEmpty(stringValue(payload["mid"]), event.ParentID, event.ID))
-		item, err := m.upsertHistoryItemBySourceIdentity(ctx, sessionID, event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
+		item, err := m.upsertHistoryItemBySourceIdentityDB(ctx, db, sessionID, event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
 			next.SourceThreadID = sourceThreadID
 			next.SourceTurnID = sourceTurnID
 			next.Kind = "assistant"
@@ -376,7 +399,7 @@ func (m *Manager) applyEventToHistoryCache(
 		return &item, nil
 	case "txt_end":
 		messageID := strings.TrimSpace(firstNonEmpty(stringValue(payload["mid"]), event.ParentID, event.ID))
-		item, err := m.upsertHistoryItemBySourceIdentity(ctx, sessionID, event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
+		item, err := m.upsertHistoryItemBySourceIdentityDB(ctx, db, sessionID, event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
 			next.SourceThreadID = sourceThreadID
 			next.SourceTurnID = sourceTurnID
 			next.Kind = "assistant"
@@ -398,11 +421,11 @@ func (m *Manager) applyEventToHistoryCache(
 		toolKey := resolveToolHistoryKey(payload, event.ID)
 		sourceKey := historyToolSourceKey(toolKey)
 		if group := parseHistoryToolCommandGroup(decodeRawObject(payload["meta"])["commandGroup"]); group != nil {
-			if err := m.ensureCompactGroupHistorySourceKey(ctx, sessionID, event.ThreadID, sourceKey, group.ID); err != nil {
+			if err := m.ensureCompactGroupHistorySourceKeyDB(ctx, db, sessionID, event.ThreadID, sourceKey, group.ID); err != nil {
 				return nil, err
 			}
 		}
-		item, err := m.upsertHistoryItemBySourceIdentity(ctx, sessionID, event.ThreadID, sourceKey, func(next *HistoryItem) {
+		item, err := m.upsertHistoryItemBySourceIdentityDB(ctx, db, sessionID, event.ThreadID, sourceKey, func(next *HistoryItem) {
 			existingPayload := cloneMap(next.Payload)
 			next.SourceThreadID = sourceThreadID
 			next.SourceTurnID = sourceTurnID
@@ -434,7 +457,7 @@ func (m *Manager) applyEventToHistoryCache(
 		toolKey := resolveToolHistoryKey(payload, event.ID)
 		sourceKey := historyToolSourceKey(toolKey)
 		if group := parseHistoryToolCommandGroup(decodeRawObject(payload["meta"])["commandGroup"]); group != nil {
-			if err := m.ensureCompactGroupHistorySourceKey(ctx, sessionID, event.ThreadID, sourceKey, group.ID); err != nil {
+			if err := m.ensureCompactGroupHistorySourceKeyDB(ctx, db, sessionID, event.ThreadID, sourceKey, group.ID); err != nil {
 				return nil, err
 			}
 		}
@@ -442,7 +465,7 @@ func (m *Manager) applyEventToHistoryCache(
 		if payload["ok"] == false {
 			status = "error"
 		}
-		item, err := m.upsertHistoryItemBySourceIdentity(ctx, sessionID, event.ThreadID, sourceKey, func(next *HistoryItem) {
+		item, err := m.upsertHistoryItemBySourceIdentityDB(ctx, db, sessionID, event.ThreadID, sourceKey, func(next *HistoryItem) {
 			existingPayload := cloneMap(next.Payload)
 			next.SourceThreadID = sourceThreadID
 			next.SourceTurnID = sourceTurnID
@@ -471,7 +494,7 @@ func (m *Manager) applyEventToHistoryCache(
 		return &item, nil
 	case "approval_req":
 		itemID := stringValue(payload["iid"])
-		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			SourceItemID:   nilIfEmptyHistory(itemID),
@@ -501,7 +524,7 @@ func (m *Manager) applyEventToHistoryCache(
 			text = "Approval rejected"
 			level = "warn"
 		}
-		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			Kind:           "system",
@@ -523,7 +546,7 @@ func (m *Manager) applyEventToHistoryCache(
 		return &item, nil
 	case "user_input_req":
 		questions := decodeToolQuestions(payload["qs"])
-		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			SourceItemID:   nilIfEmptyHistory(stringValue(payload["iid"])),
@@ -561,7 +584,7 @@ func (m *Manager) applyEventToHistoryCache(
 				answers[key] = next
 			}
 		}
-		questions := m.userInputRequestQuestions(ctx, sessionID, itemID)
+		questions := m.userInputRequestQuestionsDB(ctx, db, sessionID, itemID)
 		answerEntries := historyAnswerEntries(answersToRawMap(answers), questions)
 		text := "Submitted requested input"
 		level := "info"
@@ -569,7 +592,7 @@ func (m *Manager) applyEventToHistoryCache(
 			text = errText
 			level = "warn"
 		}
-		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			SourceItemID:   nilIfEmptyHistory(itemID),
@@ -591,7 +614,7 @@ func (m *Manager) applyEventToHistoryCache(
 		return &item, nil
 	case "note":
 		level := firstNonEmpty(stringValue(payload["lvl"]), "info")
-		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			Kind:           "system",
@@ -607,7 +630,7 @@ func (m *Manager) applyEventToHistoryCache(
 		}
 		return &item, nil
 	case "run_fail":
-		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			Kind:           "system",
@@ -623,7 +646,7 @@ func (m *Manager) applyEventToHistoryCache(
 		}
 		return &item, nil
 	case "run_abort":
-		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			Kind:           "system",

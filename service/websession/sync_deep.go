@@ -12,7 +12,6 @@ import (
 
 	"code-kanban/model/tables"
 	"code-kanban/utils"
-	"code-kanban/utils/ai_assistant2/log_watcher"
 
 	"go.uber.org/zap"
 )
@@ -46,6 +45,13 @@ type codexDeepHistoryStats struct {
 type codexDeepHistoryParseResult struct {
 	Items []HistoryItem
 	Stats codexDeepHistoryStats
+}
+
+type codexDeepRolloutEntry struct {
+	Timestamp string          `json:"timestamp"`
+	Ordinal   *uint64         `json:"ordinal,omitempty"`
+	Type      string          `json:"type"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 type codexDeepMessageOrigin uint8
@@ -161,7 +167,6 @@ func (m *Manager) syncSessionFromLogSource(
 		"last_sync_mode":                         string(SyncModeDeep),
 		"turn_count":                             0,
 		"item_count":                             len(itemRows),
-		"last_event_seq":                         0,
 		"updated_at":                             time.Now(),
 		"latest_token_count_input_tokens":        0,
 		"latest_token_count_cached_input_tokens": 0,
@@ -252,9 +257,13 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 	items := make([]HistoryItem, 0, 256)
 	pendingTools := make(map[string]int)
 	pendingUserInputs := make(map[string]int)
+	pendingCollaboration := make(map[string]codexCollaborationCall)
+	coveredCollaboration := make(map[string]struct{})
 	messageOrigins := make(map[string]codexDeepMessageOrigin)
 	var orderIndex int64
 	var stats codexDeepHistoryStats
+	var subagentHistoryStartOrdinal *uint64
+	metadataSeen := false
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -317,9 +326,34 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 			continue
 		}
 
-		var entry log_watcher.LogEntry
+		var entry codexDeepRolloutEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
+		}
+		if !metadataSeen {
+			metadataSeen = true
+			if entry.Type == "session_meta" {
+				var metadata struct {
+					SubagentHistoryStartOrdinal *uint64 `json:"subagent_history_start_ordinal"`
+				}
+				if err := json.Unmarshal(entry.Payload, &metadata); err != nil {
+					return codexDeepHistoryParseResult{}, fmt.Errorf("decode Codex session metadata: %w", err)
+				}
+				subagentHistoryStartOrdinal = metadata.SubagentHistoryStartOrdinal
+			}
+		}
+		if entry.Type == "session_meta" {
+			continue
+		}
+		if subagentHistoryStartOrdinal != nil {
+			if entry.Ordinal == nil {
+				return codexDeepHistoryParseResult{}, fmt.Errorf(
+					"paginated Codex subagent rollout entry is missing an ordinal",
+				)
+			}
+			if *entry.Ordinal < *subagentHistoryStartOrdinal {
+				continue
+			}
 		}
 		ts, _ := time.Parse(time.RFC3339, entry.Timestamp)
 
@@ -328,11 +362,12 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 			stats.observeContextCompaction(ts)
 			appendIfNotDuplicate(codexContextCompactionHistoryItem(decodeRawObject(entry.Payload), ts))
 		case "event_msg":
-			payload, ok := entry.Payload.(map[string]any)
-			if !ok {
+			payload := decodeRawObject(entry.Payload)
+			if len(payload) == 0 {
 				continue
 			}
 			stats.observeEventMessage(payload, ts)
+			markCodexDeepCollaborationEvent(payload, coveredCollaboration)
 			for _, item := range m.codexHistoryItemsFromEventMessage(payload, ts) {
 				if isCodexDeepMessage(item) {
 					appendMessage(item, codexDeepMessageOriginEvent)
@@ -341,12 +376,21 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 				appendIfNotDuplicate(item)
 			}
 		case "response_item":
-			payload, ok := entry.Payload.(map[string]any)
-			if !ok {
+			payload := decodeRawObject(entry.Payload)
+			if len(payload) == 0 {
 				continue
 			}
 			if normalizeCodexItemType(stringValue(payload["type"])) == "context_compaction" {
 				stats.observeContextCompaction(ts)
+			}
+			if m.applyCodexDeepCollaborationResponseItem(
+				payload,
+				ts,
+				appendItem,
+				pendingCollaboration,
+				coveredCollaboration,
+			) {
+				continue
 			}
 			m.applyCodexResponseItem(
 				&items,
@@ -371,6 +415,119 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 		Items: items,
 		Stats: stats,
 	}, nil
+}
+
+func markCodexDeepCollaborationEvent(payload map[string]any, covered map[string]struct{}) {
+	if covered == nil {
+		return
+	}
+	switch strings.TrimSpace(stringValue(payload["type"])) {
+	case "sub_agent_activity":
+		if callID := strings.TrimSpace(stringValue(payload["event_id"])); callID != "" {
+			covered[callID] = struct{}{}
+		}
+	case "item_completed":
+		item := decodeRawObject(payload["item"])
+		rawItemType := strings.TrimSpace(stringValue(item["type"]))
+		if rawItemType != "CollabAgentToolCall" && rawItemType != "SubAgentActivity" {
+			return
+		}
+		if callID := strings.TrimSpace(stringValue(item["id"])); callID != "" {
+			covered[callID] = struct{}{}
+		}
+	}
+}
+
+func (m *Manager) applyCodexDeepCollaborationResponseItem(
+	payload map[string]any,
+	ts time.Time,
+	appendItem func(item HistoryItem) int,
+	pending map[string]codexCollaborationCall,
+	covered map[string]struct{},
+) bool {
+	responseType := strings.TrimSpace(stringValue(payload["type"]))
+	switch responseType {
+	case "function_call":
+		namespace := strings.TrimSpace(stringValue(payload["namespace"]))
+		if namespace == "multi_agent_v1" {
+			if callID := strings.TrimSpace(stringValue(payload["call_id"])); callID != "" {
+				pending[callID] = codexCollaborationCall{CallID: callID, Ignored: true}
+			}
+			return true
+		}
+		if namespace != codexCollaborationNamespace &&
+			(namespace != "" || !isCodexV2CollaborationToolName(stringValue(payload["name"]))) {
+			return false
+		}
+		turnID := firstNonEmpty(codexResponseItemTurnID(payload), "deep-sync-turn")
+		call, ok := parseCodexCollaborationCall("deep-sync-thread", turnID, payload, ts)
+		if !ok {
+			if callID := strings.TrimSpace(stringValue(payload["call_id"])); callID != "" {
+				pending[callID] = codexCollaborationCall{CallID: callID, Ignored: true}
+			}
+			return true
+		}
+		pending[call.CallID] = call
+		return true
+	case "function_call_output":
+		callID := strings.TrimSpace(stringValue(payload["call_id"]))
+		call, ok := pending[callID]
+		if !ok {
+			return false
+		}
+		delete(pending, callID)
+		output := codexCollaborationOutputText(payload["output"])
+		_, typed := covered[callID]
+		delete(covered, callID)
+		if call.Ignored || typed {
+			return true
+		}
+		if codexCollaborationOutputSucceeded(call.Name, output) {
+			if call.Name == "wait_agent" {
+				appendItem(codexDeepCollaborationToolItem(call, output, "done", ts))
+			}
+			return true
+		}
+		appendItem(codexDeepCollaborationToolItem(call, output, "error", ts))
+		return true
+	default:
+		return false
+	}
+}
+
+func codexDeepCollaborationToolItem(
+	call codexCollaborationCall,
+	output string,
+	status string,
+	observedAt time.Time,
+) HistoryItem {
+	turnID := call.TurnID
+	if turnID == "deep-sync-turn" {
+		turnID = ""
+	}
+	return HistoryItem{
+		ID:           call.CallID,
+		SourceItemID: ptr(call.CallID),
+		SourceTurnID: nilIfEmptyHistory(turnID),
+		Kind:         "tool",
+		ItemType:     "sub_agent_tool_call",
+		Timestamp:    ptr(call.StartedAt),
+		ObservedAt:   ptr(observedAt),
+		Done:         true,
+		Payload: map[string]any{
+			"type":    "function_call_output",
+			"call_id": call.CallID,
+		},
+		Tool: &HistoryTool{
+			ID:     call.CallID,
+			Name:   "Sub Agent",
+			Kind:   "sub_agent_tool_call",
+			Input:  cloneMap(call.Input),
+			Output: truncateToolOutput("sub_agent_tool_call", firstNonEmpty(output, "Codex collaboration tool call failed")),
+			Status: status,
+			Meta:   codexCollaborationMeta(call),
+		},
+	}
 }
 
 func isCodexDeepMessage(item HistoryItem) bool {
@@ -814,8 +971,75 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 		}}
 	case "context_compacted":
 		return []HistoryItem{codexContextCompactionHistoryItem(payload, ts)}
+	case "sub_agent_activity":
+		activityAt := ts
+		if occurredAt := parseHistoryTimestamp(payload["occurred_at_ms"]); occurredAt != nil {
+			activityAt = *occurredAt
+		}
+		activity := deepSyncSubAgentActivityHistoryItem(
+			stringValue(payload["event_id"]),
+			stringValue(payload["agent_thread_id"]),
+			stringValue(payload["agent_path"]),
+			stringValue(payload["kind"]),
+			stringValue(payload["turn_id"]),
+			activityAt,
+		)
+		if activity == nil {
+			return nil
+		}
+		return []HistoryItem{*activity}
 	case "item_completed":
 		item := decodeRawObject(payload["item"])
+		rawItemType := strings.TrimSpace(stringValue(item["type"]))
+		if rawItemType == "SubAgentActivity" {
+			activity := deepSyncSubAgentActivityHistoryItem(
+				stringValue(item["id"]),
+				stringValue(item["agent_thread_id"]),
+				stringValue(item["agent_path"]),
+				stringValue(item["kind"]),
+				stringValue(payload["turn_id"]),
+				ts,
+			)
+			if activity == nil {
+				return nil
+			}
+			return []HistoryItem{*activity}
+		}
+		if rawItemType == "CollabAgentToolCall" &&
+			strings.EqualFold(strings.TrimSpace(stringValue(item["tool"])), "wait") {
+			callID := strings.TrimSpace(stringValue(item["id"]))
+			if callID == "" {
+				return nil
+			}
+			status := syncedToolStatus(stringValue(item["status"]))
+			return []HistoryItem{{
+				ID:           callID,
+				SourceItemID: ptr(callID),
+				SourceTurnID: nilIfEmptyHistory(stringValue(payload["turn_id"])),
+				Kind:         "tool",
+				ItemType:     "sub_agent_tool_call",
+				Timestamp:    ptr(ts),
+				ObservedAt:   ptr(ts),
+				Done:         status != "running",
+				Payload: map[string]any{
+					"type": "collabAgentToolCall",
+					"id":   callID,
+					"tool": "wait",
+				},
+				Tool: &HistoryTool{
+					ID:     callID,
+					Name:   "Sub Agent",
+					Kind:   "sub_agent_tool_call",
+					Input:  map[string]any{"tool": "wait"},
+					Output: mustJSONText(item),
+					Status: status,
+					Meta: map[string]any{
+						"title": "Sub Agent",
+						"kind":  "sub_agent_tool_call",
+					},
+				},
+			}}
+		}
 		plan := deepSyncPlanHistoryItem(item, stringValue(payload["turn_id"]), ts, cloneMap(payload))
 		if plan == nil {
 			return nil
@@ -823,6 +1047,41 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 		return []HistoryItem{*plan}
 	default:
 		return nil
+	}
+}
+
+func deepSyncSubAgentActivityHistoryItem(
+	itemID string,
+	agentThreadID string,
+	agentPath string,
+	kind string,
+	turnID string,
+	ts time.Time,
+) *HistoryItem {
+	itemID = strings.TrimSpace(itemID)
+	agentThreadID = strings.TrimSpace(agentThreadID)
+	agentPath = strings.TrimSpace(agentPath)
+	kind = strings.TrimSpace(kind)
+	if itemID == "" || agentThreadID == "" {
+		return nil
+	}
+	return &HistoryItem{
+		ID:             itemID,
+		SourceItemID:   ptr(itemID),
+		SourceThreadID: ptr(agentThreadID),
+		SourceTurnID:   nilIfEmptyHistory(strings.TrimSpace(turnID)),
+		Kind:           "system",
+		ItemType:       "sub_agent_activity",
+		Text:           subAgentActivityText(kind, agentPath, agentThreadID),
+		Timestamp:      ptr(ts),
+		ObservedAt:     ptr(ts),
+		Level:          "info",
+		Payload: map[string]any{
+			"itemId":        itemID,
+			"agentThreadId": agentThreadID,
+			"path":          agentPath,
+			"kind":          kind,
+		},
 	}
 }
 
@@ -1149,8 +1408,6 @@ func deepSyncToolKind(toolName string) string {
 		return "command_execution"
 	case "apply_patch":
 		return "file_change"
-	case "spawn_agent", "send_input", "wait_agent", "interrupt_agent", "close_agent", "resume_agent":
-		return "sub_agent_tool_call"
 	default:
 		return "dynamic_tool_call"
 	}
@@ -1187,34 +1444,8 @@ func deepSyncToolInput(toolName string, input any) any {
 			}
 		}
 		return input
-	case "spawn_agent", "send_input", "wait_agent", "interrupt_agent", "close_agent", "resume_agent":
-		result := cloneMap(record)
-		if result == nil {
-			result = map[string]any{}
-		}
-		result["tool"] = deepSyncCollabToolName(toolName)
-		return result
 	default:
 		return input
-	}
-}
-
-func deepSyncCollabToolName(toolName string) string {
-	switch strings.TrimSpace(toolName) {
-	case "spawn_agent":
-		return "spawnAgent"
-	case "send_input":
-		return "sendInput"
-	case "wait_agent":
-		return "wait"
-	case "interrupt_agent":
-		return "interruptAgent"
-	case "close_agent":
-		return "closeAgent"
-	case "resume_agent":
-		return "resumeAgent"
-	default:
-		return strings.TrimSpace(toolName)
 	}
 }
 

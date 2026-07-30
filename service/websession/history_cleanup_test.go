@@ -78,7 +78,7 @@ func TestRunHistoryCleanupHonorsProjectScopeAndRetention(t *testing.T) {
 	if err := model.GetDB().First(&refreshed, "id = ?", oldA.ID).Error; err != nil {
 		t.Fatalf("load retained session metadata: %v", err)
 	}
-	if refreshed.ItemCount != 0 || refreshed.TurnCount != 0 || refreshed.LastEventSeq != 0 {
+	if refreshed.ItemCount != 0 || refreshed.TurnCount != 0 || refreshed.LastEventSeq != 1 {
 		t.Fatalf("history metadata was not reset: %+v", refreshed)
 	}
 	if normalizeSyncState(refreshed.SyncState) != SyncStateMissing {
@@ -89,6 +89,92 @@ func TestRunHistoryCleanupHonorsProjectScopeAndRetention(t *testing.T) {
 	}
 	if _, err := os.Stat(manager.store.historyPath(oldA.ID)); !os.IsNotExist(err) {
 		t.Fatalf("history file should be removed, stat error = %v", err)
+	}
+	appended, err := manager.appendAndBroadcast(context.Background(), oldA.ID, refreshed, Event{
+		ID:        "event-after-cleanup",
+		Type:      "note",
+		Timestamp: now.Add(time.Minute),
+		Payload:   map[string]any{"txt": "after cleanup"},
+	})
+	if err != nil {
+		t.Fatalf("append after cleanup: %v", err)
+	}
+	if appended.Seq != 2 {
+		t.Fatalf("event sequence after cleanup = %d, want 2", appended.Seq)
+	}
+}
+
+func TestRunHistoryCleanupWaitsForSessionDispatch(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedHistoryCleanupSession(t, project.ID, "Dispatch protected", time.Now().Add(-48*time.Hour), true)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	dispatchLock := &manager.sessionDispatchLocks[sessionRevisionLockIndex(session.ID)]
+	dispatchLock.Lock()
+	done := make(chan error, 1)
+	go func() {
+		_, runErr := manager.RunHistoryCleanup(context.Background(), HistoryCleanupParams{
+			Scope:         HistoryCleanupScopeAll,
+			OlderThanDays: 1,
+		})
+		done <- runErr
+	}()
+	select {
+	case runErr := <-done:
+		dispatchLock.Unlock()
+		t.Fatalf("RunHistoryCleanup bypassed the session dispatch lock: %v", runErr)
+	case <-time.After(50 * time.Millisecond):
+	}
+	dispatchLock.Unlock()
+	if runErr := <-done; runErr != nil {
+		t.Fatalf("RunHistoryCleanup returned error after dispatch release: %v", runErr)
+	}
+}
+
+func TestHistoryCleanupConsumesRetainedEventLog(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedHistoryCleanupSession(t, project.ID, "Retained cleanup log", time.Now().Add(-48*time.Hour), true)
+	dataDir := t.TempDir()
+	manager, err := NewManager(Config{DataDir: dataDir}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	oldEvent := Event{ID: "evt-old", Seq: 1, Type: "note", Timestamp: time.Now().Add(-time.Hour), Payload: map[string]any{"txt": "old"}}
+	if err := manager.store.appendEvent(session.ID, oldEvent); err != nil {
+		t.Fatalf("append old event: %v", err)
+	}
+	if _, err := manager.RunHistoryCleanup(context.Background(), HistoryCleanupParams{
+		Scope:         HistoryCleanupScopeAll,
+		OlderThanDays: 1,
+	}); err != nil {
+		t.Fatalf("RunHistoryCleanup returned error: %v", err)
+	}
+	if err := manager.store.appendEvent(session.ID, oldEvent); err != nil {
+		t.Fatalf("restore retained event log: %v", err)
+	}
+
+	restarted, err := NewManager(Config{DataDir: dataDir}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager after cleanup returned error: %v", err)
+	}
+	window, err := restarted.loadHistoryWindow(context.Background(), session.ID, 10, nil)
+	if err != nil {
+		t.Fatalf("loadHistoryWindow returned error: %v", err)
+	}
+	if len(window.Items) != 0 {
+		t.Fatalf("cleanup log was reprojected: %#v", window.Items)
+	}
+	record, err := restarted.GetSession(context.Background(), session.ID)
+	if err != nil || record.LastEventSeq != 1 {
+		t.Fatalf("cleanup cursor = %d, %v; want 1, nil", record.LastEventSeq, err)
 	}
 }
 

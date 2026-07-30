@@ -360,6 +360,8 @@ export interface WebSessionCodexRuntimeConfig {
   hasCodex: boolean;
   hasClaudeCode: boolean;
   codexVersion?: string | null;
+  supportsWebSession: boolean;
+  webSessionMinCodexVersion: string;
   supportsGoalMode: boolean;
   goalModeMinCodexVersion: string;
 }

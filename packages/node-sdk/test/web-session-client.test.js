@@ -199,7 +199,9 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
           source: 'default',
           hasCodex: true,
           hasClaudeCode: false,
-          codexVersion: '0.133.0',
+          codexVersion: '0.146.0',
+          supportsWebSession: true,
+          webSessionMinCodexVersion: '0.146.0',
           supportsGoalMode: true,
           goalModeMinCodexVersion: '0.133.0',
         },
@@ -291,7 +293,9 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
   const runtimeConfig = await client.getWebSessionRuntimeConfig();
   assert.equal(runtimeConfig.contextWindowTokens, 200000);
   assert.equal(runtimeConfig.hasCodex, true);
-  assert.equal(runtimeConfig.codexVersion, '0.133.0');
+  assert.equal(runtimeConfig.codexVersion, '0.146.0');
+  assert.equal(runtimeConfig.supportsWebSession, true);
+  assert.equal(runtimeConfig.webSessionMinCodexVersion, '0.146.0');
   assert.equal(runtimeConfig.supportsGoalMode, true);
 });
 

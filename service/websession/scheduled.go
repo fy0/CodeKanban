@@ -1358,6 +1358,11 @@ func (m *Manager) dispatchScheduledInputRecord(
 		m.broadcastScheduledInputs(record.WebSessionID)
 		return err
 	}
+	if err := m.ensureSessionMessagingAvailable(session); err != nil {
+		_ = m.failScheduledInputByID(ctx, record.ID, err.Error())
+		m.broadcastScheduledInputs(record.WebSessionID)
+		return err
+	}
 
 	switch action {
 	case ScheduledInputActionExecutePlan:

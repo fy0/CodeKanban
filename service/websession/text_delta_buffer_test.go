@@ -330,6 +330,78 @@ func TestTextDeltaBufferClearsPendingStateOnRunEndAndDelete(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionKeepsEventStateClosedWhenFileDeletionFails(t *testing.T) {
+	manager, session := newTextDeltaTestManager(t)
+	state := manager.sessionEventState(session.ID)
+	state.mu.Lock()
+	state.projectionRetries = []eventProjectionRetry{{
+		event: Event{ID: "evt-delete-retry"},
+	}}
+	manager.scheduleEventProjectionRetryLocked(session.ID, state)
+	state.mu.Unlock()
+
+	manager.store.rootDir = "\x00"
+
+	if err := manager.DeleteSession(context.Background(), session.ID); err == nil {
+		t.Fatal("DeleteSession returned nil despite the file deletion failure")
+	}
+	if _, err := manager.GetSession(context.Background(), session.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("GetSession after database deletion error = %v, want record not found", err)
+	}
+	manager.eventStatesMu.Lock()
+	_, exists := manager.eventStates[session.ID]
+	manager.eventStatesMu.Unlock()
+	if exists {
+		t.Fatal("deleted session event state was retained after file deletion failed")
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.closed || state.projectionTimer != nil || len(state.projectionRetries) != 0 {
+		t.Fatalf("deleted session event state reopened: closed=%v timer=%v retries=%d", state.closed, state.projectionTimer, len(state.projectionRetries))
+	}
+	if err := manager.updateRuntimeState(context.Background(), session.ID, map[string]any{"last_event_seq": 1}); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("updateRuntimeState after delete error = %v, want record not found", err)
+	}
+}
+
+func TestDeleteSessionWaitsForSessionDispatch(t *testing.T) {
+	manager, session := newTextDeltaTestManager(t)
+	dispatchLock := &manager.sessionDispatchLocks[sessionRevisionLockIndex(session.ID)]
+	dispatchLock.Lock()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- manager.DeleteSession(context.Background(), session.ID)
+	}()
+	select {
+	case err := <-done:
+		dispatchLock.Unlock()
+		t.Fatalf("DeleteSession bypassed the session dispatch lock: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	dispatchLock.Unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("DeleteSession returned error after dispatch release: %v", err)
+	}
+}
+
+func TestSyncSessionRejectsActiveRun(t *testing.T) {
+	manager, session := newTextDeltaTestManager(t)
+	run := &activeRun{sessionID: session.ID, done: make(chan struct{})}
+	manager.mu.Lock()
+	manager.runs[session.ID] = run
+	manager.mu.Unlock()
+	t.Cleanup(func() {
+		manager.mu.Lock()
+		delete(manager.runs, session.ID)
+		manager.mu.Unlock()
+	})
+
+	if _, err := manager.SyncSession(context.Background(), session.ID); err == nil || !strings.Contains(err.Error(), "active web session") {
+		t.Fatalf("SyncSession active-run error = %v", err)
+	}
+}
+
 func TestTextDeltaBufferThousandFastDeltasUseOnePersistence(t *testing.T) {
 	manager, session := newTextDeltaTestManager(t)
 	manager.textDeltaFlushWindow = time.Minute
@@ -376,7 +448,12 @@ func newTextDeltaTestManager(t *testing.T) (*Manager, *tables.WebSessionTable) {
 				state.timer.Stop()
 				state.timer = nil
 			}
+			if state.projectionTimer != nil {
+				state.projectionTimer.Stop()
+				state.projectionTimer = nil
+			}
 			state.pending = nil
+			state.projectionRetries = nil
 			state.mu.Unlock()
 		}
 	})

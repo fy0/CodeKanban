@@ -26,7 +26,10 @@ const (
 	codexModelCatalogTimeout      = 3 * time.Second
 )
 
-var goalModeMinCodexVersion = semver.MustParse("0.133.0")
+var (
+	goalModeMinCodexVersion   = semver.MustParse("0.133.0")
+	webSessionMinCodexVersion = semver.MustParse("0.146.0")
+)
 
 var codexVersionPattern = regexp.MustCompile(`\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?`)
 
@@ -64,16 +67,18 @@ type CodexModelInfo struct {
 }
 
 type CodexRuntimeConfig struct {
-	Model               string              `json:"model,omitempty"`
-	ContextWindowTokens int64               `json:"contextWindowTokens"`
-	CompactLimitTokens  int64               `json:"compactLimitTokens"`
-	Source              ContextWindowSource `json:"source"`
-	Models              []CodexModelInfo    `json:"models"`
-	HasCodex            bool                `json:"hasCodex"`
-	HasClaudeCode       bool                `json:"hasClaudeCode"`
-	CodexVersion        *string             `json:"codexVersion,omitempty"`
-	SupportsGoalMode    bool                `json:"supportsGoalMode"`
-	GoalModeMinVersion  string              `json:"goalModeMinCodexVersion"`
+	Model                string              `json:"model,omitempty"`
+	ContextWindowTokens  int64               `json:"contextWindowTokens"`
+	CompactLimitTokens   int64               `json:"compactLimitTokens"`
+	Source               ContextWindowSource `json:"source"`
+	Models               []CodexModelInfo    `json:"models"`
+	HasCodex             bool                `json:"hasCodex"`
+	HasClaudeCode        bool                `json:"hasClaudeCode"`
+	CodexVersion         *string             `json:"codexVersion,omitempty"`
+	SupportsWebSession   bool                `json:"supportsWebSession"`
+	WebSessionMinVersion string              `json:"webSessionMinCodexVersion"`
+	SupportsGoalMode     bool                `json:"supportsGoalMode"`
+	GoalModeMinVersion   string              `json:"goalModeMinCodexVersion"`
 }
 
 type CodexSkillSource string
@@ -125,12 +130,14 @@ func (m *Manager) decorateSessionSummary(summary *SessionSummary) {
 
 func (m *Manager) GetCodexRuntimeConfig() CodexRuntimeConfig {
 	defaultConfig := CodexRuntimeConfig{
-		Source:             ContextWindowSourceUnavailable,
-		Models:             []CodexModelInfo{},
-		HasCodex:           false,
-		HasClaudeCode:      false,
-		SupportsGoalMode:   false,
-		GoalModeMinVersion: goalModeMinCodexVersion.String(),
+		Source:               ContextWindowSourceUnavailable,
+		Models:               []CodexModelInfo{},
+		HasCodex:             false,
+		HasClaudeCode:        false,
+		SupportsWebSession:   false,
+		WebSessionMinVersion: webSessionMinCodexVersion.String(),
+		SupportsGoalMode:     false,
+		GoalModeMinVersion:   goalModeMinCodexVersion.String(),
 	}
 	if m == nil {
 		return defaultConfig
@@ -190,13 +197,14 @@ func (m *Manager) applyCodexRuntimeCapabilities(config CodexRuntimeConfig) Codex
 
 func (m *Manager) GetCodexRuntimeConfigWithModels() CodexRuntimeConfig {
 	config := m.GetCodexRuntimeConfig()
-	if config.HasCodex {
+	if config.SupportsWebSession {
 		config.Models = m.getCodexModelCatalog()
 	}
 	return config
 }
 
 func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntimeConfig {
+	config.WebSessionMinVersion = webSessionMinCodexVersion.String()
 	config.GoalModeMinVersion = goalModeMinCodexVersion.String()
 	if m == nil {
 		return config
@@ -209,6 +217,8 @@ func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntim
 		result.HasCodex = cached.config.HasCodex
 		result.HasClaudeCode = cached.config.HasClaudeCode
 		result.CodexVersion = cached.config.CodexVersion
+		result.SupportsWebSession = cached.config.SupportsWebSession
+		result.WebSessionMinVersion = cached.config.WebSessionMinVersion
 		result.SupportsGoalMode = cached.config.SupportsGoalMode
 		result.GoalModeMinVersion = cached.config.GoalModeMinVersion
 		m.codexContextWindow.mu.Unlock()
@@ -219,21 +229,25 @@ func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntim
 	hasCodex := hasExecutable(m.cfg.CodexPath)
 	hasClaude := hasExecutable(m.cfg.ClaudePath)
 	codexVersion := (*string)(nil)
+	supportsWebSession := false
 	supportsGoalMode := false
 	if hasCodex {
 		if version := detectCodexVersion(m.cfg.CodexPath); version != nil {
 			copied := *version
 			codexVersion = &copied
-			supportsGoalMode = codexVersionAtLeast(copied, goalModeMinCodexVersion)
+			supportsWebSession = codexVersionAtLeast(copied, webSessionMinCodexVersion)
+			supportsGoalMode = supportsWebSession && codexVersionAtLeast(copied, goalModeMinCodexVersion)
 		}
 	}
 
 	binaryConfig := CodexRuntimeConfig{
-		HasCodex:           hasCodex,
-		HasClaudeCode:      hasClaude,
-		CodexVersion:       codexVersion,
-		SupportsGoalMode:   supportsGoalMode,
-		GoalModeMinVersion: goalModeMinCodexVersion.String(),
+		HasCodex:             hasCodex,
+		HasClaudeCode:        hasClaude,
+		CodexVersion:         codexVersion,
+		SupportsWebSession:   supportsWebSession,
+		WebSessionMinVersion: webSessionMinCodexVersion.String(),
+		SupportsGoalMode:     supportsGoalMode,
+		GoalModeMinVersion:   goalModeMinCodexVersion.String(),
 	}
 
 	m.codexContextWindow.mu.Lock()
@@ -247,6 +261,7 @@ func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntim
 	config.HasCodex = hasCodex
 	config.HasClaudeCode = hasClaude
 	config.CodexVersion = codexVersion
+	config.SupportsWebSession = supportsWebSession
 	config.SupportsGoalMode = supportsGoalMode
 	return config
 }

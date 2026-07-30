@@ -8,13 +8,15 @@ import (
 	"time"
 
 	"code-kanban/model/tables"
+	"code-kanban/utils"
 
 	"go.uber.org/zap"
 )
 
 const (
-	defaultTextDeltaFlushWindow = 40 * time.Millisecond
-	maxPendingTextDeltaBytes    = 16 * 1024
+	defaultTextDeltaFlushWindow  = 40 * time.Millisecond
+	defaultProjectionRetryWindow = 100 * time.Millisecond
+	maxPendingTextDeltaBytes     = 16 * 1024
 )
 
 type pendingTextDelta struct {
@@ -25,11 +27,16 @@ type pendingTextDelta struct {
 }
 
 type sessionEventState struct {
-	mu              sync.Mutex
-	pending         *pendingTextDelta
-	timer           *time.Timer
-	timerGeneration uint64
-	closed          bool
+	mu                        sync.Mutex
+	pending                   *pendingTextDelta
+	timer                     *time.Timer
+	timerGeneration           uint64
+	projectionRetries         []eventProjectionRetry
+	projectionTimer           *time.Timer
+	projectionTimerGeneration uint64
+	lastSeq                   int64
+	seqInitialized            bool
+	closed                    bool
 }
 
 func (m *Manager) sessionEventState(sessionID string) *sessionEventState {
@@ -66,11 +73,85 @@ func (m *Manager) clearSessionEventState(sessionID string) {
 	if state.timer != nil {
 		state.timer.Stop()
 	}
+	if state.projectionTimer != nil {
+		state.projectionTimer.Stop()
+	}
 	state.pending = nil
 	state.timer = nil
 	state.timerGeneration++
+	state.projectionRetries = nil
+	state.projectionTimer = nil
+	state.projectionTimerGeneration++
 	state.closed = false
 	state.mu.Unlock()
+}
+
+func (m *Manager) queueEventProjectionRetryLocked(
+	sessionID string,
+	state *sessionEventState,
+	retry eventProjectionRetry,
+) {
+	if state == nil || strings.TrimSpace(retry.event.ID) == "" {
+		return
+	}
+	for index := range state.projectionRetries {
+		if state.projectionRetries[index].event.ID == retry.event.ID {
+			return
+		}
+	}
+	state.projectionRetries = append(state.projectionRetries, retry)
+	m.scheduleEventProjectionRetryLocked(sessionID, state)
+}
+
+func (m *Manager) scheduleEventProjectionRetryLocked(sessionID string, state *sessionEventState) {
+	if state == nil || state.closed || state.projectionTimer != nil || len(state.projectionRetries) == 0 {
+		return
+	}
+	state.projectionTimerGeneration++
+	generation := state.projectionTimerGeneration
+	state.projectionTimer = time.AfterFunc(defaultProjectionRetryWindow, func() {
+		m.flushEventProjectionRetryTimer(sessionID, state, generation)
+	})
+}
+
+func (m *Manager) flushEventProjectionRetryTimer(
+	sessionID string,
+	state *sessionEventState,
+	generation uint64,
+) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.closed || state.projectionTimerGeneration != generation {
+		return
+	}
+	state.projectionTimer = nil
+	if err := m.flushEventProjectionRetriesLocked(context.Background(), sessionID, state); err != nil {
+		m.scheduleEventProjectionRetryLocked(sessionID, state)
+	}
+}
+
+func (m *Manager) flushEventProjectionRetriesLocked(
+	ctx context.Context,
+	sessionID string,
+	state *sessionEventState,
+) error {
+	if state == nil {
+		return fmt.Errorf("web session event state is nil")
+	}
+	for len(state.projectionRetries) > 0 {
+		retry := &state.projectionRetries[0]
+		if err := m.projectPersistedEvent(ctx, sessionID, retry); err != nil {
+			return err
+		}
+		state.projectionRetries[0] = eventProjectionRetry{}
+		state.projectionRetries = state.projectionRetries[1:]
+	}
+	if state.projectionTimer != nil {
+		state.projectionTimer.Stop()
+		state.projectionTimer = nil
+		state.projectionTimerGeneration++
+	}
+	return nil
 }
 
 func (m *Manager) enqueueTextDelta(
@@ -162,9 +243,18 @@ func (m *Manager) flushPendingTextDeltaLocked(ctx context.Context, sessionID str
 
 	pending := state.pending
 	merged := pending.event
+	if strings.TrimSpace(merged.ID) == "" {
+		merged.ID = utils.NewID()
+		pending.event.ID = merged.ID
+	}
 	merged.Payload = cloneMap(pending.event.Payload)
 	merged.Payload["txt"] = strings.Join(pending.chunks, "")
-	if _, err := m.appendAndBroadcastNow(ctx, sessionID, pending.record, merged); err != nil {
+	if _, err := m.appendAndBroadcastNow(ctx, sessionID, pending.record, state, merged); err != nil {
+		if _, persisted := persistedEventFromError(err, merged.ID); persisted {
+			state.pending = nil
+			m.logTextDeltaFlushFailure(sessionID, pending.event, err)
+			return nil
+		}
 		m.logTextDeltaFlushFailure(sessionID, pending.event, err)
 		m.schedulePendingTextDeltaTimerLocked(sessionID, state)
 		return err

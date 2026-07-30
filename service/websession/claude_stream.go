@@ -809,7 +809,6 @@ func (m *Manager) syncClaudeSessionFromSource(
 		"thread_preview":    nilIfEmpty(parsed.LastPrompt),
 		"turn_count":        parsed.TurnCount,
 		"item_count":        len(itemRows),
-		"last_event_seq":    0,
 		"updated_at":        time.Now(),
 	}
 	if parsed.SessionID != "" {

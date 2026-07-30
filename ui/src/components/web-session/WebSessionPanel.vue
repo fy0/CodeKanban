@@ -3785,6 +3785,12 @@ watch(
 const runtimeHasCodex = computed(() => codexRuntimeConfig.value?.hasCodex === true);
 const runtimeHasClaudeCode = computed(() => codexRuntimeConfig.value?.hasClaudeCode === true);
 const runtimeCodexVersion = computed(() => codexRuntimeConfig.value?.codexVersion?.trim() || '');
+const runtimeWebSessionMinVersion = computed(
+  () => codexRuntimeConfig.value?.webSessionMinCodexVersion?.trim() || '0.146.0'
+);
+const runtimeSupportsWebSession = computed(
+  () => codexRuntimeConfig.value?.supportsWebSession === true
+);
 const runtimeGoalModeMinVersion = computed(
   () => codexRuntimeConfig.value?.goalModeMinCodexVersion?.trim() || '0.133.0'
 );
@@ -3794,7 +3800,7 @@ const isMessageCapabilityBlocked = computed(() => {
     return false;
   }
   if (selectedAgent.value === 'codex') {
-    return !runtimeHasCodex.value;
+    return !runtimeSupportsWebSession.value;
   }
   if (selectedAgent.value === 'claude') {
     return !runtimeHasClaudeCode.value;
@@ -3809,7 +3815,7 @@ const isCurrentSessionGoalModeBlocked = computed(() => {
   if (!codexRuntimeConfig.value) {
     return false;
   }
-  return !runtimeSupportsGoalMode.value;
+  return !runtimeSupportsWebSession.value || !runtimeSupportsGoalMode.value;
 });
 const currentSessionGoal = computed(() => currentRealSession.value?.goal ?? null);
 const isCurrentDraftCodexSession = computed(() => {
@@ -5472,6 +5478,13 @@ const composerPlaceholder = computed(() =>
 const composerHint = computed(() => {
   if (codexRuntimeConfig.value && selectedAgent.value === 'codex' && !runtimeHasCodex.value) {
     return t('webSession.composerHintCodexMissing');
+  }
+  if (
+    codexRuntimeConfig.value &&
+    selectedAgent.value === 'codex' &&
+    !runtimeSupportsWebSession.value
+  ) {
+    return codexWebSessionUnavailableMessage();
   }
   if (codexRuntimeConfig.value && selectedAgent.value === 'claude' && !runtimeHasClaudeCode.value) {
     return t('webSession.composerHintClaudeMissing');
@@ -8372,6 +8385,10 @@ const agentDropdownOptions = computed<DropdownOption[]>(() =>
     label: option.label,
     key: option.value,
     value: option.value,
+    disabled:
+      option.value === 'codex' &&
+      codexRuntimeConfig.value !== null &&
+      !runtimeSupportsWebSession.value,
   }))
 );
 
@@ -10195,6 +10212,9 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
   try {
     const source = currentSession.value;
     const agent = forceAgent ?? source?.agent ?? selectedAgent.value;
+    if (!(await ensureMessageCapabilityAvailable(agent))) {
+      return undefined;
+    }
     const worktreeId = resolveCreateSessionWorktreeId(source);
     const session = await webSessionStore.createSession(props.projectId, {
       worktreeId,
@@ -11033,8 +11053,11 @@ async function handleSubmit() {
     let session = currentRealSession.value;
     if (!session || isDraftSession(currentSession.value)) {
       const created = await handleCreateSession();
-      session = created ?? webSessionStore.getActiveSession(props.projectId);
-      if (created?.id && created.id !== submitOwnerId) {
+      if (!created) {
+        return;
+      }
+      session = created;
+      if (created.id !== submitOwnerId) {
         transferSessionSubmit(submitOwnerId, created.id);
         submitOwnerId = created.id;
       }
@@ -11127,7 +11150,11 @@ async function handleConfirmScheduledSend() {
   try {
     let session = currentRealSession.value;
     if (!session || isDraftSession(currentSession.value)) {
-      session = (await handleCreateSession()) ?? webSessionStore.getActiveSession(props.projectId);
+      const created = await handleCreateSession();
+      if (!created) {
+        return;
+      }
+      session = created;
     }
     if (!session) {
       return;
@@ -11773,16 +11800,32 @@ function goalModeUnavailableMessage() {
   });
 }
 
+function codexWebSessionUnavailableMessage() {
+  if (runtimeCodexVersion.value) {
+    return t('webSession.codexWebSessionUnavailableWithCurrent', {
+      requiredVersion: runtimeWebSessionMinVersion.value,
+      currentVersion: runtimeCodexVersion.value,
+    });
+  }
+  return t('webSession.codexWebSessionUnavailable', {
+    version: runtimeWebSessionMinVersion.value,
+  });
+}
+
 async function ensureMessageCapabilityAvailable(agent: 'codex' | 'claude') {
   const config = await refreshRuntimeCapabilities();
   if (!config) {
     return true;
   }
   if (agent === 'codex') {
-    if (config.hasCodex === true) {
+    if (config.hasCodex !== true) {
+      message.warning(t('webSession.codexNotInstalled'));
+      return false;
+    }
+    if (config.supportsWebSession === true) {
       return true;
     }
-    message.warning(t('webSession.codexNotInstalled'));
+    message.warning(codexWebSessionUnavailableMessage());
     return false;
   }
   if (config.hasClaudeCode === true) {
@@ -11799,6 +11842,10 @@ async function ensureGoalModeAvailable() {
   }
   if (config.hasCodex !== true) {
     message.warning(t('webSession.codexNotInstalled'));
+    return false;
+  }
+  if (config.supportsWebSession !== true) {
+    message.warning(codexWebSessionUnavailableMessage());
     return false;
   }
   if (config.supportsGoalMode === true) {

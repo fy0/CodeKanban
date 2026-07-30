@@ -373,6 +373,41 @@ func TestEditUserMessageRejectsUnsupportedAndActiveSessions(t *testing.T) {
 	}
 }
 
+func TestEditUserMessageRejectsOldCodexBeforeThreadOperations(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath, requestLog := writeMessageEditCodexAppServerVersion(t, "0.145.9")
+	manager, err := NewManager(Config{DataDir: t.TempDir(), CodexPath: codexPath}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.updateRuntimeState(context.Background(), created.ID, map[string]any{
+		"native_session_id": "thread_source",
+	}); err != nil {
+		t.Fatalf("updateRuntimeState returned error: %v", err)
+	}
+
+	_, err = manager.EditUserMessage(context.Background(), created.ID, "missing", "edited")
+	expected := "Codex web sessions require Codex >= 0.146.0. Current version: 0.145.9."
+	if err == nil || err.Error() != expected {
+		t.Fatalf("expected error %q, got %v", expected, err)
+	}
+	if raw, readErr := os.ReadFile(requestLog); readErr == nil && strings.TrimSpace(string(raw)) != "" {
+		t.Fatalf("expected no app-server thread operations, got %s", raw)
+	} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		t.Fatalf("read request log: %v", readErr)
+	}
+}
+
 func codexTestTurn(turnID string, itemID string, text string) map[string]any {
 	return map[string]any{
 		"id":     turnID,
@@ -449,20 +484,30 @@ func waitForMessageEditRequests(t *testing.T, path string, requiredMethod string
 }
 
 func writeMessageEditCodexAppServer(t *testing.T) (string, string) {
+	return writeMessageEditCodexAppServerVersion(t, "0.146.0")
+}
+
+func writeMessageEditCodexAppServerVersion(t *testing.T, version string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	requestLog := filepath.Join(dir, "requests.jsonl")
+	rolloutPath := filepath.Join(dir, "message-edit-rollout.jsonl")
 	scriptPath := filepath.Join(dir, "message-edit-codex.js")
 	script := fmt.Sprintf(`#!/usr/bin/env node
 if (process.argv.includes('--version')) {
-  process.stdout.write('codex 0.144.1\n');
+  process.stdout.write('codex %s\n');
   process.exit(0);
 }
 const fs = require('fs');
 const readline = require('readline');
 const logPath = %q;
+const rolloutPath = %q;
 const input = readline.createInterface({ input: process.stdin });
 const send = message => process.stdout.write(JSON.stringify(message) + '\n');
+const writeRollout = threadId => fs.writeFileSync(
+  rolloutPath,
+  JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: threadId } }) + '\n',
+);
 const turns = [
   { id: 'turn_1', status: 'completed', error: null, items: [
     { id: 'msg_1', type: 'userMessage', content: [{ type: 'text', text: 'First request' }] },
@@ -495,6 +540,10 @@ input.on('line', line => {
     send({ id: message.id, result: { goal: null } });
     return;
   }
+  if (message.method === 'thread/list') {
+    send({ id: message.id, result: { data: [], nextCursor: '' } });
+    return;
+  }
   if (message.method === 'thread/fork') {
     send({ id: message.id, result: { thread: {
       id: 'thread_fork', preview: 'Fork', path: '/tmp/thread-fork.jsonl',
@@ -504,11 +553,13 @@ input.on('line', line => {
     return;
   }
   if (message.method === 'thread/start') {
-    send({ id: message.id, result: { thread: { id: 'thread_fresh' }, modelProvider: 'TestProvider' } });
+    writeRollout('thread_fresh');
+    send({ id: message.id, result: { thread: { id: 'thread_fresh', path: rolloutPath }, modelProvider: 'TestProvider' } });
     return;
   }
   if (message.method === 'thread/resume') {
-    send({ id: message.id, result: { thread: { id: message.params.threadId }, modelProvider: 'TestProvider' } });
+    writeRollout(message.params.threadId);
+    send({ id: message.id, result: { thread: { id: message.params.threadId, path: rolloutPath }, modelProvider: 'TestProvider' } });
     return;
   }
   if (message.method === 'config/read') {
@@ -523,7 +574,7 @@ input.on('line', line => {
     send({ id: message.id, result: {} });
   }
 });
-`, requestLog)
+`, version, requestLog, filepath.ToSlash(rolloutPath))
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake Codex app server failed: %v", err)
 	}

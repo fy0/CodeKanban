@@ -420,6 +420,12 @@ func (m *Manager) triggerPendingProcessing(sessionID string) {
 	go m.runPendingProcessor(normalizedSessionID)
 }
 
+func (m *Manager) hasPendingSessionWork(sessionID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.pendingInputs[sessionID]) > 0 || m.pendingProcessing[sessionID]
+}
+
 func (m *Manager) broadcastPendingInputs(sessionID string) {
 	record, err := m.GetSession(context.Background(), sessionID)
 	if err != nil || record.ArchivedAt != nil {

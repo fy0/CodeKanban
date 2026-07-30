@@ -68,6 +68,185 @@ func TestParseCodexDeepHistoryCapturesToolsAndTimestamps(t *testing.T) {
 	}
 }
 
+func TestParseCodexDeepHistoryProjectsCollaborationFailure(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-30T01:00:00Z","type":"session_meta","payload":{"id":"thread-1"}}`,
+		`{"timestamp":"2026-07-30T01:00:01Z","type":"response_item","payload":{"type":"function_call","namespace":"collaboration","name":"spawn_agent","arguments":"{\"message\":\"encrypted-secret\",\"task_name\":\"review\"}","call_id":"call-failed","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+		`{"timestamp":"2026-07-30T01:00:02Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-failed","output":"failed to parse function arguments: missing field message","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+	})
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory: %v", err)
+	}
+	if len(items) != 1 || items[0].Tool == nil {
+		t.Fatalf("expected one failed collaboration tool, got %#v", items)
+	}
+	tool := items[0].Tool
+	if tool.ID != "call-failed" || tool.Kind != "sub_agent_tool_call" || tool.Status != "error" ||
+		!strings.Contains(tool.Output, "missing field") {
+		t.Fatalf("unexpected failed tool: %#v", tool)
+	}
+	if encoded := mustJSONText(tool.Input); strings.Contains(encoded, "encrypted-secret") || strings.Contains(encoded, "message") {
+		t.Fatalf("encrypted message leaked into deep history: %s", encoded)
+	}
+}
+
+func TestParseCodexDeepHistoryProjectsDirectV2CollaborationFailure(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-30T01:00:00Z","type":"session_meta","payload":{"id":"thread-1","multi_agent_version":"v2"}}`,
+		`{"timestamp":"2026-07-30T01:00:01Z","type":"response_item","payload":{"type":"function_call","name":"send_message","arguments":"{\"target\":\"/root/review\",\"message\":\"encrypted-secret\"}","call_id":"call-direct","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+		`{"timestamp":"2026-07-30T01:00:02Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-direct","output":"target is unavailable","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+	})
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory: %v", err)
+	}
+	if len(items) != 1 || items[0].Tool == nil || items[0].Tool.Status != "error" {
+		t.Fatalf("expected one direct V2 collaboration failure, got %#v", items)
+	}
+	if encoded := mustJSONText(items[0].Tool.Input); strings.Contains(encoded, "encrypted-secret") || strings.Contains(encoded, "message") {
+		t.Fatalf("encrypted message leaked into direct V2 history: %s", encoded)
+	}
+}
+
+func TestParseCodexDeepHistoryUsesTypedCollaborationActivity(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-30T01:00:00Z","type":"session_meta","payload":{"id":"thread-1"}}`,
+		`{"timestamp":"2026-07-30T01:00:01Z","type":"response_item","payload":{"type":"function_call","namespace":"collaboration","name":"spawn_agent","arguments":"{\"message\":\"encrypted\",\"task_name\":\"review\"}","call_id":"call-success","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+		`{"timestamp":"2026-07-30T01:00:02Z","type":"event_msg","payload":{"type":"sub_agent_activity","event_id":"call-success","occurred_at_ms":1785373202000,"agent_thread_id":"thread-child","agent_path":"/root/review","kind":"started"}}`,
+		`{"timestamp":"2026-07-30T01:00:03Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-success","output":"{\"task_name\":\"/root/review\"}","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+	})
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory: %v", err)
+	}
+	if len(items) != 1 || items[0].ItemType != "sub_agent_activity" || items[0].Tool != nil {
+		t.Fatalf("expected typed activity without raw tool duplicate, got %#v", items)
+	}
+	if items[0].ID != "call-success" || items[0].SourceThreadID == nil || *items[0].SourceThreadID != "thread-child" {
+		t.Fatalf("unexpected rollout activity projection: %#v", items[0])
+	}
+}
+
+func TestParseCodexDeepHistoryHonorsPaginatedSubagentBoundary(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-30T01:00:00Z","ordinal":0,"type":"session_meta","payload":{"id":"thread-child","history_mode":"paginated","subagent_history_start_ordinal":3}}`,
+		`{"timestamp":"2026-07-30T01:00:01Z","ordinal":1,"type":"event_msg","payload":{"type":"sub_agent_activity","event_id":"call-inherited","agent_thread_id":"thread-inherited","agent_path":"/root/inherited","kind":"started"}}`,
+		`{"timestamp":"2026-07-30T01:00:02Z","ordinal":2,"type":"event_msg","payload":{"type":"agent_message","message":"inherited parent message"}}`,
+		`{"timestamp":"2026-07-30T01:00:03Z","ordinal":3,"type":"event_msg","payload":{"type":"sub_agent_activity","event_id":"call-local","agent_thread_id":"thread-local","agent_path":"/root/child/local","kind":"started"}}`,
+	})
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "call-local" || items[0].SourceThreadID == nil ||
+		*items[0].SourceThreadID != "thread-local" {
+		t.Fatalf("expected only child-local history after the ordinal boundary, got %#v", items)
+	}
+}
+
+func TestParseCodexDeepHistoryClassifiesWaitAndIgnoresListAgents(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-30T01:00:00Z","type":"session_meta","payload":{"id":"thread-1"}}`,
+		`{"timestamp":"2026-07-30T01:00:01Z","type":"response_item","payload":{"type":"function_call","namespace":"collaboration","name":"wait_agent","arguments":"{\"timeout_ms\":10000}","call_id":"call-wait-ok","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+		`{"timestamp":"2026-07-30T01:00:01.500Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"turn-1","item":{"type":"CollabAgentToolCall","id":"call-wait-ok","tool":"wait","status":"completed","sender_thread_id":"thread-1","receiver_thread_ids":[],"agents_states":{}}}}`,
+		`{"timestamp":"2026-07-30T01:00:02Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-wait-ok","output":"{\"message\":\"Wait timed out.\",\"timed_out\":true}","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+		`{"timestamp":"2026-07-30T01:00:03Z","type":"response_item","payload":{"type":"function_call","namespace":"collaboration","name":"wait_agent","arguments":"{\"timeout_ms\":1000}","call_id":"call-wait-error","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+		`{"timestamp":"2026-07-30T01:00:04Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-wait-error","output":"timeout_ms must be at least 10000","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+		`{"timestamp":"2026-07-30T01:00:05Z","type":"response_item","payload":{"type":"function_call","namespace":"collaboration","name":"list_agents","arguments":"{}","call_id":"call-list","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+		`{"timestamp":"2026-07-30T01:00:06Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-list","output":"{\"agents\":[]}","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}`,
+	})
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory: %v", err)
+	}
+	if len(items) != 2 || items[0].Tool == nil || items[1].Tool == nil {
+		t.Fatalf("expected only two wait tools, got %#v", items)
+	}
+	if items[0].Tool.Status != "done" || items[1].Tool.Status != "error" {
+		t.Fatalf("unexpected wait statuses: %#v %#v", items[0].Tool, items[1].Tool)
+	}
+}
+
+func TestParseCodexDeepHistoryConsumesUnknownCollaborationWithoutLeakingArguments(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-30T01:00:00Z","type":"session_meta","payload":{"id":"thread-1"}}`,
+		`{"timestamp":"2026-07-30T01:00:01Z","type":"response_item","payload":{"type":"function_call","namespace":"collaboration","name":"future_agent_tool","arguments":"{\"message\":\"encrypted-secret\"}","call_id":"call-unknown"}}`,
+		`{"timestamp":"2026-07-30T01:00:02Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-unknown","output":"future output"}}`,
+	})
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("unknown collaboration calls must be consumed, got %#v", items)
+	}
+}
+
+func TestParseCodexDeepHistoryDiscardsV1CollaborationNamespace(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-07-30T01:00:00Z","type":"session_meta","payload":{"id":"thread-1","multi_agent_version":"v1"}}`,
+		`{"timestamp":"2026-07-30T01:00:01Z","type":"response_item","payload":{"type":"function_call","namespace":"multi_agent_v1","name":"spawn_agent","arguments":"{\"message\":\"encrypted-secret\"}","call_id":"call-v1"}}`,
+		`{"timestamp":"2026-07-30T01:00:02Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-v1","output":"legacy output"}}`,
+	})
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("V1 collaboration history must not be migrated or exposed: %#v", items)
+	}
+}
+
 func TestParseCodexDeepHistoryCapturesMessageOnlyCyberPolicyError(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -672,8 +851,19 @@ func TestShouldPreserveExistingHistoryOnFastSync(t *testing.T) {
 	if !manager.shouldPreserveExistingHistoryOnFastSync(tables.WebSessionTable{LastSyncMode: "deep"}) {
 		t.Fatal("expected deep-synced cache to be preserved on fast sync")
 	}
-	if !manager.shouldPreserveExistingHistoryOnFastSync(tables.WebSessionTable{LastEventSeq: 3}) {
-		t.Fatal("expected live event cache to be preserved on fast sync")
+	if !manager.shouldPreserveExistingHistoryOnFastSync(tables.WebSessionTable{ItemCount: 1}) {
+		t.Fatal("expected normalized item cache to be preserved on fast sync")
+	}
+	if err := manager.store.appendEvent("live-history", Event{ID: "evt-live", Seq: 3, Type: "note", Timestamp: time.Now()}); err != nil {
+		t.Fatalf("append live event cache: %v", err)
+	}
+	liveSession := tables.WebSessionTable{LastEventSeq: 3}
+	liveSession.ID = "live-history"
+	if !manager.shouldPreserveExistingHistoryOnFastSync(liveSession) {
+		t.Fatal("expected durable live event cache to be preserved on fast sync")
+	}
+	if manager.shouldPreserveExistingHistoryOnFastSync(tables.WebSessionTable{LastEventSeq: 3}) {
+		t.Fatal("expected a sequence watermark without cache data to be replaceable on fast sync")
 	}
 	if manager.shouldPreserveExistingHistoryOnFastSync(tables.WebSessionTable{}) {
 		t.Fatal("expected empty cache to be replaceable on fast sync")

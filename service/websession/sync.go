@@ -267,7 +267,7 @@ func (m *Manager) mapThreadReadItem(
 			},
 		}
 		return result, nil
-	case "collabAgentToolCall", "subAgentToolCall":
+	case "collabAgentToolCall":
 		status := syncedToolStatus(stringValue(item["status"]))
 		result.Kind = "tool"
 		result.Tool = &HistoryTool{
@@ -529,7 +529,7 @@ func (m *Manager) shouldPreserveExistingHistoryOnFastSync(session tables.WebSess
 	if normalizeSyncMode(session.LastSyncMode) == SyncModeDeep {
 		return true
 	}
-	return session.LastEventSeq > 0
+	return session.ItemCount > 0 || session.TurnCount > 0 || m.store.hasSessionHistory(session.ID)
 }
 
 func (m *Manager) syncSessionFromSource(
@@ -539,10 +539,32 @@ func (m *Manager) syncSessionFromSource(
 	force bool,
 	clearExisting bool,
 ) (SessionSnapshot, error) {
+	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
+	dispatchLock.Lock()
+	defer dispatchLock.Unlock()
+
 	session, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
+	if m.hasActiveRun(sessionID) {
+		return SessionSnapshot{}, fmt.Errorf("cannot sync an active web session")
+	}
+	eventState := m.sessionEventState(sessionID)
+	eventState.mu.Lock()
+	if eventState.closed {
+		eventState.mu.Unlock()
+		return SessionSnapshot{}, fmt.Errorf("web session %s is being deleted", sessionID)
+	}
+	if err := m.flushPendingTextDeltaLocked(ctx, sessionID, eventState); err != nil {
+		eventState.mu.Unlock()
+		return SessionSnapshot{}, err
+	}
+	if err := m.flushEventProjectionRetriesLocked(ctx, sessionID, eventState); err != nil {
+		eventState.mu.Unlock()
+		return SessionSnapshot{}, err
+	}
+	defer eventState.mu.Unlock()
 	agent := normalizeAgent(Agent(session.Agent))
 	if agent == AgentClaude {
 		return m.syncClaudeSessionFromSource(ctx, session, force, clearExisting)
@@ -554,6 +576,7 @@ func (m *Manager) syncSessionFromSource(
 		return SessionSnapshot{}, fmt.Errorf("session has no native thread id")
 	}
 	mode = normalizeSyncMode(string(mode))
+	preserveExistingFastHistory := mode == SyncModeFast && !clearExisting && m.shouldPreserveExistingHistoryOnFastSync(session)
 
 	now := time.Now()
 	_ = m.updateRuntimeState(ctx, sessionID, map[string]any{
@@ -568,7 +591,7 @@ func (m *Manager) syncSessionFromSource(
 		snapshot, err = m.syncSessionFromLogSource(ctx, session, force, clearExisting)
 	default:
 		snapshot, err = m.syncSessionFromThreadSource(ctx, session, force, clearExisting)
-		if err != nil || snapshot.History.Total == 0 {
+		if (err != nil || snapshot.History.Total == 0) && !preserveExistingFastHistory {
 			fallbackSnapshot, fallbackErr := m.syncSessionFromLogSource(ctx, session, force, clearExisting)
 			if fallbackErr == nil {
 				snapshot = fallbackSnapshot
@@ -721,7 +744,6 @@ func (m *Manager) syncSessionFromThreadSource(
 	updates["last_sync_mode"] = string(SyncModeFast)
 	updates["turn_count"] = len(turnRows)
 	updates["item_count"] = len(itemRows)
-	updates["last_event_seq"] = 0
 	if err := m.store.deleteSessionFiles(session.ID); err != nil {
 		return SessionSnapshot{}, err
 	}

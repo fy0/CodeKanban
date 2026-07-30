@@ -189,6 +189,7 @@ const (
 	codexRetryNoteLevel              = "warn"
 	codexIncompleteTurnMaxRetries    = 1
 	codexSteerTargetWait             = 10 * time.Second
+	codexRolloutAttachTimeout        = 3 * time.Second
 )
 
 var codexReconnectProgressPattern = regexp.MustCompile(`(?i)reconnecting\.\.\.\s*(\d+)\s*/\s*(\d+)`)
@@ -435,15 +436,40 @@ func (m *Manager) runCodexAppServerSession(
 		return
 	}
 
-	threadID, modelProvider, err := m.startOrResumeCodexThread(ctx, session, run, client)
+	threadID, modelProvider, threadPath, _, err := m.startOrResumeCodexThread(ctx, session, run, client)
 	if err != nil {
 		run.resolveBootstrap(err)
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
 	}
 	session.NativeSessionID = ptr(threadID)
+	if strings.TrimSpace(threadPath) != "" {
+		session.ThreadPath = ptr(strings.TrimSpace(threadPath))
+	}
 	run.transportRemoteURL = readCodexRemoteURL(ctx, client, session.Cwd, modelProvider)
 
+	rootTailer, tailerErr := m.prepareCodexRolloutTailer(ctx, session, threadID)
+	var rolloutTailers map[string]*codexRolloutTailer
+	if tailerErr == nil {
+		var tailerWarnings []error
+		rolloutTailers, tailerWarnings = prepareCodexRolloutMonitorTailers(ctx, client, threadID, rootTailer)
+		for _, warning := range tailerWarnings {
+			if m.logger != nil {
+				m.logger.Warn("Codex descendant rollout baseline unavailable",
+					zap.String("sessionId", session.ID),
+					zap.String("threadId", threadID),
+					zap.Error(warning),
+				)
+			}
+		}
+	}
+	if tailerErr != nil {
+		run.resolveBootstrap(tailerErr)
+		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, tailerErr)
+		return
+	}
+
+	rolloutStartedAt := time.Now()
 	turnResponse, err := client.request(ctx, "turn/start", codexTurnStartParams(session, threadID, text, attachments))
 	if err != nil {
 		run.resolveBootstrap(err)
@@ -456,17 +482,60 @@ func (m *Manager) runCodexAppServerSession(
 	}
 	run.setCodexSteerTarget(threadID, turnID)
 	rootScope := codexTurnScope{threadID: threadID, turnID: turnID}
+	stopAndDrainRollout := func() {
+		run.stopCodexRolloutMonitor()
+	}
+	defer stopAndDrainRollout()
+	if len(rolloutTailers) > 0 {
+		monitor, monitorErr := newCodexRolloutMonitor(
+			ctx,
+			rolloutStartedAt,
+			rolloutTailers,
+			func(sourceThreadID string, entry codexRolloutEntry) error {
+				return m.handleCodexRolloutEntry(session, run, sourceThreadID, entry)
+			},
+			func(sourceThreadID string, monitorErr error) {
+				if m.logger != nil {
+					m.logger.Warn("Codex rollout monitoring stopped for a thread",
+						zap.String("sessionId", session.ID),
+						zap.String("threadId", sourceThreadID),
+						zap.Error(monitorErr),
+					)
+				}
+				m.appendRunNote(
+					session.ID,
+					session,
+					run,
+					"warn",
+					"Codex rollout monitoring stopped for a thread; typed events remain active.",
+					map[string]any{
+						"code":     "codex_rollout_tail_stopped",
+						"threadId": sourceThreadID,
+						"error":    monitorErr.Error(),
+					},
+				)
+			},
+		)
+		if monitorErr != nil {
+			run.resolveBootstrap(monitorErr)
+			m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, monitorErr)
+			return
+		}
+		run.setCodexRolloutMonitor(monitor)
+	}
 	if strings.TrimSpace(run.bootstrapGoalObjective) != "" {
 		if _, err := client.request(ctx, "thread/goal/set", map[string]any{
 			"threadId":  threadID,
 			"objective": strings.TrimSpace(run.bootstrapGoalObjective),
 			"status":    string(run.bootstrapGoalState),
 		}); err != nil {
+			stopAndDrainRollout()
 			run.resolveBootstrap(err)
 			m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 			return
 		}
 		if err := m.syncCodexGoalState(ctx, session, client, threadID); err != nil {
+			stopAndDrainRollout()
 			run.resolveBootstrap(err)
 			m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 			return
@@ -554,6 +623,7 @@ func (m *Manager) runCodexAppServerSession(
 					continue
 				}
 
+				stopAndDrainRollout()
 				turnCompleted = true
 				finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
 				now := time.Now()
@@ -578,9 +648,10 @@ func (m *Manager) runCodexAppServerSession(
 				)
 				m.broadcastSessionSummary(context.Background(), session.ID)
 				_ = client.closeStdin()
-				m.maybeSyncSessionAfterRun(session)
 				run.resetActiveCallTracking()
-				m.releaseActiveRun(session.ID, run)
+				if m.releaseActiveRun(session.ID, run) && !m.hasPendingSessionWork(session.ID) {
+					m.maybeSyncSessionAfterRun(session)
+				}
 			}
 		case waitErr = <-waitCh:
 			processExited = true
@@ -589,6 +660,7 @@ func (m *Manager) runCodexAppServerSession(
 	}
 
 	<-stderrDone
+	stopAndDrainRollout()
 
 	if ctx.Err() != nil {
 		abortPayload := activeCallTimeoutAbortPayload(session, run.abortEventPayload())
@@ -667,7 +739,7 @@ func (m *Manager) startOrResumeCodexThread(
 	session tables.WebSessionTable,
 	run *activeRun,
 	client *codexAppServerClient,
-) (string, string, error) {
+) (string, string, string, bool, error) {
 	existingThreadID := ""
 	if session.NativeSessionID != nil {
 		existingThreadID = strings.TrimSpace(*session.NativeSessionID)
@@ -683,7 +755,7 @@ func (m *Manager) startOrResumeCodexThread(
 		response, err = client.request(ctx, "thread/start", codexThreadStartParams(session))
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", "", existingThreadID != "", err
 	}
 
 	responsePayload := decodeRawObject(response.Result)
@@ -692,16 +764,21 @@ func (m *Manager) startOrResumeCodexThread(
 		threadID = existingThreadID
 	}
 	if threadID == "" {
-		return "", "", fmt.Errorf("codex app-server did not return a thread id")
+		return "", "", "", existingThreadID != "", fmt.Errorf("codex app-server did not return a thread id")
 	}
-	if err := m.updateRuntimeState(context.Background(), session.ID, map[string]any{
+	threadPath := strings.TrimSpace(stringValue(decodeRawObject(responsePayload["thread"])["path"]))
+	updates := map[string]any{
 		"native_session_id": threadID,
 		"updated_at":        time.Now(),
-	}); err != nil {
-		return "", "", err
+	}
+	if threadPath != "" {
+		updates["thread_path"] = threadPath
+	}
+	if err := m.updateRuntimeState(context.Background(), session.ID, updates); err != nil {
+		return "", "", "", existingThreadID != "", err
 	}
 	run.currentToolMessage = threadID
-	return threadID, strings.TrimSpace(stringValue(responsePayload["modelProvider"])), nil
+	return threadID, strings.TrimSpace(stringValue(responsePayload["modelProvider"])), threadPath, existingThreadID != "", nil
 }
 
 func readCodexRemoteURL(
@@ -780,6 +857,8 @@ func (m *Manager) handleCodexAppServerMessage(
 		return codexTurnOutcomeNone, nil
 	case "thread/started":
 		if !isRootEvent {
+			thread := decodeRawObject(decodeRawObject(message.Params)["thread"])
+			m.ensureCodexRolloutThreadAttachedAsync(session, run, client, threadID, stringValue(thread["path"]))
 			m.appendCodexSubAgentState(session, run, threadID, turnID, codexThreadStartedSubAgentPayload(message.Params))
 			return codexTurnOutcomeNone, nil
 		}
@@ -792,6 +871,7 @@ func (m *Manager) handleCodexAppServerMessage(
 		return codexTurnOutcomeNone, nil
 	case "turn/started":
 		if !isRootEvent {
+			m.ensureCodexRolloutThreadAttachedAsync(session, run, client, threadID, "")
 			m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
 				"status": string(WebSessionSubAgentRunning),
 				"turnId": turnID,
@@ -810,7 +890,17 @@ func (m *Manager) handleCodexAppServerMessage(
 		m.handleCodexAppServerAgentDelta(session, run, message.Params, isRootEvent)
 		return codexTurnOutcomeNone, nil
 	case "item/completed":
+		m.ensureCodexSubAgentRolloutAttachedAsync(session, run, client, message.Params)
 		m.handleCodexAppServerItemCompleted(session, run, message.Params, isRootEvent)
+		return codexTurnOutcomeNone, nil
+	case "rawResponseItem/completed":
+		if err := m.handleCodexRawResponseItemCompleted(session, run, message.Params, isRootEvent); err != nil {
+			return codexTurnOutcomeFailed, err
+		}
+		return codexTurnOutcomeNone, nil
+	case "rawResponse/completed":
+		// One turn can contain multiple upstream Responses API calls. This is not
+		// a tool or turn completion boundary.
 		return codexTurnOutcomeNone, nil
 	case "thread/tokenUsage/updated":
 		if isRootEvent {
@@ -909,7 +999,7 @@ func (m *Manager) handleCodexAppServerMessage(
 	case "configWarning", "account/rateLimits/updated", "serverRequest/resolved",
 		"item/plan/delta", "turn/plan/updated", "item/commandExecution/outputDelta",
 		"item/fileChange/outputDelta", "item/reasoning/summaryTextDelta",
-		"item/reasoning/summaryPartAdded", "item/reasoning/textDelta", "rawResponseItem/completed":
+		"item/reasoning/summaryPartAdded", "item/reasoning/textDelta":
 		return codexTurnOutcomeNone, nil
 	default:
 		return codexTurnOutcomeNone, nil
@@ -1079,14 +1169,21 @@ func (m *Manager) handleCodexAppServerItemStarted(
 	item := decodeRawObject(payload["item"])
 	threadID := codexNotificationThreadID(params)
 	turnID := codexNotificationTurnID(params)
+	if strings.TrimSpace(stringValue(item["type"])) == "subAgentActivity" {
+		run.codexCollaboration.markCovered(threadID, turnID, stringValue(item["id"]))
+		return
+	}
 	itemType := normalizeCodexItemType(stringValue(item["type"]))
+	if itemType == "sub_agent_tool_call" {
+		run.codexCollaboration.markCovered(threadID, turnID, stringValue(item["id"]))
+	}
 	switch itemType {
 	case "user_message":
 		return
 	case "agent_message":
 		messageID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
 		if isRootEvent {
-			run.assistantMessageID = messageID
+			run.setAssistantMessageID(messageID)
 			run.recordAssistantMessageStarted(messageID, stringValue(item["phase"]))
 		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
@@ -1148,8 +1245,8 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 		fallbackMessageID = run.assistantMessageID
 	}
 	messageID := firstNonEmpty(stringValue(payload["itemId"]), fallbackMessageID, utils.NewID())
-	if isRootEvent && run.assistantMessageID != messageID {
-		run.assistantMessageID = messageID
+	if isRootEvent && run.assistantMessageIDSnapshot() != messageID {
+		run.setAssistantMessageID(messageID)
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
@@ -1204,11 +1301,13 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 	threadID := codexNotificationThreadID(params)
 	turnID := codexNotificationTurnID(params)
 	if strings.TrimSpace(stringValue(item["type"])) == "subAgentActivity" {
+		run.codexCollaboration.markCovered(threadID, turnID, stringValue(item["id"]))
 		m.handleCodexSubAgentActivity(session, run, threadID, turnID, item)
 		return
 	}
 	itemType := normalizeCodexItemType(stringValue(item["type"]))
 	if itemType == "sub_agent_tool_call" {
+		run.codexCollaboration.markCovered(threadID, turnID, stringValue(item["id"]))
 		m.handleCodexCollabAgentCompletion(session, run, threadID, turnID, item)
 	}
 	switch itemType {
@@ -1300,6 +1399,289 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			m.trackActiveCodexToolComplete(run, toolID)
 		}
 	}
+}
+
+func (m *Manager) handleCodexRawResponseItemCompleted(
+	session tables.WebSessionTable,
+	run *activeRun,
+	params json.RawMessage,
+	isRootEvent bool,
+) error {
+	if run == nil {
+		return nil
+	}
+	payload := decodeRawObject(params)
+	item := decodeRawObject(payload["item"])
+	threadID := codexNotificationThreadID(params)
+	turnID := codexNotificationTurnID(params)
+	switch strings.TrimSpace(stringValue(item["type"])) {
+	case "function_call":
+		call, ok := parseCodexCollaborationCall(threadID, turnID, item, time.Now())
+		if !ok {
+			return nil
+		}
+		if isRootEvent {
+			call.ParentID = run.assistantMessageIDSnapshot()
+		}
+		run.codexCollaboration.record(call)
+	case "function_call_output":
+		callID := strings.TrimSpace(stringValue(item["call_id"]))
+		if turnID == "" {
+			turnID = codexResponseItemTurnID(item)
+		}
+		call, output, emitFailure, handled := run.codexCollaboration.resolve(
+			threadID,
+			turnID,
+			callID,
+			item["output"],
+		)
+		if !handled || !emitFailure {
+			return nil
+		}
+		return m.persistCodexCollaborationFailure(session, run, call, output, time.Now())
+	}
+	return nil
+}
+
+func (m *Manager) ensureCodexSubAgentRolloutAttachedAsync(
+	session tables.WebSessionTable,
+	run *activeRun,
+	client *codexAppServerClient,
+	params json.RawMessage,
+) {
+	item := decodeRawObject(decodeRawObject(params)["item"])
+	if strings.TrimSpace(stringValue(item["type"])) != "subAgentActivity" ||
+		!strings.EqualFold(strings.TrimSpace(stringValue(item["kind"])), "started") {
+		return
+	}
+	m.ensureCodexRolloutThreadAttachedAsync(
+		session,
+		run,
+		client,
+		stringValue(item["agentThreadId"]),
+		"",
+	)
+}
+
+func (m *Manager) ensureCodexRolloutThreadAttachedAsync(
+	session tables.WebSessionTable,
+	run *activeRun,
+	client *codexAppServerClient,
+	threadID string,
+	path string,
+) {
+	if run == nil || run.codexRolloutMonitorSnapshot() == nil || strings.TrimSpace(threadID) == "" {
+		return
+	}
+	go func() {
+		if err := m.ensureCodexRolloutThreadAttached(run, client, threadID, path); err != nil {
+			m.warnCodexRolloutAttachFailure(session, run, threadID, err)
+		}
+	}()
+}
+
+func (m *Manager) ensureCodexRolloutThreadAttached(
+	run *activeRun,
+	client *codexAppServerClient,
+	threadID string,
+	path string,
+) error {
+	monitor := run.codexRolloutMonitorSnapshot()
+	threadID = strings.TrimSpace(threadID)
+	if monitor == nil || threadID == "" || monitor.hasThread(threadID) {
+		return nil
+	}
+
+	path = strings.TrimSpace(path)
+	var readErr error
+	if path == "" && client != nil {
+		readCtx, cancel := context.WithTimeout(context.Background(), codexRolloutAttachTimeout)
+		response, err := client.request(readCtx, "thread/read", map[string]any{
+			"threadId":     threadID,
+			"includeTurns": false,
+		})
+		cancel()
+		if err != nil {
+			readErr = err
+		} else {
+			thread := decodeRawObject(decodeRawObject(response.Result)["thread"])
+			responseThreadID := strings.TrimSpace(stringValue(thread["id"]))
+			if responseThreadID != "" && responseThreadID != threadID {
+				readErr = fmt.Errorf("thread/read returned thread %s", responseThreadID)
+			} else {
+				path = strings.TrimSpace(stringValue(thread["path"]))
+			}
+		}
+	}
+	if err := monitor.addThreadFromBeginning(threadID, path); err != nil {
+		if readErr != nil {
+			return fmt.Errorf(
+				"cannot attach Codex descendant rollout for thread %s (thread/read: %v): %w",
+				threadID,
+				readErr,
+				err,
+			)
+		}
+		return fmt.Errorf("cannot attach Codex descendant rollout for thread %s: %w", threadID, err)
+	}
+	return nil
+}
+
+func (m *Manager) warnCodexRolloutAttachFailure(
+	session tables.WebSessionTable,
+	run *activeRun,
+	threadID string,
+	err error,
+) {
+	if err == nil {
+		return
+	}
+	threadID = strings.TrimSpace(threadID)
+	if m.logger != nil {
+		m.logger.Warn("Codex descendant rollout attachment unavailable",
+			zap.String("sessionId", session.ID),
+			zap.String("threadId", threadID),
+			zap.Error(err),
+		)
+	}
+	m.appendRunNote(
+		session.ID,
+		session,
+		run,
+		"warn",
+		"Codex descendant rollout attachment is unavailable; typed events remain active.",
+		map[string]any{
+			"code":     "codex_descendant_rollout_unavailable",
+			"threadId": threadID,
+			"error":    err.Error(),
+		},
+	)
+}
+
+func (m *Manager) handleCodexRolloutEntry(
+	session tables.WebSessionTable,
+	run *activeRun,
+	threadID string,
+	entry codexRolloutEntry,
+) error {
+	if run == nil || strings.TrimSpace(threadID) == "" {
+		return nil
+	}
+	observedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(entry.Timestamp))
+	if err != nil {
+		observedAt = time.Now()
+	}
+	switch strings.TrimSpace(entry.Type) {
+	case "response_item":
+		itemType := strings.TrimSpace(stringValue(entry.Payload["type"]))
+		turnID := codexResponseItemTurnID(entry.Payload)
+		switch itemType {
+		case "function_call":
+			call, ok := parseCodexCollaborationCall(threadID, turnID, entry.Payload, observedAt)
+			if !ok {
+				return nil
+			}
+			call.ParentID = run.assistantMessageIDSnapshot()
+			run.codexCollaboration.record(call)
+		case "function_call_output":
+			call, output, emitFailure, handled := run.codexCollaboration.resolve(
+				threadID,
+				turnID,
+				stringValue(entry.Payload["call_id"]),
+				entry.Payload["output"],
+			)
+			if handled && emitFailure {
+				return m.persistCodexCollaborationFailure(session, run, call, output, observedAt)
+			}
+		}
+	case "event_msg":
+		eventType := strings.TrimSpace(stringValue(entry.Payload["type"]))
+		switch eventType {
+		case "sub_agent_activity":
+			run.codexCollaboration.markCoveredByCall(threadID, stringValue(entry.Payload["event_id"]))
+			if strings.EqualFold(strings.TrimSpace(stringValue(entry.Payload["kind"])), "started") {
+				if err := m.ensureCodexRolloutThreadAttached(
+					run,
+					nil,
+					stringValue(entry.Payload["agent_thread_id"]),
+					"",
+				); err != nil {
+					return err
+				}
+			}
+		case "item_completed":
+			item := decodeRawObject(entry.Payload["item"])
+			rawItemType := strings.TrimSpace(stringValue(item["type"]))
+			if rawItemType == "CollabAgentToolCall" || rawItemType == "SubAgentActivity" {
+				run.codexCollaboration.markCoveredByCall(threadID, stringValue(item["id"]))
+			}
+		}
+	}
+	return nil
+}
+
+func (m *Manager) appendCodexCollaborationFailure(
+	session tables.WebSessionTable,
+	run *activeRun,
+	call codexCollaborationCall,
+	output string,
+	completedAt time.Time,
+) error {
+	if run == nil || strings.TrimSpace(call.CallID) == "" {
+		return nil
+	}
+	meta := codexCollaborationMeta(call)
+	_, err := m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+		ID:        codexCollaborationFailureEventID(call),
+		Type:      "tool_end",
+		RunID:     run.runID,
+		ParentID:  call.ParentID,
+		ThreadID:  call.ThreadID,
+		TurnID:    call.TurnID,
+		Timestamp: completedAt,
+		Payload: map[string]any{
+			"tid":  call.CallID,
+			"name": "Sub Agent",
+			"kind": "sub_agent_tool_call",
+			"in":   cloneMap(call.Input),
+			"out":  firstNonEmpty(output, "Codex collaboration tool call failed"),
+			"ok":   false,
+			"meta": cloneMap(meta),
+		},
+	})
+	return err
+}
+
+func (m *Manager) persistCodexCollaborationFailure(
+	session tables.WebSessionTable,
+	run *activeRun,
+	call codexCollaborationCall,
+	output string,
+	completedAt time.Time,
+) error {
+	err := m.appendCodexCollaborationFailure(session, run, call, output, completedAt)
+	if err == nil {
+		run.codexCollaboration.finishFailure(call, true)
+		return nil
+	}
+	if _, persisted := persistedEventFromError(err, codexCollaborationFailureEventID(call)); persisted {
+		run.codexCollaboration.finishFailure(call, true)
+		if m.logger != nil {
+			m.logger.Warn("Codex collaboration failure was persisted but not fully projected",
+				zap.String("sessionId", session.ID),
+				zap.String("threadId", call.ThreadID),
+				zap.String("callId", call.CallID),
+				zap.Error(err),
+			)
+		}
+		return nil
+	}
+	run.codexCollaboration.finishFailure(call, false)
+	return err
+}
+
+func codexCollaborationFailureEventID(call codexCollaborationCall) string {
+	return "codex-collaboration-failure-" + strings.TrimSpace(call.ThreadID) + "-" + strings.TrimSpace(call.CallID)
 }
 
 func (m *Manager) appendCodexSubAgentState(
@@ -1869,22 +2251,31 @@ func userInputResponsePayload(answers map[string][]string) map[string]any {
 
 func codexThreadStartParams(session tables.WebSessionTable) map[string]any {
 	return map[string]any{
-		"cwd":                    session.Cwd,
-		"model":                  strings.TrimSpace(session.Model),
-		"sandbox":                codexSandboxMode(effectivePermissionLevel(session)),
-		"approvalPolicy":         codexApprovalPolicy(effectivePermissionLevel(session)),
-		"persistExtendedHistory": true,
+		"cwd":                   session.Cwd,
+		"model":                 strings.TrimSpace(session.Model),
+		"sandbox":               codexSandboxMode(effectivePermissionLevel(session)),
+		"approvalPolicy":        codexApprovalPolicy(effectivePermissionLevel(session)),
+		"config":                codexMultiAgentV2Config(),
+		"historyMode":           "paginated",
+		"experimentalRawEvents": true,
 	}
 }
 
 func codexThreadResumeParams(session tables.WebSessionTable, threadID string) map[string]any {
 	return map[string]any{
-		"threadId":               strings.TrimSpace(threadID),
-		"persistExtendedHistory": true,
-		"cwd":                    session.Cwd,
-		"model":                  strings.TrimSpace(session.Model),
-		"sandbox":                codexSandboxMode(effectivePermissionLevel(session)),
-		"approvalPolicy":         codexApprovalPolicy(effectivePermissionLevel(session)),
+		"threadId":       strings.TrimSpace(threadID),
+		"cwd":            session.Cwd,
+		"model":          strings.TrimSpace(session.Model),
+		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
+		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
+		"config":         codexMultiAgentV2Config(),
+	}
+}
+
+func codexMultiAgentV2Config() map[string]any {
+	return map[string]any{
+		"features.multi_agent_v2.enabled":        true,
+		"features.multi_agent_v2.tool_namespace": codexCollaborationNamespace,
 	}
 }
 

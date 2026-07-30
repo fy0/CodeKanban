@@ -1015,6 +1015,10 @@ export default {
     composerHintRecovered:
       'The previous run was interrupted by an app restart. Send a new message to continue this session.',
     codexNotInstalled: 'Codex was not detected. Install Codex before continuing.',
+    codexWebSessionUnavailable:
+      'Codex web sessions require Codex >= {version}. The installed version could not be determined.',
+    codexWebSessionUnavailableWithCurrent:
+      'Codex web sessions require Codex >= {requiredVersion}. Current version: {currentVersion}.',
     claudeCodeNotInstalled: 'Claude Code was not detected. Install Claude Code before continuing.',
     goalModeUnavailable: 'Goal mode requires Codex >= {version}.',
     goalModeUnavailableWithCurrent:

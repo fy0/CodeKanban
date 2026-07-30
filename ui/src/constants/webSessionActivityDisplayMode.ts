@@ -32,7 +32,6 @@ export function normalizeWebSessionActivityToolKind(value: string | undefined) {
   if (
     normalized === 'collabAgentToolCall' ||
     normalized === 'collab_agent_tool_call' ||
-    normalized === 'subAgentToolCall' ||
     normalized === 'sub_agent_tool_call'
   ) {
     return 'sub_agent_tool_call';
