@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { postMethodMock, postSendMock, postAbortMock } = vi.hoisted(() => {
+const { postMethodMock, postSendMock, postAbortMock, fetchMock } = vi.hoisted(() => {
   const postSendMock = vi.fn();
   const postAbortMock = vi.fn();
   return {
@@ -10,11 +10,24 @@ const { postMethodMock, postSendMock, postAbortMock } = vi.hoisted(() => {
     })),
     postSendMock,
     postAbortMock,
+    fetchMock: vi.fn(),
   };
 });
 
 vi.mock('@/api', () => ({
   urlBase: '',
+  ApiError: class ApiError extends Error {
+    status: number;
+    statusText: string;
+    data: unknown;
+
+    constructor(status: number, statusText: string, data: unknown) {
+      super(statusText);
+      this.status = status;
+      this.statusText = statusText;
+      this.data = data;
+    }
+  },
 }));
 
 vi.mock('@/api/http', () => ({
@@ -26,7 +39,9 @@ vi.mock('@/api/http', () => ({
   },
 }));
 
-import { webSessionApi } from '@/api/webSession';
+vi.stubGlobal('fetch', fetchMock);
+
+import { buildWebSessionLocalFileContentUrl, webSessionApi } from '@/api/webSession';
 
 describe('webSessionApi.search', () => {
   beforeEach(() => {
@@ -128,5 +143,46 @@ describe('webSessionApi.search', () => {
     expect(requestBody).not.toHaveProperty('model');
     expect(requestBody).not.toHaveProperty('reasoningEffort');
     expect(requestBody).not.toHaveProperty('permissionLevel');
+  });
+});
+
+describe('webSessionApi local files', () => {
+  beforeEach(() => {
+    postMethodMock.mockClear();
+    postSendMock.mockReset();
+    fetchMock.mockReset();
+  });
+
+  it('builds an encoded local-file download URL', () => {
+    expect(
+      buildWebSessionLocalFileContentUrl('project/1', 'session 2', 'C:\\Temp\\report results.csv')
+    ).toBe(
+      '/api/v1/projects/project%2F1/web-sessions/session%202/local-files/content?path=C%3A%5CTemp%5Creport+results.csv'
+    );
+  });
+
+  it('preflights a local-file download with credentials', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    await webSessionApi.probeLocalFile('project-1', 'session-1', 'C:\\Temp\\report.csv');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/projects/project-1/web-sessions/session-1/local-files/content?path=C%3A%5CTemp%5Creport.csv',
+      {
+        method: 'HEAD',
+        credentials: 'include',
+      }
+    );
+  });
+
+  it('opens a validated local-file location through the session endpoint', async () => {
+    postSendMock.mockResolvedValueOnce({ message: 'file location opened' });
+
+    await webSessionApi.openLocalFileLocation('project-1', 'session-1', 'C:\\Temp\\report.csv');
+
+    expect(postMethodMock).toHaveBeenCalledWith(
+      '/projects/project-1/web-sessions/session-1/local-files/open-location',
+      { path: 'C:\\Temp\\report.csv' }
+    );
   });
 });

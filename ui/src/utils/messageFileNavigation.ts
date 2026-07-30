@@ -10,6 +10,10 @@ export interface ResolveMessageFileTargetOptions {
   preferredScopeId?: string;
 }
 
+export interface ResolveMessageLocalFilePathOptions {
+  workingDirectory?: string;
+}
+
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-z]:\//i;
 const WINDOWS_URL_PATH_PATTERN = /^\/[a-z]:\//i;
 const URL_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/i;
@@ -52,7 +56,9 @@ function normalizeSegments(segments: string[], allowRootParent = false) {
 }
 
 function normalizeAbsolutePath(value: string): string | null {
-  let path = decodePath(stripQueryAndHash(value.trim())).replace(/\\/g, '/');
+  let path = decodePath(stripQueryAndHash(value.trim()))
+    .replace(/\\/g, '/')
+    .replace(/:\d+(?::\d+)?$/, '');
   if (WINDOWS_URL_PATH_PATTERN.test(path)) {
     path = path.slice(1);
   }
@@ -114,6 +120,9 @@ function resolveAbsoluteHrefPath(rawHref: string, baseHref: string): string | nu
   try {
     const resolved = new URL(href, baseHref);
     if (resolved.protocol === 'file:') {
+      if (resolved.hostname && resolved.hostname !== 'localhost') {
+        return null;
+      }
       return normalizeAbsolutePath(resolved.pathname);
     }
     if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') {
@@ -210,6 +219,28 @@ export function isPotentialMessageFileHref(rawHref: string, baseHref: string) {
     return true;
   }
   return normalizeRelativePath(href) !== null;
+}
+
+export function resolveMessageLocalFilePath(
+  rawHref: string,
+  baseHref: string,
+  options: ResolveMessageLocalFilePathOptions = {}
+): string | null {
+  const absolutePath = resolveAbsoluteHrefPath(rawHref, baseHref);
+  if (absolutePath) {
+    return absolutePath;
+  }
+
+  const relativePath = normalizeRelativePath(rawHref);
+  if (relativePath === null || !options.workingDirectory) {
+    return null;
+  }
+  return joinAbsoluteAndRelative(options.workingDirectory, relativePath);
+}
+
+export function resolveMessageLocalFileName(path: string) {
+  const normalizedPath = path.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalizedPath.split('/').pop() || normalizedPath;
 }
 
 export function resolveMessageFileTarget(

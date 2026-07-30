@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { FileManagerScope } from '@/types/fileManager';
 import {
   isPotentialMessageFileHref,
+  resolveMessageLocalFileName,
+  resolveMessageLocalFilePath,
   resolveMessageFileTarget,
 } from '@/utils/messageFileNavigation';
 
@@ -25,6 +27,42 @@ const windowsScopes: FileManagerScope[] = [
 ];
 
 describe('messageFileNavigation', () => {
+  it('resolves Windows file URLs and relative files for local-file actions', () => {
+    expect(
+      resolveMessageLocalFilePath(
+        'file:///C:/Users/test/AppData/Local/Temp/report%20results.csv',
+        BASE_URL,
+        { workingDirectory: 'D:\\codes\\2026\\vfbox' }
+      )
+    ).toBe('C:/Users/test/AppData/Local/Temp/report results.csv');
+
+    expect(
+      resolveMessageLocalFilePath('reports/result.csv#latest', BASE_URL, {
+        workingDirectory: 'D:\\codes\\2026\\vfbox',
+      })
+    ).toBe('D:/codes/2026/vfbox/reports/result.csv');
+  });
+
+  it('normalizes line suffixes and derives local-file display names', () => {
+    const path = resolveMessageLocalFilePath(
+      'file:///D:/codes/2026/vfbox/src/main.ts:42:7#L42',
+      BASE_URL
+    );
+
+    expect(path).toBe('D:/codes/2026/vfbox/src/main.ts');
+    expect(resolveMessageLocalFileName(path ?? '')).toBe('main.ts');
+  });
+
+  it('does not classify external or unsafe protocols as local-file paths', () => {
+    expect(
+      resolveMessageLocalFilePath('https://example.com/report.csv', BASE_URL, {
+        workingDirectory: 'D:\\codes\\2026\\vfbox',
+      })
+    ).toBeNull();
+    expect(resolveMessageLocalFilePath('javascript:alert(1)', BASE_URL)).toBeNull();
+    expect(resolveMessageLocalFilePath('file://server/share/report.csv', BASE_URL)).toBeNull();
+  });
+
   it('resolves the same-origin Windows file URL produced by markdown links', () => {
     expect(
       resolveMessageFileTarget(

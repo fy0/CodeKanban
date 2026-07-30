@@ -2742,6 +2742,57 @@
     </n-modal>
 
     <n-modal
+      :show="showLocalFileDialog"
+      preset="card"
+      class="local-file-modal"
+      :title="t('webSession.localFileTitle')"
+      :bordered="false"
+      :segmented="{ content: false, footer: false }"
+      :mask-closable="!localFileAction"
+      :closable="!localFileAction"
+      style="width: min(92vw, 560px)"
+      @update:show="handleLocalFileDialogVisibilityChange"
+    >
+      <div v-if="localFileDialogTarget" class="local-file-modal-body">
+        <div class="local-file-name">{{ localFileDialogTarget.name }}</div>
+        <code class="local-file-path">{{ localFileDialogTarget.path }}</code>
+      </div>
+      <template #footer>
+        <div class="local-file-modal-footer">
+          <n-button
+            secondary
+            :disabled="Boolean(localFileAction)"
+            @click="handleLocalFileDialogVisibilityChange(false)"
+          >
+            {{ t('common.cancel') }}
+          </n-button>
+          <n-button
+            secondary
+            :loading="localFileAction === 'open-location'"
+            :disabled="Boolean(localFileAction)"
+            @click="handleOpenLocalFileLocation"
+          >
+            <template #icon>
+              <n-icon><FolderOpenOutline /></n-icon>
+            </template>
+            {{ t('webSession.localFileOpenLocation') }}
+          </n-button>
+          <n-button
+            type="primary"
+            :loading="localFileAction === 'download'"
+            :disabled="Boolean(localFileAction)"
+            @click="handleDownloadLocalFile"
+          >
+            <template #icon>
+              <n-icon><DownloadOutline /></n-icon>
+            </template>
+            {{ t('webSession.localFileDownload') }}
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
+
+    <n-modal
       :show="showMessageEditDialog"
       preset="card"
       class="message-edit-modal"
@@ -2963,8 +3014,10 @@ import {
   ChevronForwardOutline,
   ChevronUpOutline,
   CreateOutline,
+  DownloadOutline,
   FlashOutline,
   Flag as FlagIcon,
+  FolderOpenOutline,
   FunnelOutline,
   ImageOutline,
   LocateOutline,
@@ -2984,7 +3037,6 @@ import { useLocale } from '@/composables/useLocale';
 import { useMobileKeyboard } from '@/composables/useMobileKeyboard';
 import { useResponsive } from '@/composables/useResponsive';
 import { systemApi } from '@/api/project';
-import { useFileManagerStore } from '@/stores/fileManager';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import { useDeveloperConfigStore } from '@/stores/developerConfig';
@@ -3030,8 +3082,8 @@ import {
   resolveNavigableHref,
 } from '@/utils/messageLinkNavigation';
 import {
-  isPotentialMessageFileHref,
-  resolveMessageFileTarget,
+  resolveMessageLocalFileName,
+  resolveMessageLocalFilePath,
 } from '@/utils/messageFileNavigation';
 import {
   buildImagePlaceholder,
@@ -3042,7 +3094,7 @@ import {
   stripImagePlaceholdersFromText,
   resolveImageViewDisplayName,
 } from '@/utils/webSessionImages';
-import { urlBase } from '@/api';
+import { ApiError, urlBase } from '@/api';
 import { http } from '@/api/http';
 import { webSessionApi, type SessionSearchChunkResult } from '@/api/webSession';
 import { createLongPressTracker } from '@/utils/longPress';
@@ -3377,6 +3429,15 @@ type CommandExecutionDetail = {
 
 type ImageViewPreviewState = 'loading' | 'ready' | 'error';
 
+type LocalFileAction = '' | 'download' | 'open-location';
+
+type LocalFileDialogTarget = {
+  projectId: string;
+  sessionId: string;
+  path: string;
+  name: string;
+};
+
 type ScheduledSendMode = 'send' | 'interrupt' | 'queue';
 type ScheduledSendPurpose = 'message' | 'execute_plan' | 'edit_message' | 'edit_plan';
 type ScheduledScheduleKind = 'at_time' | 'when_idle';
@@ -3415,7 +3476,6 @@ function isAbortLikeError(error: unknown) {
 }
 
 const webSessionStore = useWebSessionStore();
-const fileManagerStore = useFileManagerStore();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const route = useRoute();
@@ -3587,6 +3647,9 @@ const planQuickActionsY = ref(0);
 const planQuickActionAnchor = shallowRef<HTMLElement | null>(null);
 const showScheduledSendDialog = ref(false);
 const showMessageEditDialog = ref(false);
+const showLocalFileDialog = ref(false);
+const localFileDialogTarget = ref<LocalFileDialogTarget | null>(null);
+const localFileAction = ref<LocalFileAction>('');
 const editingUserMessage = ref<{
   projectId: string;
   sessionId: string;
@@ -12586,56 +12649,108 @@ function restoreHistoryAnchor() {
   return true;
 }
 
-async function tryOpenTimelineFileLink(rawHref: string) {
-  if (!isPotentialMessageFileHref(rawHref, window.location.href)) {
+function tryOpenTimelineFileLink(rawHref: string) {
+  const sourceSession = currentRealSession.value;
+  const projectId = sourceSession?.projectId || props.projectId;
+  if (!sourceSession || !projectId) {
     return false;
   }
 
-  const sourceSession = currentSession.value;
-  const sourceProjectId = props.projectId;
-  const targetProjectId = sourceSession?.projectId || sourceProjectId;
-  if (!targetProjectId) {
-    return false;
-  }
-
-  let scopes;
-  try {
-    scopes = await fileManagerStore.ensureScopes(targetProjectId);
-  } catch {
-    return false;
-  }
-
-  const sessionWorktreeId = sourceSession?.worktreeId ?? '';
-  const preferredScopeId =
-    scopes.find(scope => scope.worktreeId === sessionWorktreeId)?.id ??
-    fileManagerStore.getActiveScope(targetProjectId)?.id ??
-    '';
-  const target = resolveMessageFileTarget(rawHref, window.location.href, scopes, {
-    workingDirectory: sourceSession?.cwd,
-    preferredScopeId,
+  const path = resolveMessageLocalFilePath(rawHref, window.location.href, {
+    workingDirectory: sourceSession.cwd,
   });
-  if (!target) {
+  if (!path) {
     return false;
   }
 
-  const request = fileManagerStore.requestFileOpen(targetProjectId, target);
-  try {
-    await router.push({
-      name: 'project',
-      params: { id: targetProjectId },
-      query: buildWorkspaceRouteQuery(
-        targetProjectId === sourceProjectId ? route.query : {},
-        'files'
-      ),
-    });
-  } catch (error) {
-    fileManagerStore.consumeFileOpenRequest(targetProjectId, request.id);
-    message.error(error instanceof Error ? error.message : t('common.error'));
-  }
+  localFileDialogTarget.value = {
+    projectId,
+    sessionId: sourceSession.id,
+    path,
+    name: resolveMessageLocalFileName(path),
+  };
+  localFileAction.value = '';
+  showLocalFileDialog.value = true;
   return true;
 }
 
-async function handleTimelineLinkClick(event: MouseEvent) {
+function handleLocalFileDialogVisibilityChange(show: boolean) {
+  if (!show && localFileAction.value) {
+    return;
+  }
+  showLocalFileDialog.value = show;
+  if (!show) {
+    clearLocalFileDialog();
+  }
+}
+
+function clearLocalFileDialog() {
+  showLocalFileDialog.value = false;
+  localFileDialogTarget.value = null;
+  localFileAction.value = '';
+}
+
+function formatLocalFileActionError(error: unknown, fallback: string) {
+  if (error instanceof ApiError) {
+    switch (error.status) {
+      case 400:
+        return t('webSession.localFileInvalid');
+      case 403:
+        return t('webSession.localFileOutsideAllowedRoots');
+      case 404:
+        return t('webSession.localFileNotFound');
+      case 501:
+      case 503:
+        return t('webSession.localFileManagerUnavailable');
+    }
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+async function handleOpenLocalFileLocation() {
+  const target = localFileDialogTarget.value;
+  if (!target || localFileAction.value) {
+    return;
+  }
+
+  localFileAction.value = 'open-location';
+  try {
+    await webSessionApi.openLocalFileLocation(target.projectId, target.sessionId, target.path);
+    if (localFileDialogTarget.value !== target) {
+      return;
+    }
+    message.success(t('webSession.localFileOpenLocationSuccess'));
+    clearLocalFileDialog();
+  } catch (error) {
+    message.error(formatLocalFileActionError(error, t('webSession.localFileOpenLocationFailed')));
+  } finally {
+    localFileAction.value = '';
+  }
+}
+
+async function handleDownloadLocalFile() {
+  const target = localFileDialogTarget.value;
+  if (!target || localFileAction.value) {
+    return;
+  }
+
+  localFileAction.value = 'download';
+  try {
+    await webSessionApi.probeLocalFile(target.projectId, target.sessionId, target.path);
+    if (localFileDialogTarget.value !== target) {
+      return;
+    }
+    webSessionApi.startLocalFileDownload(target.projectId, target.sessionId, target.path);
+    message.success(t('webSession.localFileDownloadStarted'));
+    clearLocalFileDialog();
+  } catch (error) {
+    message.error(formatLocalFileActionError(error, t('webSession.localFileDownloadFailed')));
+  } finally {
+    localFileAction.value = '';
+  }
+}
+
+function handleTimelineLinkClick(event: MouseEvent) {
   if (event.defaultPrevented || typeof window === 'undefined') {
     return;
   }
@@ -12669,7 +12784,7 @@ async function handleTimelineLinkClick(event: MouseEvent) {
 
   event.preventDefault();
   const rawHref = anchor.getAttribute('href') ?? '';
-  if (await tryOpenTimelineFileLink(rawHref)) {
+  if (tryOpenTimelineFileLink(rawHref)) {
     return;
   }
 
@@ -13527,6 +13642,7 @@ watch(
       return;
     }
     clearPendingEditState();
+    clearLocalFileDialog();
     closeScheduledInputPopover();
     if (showScheduledSendDialog.value && isScheduledDialogEdit.value) {
       handleScheduledSendDialogVisibilityChange(false);
@@ -15599,6 +15715,62 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.local-file-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.local-file-name {
+  min-width: 0;
+  color: var(--n-text-color-1);
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.local-file-path {
+  display: block;
+  max-height: 132px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-border-color));
+  color: var(--n-text-color-2);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.local-file-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.local-file-modal-footer :deep(.n-button) {
+  min-width: 92px;
+}
+
+@media (max-width: 480px) {
+  .local-file-modal-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .local-file-modal-footer :deep(.n-button) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .local-file-modal-footer :deep(.n-button:first-child) {
+    grid-column: 1 / -1;
+  }
 }
 
 .message-edit-hint,

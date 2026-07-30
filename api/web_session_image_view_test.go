@@ -38,6 +38,7 @@ func TestWebSessionImageViewPreviewServesAbsolutePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -79,6 +80,7 @@ func TestWebSessionImageViewPreviewResolvesRelativePathWithCwd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -101,6 +103,7 @@ func TestWebSessionImageViewPreviewRejectsNonImageFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
@@ -120,6 +123,7 @@ func TestWebSessionImageViewPreviewReturnsNotFoundForMissingFiles(t *testing.T) 
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNotFound)
@@ -133,6 +137,7 @@ func TestWebSessionImageViewPreviewRejectsEmptyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)

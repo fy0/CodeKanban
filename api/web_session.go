@@ -29,9 +29,10 @@ const (
 )
 
 type webSessionController struct {
-	manager  *websession.Manager
-	logger   *zap.Logger
-	upgrader websocket.Upgrader
+	manager      *websession.Manager
+	logger       *zap.Logger
+	upgrader     websocket.Upgrader
+	openExplorer func(string) error
 }
 
 type webSessionCountsResponse struct {
@@ -693,6 +694,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 	})
 
 	app.Get("/api/v1/web-sessions/image-view", c.serveImageViewPreview)
+	c.registerLocalFileRoutes(app)
 
 	app.Get("/api/v1/web-sessions/attachments/:attachmentId", func(ctx *fiber.Ctx) error {
 		attachmentID := strings.TrimSpace(ctx.Params("attachmentId"))
@@ -744,7 +746,7 @@ func (c *webSessionController) serveImageViewPreview(ctx *fiber.Ctx) error {
 	ctx.Set(fiber.HeaderContentDisposition, "inline")
 	ctx.Set(fiber.HeaderCacheControl, "no-store")
 	ctx.Set(fiber.HeaderContentType, mimeType)
-	return ctx.SendFile(resolvedPath, false)
+	return sendWebSessionFileStream(ctx, resolvedPath, info.Size())
 }
 
 func resolveWebSessionImageViewPath(rawPath string, rawCwd string) (string, error) {

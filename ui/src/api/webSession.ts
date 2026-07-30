@@ -4,7 +4,7 @@ import type {
   WebSessionReasoningEffort,
   WebSessionSummary,
 } from '@/types/models';
-import { urlBase } from '@/api';
+import { ApiError, urlBase } from '@/api';
 import { extractItem } from './response';
 import { http } from './http';
 
@@ -77,6 +77,21 @@ export type WebSessionHistoryCleanupResult = WebSessionHistoryCleanupStats & {
 type CountsResponse = {
   counts?: Record<string, number>;
 };
+
+function webSessionLocalFileBasePath(projectId: string, sessionId: string) {
+  return `/api/v1/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/local-files`;
+}
+
+export function buildWebSessionLocalFileContentUrl(
+  projectId: string,
+  sessionId: string,
+  path: string
+) {
+  const params = new URLSearchParams();
+  params.set('path', path);
+  const requestPath = `${webSessionLocalFileBasePath(projectId, sessionId)}/content?${params.toString()}`;
+  return urlBase ? new URL(requestPath, urlBase).toString() : requestPath;
+}
 
 export type WebSessionHistoryWindow = {
   items: unknown[];
@@ -594,5 +609,44 @@ export const webSessionApi = {
       throw new Error('clipboard image import succeeded but no attachment was returned');
     }
     return body.item;
+  },
+
+  async probeLocalFile(projectId: string, sessionId: string, path: string): Promise<void> {
+    const response = await fetch(buildWebSessionLocalFileContentUrl(projectId, sessionId, path), {
+      method: 'HEAD',
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        response.statusText || 'Local file is unavailable',
+        undefined
+      );
+    }
+  },
+
+  async openLocalFileLocation(projectId: string, sessionId: string, path: string): Promise<void> {
+    await http
+      .Post(
+        `/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/local-files/open-location`,
+        { path }
+      )
+      .send();
+  },
+
+  startLocalFileDownload(projectId: string, sessionId: string, path: string) {
+    if (typeof document === 'undefined') {
+      throw new Error('browser download is unavailable in the current environment');
+    }
+
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = buildWebSessionLocalFileContentUrl(projectId, sessionId, path);
+    iframe.setAttribute('aria-hidden', 'true');
+    document.body.append(iframe);
+
+    window.setTimeout(() => {
+      iframe.remove();
+    }, 60_000);
   },
 };
