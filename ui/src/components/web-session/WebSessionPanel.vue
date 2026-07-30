@@ -2082,6 +2082,7 @@
 
               <div class="composer-input-shell" :class="{ 'is-mobile': isMobile }">
                 <WebSessionComposerEditor
+                  :key="composerEditorKey"
                   ref="composerInputRef"
                   v-model="composerText"
                   class="composer-input"
@@ -3500,6 +3501,7 @@ const userMessageNavigationPending = ref<{
 const mobileComposerScrollState = ref<WebSessionMobileComposerScrollState | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const composerInputRef = ref<WebSessionComposerEditorExposed | null>(null);
+const composerEditorResetVersion = ref(0);
 const sidebarRootRef = ref<HTMLElement | null>(null);
 const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
@@ -3551,6 +3553,7 @@ const isComposerDragOver = ref(false);
 const isMobileComposerCollapsed = useStorage(MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY, false);
 const isMobileComposerSettingsExpanded = ref(false);
 const isMobileComposerFocused = ref(false);
+const isComposerFocused = ref(false);
 const isMobileKeyboardResizeFrozen = ref(false);
 const showAttachmentPreview = ref(false);
 const activeAttachmentPreview = ref<{
@@ -3837,6 +3840,9 @@ function formatGoalDuration(totalSeconds: number) {
 }
 const sendGuardProjectId = computed(() => currentRealSession.value?.projectId || props.projectId);
 const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
+const composerEditorKey = computed(
+  () => `${currentDraftSessionId.value}:${composerEditorResetVersion.value}`
+);
 const currentSessionAutoRetryEnabled = computed(() =>
   Boolean(currentSession.value?.autoRetryEnabled)
 );
@@ -3974,6 +3980,17 @@ const composerText = computed({
     webSessionStore.setDraftText(props.projectId, sessionId, value);
   },
 });
+
+function clearComposerDraftAfterSubmit(sessionId: string) {
+  const restoreFocus = isComposerFocused.value;
+  webSessionStore.clearDraft(props.projectId, sessionId);
+  if (sessionId === currentDraftSessionId.value) {
+    composerEditorResetVersion.value += 1;
+    if (restoreFocus) {
+      nextTick(() => composerInputRef.value?.focus());
+    }
+  }
+}
 
 async function handleGoalPause() {
   if (!currentRealSession.value) {
@@ -11056,7 +11073,7 @@ async function handleSubmit() {
       }
       settingsStore.recordWebSessionRecentInput(draftText);
       void settingsStore.syncWebSessionQuickInputToServer();
-      webSessionStore.clearDraft(props.projectId, draftSessionId);
+      clearComposerDraftAfterSubmit(draftSessionId);
       message.success('Goal updated');
       return;
     }
@@ -11070,7 +11087,7 @@ async function handleSubmit() {
     );
     settingsStore.recordWebSessionRecentInput(draftText);
     void settingsStore.syncWebSessionQuickInputToServer();
-    webSessionStore.clearDraft(props.projectId, draftSessionId);
+    clearComposerDraftAfterSubmit(draftSessionId);
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, session.id));
@@ -11132,7 +11149,7 @@ async function handleConfirmScheduledSend() {
     );
     settingsStore.recordWebSessionRecentInput(draftText);
     void settingsStore.syncWebSessionQuickInputToServer();
-    webSessionStore.clearDraft(props.projectId, draftSessionId);
+    clearComposerDraftAfterSubmit(draftSessionId);
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, session.id));
@@ -11264,7 +11281,7 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
     );
     settingsStore.recordWebSessionRecentInput(draftText);
     void settingsStore.syncWebSessionQuickInputToServer();
-    webSessionStore.clearDraft(props.projectId, currentRealSession.value.id);
+    clearComposerDraftAfterSubmit(currentRealSession.value.id);
     isMobileComposerSettingsExpanded.value = false;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -11287,6 +11304,7 @@ async function triggerPrimaryComposerAction() {
 }
 
 function handleComposerFocus() {
+  isComposerFocused.value = true;
   if (!isMobile.value) {
     return;
   }
@@ -11296,6 +11314,7 @@ function handleComposerFocus() {
 }
 
 function handleComposerBlur() {
+  isComposerFocused.value = false;
   if (!isMobile.value) {
     return;
   }

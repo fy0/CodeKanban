@@ -1,25 +1,10 @@
 <template>
   <div class="web-session-composer-editor" :style="editorStyleVars">
-    <textarea
-      ref="textareaRef"
-      class="web-session-composer-editor__textarea"
-      :value="modelValue"
-      :placeholder="placeholder"
-      rows="1"
-      spellcheck="false"
-      autocorrect="off"
-      autocapitalize="off"
-      autocomplete="off"
-      @blur="handleBlur"
-      @click="refreshCompletion"
-      @compositionend="handleCompositionEnd"
-      @compositionstart="handleCompositionStart"
-      @focus="handleFocus"
-      @input="handleInput"
-      @keydown="handleKeydown"
-      @keyup="refreshCompletion"
-      @select="refreshCompletion"
-    ></textarea>
+    <EditorContent
+      v-if="editorRef"
+      :editor="editorRef"
+      class="web-session-composer-editor__content"
+    />
 
     <div v-if="completionState.open" class="web-session-composer-editor__completion">
       <button
@@ -40,20 +25,49 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { Extension, type JSONContent } from '@tiptap/core';
+import Document from '@tiptap/extension-document';
+import HardBreak from '@tiptap/extension-hard-break';
+import Paragraph from '@tiptap/extension-paragraph';
+import Text from '@tiptap/extension-text';
+import { Placeholder } from '@tiptap/extensions/placeholder';
+import { UndoRedo } from '@tiptap/extensions/undo-redo';
+import type { Node as ProseMirrorNode, Slice } from '@tiptap/pm/model';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
+import { Editor, EditorContent } from '@tiptap/vue-3';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  shallowRef,
+  watch,
+} from 'vue';
+
 import type { CodexSkillSummary } from '@/types/models';
-import { filterCodexSkills } from '@/components/web-session/webSessionCodexSkills';
-import type {
-  WebSessionComposerEditorExposed,
-  WebSessionComposerSelection,
+import {
+  buildWebSessionComposerCompletions,
+  buildWebSessionComposerHighlights,
+  composerJSONToText,
+  composerOffsetToPosition,
+  composerPositionToOffset,
+  composerTextToJSON,
+  resolveWebSessionComposerKeyAction,
+  type WebSessionComposerCompletionOption,
+  type WebSessionComposerEditorExposed,
+  type WebSessionComposerSelection,
 } from '@/components/web-session/webSessionComposerEditor';
 
-interface CompletionOption {
-  key: string;
-  label: string;
-  detail: string;
-  apply: string;
-}
+const highlightPluginKey = new PluginKey<DecorationSet>('webSessionComposerHighlights');
+const ComposerDocument = Document.extend({
+  content: 'paragraph',
+});
+const ComposerParagraph = Paragraph.extend({
+  marks: '',
+});
 
 const props = withDefaults(
   defineProps<{
@@ -80,15 +94,18 @@ const emit = defineEmits<{
   (event: 'blur'): void;
 }>();
 
-const textareaRef = ref<HTMLTextAreaElement | null>(null);
+const editorRef = shallowRef<Editor | null>(null);
 const isComposing = ref(false);
-let suppressNextCompletionRefresh = false;
+let applyingExternalValue = false;
+let pendingExternalValue: string | null = null;
+let lastLocallyEmittedValue: string | null = null;
+let dismissedCompletionSignature = '';
 const completionState = reactive({
   open: false,
   from: 0,
   to: 0,
   selectedIndex: 0,
-  options: [] as CompletionOption[],
+  options: [] as WebSessionComposerCompletionOption[],
 });
 
 const editorStyleVars = computed(() => ({
@@ -99,110 +116,94 @@ const editorStyleVars = computed(() => ({
   '--composer-editor-extra-height': props.compact ? '24px' : '28px',
 }));
 
+function getEditorText(editor: { getJSON: () => JSONContent } | null = editorRef.value) {
+  return editor ? composerJSONToText(editor.getJSON()) : String(props.modelValue ?? '');
+}
+
+function buildHighlightDecorations(doc: ProseMirrorNode) {
+  const text = composerJSONToText(doc.toJSON() as JSONContent);
+  const decorations = buildWebSessionComposerHighlights(text, props.skills).map(range => {
+    const className =
+      range.kind === 'goal'
+        ? 'composer-goal-command'
+        : range.kind === 'skill'
+          ? 'composer-skill-token'
+          : 'composer-skill-token composer-skill-token--unknown';
+    return Decoration.inline(
+      composerOffsetToPosition(range.from, text.length),
+      composerOffsetToPosition(range.to, text.length),
+      { class: className }
+    );
+  });
+  return DecorationSet.create(doc, decorations);
+}
+
+const ComposerHighlights = Extension.create({
+  name: 'webSessionComposerHighlights',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: highlightPluginKey,
+        state: {
+          init: (_, state) => buildHighlightDecorations(state.doc),
+          apply: (transaction, current) =>
+            transaction.docChanged || transaction.getMeta(highlightPluginKey)
+              ? buildHighlightDecorations(transaction.doc)
+              : current,
+        },
+        props: {
+          decorations: state => highlightPluginKey.getState(state) ?? null,
+        },
+      }),
+    ];
+  },
+});
+
 function closeCompletion() {
   completionState.open = false;
   completionState.options = [];
   completionState.selectedIndex = 0;
 }
 
-function syncTextareaHeight() {
-  const textarea = textareaRef.value;
-  if (!textarea) {
-    return;
+function getSelectionRange(editor = editorRef.value): WebSessionComposerSelection {
+  if (!editor) {
+    const length = String(props.modelValue ?? '').length;
+    return { start: length, end: length };
   }
 
-  textarea.style.height = 'auto';
-  const styles = window.getComputedStyle(textarea);
-  const minHeight = Number.parseFloat(styles.minHeight || '0') || 0;
-  const maxHeight = Number.parseFloat(styles.maxHeight || '0') || Number.POSITIVE_INFINITY;
-  const nextHeight = Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight));
-  textarea.style.height = `${nextHeight}px`;
-  textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
-}
-
-function getTextareaSelection(): WebSessionComposerSelection {
-  const textarea = textareaRef.value;
-  if (!textarea) {
-    const length = String(props.modelValue || '').length;
-    return {
-      start: length,
-      end: length,
-    };
-  }
-
+  const textLength = getEditorText(editor).length;
   return {
-    start: textarea.selectionStart,
-    end: textarea.selectionEnd,
+    start: composerPositionToOffset(editor.state.selection.from, textLength),
+    end: composerPositionToOffset(editor.state.selection.to, textLength),
   };
 }
 
-function buildCompletionOptions(text: string, cursor: number) {
-  const beforeCursor = text.slice(0, cursor);
-  const slashMatch = beforeCursor.match(/^\/[a-z-]*$/i);
-  if (slashMatch) {
-    const query = slashMatch[0].slice(1).toLowerCase();
-    const options: CompletionOption[] = [
-      { key: 'slash:goal', label: '/goal', detail: 'Persistent goal', apply: '/goal ' },
-    ].filter(option => option.label.slice(1).startsWith(query));
-    return {
-      from: 0,
-      to: cursor,
-      options,
-    };
-  }
-
-  const skillMatch = beforeCursor.match(/\$[a-z0-9._-]*$/i);
-  if (skillMatch) {
-    const query = skillMatch[0].slice(1);
-    const options = filterCodexSkills(props.skills, query)
-      .slice(0, 12)
-      .map(skill => {
-        const details = [
-          skill.displayName && skill.displayName !== skill.name ? skill.displayName : '',
-          skill.source,
-        ]
-          .map(value => String(value || '').trim())
-          .filter(Boolean);
-        return {
-          key: `skill:${skill.name}`,
-          label: `$${skill.name}`,
-          detail: details.join(' · '),
-          apply: `$${skill.name}`,
-        };
-      });
-    return {
-      from: cursor - skillMatch[0].length,
-      to: cursor,
-      options,
-    };
-  }
-
-  return {
-    from: cursor,
-    to: cursor,
-    options: [],
-  };
+function getCompletionSignature(text: string, selection: WebSessionComposerSelection) {
+  return `${selection.start}:${selection.end}:${text}`;
 }
 
 function refreshCompletion() {
-  if (suppressNextCompletionRefresh) {
-    suppressNextCompletionRefresh = false;
+  const editor = editorRef.value;
+  if (!editor || isComposing.value || editor.view.composing) {
     closeCompletion();
     return;
   }
 
-  if (isComposing.value) {
+  const selection = getSelectionRange(editor);
+  if (selection.start !== selection.end) {
     closeCompletion();
     return;
   }
 
-  const textarea = textareaRef.value;
-  if (!textarea || textarea.selectionStart !== textarea.selectionEnd) {
+  const text = getEditorText(editor);
+  const signature = getCompletionSignature(text, selection);
+  if (signature === dismissedCompletionSignature) {
     closeCompletion();
     return;
   }
+  dismissedCompletionSignature = '';
 
-  const result = buildCompletionOptions(props.modelValue, textarea.selectionStart);
+  const result = buildWebSessionComposerCompletions(text, selection.start, props.skills);
   if (result.options.length === 0) {
     closeCompletion();
     return;
@@ -218,140 +219,301 @@ function refreshCompletion() {
   );
 }
 
-function applyCompletion(option: CompletionOption) {
-  const text = String(props.modelValue ?? '');
-  const nextValue = `${text.slice(0, completionState.from)}${option.apply}${text.slice(completionState.to)}`;
-  const cursor = completionState.from + option.apply.length;
-  suppressNextCompletionRefresh = true;
-  emit('update:modelValue', nextValue);
+function inlineContentFromText(text: string) {
+  return composerTextToJSON(text).content?.[0]?.content ?? [];
+}
+
+function insertPlainText(text: string, from: number, to: number) {
+  const editor = editorRef.value;
+  if (!editor) {
+    return false;
+  }
+
+  const currentText = getEditorText(editor);
+  const safeFrom = Math.max(0, Math.min(from, currentText.length));
+  const safeTo = Math.max(safeFrom, Math.min(to, currentText.length));
+  const normalizedText = String(text ?? '').replace(/\r\n?/g, '\n');
+  const cursor = safeFrom + normalizedText.length;
+  return editor
+    .chain()
+    .focus()
+    .insertContentAt(
+      {
+        from: composerOffsetToPosition(safeFrom, currentText.length),
+        to: composerOffsetToPosition(safeTo, currentText.length),
+      },
+      inlineContentFromText(normalizedText)
+    )
+    .setTextSelection(
+      composerOffsetToPosition(
+        cursor,
+        currentText.length - (safeTo - safeFrom) + normalizedText.length
+      )
+    )
+    .run();
+}
+
+function applyCompletion(option: WebSessionComposerCompletionOption) {
+  const editor = editorRef.value;
+  if (!editor) {
+    return;
+  }
+
+  const from = completionState.from;
+  const to = completionState.to;
   closeCompletion();
-  nextTick(() => {
-    setSelectionRange(cursor, cursor);
-    syncTextareaHeight();
+  insertPlainText(option.apply, from, to);
+  const text = getEditorText(editor);
+  const selection = getSelectionRange(editor);
+  dismissedCompletionSignature = getCompletionSignature(text, selection);
+}
+
+function dismissCompletion() {
+  const editor = editorRef.value;
+  if (editor) {
+    dismissedCompletionSignature = getCompletionSignature(
+      getEditorText(editor),
+      getSelectionRange(editor)
+    );
+  }
+  closeCompletion();
+}
+
+function handleEditorKeydown(view: EditorView, event: KeyboardEvent) {
+  const action = resolveWebSessionComposerKeyAction({
+    key: event.key,
+    altKey: event.altKey,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    shiftKey: event.shiftKey,
+    isComposing: isComposing.value || view.composing || event.isComposing,
+    keyCode: event.keyCode,
+    completionOpen: completionState.open,
   });
+
+  if (action === 'none') {
+    return false;
+  }
+
+  event.preventDefault();
+  if (action === 'completion-next') {
+    completionState.selectedIndex =
+      (completionState.selectedIndex + 1) % completionState.options.length;
+  } else if (action === 'completion-previous') {
+    completionState.selectedIndex =
+      (completionState.selectedIndex - 1 + completionState.options.length) %
+      completionState.options.length;
+  } else if (action === 'completion-close') {
+    dismissCompletion();
+  } else if (action === 'completion-apply') {
+    applyCompletion(completionState.options[completionState.selectedIndex]);
+  } else if (action === 'hard-break') {
+    editorRef.value?.commands.setHardBreak();
+  } else if (action === 'submit') {
+    emit('submit');
+  }
+  return true;
 }
 
-function handleInput(event: Event) {
-  const target = event.target as HTMLTextAreaElement | null;
-  emit('update:modelValue', target?.value ?? '');
-  nextTick(() => {
-    syncTextareaHeight();
-    refreshCompletion();
-  });
+function handleEditorPaste(event: ClipboardEvent) {
+  if (event.defaultPrevented) {
+    return true;
+  }
+
+  const clipboardData = event.clipboardData;
+  if (!clipboardData) {
+    return false;
+  }
+
+  event.preventDefault();
+  const selection = getSelectionRange();
+  insertPlainText(clipboardData.getData('text/plain'), selection.start, selection.end);
+  return true;
 }
 
-function handleFocus() {
-  emit('focus');
-  refreshCompletion();
+function handleEditorDrop(event: DragEvent) {
+  const hasImage = Array.from(event.dataTransfer?.files ?? []).some(file =>
+    file.type.toLowerCase().startsWith('image/')
+  );
+  if (!hasImage) {
+    return false;
+  }
+
+  event.preventDefault();
+  return true;
 }
 
-function handleBlur() {
-  emit('blur');
-  closeCompletion();
-}
-
-function handleCompositionStart() {
-  isComposing.value = true;
-  closeCompletion();
-}
-
-function handleCompositionEnd() {
-  isComposing.value = false;
-  nextTick(refreshCompletion);
-}
-
-function isPlainEnter(event: KeyboardEvent) {
-  return (
-    event.key === 'Enter' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+function serializeClipboardText(slice: Slice) {
+  return slice.content.textBetween(0, slice.content.size, '\n', (node: ProseMirrorNode) =>
+    node.type.name === 'hardBreak' ? '\n' : ''
   );
 }
 
-function handleKeydown(event: KeyboardEvent) {
-  if (isComposing.value || event.isComposing || event.keyCode === 229) {
+function syncExternalValue(value: string) {
+  const editor = editorRef.value;
+  if (!editor) {
     return;
   }
 
-  if (completionState.open) {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      completionState.selectedIndex =
-        (completionState.selectedIndex + 1) % completionState.options.length;
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      completionState.selectedIndex =
-        (completionState.selectedIndex - 1 + completionState.options.length) %
-        completionState.options.length;
-      return;
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeCompletion();
-      return;
-    }
-    if (isPlainEnter(event)) {
-      event.preventDefault();
-      applyCompletion(completionState.options[completionState.selectedIndex]);
-      return;
-    }
+  const nextValue = String(value ?? '');
+  if (nextValue === getEditorText(editor)) {
+    return;
   }
 
-  if (isPlainEnter(event)) {
-    event.preventDefault();
-    emit('submit');
-  }
+  applyingExternalValue = true;
+  editor.commands.setContent(composerTextToJSON(nextValue), {
+    emitUpdate: false,
+    errorOnInvalidContent: true,
+  });
+  applyingExternalValue = false;
+  dismissedCompletionSignature = '';
+  nextTick(refreshCompletion);
 }
 
 function focus() {
-  textareaRef.value?.focus();
-}
-
-function getSelectionRange(): WebSessionComposerSelection {
-  return getTextareaSelection();
+  editorRef.value?.commands.focus();
 }
 
 function setSelectionRange(start: number, end = start) {
-  const textarea = textareaRef.value;
-  if (!textarea) {
+  const editor = editorRef.value;
+  if (!editor) {
     return;
   }
 
-  const length = textarea.value.length;
-  const anchor = Math.max(0, Math.min(start, length));
-  const head = Math.max(0, Math.min(end, length));
-  textarea.setSelectionRange(anchor, head);
-  textarea.focus();
+  const textLength = getEditorText(editor).length;
+  const from = composerOffsetToPosition(start, textLength);
+  const to = composerOffsetToPosition(end, textLength);
+  editor.chain().setTextSelection({ from, to }).focus().run();
   refreshCompletion();
 }
 
 watch(
   () => props.modelValue,
-  () => {
-    nextTick(() => {
-      syncTextareaHeight();
-      refreshCompletion();
-    });
+  nextValue => {
+    const editor = editorRef.value;
+    const normalizedValue = String(nextValue ?? '');
+    if (normalizedValue === lastLocallyEmittedValue) {
+      lastLocallyEmittedValue = null;
+      return;
+    }
+    if (!editor || normalizedValue === getEditorText(editor)) {
+      return;
+    }
+    if (isComposing.value || editor.view.composing) {
+      pendingExternalValue = normalizedValue;
+      return;
+    }
+    syncExternalValue(normalizedValue);
   }
 );
 
 watch(
-  () => [props.minRows, props.maxRows, props.compact],
-  () => {
-    nextTick(syncTextareaHeight);
+  () => props.placeholder,
+  nextValue => {
+    const editor = editorRef.value;
+    if (!editor) {
+      return;
+    }
+    editor.view.dom.setAttribute('aria-label', nextValue || 'Message');
+    editor.view.dispatch(editor.state.tr.setMeta('webSessionComposerPlaceholder', true));
   }
 );
 
 watch(
   () => props.skills,
   () => {
+    const editor = editorRef.value;
+    if (!editor) {
+      return;
+    }
+    editor.view.dispatch(editor.state.tr.setMeta(highlightPluginKey, true));
     refreshCompletion();
   },
   { deep: true }
 );
 
 onMounted(() => {
-  syncTextareaHeight();
+  const editor = new Editor({
+    content: composerTextToJSON(props.modelValue),
+    extensions: [
+      ComposerDocument,
+      ComposerParagraph,
+      Text,
+      HardBreak,
+      UndoRedo,
+      Placeholder.configure({
+        placeholder: () => props.placeholder,
+        emptyEditorClass: 'is-editor-empty',
+        emptyNodeClass: 'is-empty',
+      }),
+      ComposerHighlights,
+    ],
+    editorProps: {
+      attributes: {
+        class: 'web-session-composer-editor__surface',
+        role: 'textbox',
+        'aria-label': props.placeholder || 'Message',
+        'aria-multiline': 'true',
+        spellcheck: 'false',
+        autocorrect: 'off',
+        autocapitalize: 'off',
+        autocomplete: 'off',
+      },
+      handleKeyDown: handleEditorKeydown,
+      handlePaste: (_, event) => handleEditorPaste(event),
+      handleDrop: (_, event) => handleEditorDrop(event),
+      clipboardTextSerializer: serializeClipboardText,
+      handleDOMEvents: {
+        compositionstart: () => {
+          isComposing.value = true;
+          closeCompletion();
+          return false;
+        },
+        compositionend: () => {
+          isComposing.value = false;
+          nextTick(() => {
+            if (pendingExternalValue != null) {
+              const pending = pendingExternalValue;
+              pendingExternalValue = null;
+              syncExternalValue(pending);
+            } else {
+              refreshCompletion();
+            }
+          });
+          return false;
+        },
+      },
+    },
+    onUpdate: ({ editor: currentEditor }) => {
+      const nextValue = getEditorText(currentEditor);
+      if (!applyingExternalValue && nextValue !== props.modelValue) {
+        lastLocallyEmittedValue = nextValue;
+        emit('update:modelValue', nextValue);
+      }
+      if (!isComposing.value && !currentEditor.view.composing) {
+        nextTick(refreshCompletion);
+      }
+    },
+    onSelectionUpdate: () => {
+      if (!isComposing.value) {
+        refreshCompletion();
+      }
+    },
+    onFocus: () => {
+      emit('focus');
+      refreshCompletion();
+    },
+    onBlur: () => {
+      emit('blur');
+      closeCompletion();
+    },
+  });
+  editorRef.value = editor;
+});
+
+onBeforeUnmount(() => {
+  editorRef.value?.destroy();
+  editorRef.value = null;
 });
 
 defineExpose<WebSessionComposerEditorExposed>({
@@ -368,7 +530,12 @@ defineExpose<WebSessionComposerEditorExposed>({
   min-width: 0;
 }
 
-.web-session-composer-editor__textarea {
+.web-session-composer-editor__content {
+  width: 100%;
+  min-width: 0;
+}
+
+.web-session-composer-editor :deep(.web-session-composer-editor__surface) {
   display: block;
   width: 100%;
   min-width: 0;
@@ -380,24 +547,65 @@ defineExpose<WebSessionComposerEditorExposed>({
     var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-max-rows) +
       var(--composer-editor-extra-height, 28px)
   );
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: var(--composer-editor-padding-top, 10px) 0 var(--composer-editor-padding-bottom, 12px);
   border: 0;
   outline: none;
-  resize: none;
   box-sizing: border-box;
   background: transparent;
   color: var(--n-text-color);
   font: inherit;
   font-size: 14px;
   line-height: 1.68;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.web-session-composer-editor__textarea::placeholder {
+.web-session-composer-editor :deep(.web-session-composer-editor__surface p) {
+  min-height: 1.68em;
+  margin: 0;
+}
+
+.web-session-composer-editor
+  :deep(.web-session-composer-editor__surface p.is-editor-empty::before) {
+  height: 0;
+  float: left;
   color: var(--n-text-color-3, #999);
+  content: attr(data-placeholder);
+  pointer-events: none;
+  transition: opacity 0.12s ease;
 }
 
-.web-session-composer-editor__textarea:focus::placeholder {
+.web-session-composer-editor
+  :deep(.web-session-composer-editor__surface.ProseMirror-focused p.is-editor-empty::before) {
   opacity: 0;
+}
+
+.web-session-composer-editor :deep(.composer-skill-token) {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+  color: color-mix(in srgb, var(--n-primary-color) 86%, #0f172a);
+  padding: 0 1px;
+  box-decoration-break: clone;
+}
+
+.web-session-composer-editor :deep(.composer-skill-token--unknown) {
+  background: color-mix(in srgb, var(--n-border-color) 70%, transparent);
+  color: var(--n-text-color-2);
+}
+
+.web-session-composer-editor :deep(.composer-goal-command) {
+  border-radius: 7px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, #f59e0b 28%, transparent) 0%,
+    color-mix(in srgb, #f97316 22%, transparent) 100%
+  );
+  color: color-mix(in srgb, #9a3412 82%, #111827);
+  font-weight: 700;
+  padding: 0 2px;
+  box-decoration-break: clone;
 }
 
 .web-session-composer-editor__completion {

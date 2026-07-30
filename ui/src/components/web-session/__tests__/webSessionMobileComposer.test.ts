@@ -11,6 +11,19 @@ const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
 const webSessionComposerEditorSource = readFileSync(webSessionComposerEditorPath, 'utf8');
 
 describe('webSession mobile composer', () => {
+  it('uses a plain-text Tiptap editor without the legacy textarea', () => {
+    expect(webSessionComposerEditorSource).toContain('<EditorContent');
+    expect(webSessionComposerEditorSource).toContain("content: 'paragraph'");
+    expect(webSessionComposerEditorSource).toContain('HardBreak');
+    expect(webSessionComposerEditorSource).not.toContain('<textarea');
+  });
+
+  it('isolates editor history by session and successful draft reset', () => {
+    expect(webSessionPanelSource).toContain(':key="composerEditorKey"');
+    expect(webSessionPanelSource).toContain('clearComposerDraftAfterSubmit');
+    expect(webSessionPanelSource).toContain('composerEditorResetVersion.value += 1');
+  });
+
   it('starts the mobile composer editor at one row', () => {
     expect(webSessionPanelSource).toMatch(
       /const composerMinRows = computed\(\(\) => \(isMobile\.value \? 1 : 3\)\);/
