@@ -79,6 +79,16 @@ test('WebSessionCommandChannel connect returns a normalized snapshot', async () 
       hm: false,
       tot: 1,
     },
+    pi: [
+      {
+        id: 'pending-1',
+        m: 'redirect',
+        txt: 'adjust course',
+        ra: 1710000005000,
+        ps: true,
+        ca: 1710000000004,
+      },
+    ],
   });
 
   const snapshot = await promise;
@@ -86,6 +96,56 @@ test('WebSessionCommandChannel connect returns a normalized snapshot', async () 
   assert.equal(snapshot.session.agent, 'codex');
   assert.equal(snapshot.history.items.length, 1);
   assert.equal(snapshot.history.items[0].text, 'hello');
+  assert.deepEqual(snapshot.pendingInputs[0], {
+    id: 'pending-1',
+    mode: 'redirect',
+    text: 'adjust course',
+    attachmentIds: [],
+    readyAt: '2024-03-09T16:00:05.000Z',
+    paused: true,
+    createdAt: '2024-03-09T16:00:00.004Z',
+  });
+  channel.close();
+});
+
+test('WebSessionCommandChannel updates pending text and pause state', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const channel = new WebSessionCommandChannel({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/ws',
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  await channel.waitForOpen();
+  const promise = channel.updatePendingInput('ws1', {
+    pendingId: 'pending-1',
+    text: 'updated course',
+    paused: false,
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const socket = FakeWebSocket.instances[0];
+  assert.equal(socket.sent[0].op, 'pending_update');
+  assert.deepEqual(socket.sent[0].p, {
+    id: 'pending-1',
+    txt: 'updated course',
+    paused: false,
+  });
+
+  socket.emitJson({
+    v: 1,
+    k: 'ack',
+    rid: socket.sent[0].rid,
+    sid: 'ws1',
+    ts: 1710000000030,
+    op: 'pending_update',
+    ok: 1,
+  });
+
+  await promise;
   channel.close();
 });
 

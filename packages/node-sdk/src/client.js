@@ -1359,6 +1359,16 @@ export class CodeKanbanClient {
     );
   }
 
+  async updateWebSessionPendingInput({ sessionId, pendingId, text, paused }) {
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.updatePendingInput(sessionId, {
+        pendingId,
+        ...(text !== undefined ? { text } : {}),
+        ...(typeof paused === "boolean" ? { paused } : {}),
+      }),
+    );
+  }
+
   async updateWebSessionWorkflowMode({ sessionId, workflowMode }) {
     return await this.withWebSessionCommandChannel((channel) =>
       channel.updateWorkflowMode(sessionId, {

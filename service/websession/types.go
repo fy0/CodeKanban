@@ -370,6 +370,8 @@ type PendingInput struct {
 	Mode          PendingInputMode `json:"mode"`
 	Text          string           `json:"text"`
 	AttachmentIDs []string         `json:"attachmentIds"`
+	ReadyAt       *time.Time       `json:"readyAt,omitempty"`
+	Paused        bool             `json:"paused,omitempty"`
 	CreatedAt     time.Time        `json:"createdAt"`
 }
 

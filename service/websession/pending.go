@@ -7,16 +7,25 @@ import (
 	"strings"
 	"time"
 
+	"code-kanban/model/tables"
 	"code-kanban/utils"
 
 	"go.uber.org/zap"
 )
 
 var (
-	errInvalidPendingInputMode = errors.New("invalid pending input mode")
-	errEmptyPendingInput       = errors.New("message is empty")
-	errPendingInputNotFound    = errors.New("pending input not found")
+	errInvalidPendingInputMode   = errors.New("invalid pending input mode")
+	errInvalidPendingInputUpdate = errors.New("invalid pending input update")
+	errEmptyPendingInput         = errors.New("message is empty")
+	errPendingInputNotFound      = errors.New("pending input not found")
 )
+
+const defaultPendingSteerDelay = 5 * time.Second
+
+type pendingInputUpdate struct {
+	Text   *string
+	Paused *bool
+}
 
 func normalizePendingInputMode(mode PendingInputMode) PendingInputMode {
 	switch strings.ToLower(strings.TrimSpace(string(mode))) {
@@ -30,11 +39,18 @@ func normalizePendingInputMode(mode PendingInputMode) PendingInputMode {
 }
 
 func clonePendingInput(item PendingInput) PendingInput {
+	var readyAt *time.Time
+	if item.ReadyAt != nil {
+		value := *item.ReadyAt
+		readyAt = &value
+	}
 	return PendingInput{
 		ID:            strings.TrimSpace(item.ID),
 		Mode:          normalizePendingInputMode(item.Mode),
 		Text:          item.Text,
 		AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
+		ReadyAt:       readyAt,
+		Paused:        item.Paused,
 		CreatedAt:     item.CreatedAt,
 	}
 }
@@ -78,6 +94,24 @@ func (m *Manager) validatePendingAttachmentIDs(attachmentIDs []string) error {
 	return nil
 }
 
+func isCodexSteerSession(record tables.WebSessionTable) bool {
+	return normalizeAgent(Agent(record.Agent)) == AgentCodex &&
+		effectiveSessionBackend(record) == SessionBackendCodexAppServer
+}
+
+func (m *Manager) nextPendingSteerReadyAt() time.Time {
+	delay := m.pendingSteerDelay
+	if delay <= 0 {
+		delay = defaultPendingSteerDelay
+	}
+	return time.Now().Add(delay)
+}
+
+func (m *Manager) sessionUsesCodexSteer(sessionID string) bool {
+	record, err := m.GetSession(context.Background(), strings.TrimSpace(sessionID))
+	return err == nil && record.ArchivedAt == nil && isCodexSteerSession(record)
+}
+
 func insertPendingInput(queue []PendingInput, item PendingInput) []PendingInput {
 	if item.Mode != PendingInputModeRedirect {
 		return append(queue, item)
@@ -109,6 +143,24 @@ func (m *Manager) queuePendingInput(
 	mode PendingInputMode,
 	pendingID string,
 ) (PendingInput, error) {
+	return m.queuePendingInputWithReadyAt(
+		sessionID,
+		text,
+		attachmentIDs,
+		mode,
+		pendingID,
+		nil,
+	)
+}
+
+func (m *Manager) queuePendingInputWithReadyAt(
+	sessionID string,
+	text string,
+	attachmentIDs []string,
+	mode PendingInputMode,
+	pendingID string,
+	readyAt *time.Time,
+) (PendingInput, error) {
 	normalizedMode := normalizePendingInputMode(mode)
 	if normalizedMode == "" {
 		return PendingInput{}, errInvalidPendingInputMode
@@ -125,6 +177,10 @@ func (m *Manager) queuePendingInput(
 		AttachmentIDs: sanitizedAttachmentIDs,
 		CreatedAt:     time.Now(),
 	}
+	if readyAt != nil {
+		value := *readyAt
+		item.ReadyAt = &value
+	}
 	if item.Text == "" && len(item.AttachmentIDs) == 0 {
 		return PendingInput{}, errEmptyPendingInput
 	}
@@ -136,9 +192,10 @@ func (m *Manager) queuePendingInput(
 	m.pendingInputs[sessionID] = insertPendingInput(m.pendingInputs[sessionID], item)
 	m.mu.Unlock()
 
+	m.cancelPendingInputTimer(sessionID)
 	m.broadcastPendingInputs(sessionID)
 	m.triggerPendingProcessing(sessionID)
-	return item, nil
+	return clonePendingInput(item), nil
 }
 
 func (m *Manager) sendMessageWithMode(
@@ -161,23 +218,38 @@ func (m *Manager) sendMessageWithMode(
 	}
 
 	normalizedMode := normalizePendingInputMode(mode)
-	if normalizedMode == PendingInputModeRedirect &&
-		m.hasActiveRun(sessionID) &&
-		normalizeAgent(Agent(record.Agent)) == AgentCodex &&
-		effectiveSessionBackend(record) == SessionBackendCodexAppServer {
-		handled, steerErr := m.steerActiveCodexTurn(ctx, record, text, attachmentIDs)
-		if handled || steerErr != nil {
-			return steerErr
-		}
-	}
 	if normalizedMode != "" && (m.hasActiveRun(sessionID) || autoRetryDefersPending(record)) {
-		_, err := m.queuePendingInput(sessionID, text, attachmentIDs, normalizedMode, pendingID)
+		var readyAt *time.Time
+		if normalizedMode == PendingInputModeRedirect && isCodexSteerSession(record) {
+			value := m.nextPendingSteerReadyAt()
+			readyAt = &value
+		}
+		_, err := m.queuePendingInputWithReadyAt(
+			sessionID,
+			text,
+			attachmentIDs,
+			normalizedMode,
+			pendingID,
+			readyAt,
+		)
 		return err
 	}
 
 	err = m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
 	if normalizedMode != "" && err != nil && strings.Contains(strings.ToLower(err.Error()), "already running") {
-		_, queueErr := m.queuePendingInput(sessionID, text, attachmentIDs, normalizedMode, pendingID)
+		var readyAt *time.Time
+		if normalizedMode == PendingInputModeRedirect && isCodexSteerSession(record) {
+			value := m.nextPendingSteerReadyAt()
+			readyAt = &value
+		}
+		_, queueErr := m.queuePendingInputWithReadyAt(
+			sessionID,
+			text,
+			attachmentIDs,
+			normalizedMode,
+			pendingID,
+			readyAt,
+		)
 		return queueErr
 	}
 	return err
@@ -212,6 +284,7 @@ func (m *Manager) removePendingInput(sessionID, pendingID string) bool {
 	m.mu.Unlock()
 
 	if removed {
+		m.cancelPendingInputTimer(sessionID)
 		m.broadcastPendingInputs(sessionID)
 		m.triggerPendingProcessing(sessionID)
 	}
@@ -299,46 +372,130 @@ func reorderPendingInput(queue []PendingInput, pendingID string, mode PendingInp
 	return append(result, item), true
 }
 
-func (m *Manager) updatePendingInput(sessionID, pendingID, text string) (PendingInput, error) {
+func (m *Manager) updatePendingInput(
+	sessionID string,
+	pendingID string,
+	update pendingInputUpdate,
+) (PendingInput, error) {
 	normalizedPendingID := strings.TrimSpace(pendingID)
 	if normalizedPendingID == "" {
 		return PendingInput{}, errPendingInputNotFound
 	}
-	normalizedText := strings.TrimSpace(text)
-	if normalizedText == "" {
-		return PendingInput{}, errEmptyPendingInput
+	if update.Text == nil && update.Paused == nil {
+		return PendingInput{}, errInvalidPendingInputUpdate
+	}
+	var normalizedText string
+	if update.Text != nil {
+		normalizedText = strings.TrimSpace(*update.Text)
+		if normalizedText == "" {
+			return PendingInput{}, errEmptyPendingInput
+		}
+	}
+	usesCodexSteer := false
+	if update.Text != nil || (update.Paused != nil && !*update.Paused) {
+		usesCodexSteer = m.sessionUsesCodexSteer(sessionID)
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	queue := m.pendingInputs[sessionID]
 	if len(queue) == 0 {
+		m.mu.Unlock()
 		return PendingInput{}, errPendingInputNotFound
 	}
 	for idx, item := range queue {
 		if item.ID != normalizedPendingID {
 			continue
 		}
-		item.Text = normalizedText
+		if update.Text != nil {
+			item.Text = normalizedText
+		}
+		if update.Paused != nil && *update.Paused {
+			item.Paused = true
+			item.ReadyAt = nil
+		} else if update.Text != nil || update.Paused != nil {
+			item.Paused = false
+			item.ReadyAt = nil
+			if item.Mode == PendingInputModeRedirect && usesCodexSteer {
+				value := m.nextPendingSteerReadyAt()
+				item.ReadyAt = &value
+			}
+		}
 		queue[idx] = item
 		m.pendingInputs[sessionID] = queue
-		return clonePendingInput(item), nil
+		updated := clonePendingInput(item)
+		m.mu.Unlock()
+		m.cancelPendingInputTimer(sessionID)
+		return updated, nil
 	}
+	m.mu.Unlock()
 	return PendingInput{}, errPendingInputNotFound
 }
 
 func (m *Manager) reorderPendingInput(sessionID, pendingID string, mode PendingInputMode, index int) error {
+	normalizedMode := normalizePendingInputMode(mode)
+	if normalizedMode == "" {
+		return errInvalidPendingInputMode
+	}
+	normalizedPendingID := strings.TrimSpace(pendingID)
+	if normalizedPendingID == "" {
+		return errPendingInputNotFound
+	}
+
+	previousMode := PendingInputMode("")
+	m.mu.RLock()
+	for _, item := range m.pendingInputs[sessionID] {
+		if item.ID == normalizedPendingID {
+			previousMode = item.Mode
+			break
+		}
+	}
+	m.mu.RUnlock()
+	if previousMode == "" {
+		return errPendingInputNotFound
+	}
+
+	var readyAt *time.Time
+	if previousMode != normalizedMode && normalizedMode == PendingInputModeRedirect &&
+		m.sessionUsesCodexSteer(sessionID) {
+		value := m.nextPendingSteerReadyAt()
+		readyAt = &value
+	}
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	queue := m.pendingInputs[sessionID]
 	if len(queue) == 0 {
+		m.mu.Unlock()
 		return errPendingInputNotFound
 	}
-	next, ok := reorderPendingInput(queue, pendingID, mode, index)
+	previousMode = ""
+	for _, item := range queue {
+		if item.ID == normalizedPendingID {
+			previousMode = item.Mode
+			break
+		}
+	}
+	next, ok := reorderPendingInput(queue, normalizedPendingID, normalizedMode, index)
 	if !ok {
+		m.mu.Unlock()
 		return errPendingInputNotFound
+	}
+	if previousMode != normalizedMode {
+		for itemIndex := range next {
+			if next[itemIndex].ID != normalizedPendingID {
+				continue
+			}
+			next[itemIndex].Paused = false
+			next[itemIndex].ReadyAt = nil
+			if readyAt != nil {
+				value := *readyAt
+				next[itemIndex].ReadyAt = &value
+			}
+			break
+		}
 	}
 	m.pendingInputs[sessionID] = next
+	m.mu.Unlock()
+	m.cancelPendingInputTimer(sessionID)
 	return nil
 }
 
@@ -346,11 +503,13 @@ func (m *Manager) clearPendingInputsForSession(sessionID string) bool {
 	m.mu.Lock()
 	if len(m.pendingInputs[sessionID]) == 0 {
 		m.mu.Unlock()
+		m.cancelPendingInputTimer(sessionID)
 		return false
 	}
 	delete(m.pendingInputs, sessionID)
 	delete(m.pendingDirty, sessionID)
 	m.mu.Unlock()
+	m.cancelPendingInputTimer(sessionID)
 	m.broadcastPendingInputs(sessionID)
 	m.triggerPendingProcessing(sessionID)
 	return true
@@ -361,6 +520,7 @@ func (m *Manager) clearPendingInputs(sessionID string) {
 	delete(m.pendingInputs, sessionID)
 	delete(m.pendingDirty, sessionID)
 	m.mu.Unlock()
+	m.cancelPendingInputTimer(sessionID)
 }
 
 func (m *Manager) peekPendingInput(sessionID string) (PendingInput, bool) {
@@ -373,11 +533,22 @@ func (m *Manager) peekPendingInput(sessionID string) (PendingInput, bool) {
 	return clonePendingInput(queue[0]), true
 }
 
-func (m *Manager) popPendingInput(sessionID string) (PendingInput, bool) {
+func (m *Manager) claimPendingInput(
+	sessionID string,
+	pendingID string,
+	mode PendingInputMode,
+	now time.Time,
+) (PendingInput, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	queue := m.pendingInputs[sessionID]
 	if len(queue) == 0 {
+		return PendingInput{}, false
+	}
+	if queue[0].ID != strings.TrimSpace(pendingID) || queue[0].Mode != mode || queue[0].Paused {
+		return PendingInput{}, false
+	}
+	if queue[0].ReadyAt != nil && now.Before(*queue[0].ReadyAt) {
 		return PendingInput{}, false
 	}
 	item := clonePendingInput(queue[0])
@@ -394,6 +565,84 @@ func (m *Manager) prependPendingInput(sessionID string, item PendingInput) {
 	m.mu.Lock()
 	queue := append([]PendingInput(nil), m.pendingInputs[sessionID]...)
 	m.pendingInputs[sessionID] = append([]PendingInput{cloned}, queue...)
+	m.mu.Unlock()
+}
+
+func (m *Manager) ensurePendingSteerReadyAt(
+	sessionID string,
+	pendingID string,
+) (time.Time, bool, bool) {
+	readyAt := m.nextPendingSteerReadyAt()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	queue := m.pendingInputs[sessionID]
+	if len(queue) == 0 || queue[0].ID != strings.TrimSpace(pendingID) ||
+		queue[0].Mode != PendingInputModeRedirect || queue[0].Paused {
+		return time.Time{}, false, false
+	}
+	if queue[0].ReadyAt != nil {
+		return *queue[0].ReadyAt, true, false
+	}
+	value := readyAt
+	queue[0].ReadyAt = &value
+	m.pendingInputs[sessionID] = queue
+	return readyAt, true, true
+}
+
+func (m *Manager) cancelPendingInputTimer(sessionID string) {
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	if normalizedSessionID == "" {
+		return
+	}
+	m.mu.Lock()
+	if timer := m.pendingInputTimers[normalizedSessionID]; timer != nil {
+		timer.Stop()
+	}
+	delete(m.pendingInputTimers, normalizedSessionID)
+	delete(m.pendingInputTimerDeadlines, normalizedSessionID)
+	m.mu.Unlock()
+}
+
+func (m *Manager) setPendingInputTimer(sessionID string, readyAt time.Time) {
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	if normalizedSessionID == "" {
+		return
+	}
+	delay := time.Until(readyAt)
+	if delay <= 0 {
+		m.triggerPendingProcessing(normalizedSessionID)
+		return
+	}
+
+	m.mu.Lock()
+	if current, ok := m.pendingInputTimerDeadlines[normalizedSessionID]; ok && current.Equal(readyAt) {
+		m.mu.Unlock()
+		return
+	}
+	if timer := m.pendingInputTimers[normalizedSessionID]; timer != nil {
+		timer.Stop()
+	}
+	if m.pendingInputTimers == nil {
+		m.pendingInputTimers = make(map[string]*time.Timer)
+	}
+	if m.pendingInputTimerDeadlines == nil {
+		m.pendingInputTimerDeadlines = make(map[string]time.Time)
+	}
+	deadline := readyAt
+	timer := time.AfterFunc(delay, func() {
+		m.mu.Lock()
+		current, ok := m.pendingInputTimerDeadlines[normalizedSessionID]
+		if !ok || !current.Equal(deadline) {
+			m.mu.Unlock()
+			return
+		}
+		delete(m.pendingInputTimers, normalizedSessionID)
+		delete(m.pendingInputTimerDeadlines, normalizedSessionID)
+		m.mu.Unlock()
+		m.triggerPendingProcessing(normalizedSessionID)
+	})
+	m.pendingInputTimers[normalizedSessionID] = timer
+	m.pendingInputTimerDeadlines[normalizedSessionID] = deadline
 	m.mu.Unlock()
 }
 
@@ -458,7 +707,19 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 	for {
 		next, ok := m.peekPendingInput(sessionID)
 		if !ok {
+			m.cancelPendingInputTimer(sessionID)
 			return
+		}
+		if next.Paused {
+			m.cancelPendingInputTimer(sessionID)
+			return
+		}
+		if next.ReadyAt != nil {
+			if time.Now().Before(*next.ReadyAt) {
+				m.setPendingInputTimer(sessionID, *next.ReadyAt)
+				return
+			}
+			m.cancelPendingInputTimer(sessionID)
 		}
 
 		record, err := m.GetSession(ctx, sessionID)
@@ -473,14 +734,25 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 
 		if m.hasActiveRun(sessionID) {
 			if next.Mode != PendingInputModeRedirect ||
-				normalizeAgent(Agent(record.Agent)) != AgentCodex ||
-				effectiveSessionBackend(record) != SessionBackendCodexAppServer {
+				!isCodexSteerSession(record) {
 				return
 			}
-			steerInput, ok := m.popPendingInput(sessionID)
+			if next.ReadyAt == nil {
+				readyAt, found, changed := m.ensurePendingSteerReadyAt(sessionID, next.ID)
+				if !found {
+					continue
+				}
+				if changed {
+					m.broadcastPendingInputs(sessionID)
+				}
+				m.setPendingInputTimer(sessionID, readyAt)
+				return
+			}
+			steerInput, ok := m.claimPendingInput(sessionID, next.ID, next.Mode, time.Now())
 			if !ok {
-				return
+				continue
 			}
+			m.cancelPendingInputTimer(sessionID)
 			m.broadcastPendingInputs(sessionID)
 			handled, steerErr := m.steerActiveCodexTurn(
 				ctx,
@@ -506,10 +778,11 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			return
 		}
 
-		next, ok = m.popPendingInput(sessionID)
+		next, ok = m.claimPendingInput(sessionID, next.ID, next.Mode, time.Now())
 		if !ok {
-			return
+			continue
 		}
+		m.cancelPendingInputTimer(sessionID)
 		m.broadcastPendingInputs(sessionID)
 
 		if err := m.sendMessageInternal(ctx, sessionID, next.Text, next.AttachmentIDs, false); err != nil {
@@ -539,13 +812,11 @@ func (m *Manager) maybeInterruptForRedirect(sessionID string) {
 	}
 
 	item, ok := m.peekPendingInput(sessionID)
-	if !ok || item.Mode != PendingInputModeRedirect {
+	if !ok || item.Mode != PendingInputModeRedirect || item.Paused {
 		return
 	}
 	record, err := m.GetSession(context.Background(), sessionID)
-	if err == nil &&
-		normalizeAgent(Agent(record.Agent)) == AgentCodex &&
-		effectiveSessionBackend(record) == SessionBackendCodexAppServer {
+	if err == nil && isCodexSteerSession(record) {
 		m.triggerPendingProcessing(sessionID)
 		return
 	}

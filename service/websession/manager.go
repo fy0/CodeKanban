@@ -131,6 +131,9 @@ type Manager struct {
 	autoRetryTimers             map[string]*time.Timer
 	scheduledInputTimers        map[string]*time.Timer
 	scheduledInputTimerSessions map[string]string
+	pendingInputTimers          map[string]*time.Timer
+	pendingInputTimerDeadlines  map[string]time.Time
+	pendingSteerDelay           time.Duration
 	scheduledIdleTimer          *time.Timer
 	scheduledIdleSweepMu        sync.Mutex
 	scheduledInputLocks         [64]sync.Mutex
@@ -393,6 +396,9 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		autoRetryTimers:             make(map[string]*time.Timer),
 		scheduledInputTimers:        make(map[string]*time.Timer),
 		scheduledInputTimerSessions: make(map[string]string),
+		pendingInputTimers:          make(map[string]*time.Timer),
+		pendingInputTimerDeadlines:  make(map[string]time.Time),
+		pendingSteerDelay:           defaultPendingSteerDelay,
 		pendingInputs:               make(map[string][]PendingInput),
 		pendingProcessing:           make(map[string]bool),
 		pendingDirty:                make(map[string]bool),
@@ -2783,8 +2789,9 @@ func (m *Manager) handlePendingDeleteCommand(client *client, frame wireCommandFr
 
 func (m *Manager) handlePendingUpdateCommand(client *client, frame wireCommandFrame) error {
 	var payload struct {
-		PendingID string `json:"id"`
-		Text      string `json:"txt"`
+		PendingID string  `json:"id"`
+		Text      *string `json:"txt"`
+		Paused    *bool   `json:"paused"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid pending update payload", false))
@@ -2792,16 +2799,27 @@ func (m *Manager) handlePendingUpdateCommand(client *client, frame wireCommandFr
 	if strings.TrimSpace(payload.PendingID) == "" {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "pending id is required", false))
 	}
-	if _, err := m.updatePendingInput(frame.SessionID, payload.PendingID, payload.Text); err != nil {
+	updated, err := m.updatePendingInput(frame.SessionID, payload.PendingID, pendingInputUpdate{
+		Text:   payload.Text,
+		Paused: payload.Paused,
+	})
+	if err != nil {
 		code := "invalid_state"
 		if errors.Is(err, errPendingInputNotFound) {
 			code = "not_found"
+		} else if errors.Is(err, errInvalidPendingInputUpdate) {
+			code = "bad_req"
 		}
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, code, err.Error(), false))
 	}
 	m.broadcastPendingInputs(frame.SessionID)
 	m.triggerPendingProcessing(frame.SessionID)
-	return m.sendMutationAck(context.Background(), client, frame, nil)
+	return m.sendMutationAck(
+		context.Background(),
+		client,
+		frame,
+		mapWirePendingInputs([]PendingInput{updated})[0],
+	)
 }
 
 func (m *Manager) handlePendingReorderCommand(client *client, frame wireCommandFrame) error {

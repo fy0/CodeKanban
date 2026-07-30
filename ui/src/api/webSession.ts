@@ -90,6 +90,8 @@ export type WebSessionPendingInputRecord = {
   mode?: 'redirect' | 'queue' | string;
   text?: string;
   attachmentIds?: string[];
+  readyAt?: string | number | null;
+  paused?: boolean;
   createdAt?: string | number | null;
 };
 

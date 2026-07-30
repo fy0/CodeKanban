@@ -30,7 +30,6 @@ func TestScheduleInputIncludesScheduledInputsInSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
 		Agent:     AgentCodex,
@@ -1266,6 +1265,7 @@ func TestScheduledSendFollowsNormalSendBehaviorWhenRunActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
+	manager.pendingSteerDelay = 500 * time.Millisecond
 
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
@@ -1294,13 +1294,25 @@ func TestScheduledSendFollowsNormalSendBehaviorWhenRunActive(t *testing.T) {
 		t.Fatalf("ScheduleInput returned error: %v", err)
 	}
 
+	waitForScheduledInputCount(t, manager, created.ID, 0)
+	pending := manager.pendingInputsSnapshot(created.ID)
+	if len(pending) != 1 || pending[0].Text != "Next after timer" || pending[0].ReadyAt == nil {
+		t.Fatalf("expected scheduled send to enter the steer undo window, got %#v", pending)
+	}
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error before steer: %v", err)
+	}
+	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "first" {
+		t.Fatalf("expected scheduled send to wait before steering, got %#v", got)
+	}
+
 	waitForUserMessageCount(t, manager, created.ID, 2)
 	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
-		t.Fatalf("expected scheduled send to steer without creating a pending input, got %#v", pending)
+		t.Fatalf("expected scheduled pending input to clear after steer, got %#v", pending)
 	}
-	waitForScheduledInputCount(t, manager, created.ID, 0)
 
-	rawEvents, err := manager.store.readEvents(created.ID)
+	rawEvents, err = manager.store.readEvents(created.ID)
 	if err != nil {
 		t.Fatalf("readEvents returned error: %v", err)
 	}

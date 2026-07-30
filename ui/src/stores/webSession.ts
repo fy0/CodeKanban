@@ -123,6 +123,8 @@ type WirePendingInput = {
   m?: 'redirect' | 'queue' | string;
   txt?: string;
   atts?: string[];
+  ra?: number | null;
+  ps?: boolean;
   ca?: number | null;
 };
 
@@ -502,8 +504,12 @@ export interface WebSessionPendingInput {
   mode: 'redirect' | 'queue';
   text: string;
   attachmentIds: string[];
+  readyAt: number | null;
+  paused: boolean;
   createdAt: number;
 }
+
+export const WEB_SESSION_CODEX_STEER_UNDO_WINDOW_MS = 5_000;
 
 type WebSessionPendingInputMode = WebSessionPendingInput['mode'];
 
@@ -2692,6 +2698,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     mode?: 'redirect' | 'queue' | string;
     text?: string;
     attachmentIds?: string[];
+    readyAt?: string | number | null;
+    paused?: boolean;
     createdAt?: string | number | null;
   }): WebSessionPendingInput | null {
     const id = typeof item.id === 'string' ? item.id.trim() : '';
@@ -2706,6 +2714,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       typeof item.createdAt === 'number'
         ? item.createdAt
         : Date.parse(typeof item.createdAt === 'string' ? item.createdAt : '');
+    const parsedReadyAt =
+      typeof item.readyAt === 'number'
+        ? item.readyAt
+        : Date.parse(typeof item.readyAt === 'string' ? item.readyAt : '');
     return {
       id,
       mode,
@@ -2713,6 +2725,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
       attachmentIds: Array.isArray(item.attachmentIds)
         ? item.attachmentIds.filter((value): value is string => typeof value === 'string')
         : [],
+      readyAt: Number.isFinite(parsedReadyAt) ? parsedReadyAt : null,
+      paused: item.paused === true,
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
     };
   }
@@ -4379,6 +4393,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
                   mode: item.m,
                   text: item.txt,
                   attachmentIds: item.atts,
+                  readyAt: item.ra,
+                  paused: item.ps,
                   createdAt: item.ca,
                 })
               )
@@ -4449,6 +4465,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
                     mode: item.m,
                     text: item.txt,
                     attachmentIds: item.atts,
+                    readyAt: item.ra,
+                    paused: item.ps,
                     createdAt: item.ca,
                   })
                 )
@@ -5365,6 +5383,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
           mode,
           text,
           attachmentIds: [...attachmentIds],
+          readyAt:
+            mode === 'redirect' && session.agent === 'codex'
+              ? Date.now() + WEB_SESSION_CODEX_STEER_UNDO_WINDOW_MS
+              : null,
+          paused: false,
           createdAt: Date.now(),
         })
       );
@@ -5439,13 +5462,39 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await runRuntimeMutationCommand(
       sessionId,
       'pending_update',
-      { id: pendingId, txt: normalizedText },
+      { id: pendingId, txt: normalizedText, paused: false },
       {
         label: 'pending_update',
         predicate: () =>
           getPendingInputs(sessionId).some(
-            item => item.id === pendingId && item.text === normalizedText
+            item => item.id === pendingId && item.text === normalizedText && !item.paused
           ),
+      }
+    );
+  }
+
+  async function pausePendingInput(sessionId: string, pendingId: string) {
+    await runRuntimeMutationCommand(
+      sessionId,
+      'pending_update',
+      { id: pendingId, paused: true },
+      {
+        label: 'pending_pause',
+        predicate: () =>
+          getPendingInputs(sessionId).some(item => item.id === pendingId && item.paused),
+      }
+    );
+  }
+
+  async function resumePendingInput(sessionId: string, pendingId: string) {
+    await runRuntimeMutationCommand(
+      sessionId,
+      'pending_update',
+      { id: pendingId, paused: false },
+      {
+        label: 'pending_resume',
+        predicate: () =>
+          getPendingInputs(sessionId).some(item => item.id === pendingId && !item.paused),
       }
     );
   }
@@ -6336,6 +6385,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     removeDraftAttachment,
     removePendingInput,
     updatePendingInput,
+    pausePendingInput,
+    resumePendingInput,
     reorderPendingInput,
     clearPendingInputs,
     removeScheduledInput,

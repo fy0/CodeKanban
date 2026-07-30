@@ -240,6 +240,12 @@ function normalizePendingInput(value) {
       value?.atts ?? value?.attachmentIds,
       "attachmentIds",
     ),
+    readyAt:
+      isoFromUnixMilli(value?.ra) ||
+      (typeof value?.readyAt === "string"
+        ? trimmedString(value.readyAt) || null
+        : null),
+    paused: value?.ps === true || value?.paused === true,
     createdAt:
       isoFromUnixMilli(value?.ca) ||
       (typeof value?.createdAt === "string"

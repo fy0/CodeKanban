@@ -48,6 +48,48 @@ func TestReorderPendingInputWithinQueuePartition(t *testing.T) {
 	}
 }
 
+func TestClaimPendingInputRechecksModePauseAndDeadline(t *testing.T) {
+	now := time.Now()
+	future := now.Add(time.Minute)
+	manager := &Manager{
+		pendingInputs: map[string][]PendingInput{
+			"session-1": {{
+				ID:      "next-1",
+				Mode:    PendingInputModeQueue,
+				Text:    "next",
+				ReadyAt: &future,
+			}},
+		},
+	}
+
+	if _, ok := manager.claimPendingInput("session-1", "next-1", PendingInputModeRedirect, now); ok {
+		t.Fatal("expected a mode change to invalidate a stale redirect claim")
+	}
+
+	manager.mu.Lock()
+	manager.pendingInputs["session-1"][0].Mode = PendingInputModeRedirect
+	manager.mu.Unlock()
+	if _, ok := manager.claimPendingInput("session-1", "next-1", PendingInputModeRedirect, now); ok {
+		t.Fatal("expected a future deadline to block the claim")
+	}
+
+	manager.mu.Lock()
+	manager.pendingInputs["session-1"][0].ReadyAt = nil
+	manager.pendingInputs["session-1"][0].Paused = true
+	manager.mu.Unlock()
+	if _, ok := manager.claimPendingInput("session-1", "next-1", PendingInputModeRedirect, now); ok {
+		t.Fatal("expected a paused input to block the claim")
+	}
+
+	manager.mu.Lock()
+	manager.pendingInputs["session-1"][0].Paused = false
+	manager.mu.Unlock()
+	claimed, ok := manager.claimPendingInput("session-1", "next-1", PendingInputModeRedirect, now)
+	if !ok || claimed.ID != "next-1" {
+		t.Fatalf("expected the current ready input to be claimed, got %#v, ok=%v", claimed, ok)
+	}
+}
+
 func TestRedirectDoesNotInterruptAutoRetryRun(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

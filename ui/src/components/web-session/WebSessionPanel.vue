@@ -1826,6 +1826,13 @@
                                 : t('webSession.pendingQueue')
                             }}
                           </span>
+                          <span
+                            v-if="pendingInputTimingLabel(item)"
+                            class="pending-input-timing"
+                            :class="{ 'is-paused': item.paused }"
+                          >
+                            {{ pendingInputTimingLabel(item) }}
+                          </span>
                           <span class="pending-input-preview">
                             {{ pendingInputPreview(item) }}
                           </span>
@@ -1842,6 +1849,13 @@
                           </span>
                           <span class="pending-input-position">
                             {{ t('webSession.pendingPosition', { index: index + 1 }) }}
+                          </span>
+                          <span
+                            v-if="pendingInputTimingLabel(item)"
+                            class="pending-input-timing"
+                            :class="{ 'is-paused': item.paused }"
+                          >
+                            {{ pendingInputTimingLabel(item) }}
                           </span>
                           <span
                             v-if="item.attachmentIds.length > 0"
@@ -1862,13 +1876,19 @@
                             :autosize="{ minRows: 2, maxRows: 3 }"
                           />
                           <div class="pending-input-editor-actions">
-                            <n-button size="tiny" tertiary @click="cancelPendingEdit">
+                            <n-button
+                              size="tiny"
+                              tertiary
+                              :disabled="pendingEditActionId === item.id"
+                              @click="cancelPendingEdit"
+                            >
                               {{ t('common.cancel') }}
                             </n-button>
                             <n-button
                               size="tiny"
                               type="primary"
                               :disabled="!pendingEditCanSave"
+                              :loading="pendingEditActionId === item.id"
                               @click="handlePendingEditSave(item.id)"
                             >
                               {{ t('common.save') }}
@@ -1883,7 +1903,7 @@
                             <button
                               type="button"
                               class="pending-input-action"
-                              :disabled="index === 0"
+                              :disabled="index === 0 || pendingEditActionId === item.id"
                               @click="handleMovePendingInputToAbsoluteIndex(item, index - 1)"
                             >
                               {{ t('webSession.pendingMoveUp') }}
@@ -1891,7 +1911,9 @@
                             <button
                               type="button"
                               class="pending-input-action"
-                              :disabled="index >= pendingInputs.length - 1"
+                              :disabled="
+                                index >= pendingInputs.length - 1 || pendingEditActionId === item.id
+                              "
                               @click="handleMovePendingInputToAbsoluteIndex(item, index + 1)"
                             >
                               {{ t('webSession.pendingMoveDown') }}
@@ -1899,6 +1921,7 @@
                             <button
                               type="button"
                               class="pending-input-action"
+                              :disabled="pendingEditActionId === item.id"
                               @click="handleTogglePendingPriority(item)"
                             >
                               {{
@@ -1908,9 +1931,19 @@
                               }}
                             </button>
                             <button
+                              v-if="item.paused"
+                              type="button"
+                              class="pending-input-action"
+                              :disabled="pendingEditActionId === item.id"
+                              @click="handleResumePendingInput(item.id)"
+                            >
+                              {{ t('webSession.pendingResume') }}
+                            </button>
+                            <button
                               v-if="item.text.trim()"
                               type="button"
                               class="pending-input-action"
+                              :disabled="pendingEditActionId === item.id"
                               @click="startPendingEdit(item)"
                             >
                               {{ t('common.edit') }}
@@ -1922,6 +1955,7 @@
                     <button
                       type="button"
                       class="pending-input-remove"
+                      :disabled="pendingEditActionId === item.id"
                       @click.stop="handleRemovePendingInput(item.id)"
                     >
                       ×
@@ -5271,6 +5305,7 @@ const pendingInputs = computed(() =>
 );
 const pendingEditingId = ref('');
 const pendingEditText = ref('');
+const pendingEditActionId = ref('');
 const pendingEditCanSave = computed(() => pendingEditText.value.trim().length > 0);
 const scheduledInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getScheduledInputs(currentRealSession.value.id) : []
@@ -11471,33 +11506,104 @@ function pendingInputPreview(item: WebSessionPendingInput) {
   return t('webSession.pendingAttachments', { count: item.attachmentIds.length });
 }
 
+function pendingInputTimingLabel(item: WebSessionPendingInput) {
+  if (item.paused) {
+    return t('webSession.pendingPaused');
+  }
+  if (item.mode !== 'redirect' || item.readyAt == null) {
+    return '';
+  }
+  const remainingSeconds = Math.max(0, Math.ceil((item.readyAt - liveStateClockMs.value) / 1000));
+  return remainingSeconds > 0
+    ? t('webSession.pendingSteerCountdown', { seconds: remainingSeconds })
+    : t('webSession.pendingSteering');
+}
+
 function isEditingPendingInput(pendingId: string) {
   return pendingEditingId.value === pendingId;
 }
 
-function startPendingEdit(item: WebSessionPendingInput) {
-  pendingEditingId.value = item.id;
-  pendingEditText.value = item.text;
+async function startPendingEdit(item: WebSessionPendingInput) {
+  const session = currentRealSession.value;
+  if (!session || pendingEditActionId.value) {
+    return;
+  }
+  pendingEditActionId.value = item.id;
+  try {
+    if (!item.paused) {
+      await webSessionStore.pausePendingInput(session.id, item.id);
+    }
+    if (
+      currentRealSession.value?.id !== session.id ||
+      !pendingInputs.value.some(entry => entry.id === item.id)
+    ) {
+      return;
+    }
+    pendingEditingId.value = item.id;
+    pendingEditText.value = item.text;
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    pendingEditActionId.value = '';
+  }
 }
 
-function cancelPendingEdit() {
+function clearPendingEditState() {
   pendingEditingId.value = '';
   pendingEditText.value = '';
 }
 
-async function handlePendingEditSave(pendingId: string) {
-  if (!currentRealSession.value || !pendingEditCanSave.value) {
+async function cancelPendingEdit() {
+  const session = currentRealSession.value;
+  const pendingId = pendingEditingId.value;
+  if (!session || !pendingId || pendingEditActionId.value) {
     return;
   }
+  pendingEditActionId.value = pendingId;
+  try {
+    await webSessionStore.resumePendingInput(session.id, pendingId);
+    clearPendingEditState();
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    pendingEditActionId.value = '';
+  }
+}
+
+async function handleResumePendingInput(pendingId: string) {
+  const session = currentRealSession.value;
+  if (!session || pendingEditActionId.value) {
+    return;
+  }
+  pendingEditActionId.value = pendingId;
+  try {
+    await webSessionStore.resumePendingInput(session.id, pendingId);
+    if (pendingEditingId.value === pendingId) {
+      clearPendingEditState();
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    pendingEditActionId.value = '';
+  }
+}
+
+async function handlePendingEditSave(pendingId: string) {
+  if (!currentRealSession.value || !pendingEditCanSave.value || pendingEditActionId.value) {
+    return;
+  }
+  pendingEditActionId.value = pendingId;
   try {
     await webSessionStore.updatePendingInput(
       currentRealSession.value.id,
       pendingId,
       pendingEditText.value
     );
-    cancelPendingEdit();
+    clearPendingEditState();
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    pendingEditActionId.value = '';
   }
 }
 
@@ -11713,7 +11819,7 @@ async function handleRemovePendingInput(pendingId: string) {
   }
   try {
     if (pendingEditingId.value === pendingId) {
-      cancelPendingEdit();
+      clearPendingEditState();
     }
     await webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
   } catch (error) {
@@ -11727,7 +11833,7 @@ async function handleClearPendingInputs() {
   }
   try {
     await webSessionStore.clearPendingInputs(currentRealSession.value.id);
-    cancelPendingEdit();
+    clearPendingEditState();
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -13042,9 +13148,22 @@ watch(
     if (sessionId === previousSessionId) {
       return;
     }
+    clearPendingEditState();
     closeScheduledInputPopover();
     if (showScheduledSendDialog.value && isScheduledDialogEdit.value) {
       handleScheduledSendDialogVisibilityChange(false);
+    }
+  }
+);
+
+watch(
+  () => pendingInputs.value.map(item => item.id).join('|'),
+  () => {
+    if (
+      pendingEditingId.value &&
+      !pendingInputs.value.some(item => item.id === pendingEditingId.value)
+    ) {
+      clearPendingEditState();
     }
   }
 );
@@ -17711,6 +17830,18 @@ defineExpose({
   color: var(--n-text-color-3);
 }
 
+.pending-input-timing {
+  flex-shrink: 0;
+  color: var(--n-primary-color);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pending-input-timing.is-paused {
+  color: var(--n-warning-color);
+}
+
 .pending-input-action,
 .pending-input-remove {
   border: none;
@@ -17722,6 +17853,11 @@ defineExpose({
 }
 
 .pending-input-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pending-input-remove:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }

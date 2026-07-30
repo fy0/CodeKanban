@@ -185,6 +185,24 @@ export class WebSessionCommandChannel {
     });
   }
 
+  async updatePendingInput(sessionId, input = {}) {
+    const pendingId = ensureString(input.pendingId, "pendingId");
+    const hasText = input.text !== undefined;
+    const hasPaused = typeof input.paused === "boolean";
+    if (!hasText && !hasPaused) {
+      throw new CodeKanbanValidationError("text or paused is required");
+    }
+    return await this._executeCommand({
+      operation: "pending_update",
+      sessionId,
+      payload: {
+        id: pendingId,
+        ...(hasText ? { txt: ensureString(input.text, "text") } : {}),
+        ...(hasPaused ? { paused: input.paused } : {}),
+      },
+    });
+  }
+
   async abort(sessionId) {
     return await this._executeCommand({ operation: "abort", sessionId });
   }

@@ -214,6 +214,8 @@ type wirePendingInput struct {
 	Mode          string   `json:"m"`
 	Text          string   `json:"txt,omitempty"`
 	AttachmentIDs []string `json:"atts,omitempty"`
+	ReadyAt       *int64   `json:"ra,omitempty"`
+	Paused        bool     `json:"ps,omitempty"`
 	CreatedAt     int64    `json:"ca"`
 }
 
@@ -539,11 +541,18 @@ func mapWirePendingInputs(items []PendingInput) []wirePendingInput {
 	}
 	wireItems := make([]wirePendingInput, 0, len(items))
 	for _, item := range items {
+		var readyAt *int64
+		if item.ReadyAt != nil {
+			value := item.ReadyAt.UnixMilli()
+			readyAt = &value
+		}
 		wireItems = append(wireItems, wirePendingInput{
 			ID:            item.ID,
 			Mode:          string(item.Mode),
 			Text:          item.Text,
 			AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
+			ReadyAt:       readyAt,
+			Paused:        item.Paused,
 			CreatedAt:     item.CreatedAt.UnixMilli(),
 		})
 	}

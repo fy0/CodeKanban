@@ -701,9 +701,11 @@ describe('webSession loading behavior', () => {
       pendingInputs: [
         {
           id: 'pending-1',
-          mode: 'queue',
-          text: 'Queued follow-up',
+          mode: 'redirect',
+          text: 'Steer follow-up',
           attachmentIds: ['attachment-1'],
+          readyAt: '2026-04-09T10:01:05.000Z',
+          paused: true,
           createdAt: '2026-04-09T10:01:00.000Z',
         },
       ],
@@ -715,9 +717,11 @@ describe('webSession loading behavior', () => {
     expect(store.getPendingInputs(session.id)).toEqual([
       {
         id: 'pending-1',
-        mode: 'queue',
-        text: 'Queued follow-up',
+        mode: 'redirect',
+        text: 'Steer follow-up',
         attachmentIds: ['attachment-1'],
+        readyAt: Date.parse('2026-04-09T10:01:05.000Z'),
+        paused: true,
         createdAt: Date.parse('2026-04-09T10:01:00.000Z'),
       },
     ]);
@@ -908,6 +912,7 @@ describe('webSession loading behavior', () => {
       p: {
         id: 'pending-1',
         txt: 'Updated follow-up',
+        paused: false,
       },
     });
 
@@ -942,6 +947,134 @@ describe('webSession loading behavior', () => {
 
     await updatePromise;
     expect(store.getPendingInputs(session.id)[0]?.text).toBe('Updated follow-up');
+  });
+
+  it('pauses and resumes delayed steer inputs through pending updates', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-pending-pause',
+      status: 'running',
+      assistantState: 'working',
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [
+        {
+          id: 'pending-1',
+          mode: 'redirect',
+          text: 'Steer follow-up',
+          attachmentIds: [],
+          readyAt: '2026-04-09T10:01:05.000Z',
+          paused: false,
+          createdAt: '2026-04-09T10:01:00.000Z',
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+
+    const pausePromise = store.pausePendingInput(session.id, 'pending-1');
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      op: 'pending_update',
+      p: { id: 'pending-1', paused: true },
+    });
+    const pauseRequestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: pauseRequestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_update',
+      ok: 1,
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending',
+      pi: [
+        {
+          id: 'pending-1',
+          m: 'redirect',
+          txt: 'Steer follow-up',
+          ps: true,
+          ca: Date.parse('2026-04-09T10:01:00.000Z'),
+        },
+      ],
+    });
+    await pausePromise;
+    expect(store.getPendingInputs(session.id)[0]).toMatchObject({
+      paused: true,
+      readyAt: null,
+    });
+
+    const resumedAt = Date.parse('2026-04-09T10:02:05.000Z');
+    const resumePromise = store.resumePendingInput(session.id, 'pending-1');
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (commandSocket?.sent.at(-1)?.p?.paused === false) {
+        break;
+      }
+    }
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      op: 'pending_update',
+      p: { id: 'pending-1', paused: false },
+    });
+    const resumeRequestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: resumeRequestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_update',
+      ok: 1,
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending',
+      pi: [
+        {
+          id: 'pending-1',
+          m: 'redirect',
+          txt: 'Steer follow-up',
+          ra: resumedAt,
+          ps: false,
+          ca: Date.parse('2026-04-09T10:01:00.000Z'),
+        },
+      ],
+    });
+    await resumePromise;
+    expect(store.getPendingInputs(session.id)[0]).toMatchObject({
+      paused: false,
+      readyAt: resumedAt,
+    });
   });
 
   it('reorders pending inputs via the backend command channel and pending events', async () => {
