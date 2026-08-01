@@ -13,8 +13,6 @@ Manage all your terminals and AI coding tools (Claude Code / Codex) from one uni
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-![Preview](docs/preview-en.png)
-
 </div>
 
 ## Quick Start

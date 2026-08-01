@@ -13,8 +13,6 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-![预览图](docs/preview.png)
-
 </div>
 
 ## 快速体验
