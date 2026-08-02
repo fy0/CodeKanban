@@ -280,6 +280,18 @@ func normalizeAutoRetryPreset(preset AutoRetryPreset) AutoRetryPreset {
 	}
 }
 
+const maxAutoRetryAttempts = 100
+
+func normalizeAutoRetryMaxAttempts(attempts int) int {
+	if attempts < 0 {
+		return 0
+	}
+	if attempts > maxAutoRetryAttempts {
+		return maxAutoRetryAttempts
+	}
+	return attempts
+}
+
 func effectiveAssistantState(record tables.WebSessionTable) AssistantState {
 	if normalized := normalizeAssistantState(AssistantState(record.AssistantState)); normalized != AssistantStateNone {
 		return normalized
@@ -539,10 +551,52 @@ func autoRetryDelayForFailure(
 	code string,
 	message string,
 ) (time.Duration, bool) {
+	return autoRetryDelayForFailureWithMax(preset, attempt, 0, code, message)
+}
+
+func autoRetryDelayForFailureWithMax(
+	preset AutoRetryPreset,
+	attempt int,
+	maxAttempts int,
+	code string,
+	message string,
+) (time.Duration, bool) {
 	if attempt == 1 && isCodexModelCapacityError(code, message) {
+		if maxAttempts > 0 && attempt > maxAttempts {
+			return 0, false
+		}
 		return 3 * time.Second, true
 	}
-	return autoRetryDelay(preset, attempt)
+
+	normalizedPreset := normalizeAutoRetryPreset(preset)
+	normalizedMaxAttempts := normalizeAutoRetryMaxAttempts(maxAttempts)
+	if normalizedMaxAttempts == 0 {
+		return autoRetryDelay(normalizedPreset, attempt)
+	}
+	if attempt <= 0 || attempt > normalizedMaxAttempts {
+		return 0, false
+	}
+
+	switch normalizedPreset {
+	case AutoRetryPresetAggressiveStop:
+		delays := []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
+		if attempt <= len(delays) {
+			return delays[attempt-1], true
+		}
+		return delays[len(delays)-1], true
+	case AutoRetryPresetSustain60s:
+		delays := []time.Duration{3 * time.Second, 10 * time.Second, 30 * time.Second}
+		if attempt <= len(delays) {
+			return delays[attempt-1], true
+		}
+		return 60 * time.Second, true
+	default:
+		delays := []time.Duration{3 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second}
+		if attempt <= len(delays) {
+			return delays[attempt-1], true
+		}
+		return delays[len(delays)-1], true
+	}
 }
 
 func (m *Manager) UnregisterClient(client *client) {
@@ -817,6 +871,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		AutoRetryEnabled:                  params.AutoRetryEnabled,
 		AutoRetryScope:                    string(normalizeAutoRetryScope(params.AutoRetryScope)),
 		AutoRetryPreset:                   string(normalizeAutoRetryPreset(params.AutoRetryPreset)),
+		AutoRetryMaxAttempts:              normalizeAutoRetryMaxAttempts(params.AutoRetryMaxAttempts),
 		AutoRetryDispatchPendingOnFailure: params.AutoRetryDispatchPendingOnFailure,
 		Cwd:                               cwd,
 		Status:                            string(StatusIdle),
@@ -954,6 +1009,7 @@ func (m *Manager) createImportedCodexSession(
 		AutoRetryEnabled:                  false,
 		AutoRetryScope:                    string(AutoRetryScopeNetworkOnly),
 		AutoRetryPreset:                   string(AutoRetryPresetGentleStop),
+		AutoRetryMaxAttempts:              0,
 		AutoRetryDispatchPendingOnFailure: false,
 		LegacyPermissionMode:              "default",
 		Cwd:                               filepath.Clean(strings.TrimSpace(source.ProjectPath)),
@@ -1931,14 +1987,26 @@ func (m *Manager) UpdateAutoRetry(
 	enabled bool,
 	scope AutoRetryScope,
 	preset AutoRetryPreset,
+	maxAttempts ...int,
 ) (SessionSummary, error) {
+	configuredMaxAttempts := 0
+	if len(maxAttempts) > 0 {
+		configuredMaxAttempts = normalizeAutoRetryMaxAttempts(maxAttempts[0])
+	} else {
+		record, err := m.GetSession(ctx, sessionID)
+		if err != nil {
+			return SessionSummary{}, err
+		}
+		configuredMaxAttempts = normalizeAutoRetryMaxAttempts(record.AutoRetryMaxAttempts)
+	}
 	summary, err := m.updateFields(ctx, sessionID, map[string]any{
-		"auto_retry_enabled": enabled,
-		"auto_retry_scope":   string(normalizeAutoRetryScope(scope)),
-		"auto_retry_preset":  string(normalizeAutoRetryPreset(preset)),
-		"auto_retry_attempt": 0,
-		"auto_retry_next_at": nil,
-		"updated_at":         time.Now(),
+		"auto_retry_enabled":      enabled,
+		"auto_retry_scope":        string(normalizeAutoRetryScope(scope)),
+		"auto_retry_preset":       string(normalizeAutoRetryPreset(preset)),
+		"auto_retry_max_attempts": configuredMaxAttempts,
+		"auto_retry_attempt":      0,
+		"auto_retry_next_at":      nil,
+		"updated_at":              time.Now(),
 	})
 	if err != nil {
 		return SessionSummary{}, err
@@ -2303,9 +2371,10 @@ func (m *Manager) scheduleAutoRetry(record tables.WebSessionTable, code string, 
 	}
 
 	nextAttempt := record.AutoRetryAttempt + 1
-	delay, ok := autoRetryDelayForFailure(
+	delay, ok := autoRetryDelayForFailureWithMax(
 		AutoRetryPreset(record.AutoRetryPreset),
 		nextAttempt,
+		record.AutoRetryMaxAttempts,
 		code,
 		message,
 	)
@@ -2620,6 +2689,7 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 		AutoRetryEnabled                  bool   `json:"ae"`
 		AutoRetryScope                    string `json:"ars"`
 		AutoRetryPreset                   string `json:"arp"`
+		AutoRetryMaxAttempts              int    `json:"aram"`
 		AutoRetryDispatchPendingOnFailure bool   `json:"ardpf"`
 		PermissionMode                    string `json:"pm"`
 		Title                             string `json:"ttl"`
@@ -2652,6 +2722,7 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 		AutoRetryEnabled:                  payload.AutoRetryEnabled,
 		AutoRetryScope:                    AutoRetryScope(payload.AutoRetryScope),
 		AutoRetryPreset:                   AutoRetryPreset(payload.AutoRetryPreset),
+		AutoRetryMaxAttempts:              payload.AutoRetryMaxAttempts,
 		AutoRetryDispatchPendingOnFailure: payload.AutoRetryDispatchPendingOnFailure,
 		Title:                             payload.Title,
 	})
@@ -3021,12 +3092,17 @@ func (m *Manager) handleSetAutoRetryCommand(
 	frame wireCommandFrame,
 ) error {
 	var payload struct {
-		Enabled bool   `json:"ae"`
-		Scope   string `json:"ars"`
-		Preset  string `json:"arp"`
+		Enabled     bool   `json:"ae"`
+		Scope       string `json:"ars"`
+		Preset      string `json:"arp"`
+		MaxAttempts *int   `json:"aram"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid auto retry payload", false))
+	}
+	maxAttempts := []int(nil)
+	if payload.MaxAttempts != nil {
+		maxAttempts = []int{*payload.MaxAttempts}
 	}
 	if _, err := m.UpdateAutoRetry(
 		ctx,
@@ -3034,6 +3110,7 @@ func (m *Manager) handleSetAutoRetryCommand(
 		payload.Enabled,
 		AutoRetryScope(payload.Scope),
 		AutoRetryPreset(payload.Preset),
+		maxAttempts...,
 	); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
@@ -5559,6 +5636,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		AutoRetryEnabled:                  record.AutoRetryEnabled,
 		AutoRetryScope:                    normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),
 		AutoRetryPreset:                   normalizeAutoRetryPreset(AutoRetryPreset(record.AutoRetryPreset)),
+		AutoRetryMaxAttempts:              normalizeAutoRetryMaxAttempts(record.AutoRetryMaxAttempts),
 		AutoRetryDispatchPendingOnFailure: record.AutoRetryDispatchPendingOnFailure,
 		Cwd:                               record.Cwd,
 		NativeSessionID:                   record.NativeSessionID,

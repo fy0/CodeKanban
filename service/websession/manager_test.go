@@ -141,6 +141,58 @@ func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	}
 }
 
+func TestManagerCreateSessionPersistsAutoRetryMaxAttempts(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:            project.ID,
+		Agent:                AgentCodex,
+		AutoRetryEnabled:     true,
+		AutoRetryPreset:      AutoRetryPresetGentleStop,
+		AutoRetryMaxAttempts: 7,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if created.AutoRetryMaxAttempts != 7 {
+		t.Fatalf("expected summary max attempts 7, got %d", created.AutoRetryMaxAttempts)
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.AutoRetryMaxAttempts != 7 {
+		t.Fatalf("expected persisted max attempts 7, got %d", record.AutoRetryMaxAttempts)
+	}
+	if wire := mapWireSession(created); wire.AutoRetryMaxAttempts != 7 {
+		t.Fatalf("expected wire max attempts 7, got %d", wire.AutoRetryMaxAttempts)
+	}
+	if _, err := manager.UpdateAutoRetry(
+		context.Background(),
+		created.ID,
+		true,
+		AutoRetryScopeNetworkOnly,
+		AutoRetryPresetGentleStop,
+	); err != nil {
+		t.Fatalf("UpdateAutoRetry without max attempts returned error: %v", err)
+	}
+	record, err = manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after update returned error: %v", err)
+	}
+	if record.AutoRetryMaxAttempts != 7 {
+		t.Fatalf("expected omitted max attempts to preserve 7, got %d", record.AutoRetryMaxAttempts)
+	}
+}
+
 func TestManagerCreateSessionUsesConfiguredCodexDefaultsAndExplicitOverrides(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

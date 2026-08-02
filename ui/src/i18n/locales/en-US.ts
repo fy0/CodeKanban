@@ -1364,6 +1364,9 @@ export default {
     webSessionAutoContinuePresetGentleStop: 'Gentle: stop after 3/10/30/60s',
     webSessionAutoContinuePresetAggressiveStop: 'Aggressive: stop after 2/5/15/30/60s',
     webSessionAutoContinuePresetSustain60s: 'Sustain: 3/10/30s, then every 60s',
+    webSessionAutoContinueMaxAttempts: 'Maximum auto-continue attempts',
+    webSessionAutoContinueMaxAttemptsTip:
+      '0 uses the preset default; the sustain preset does not stop by default. Configure 0-100 attempts.',
     webSessionAutoRetryDispatchPendingOnFailure: 'Next after retry failure',
     webSessionAutoRetryDispatchPendingOnFailureEnabled: 'Run queued Next input',
     webSessionAutoRetryDispatchPendingOnFailureTip:

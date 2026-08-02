@@ -50,7 +50,7 @@ describe('settings backup helpers in store', () => {
     });
 
     expect(payload.locale).toBe('en-US');
-    expect(payload.settings.version).toBe(5);
+    expect(payload.settings.version).toBe(6);
     expect(payload.settings.recentProjectsLimit).toBe(7);
     expect(payload.settings.showWebSessionReasoning).toBe(true);
     expect(payload.settings.webSessionAutoRetryDispatchPendingOnFailure).toBe(true);
@@ -69,7 +69,7 @@ describe('settings backup helpers in store', () => {
     store.importClientBackup({
       locale: 'en-US',
       settings: {
-        version: 5,
+        version: 6,
         theme: {
           primaryColor: '#123456',
           surfaceColor: '#ffffff',
@@ -101,6 +101,7 @@ describe('settings backup helpers in store', () => {
         webSessionActivityDisplayMode: 'card',
         webSessionAutoContinueScope: 'network_only',
         webSessionAutoContinuePreset: 'gentle_stop',
+        webSessionAutoContinueMaxAttempts: 0,
         webSessionAutoRetryDispatchPendingOnFailure: true,
         webSessionStreamingMarkdownThrottleMode: 'default',
         webSessionStreamingMarkdownThrottleCustomMs: 100,

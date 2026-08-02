@@ -238,6 +238,7 @@ interface GeneralSettings {
   webSessionActivityDisplayMode: WebSessionActivityDisplayMode;
   webSessionAutoContinueScope: WebSessionAutoContinueScope;
   webSessionAutoContinuePreset: WebSessionAutoContinuePreset;
+  webSessionAutoContinueMaxAttempts: number;
   webSessionAutoRetryDispatchPendingOnFailure: boolean;
   webSessionStreamingMarkdownThrottleMode: WebSessionStreamingMarkdownThrottleMode;
   webSessionStreamingMarkdownThrottleCustomMs: number;
@@ -269,12 +270,14 @@ type LoadSettingsResult = {
   shouldPersist: boolean;
 };
 
-const STORAGE_VERSION = 5;
+const STORAGE_VERSION = 6;
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
 const DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE: WebSessionAutoContinueScope = 'network_only';
 const DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET: WebSessionAutoContinuePreset = 'gentle_stop';
+export const DEFAULT_WEB_SESSION_AUTO_CONTINUE_MAX_ATTEMPTS = 0;
+const MAX_WEB_SESSION_AUTO_CONTINUE_ATTEMPTS = 100;
 export const DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS = 100;
 export const WEB_SESSION_QUICK_INPUT_RECENT_LIMIT = 6;
 const FOLLOW_SYSTEM_THEME_DEFAULT: FollowSystemThemeSetting = -1;
@@ -361,6 +364,7 @@ const defaultSettings: GeneralSettings = {
   webSessionActivityDisplayMode: DEFAULT_WEB_SESSION_ACTIVITY_DISPLAY_MODE,
   webSessionAutoContinueScope: DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE,
   webSessionAutoContinuePreset: DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET,
+  webSessionAutoContinueMaxAttempts: DEFAULT_WEB_SESSION_AUTO_CONTINUE_MAX_ATTEMPTS,
   webSessionAutoRetryDispatchPendingOnFailure: false,
   webSessionStreamingMarkdownThrottleMode: 'default',
   webSessionStreamingMarkdownThrottleCustomMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
@@ -421,6 +425,9 @@ export const useSettingsStore = defineStore('settings', () => {
   );
   const webSessionAutoContinueScope = computed(() => settings.value.webSessionAutoContinueScope);
   const webSessionAutoContinuePreset = computed(() => settings.value.webSessionAutoContinuePreset);
+  const webSessionAutoContinueMaxAttempts = computed(
+    () => settings.value.webSessionAutoContinueMaxAttempts
+  );
   const webSessionAutoRetryDispatchPendingOnFailure = computed(
     () => settings.value.webSessionAutoRetryDispatchPendingOnFailure
   );
@@ -802,6 +809,11 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.webSessionAutoContinuePreset = sanitizeWebSessionAutoContinuePreset(value);
   }
 
+  function updateWebSessionAutoContinueMaxAttempts(value: number | null) {
+    settings.value.webSessionAutoContinueMaxAttempts =
+      sanitizeWebSessionAutoContinueMaxAttempts(value);
+  }
+
   function updateWebSessionAutoRetryDispatchPendingOnFailure(value: boolean) {
     settings.value.webSessionAutoRetryDispatchPendingOnFailure = value === true;
   }
@@ -984,6 +996,7 @@ export const useSettingsStore = defineStore('settings', () => {
     webSessionActivityDisplayMode,
     webSessionAutoContinueScope,
     webSessionAutoContinuePreset,
+    webSessionAutoContinueMaxAttempts,
     webSessionAutoRetryDispatchPendingOnFailure,
     webSessionStreamingMarkdownThrottleMode,
     webSessionStreamingMarkdownThrottleCustomMs,
@@ -1023,6 +1036,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateWebSessionActivityDisplayMode,
     updateWebSessionAutoContinueScope,
     updateWebSessionAutoContinuePreset,
+    updateWebSessionAutoContinueMaxAttempts,
     updateWebSessionAutoRetryDispatchPendingOnFailure,
     updateWebSessionStreamingMarkdownThrottleMode,
     updateWebSessionStreamingMarkdownThrottleCustomMs,
@@ -1145,6 +1159,7 @@ function cloneDefaultSettings(): GeneralSettings {
     webSessionActivityDisplayMode: defaultSettings.webSessionActivityDisplayMode,
     webSessionAutoContinueScope: defaultSettings.webSessionAutoContinueScope,
     webSessionAutoContinuePreset: defaultSettings.webSessionAutoContinuePreset,
+    webSessionAutoContinueMaxAttempts: defaultSettings.webSessionAutoContinueMaxAttempts,
     webSessionAutoRetryDispatchPendingOnFailure:
       defaultSettings.webSessionAutoRetryDispatchPendingOnFailure,
     webSessionStreamingMarkdownThrottleMode:
@@ -1233,6 +1248,9 @@ function loadSettingsFromParsed(
       webSessionAutoContinuePreset: sanitizeWebSessionAutoContinuePreset(
         parsed.webSessionAutoContinuePreset
       ),
+      webSessionAutoContinueMaxAttempts: sanitizeWebSessionAutoContinueMaxAttempts(
+        parsed.webSessionAutoContinueMaxAttempts
+      ),
       webSessionAutoRetryDispatchPendingOnFailure:
         parsed.webSessionAutoRetryDispatchPendingOnFailure === true,
       webSessionStreamingMarkdownThrottleMode: sanitizeWebSessionStreamingMarkdownThrottleMode(
@@ -1294,6 +1312,14 @@ function sanitizeRecentProjectsLimit(value: number | undefined) {
     return DEFAULT_RECENT_PROJECTS_LIMIT;
   }
   return Math.min(Math.max(Math.round(parsed), 1), 20);
+}
+
+function sanitizeWebSessionAutoContinueMaxAttempts(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_WEB_SESSION_AUTO_CONTINUE_MAX_ATTEMPTS;
+  }
+  return Math.min(Math.max(Math.round(parsed), 0), MAX_WEB_SESSION_AUTO_CONTINUE_ATTEMPTS);
 }
 
 function sanitizeTerminalLimit(value: number | undefined) {

@@ -77,7 +77,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(5);
+    expect(persisted.version).toBe(6);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -103,7 +103,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(5);
+    expect(persisted.version).toBe(6);
     expect(persisted.followSystemTheme).toBe(1);
 
     setActivePinia(createPinia());
@@ -133,7 +133,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(5);
+    expect(persisted.version).toBe(6);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -157,7 +157,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(5);
+    expect(persisted.version).toBe(6);
     expect(persisted.followSystemTheme).toBe(1);
   });
 
@@ -197,7 +197,7 @@ describe('settings theme storage', () => {
       customTheme?: Record<string, unknown>;
     };
 
-    expect(persisted.version).toBe(5);
+    expect(persisted.version).toBe(6);
     expect(persisted.terminalDisplayMode).toBeUndefined();
     expect(persisted.theme?.terminalFloatingButtonBg).toBeUndefined();
     expect(persisted.customTheme?.terminalFloatingButtonFg).toBeUndefined();
@@ -270,8 +270,27 @@ describe('settings theme storage', () => {
       version?: number;
       webSessionAutoRetryDispatchPendingOnFailure?: boolean;
     };
-    expect(persisted.version).toBe(5);
+    expect(persisted.version).toBe(6);
     expect(persisted.webSessionAutoRetryDispatchPendingOnFailure).toBe(true);
+  });
+
+  it('sanitizes and persists the auto-continue maximum attempts', async () => {
+    const store = useSettingsStore();
+    const { webSessionAutoContinueMaxAttempts } = storeToRefs(store);
+
+    expect(webSessionAutoContinueMaxAttempts.value).toBe(0);
+
+    store.updateWebSessionAutoContinueMaxAttempts(7.6);
+    await nextTick();
+    expect(webSessionAutoContinueMaxAttempts.value).toBe(8);
+
+    store.updateWebSessionAutoContinueMaxAttempts(999);
+    await nextTick();
+    expect(webSessionAutoContinueMaxAttempts.value).toBe(100);
+    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      webSessionAutoContinueMaxAttempts?: number;
+    };
+    expect(persisted.webSessionAutoContinueMaxAttempts).toBe(100);
   });
 
   it('defaults web session streaming markdown cadence to the built-in profile', () => {
@@ -307,7 +326,7 @@ describe('settings theme storage', () => {
       dailyTipEnabled?: boolean;
     };
 
-    expect(persisted.version).toBe(5);
+    expect(persisted.version).toBe(6);
     expect(persisted.dailyTipEnabled).toBeUndefined();
   });
 

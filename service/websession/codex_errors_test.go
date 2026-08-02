@@ -206,3 +206,45 @@ func TestModelCapacityRetryUsesFixedInitialDelayThenPreset(t *testing.T) {
 		t.Fatalf("expected non-capacity aggressive delay 2s, got delay=%s ok=%v", delay, ok)
 	}
 }
+
+func TestAutoRetryMaxAttemptsOverridesPresetStop(t *testing.T) {
+	if delay, ok := autoRetryDelayForFailureWithMax(
+		AutoRetryPresetGentleStop,
+		3,
+		2,
+		"",
+		"network timeout",
+	); ok || delay != 0 {
+		t.Fatalf("expected gentle retry to stop at configured max, got delay=%s ok=%v", delay, ok)
+	}
+
+	if delay, ok := autoRetryDelayForFailureWithMax(
+		AutoRetryPresetGentleStop,
+		5,
+		6,
+		"",
+		"network timeout",
+	); !ok || delay != 60*time.Second {
+		t.Fatalf("expected custom gentle retry to reuse final delay, got delay=%s ok=%v", delay, ok)
+	}
+
+	if delay, ok := autoRetryDelayForFailureWithMax(
+		AutoRetryPresetSustain60s,
+		3,
+		2,
+		"",
+		"network timeout",
+	); ok || delay != 0 {
+		t.Fatalf("expected sustain retry to honor configured max, got delay=%s ok=%v", delay, ok)
+	}
+
+	if delay, ok := autoRetryDelayForFailureWithMax(
+		AutoRetryPresetGentleStop,
+		5,
+		0,
+		"",
+		"network timeout",
+	); ok || delay != 0 {
+		t.Fatalf("expected zero max to preserve gentle preset stop, got delay=%s ok=%v", delay, ok)
+	}
+}

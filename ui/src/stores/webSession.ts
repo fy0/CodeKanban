@@ -58,6 +58,7 @@ type WireSession = {
   ae?: boolean;
   ars?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
   arp?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+  aram?: number;
   ardpf?: boolean;
   ttl: string;
   cwd: string;
@@ -652,6 +653,7 @@ type PendingAutoRetryOverride = {
   enabled: boolean;
   scope: WebSessionSummary['autoRetryScope'];
   preset: WebSessionSummary['autoRetryPreset'];
+  maxAttempts: number;
   appliedAt: number;
   ackedAt?: number;
 };
@@ -687,6 +689,14 @@ const WEB_SESSION_MIN_RETAINED_BLOCKS = 160;
 const PROCESS_RESTART_REASON = 'process_restart';
 const DEFAULT_RECOVERY_MESSAGE =
   'The previous run was interrupted because the app restarted. Send a new message to continue.';
+
+function normalizeAutoRetryMaxAttempts(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.min(Math.max(Math.round(parsed), 0), 100);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -2108,6 +2118,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       enabled: boolean;
       scope: WebSessionSummary['autoRetryScope'];
       preset: WebSessionSummary['autoRetryPreset'];
+      maxAttempts?: number;
     },
     appliedAt = Date.now()
   ) {
@@ -2115,6 +2126,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       enabled: config.enabled === true,
       scope: config.scope,
       preset: config.preset,
+      maxAttempts: normalizeAutoRetryMaxAttempts(config.maxAttempts),
       appliedAt,
     });
   }
@@ -2142,7 +2154,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const matchesPendingConfig =
       summary.autoRetryEnabled === pendingOverride.enabled &&
       summary.autoRetryScope === pendingOverride.scope &&
-      summary.autoRetryPreset === pendingOverride.preset;
+      summary.autoRetryPreset === pendingOverride.preset &&
+      normalizeAutoRetryMaxAttempts(summary.autoRetryMaxAttempts) === pendingOverride.maxAttempts;
     const updatedAt = Date.parse(summary.updatedAt || '');
     const hasAuthoritativeUpdate =
       Number.isFinite(updatedAt) &&
@@ -2159,6 +2172,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       autoRetryEnabled: pendingOverride.enabled,
       autoRetryScope: pendingOverride.scope,
       autoRetryPreset: pendingOverride.preset,
+      autoRetryMaxAttempts: pendingOverride.maxAttempts,
       updatedAt: new Date(mergedUpdatedAt).toISOString(),
     };
   }
@@ -2619,6 +2633,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         session.arp === 'aggressive_stop' || session.arp === 'sustain_60s'
           ? session.arp
           : 'gentle_stop',
+      autoRetryMaxAttempts: normalizeAutoRetryMaxAttempts(session.aram),
       autoRetryDispatchPendingOnFailure: session.ardpf === true,
       cwd: session.cwd,
       nativeSessionId: session.nsid ?? null,
@@ -6124,9 +6139,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
       enabled: boolean;
       scope: 'network_only' | 'network_and_rate_limit' | 'all_failures';
       preset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+      maxAttempts?: number;
     }
   ) {
     const session = findSessionById(sessionId);
+    const maxAttempts = normalizeAutoRetryMaxAttempts(
+      config.maxAttempts ?? session?.autoRetryMaxAttempts
+    );
     const optimisticUpdatedAt = new Date().toISOString();
     const previous =
       session && !session.archivedAt
@@ -6134,15 +6153,21 @@ export const useWebSessionStore = defineStore('web-session', () => {
             enabled: session.autoRetryEnabled,
             scope: session.autoRetryScope,
             preset: session.autoRetryPreset,
+            maxAttempts: normalizeAutoRetryMaxAttempts(session.autoRetryMaxAttempts),
           }
         : null;
     if (previous) {
-      setPendingAutoRetryOverride(sessionId, config, Date.parse(optimisticUpdatedAt));
+      setPendingAutoRetryOverride(
+        sessionId,
+        { ...config, maxAttempts },
+        Date.parse(optimisticUpdatedAt)
+      );
       updateSessionStatus(sessionId, current => ({
         ...current,
         autoRetryEnabled: config.enabled === true,
         autoRetryScope: config.scope,
         autoRetryPreset: config.preset,
+        autoRetryMaxAttempts: maxAttempts,
         updatedAt: optimisticUpdatedAt,
       }));
     }
@@ -6151,6 +6176,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         ae: config.enabled === true,
         ars: config.scope,
         arp: config.preset,
+        aram: maxAttempts,
       });
     } catch (error) {
       clearPendingAutoRetryOverride(sessionId);
@@ -6160,6 +6186,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           autoRetryEnabled: previous.enabled,
           autoRetryScope: previous.scope,
           autoRetryPreset: previous.preset,
+          autoRetryMaxAttempts: previous.maxAttempts,
           updatedAt: optimisticUpdatedAt,
         }));
       }
@@ -6314,6 +6341,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       autoRetryEnabled?: boolean;
       autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
       autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+      autoRetryMaxAttempts?: number;
       autoRetryDispatchPendingOnFailure?: boolean;
       title?: string;
     }

@@ -28,6 +28,7 @@ type WebSessionTable struct {
 	AutoRetryEnabled                  bool   `gorm:"type:boolean;not null;default:false" json:"autoRetryEnabled"`
 	AutoRetryScope                    string `gorm:"type:text;not null;default:network_only" json:"autoRetryScope"`
 	AutoRetryPreset                   string `gorm:"type:text;not null;default:gentle_stop" json:"autoRetryPreset"`
+	AutoRetryMaxAttempts              int    `gorm:"type:integer;not null;default:0" json:"autoRetryMaxAttempts"`
 	AutoRetryDispatchPendingOnFailure bool   `gorm:"type:boolean;not null;default:false" json:"autoRetryDispatchPendingOnFailure"`
 	LegacyPermissionMode              string `gorm:"column:permission_mode;type:text" json:"-"`
 	Cwd                               string `gorm:"type:text;not null" json:"cwd"`

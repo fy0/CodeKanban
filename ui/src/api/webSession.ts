@@ -227,6 +227,7 @@ export const webSessionApi = {
       autoRetryEnabled?: boolean;
       autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
       autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+      autoRetryMaxAttempts?: number;
       autoRetryDispatchPendingOnFailure?: boolean;
       permissionMode?: string;
       title?: string;
@@ -246,6 +247,7 @@ export const webSessionApi = {
           autoRetryEnabled: data.autoRetryEnabled === true,
           autoRetryScope: data.autoRetryScope ?? 'network_only',
           autoRetryPreset: data.autoRetryPreset ?? 'gentle_stop',
+          autoRetryMaxAttempts: data.autoRetryMaxAttempts ?? 0,
           autoRetryDispatchPendingOnFailure: data.autoRetryDispatchPendingOnFailure === true,
           permissionMode: data.permissionMode ?? '',
           title: data.title ?? '',

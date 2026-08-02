@@ -400,6 +400,7 @@ export interface WebSessionSummary {
   autoRetryEnabled: boolean;
   autoRetryScope: 'network_only' | 'network_and_rate_limit' | 'all_failures';
   autoRetryPreset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+  autoRetryMaxAttempts?: number;
   autoRetryDispatchPendingOnFailure: boolean;
   cwd: string;
   nativeSessionId?: string | null;

@@ -656,6 +656,23 @@
                   </n-space>
                 </n-form-item>
                 <n-form-item
+                  :label="t('settings.webSessionAutoContinueMaxAttempts')"
+                  data-search-key="webSessionAutoContinueMaxAttempts"
+                >
+                  <n-space vertical size="small">
+                    <n-input-number
+                      v-model:value="webSessionAutoContinueMaxAttemptsValue"
+                      :min="0"
+                      :max="100"
+                      :step="1"
+                      style="max-width: 180px"
+                    />
+                    <span class="form-tip">{{
+                      t('settings.webSessionAutoContinueMaxAttemptsTip')
+                    }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
                   :label="t('settings.webSessionAutoRetryDispatchPendingOnFailure')"
                   data-search-key="webSessionAutoRetryDispatchPendingOnFailure"
                 >
@@ -2172,6 +2189,7 @@ const {
   webSessionActivityDisplayMode,
   webSessionAutoContinueScope,
   webSessionAutoContinuePreset,
+  webSessionAutoContinueMaxAttempts,
   webSessionAutoRetryDispatchPendingOnFailure,
   webSessionStreamingMarkdownThrottleMode,
   webSessionStreamingMarkdownThrottleCustomMs,
@@ -3770,6 +3788,11 @@ const webSessionAutoContinuePresetValue = computed({
     settingsStore.updateWebSessionAutoContinuePreset(value),
 });
 
+const webSessionAutoContinueMaxAttemptsValue = computed({
+  get: () => webSessionAutoContinueMaxAttempts.value,
+  set: (value: number | null) => settingsStore.updateWebSessionAutoContinueMaxAttempts(value),
+});
+
 const webSessionAutoRetryDispatchPendingOnFailureValue = computed({
   get: () => webSessionAutoRetryDispatchPendingOnFailure.value,
   set: (value: boolean) => settingsStore.updateWebSessionAutoRetryDispatchPendingOnFailure(value),
@@ -4090,6 +4113,7 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
         t('settings.webSessionStreamingMarkdownThrottle'),
         t('settings.webSessionAutoContinueScope'),
         t('settings.webSessionAutoContinuePreset'),
+        t('settings.webSessionAutoContinueMaxAttempts'),
         t('settings.webSessionAutoRetryDispatchPendingOnFailure'),
         t('settings.webSessionQuickInputPinned'),
         t('settings.webSessionCodexDefaultModel'),

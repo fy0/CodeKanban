@@ -216,6 +216,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				AutoRetryEnabled                  bool   `json:"autoRetryEnabled"`
 				AutoRetryScope                    string `json:"autoRetryScope"`
 				AutoRetryPreset                   string `json:"autoRetryPreset"`
+				AutoRetryMaxAttempts              int    `json:"autoRetryMaxAttempts"`
 				AutoRetryDispatchPendingOnFailure bool   `json:"autoRetryDispatchPendingOnFailure"`
 				PermissionMode                    string `json:"permissionMode,omitempty"`
 				Title                             string `json:"title"`
@@ -262,6 +263,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			AutoRetryEnabled:                  input.Body.AutoRetryEnabled,
 			AutoRetryScope:                    websession.AutoRetryScope(input.Body.AutoRetryScope),
 			AutoRetryPreset:                   websession.AutoRetryPreset(input.Body.AutoRetryPreset),
+			AutoRetryMaxAttempts:              input.Body.AutoRetryMaxAttempts,
 			AutoRetryDispatchPendingOnFailure: input.Body.AutoRetryDispatchPendingOnFailure,
 			Title:                             input.Body.Title,
 		})

@@ -1301,6 +1301,9 @@ export default {
     webSessionAutoContinuePresetGentleStop: '温和：3/10/30/60 秒后停止',
     webSessionAutoContinuePresetAggressiveStop: '积极：2/5/15/30/60 秒后停止',
     webSessionAutoContinuePresetSustain60s: '持续：3/10/30 秒后每 60 秒继续',
+    webSessionAutoContinueMaxAttempts: '自动继续最大次数',
+    webSessionAutoContinueMaxAttemptsTip:
+      '设置为 0 时使用退避策略默认值；持续策略默认不会停止。可配置范围为 0-100 次。',
     webSessionAutoRetryDispatchPendingOnFailure: '重试失败后的下一步',
     webSessionAutoRetryDispatchPendingOnFailureEnabled: '继续执行已排队的下一步',
     webSessionAutoRetryDispatchPendingOnFailureTip:

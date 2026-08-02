@@ -68,6 +68,7 @@ type wireSess struct {
 	AutoRetryEnabled                  bool        `json:"ae"`
 	AutoRetryScope                    string      `json:"ars"`
 	AutoRetryPreset                   string      `json:"arp"`
+	AutoRetryMaxAttempts              int         `json:"aram"`
 	AutoRetryDispatchPendingOnFailure bool        `json:"ardpf"`
 	Title                             string      `json:"ttl"`
 	Cwd                               string      `json:"cwd"`
@@ -462,6 +463,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		AutoRetryEnabled:                  session.AutoRetryEnabled,
 		AutoRetryScope:                    string(session.AutoRetryScope),
 		AutoRetryPreset:                   string(session.AutoRetryPreset),
+		AutoRetryMaxAttempts:              session.AutoRetryMaxAttempts,
 		AutoRetryDispatchPendingOnFailure: session.AutoRetryDispatchPendingOnFailure,
 		Title:                             session.Title,
 		Cwd:                               session.Cwd,

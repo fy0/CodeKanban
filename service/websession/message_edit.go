@@ -489,6 +489,7 @@ func (m *Manager) createEditedWebSession(
 		AutoRetryEnabled:                  source.AutoRetryEnabled,
 		AutoRetryScope:                    AutoRetryScope(source.AutoRetryScope),
 		AutoRetryPreset:                   AutoRetryPreset(source.AutoRetryPreset),
+		AutoRetryMaxAttempts:              source.AutoRetryMaxAttempts,
 		AutoRetryDispatchPendingOnFailure: source.AutoRetryDispatchPendingOnFailure,
 		Title:                             title,
 	})

@@ -222,6 +222,7 @@ type SessionSummary struct {
 	AutoRetryEnabled                  bool                       `json:"autoRetryEnabled"`
 	AutoRetryScope                    AutoRetryScope             `json:"autoRetryScope"`
 	AutoRetryPreset                   AutoRetryPreset            `json:"autoRetryPreset"`
+	AutoRetryMaxAttempts              int                        `json:"autoRetryMaxAttempts"`
 	AutoRetryDispatchPendingOnFailure bool                       `json:"autoRetryDispatchPendingOnFailure"`
 	Cwd                               string                     `json:"cwd"`
 	NativeSessionID                   *string                    `json:"nativeSessionId,omitempty"`
@@ -559,6 +560,7 @@ type CreateParams struct {
 	AutoRetryEnabled                  bool
 	AutoRetryScope                    AutoRetryScope
 	AutoRetryPreset                   AutoRetryPreset
+	AutoRetryMaxAttempts              int
 	AutoRetryDispatchPendingOnFailure bool
 	Title                             string
 }
