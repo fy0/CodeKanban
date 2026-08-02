@@ -3731,10 +3731,14 @@ func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, se
 			context.Background(),
 			session.ID,
 			applyAssistantStateUpdates(map[string]any{
-				"status":     string(StatusIdle),
-				"updated_at": now,
+				"status":                     string(StatusIdle),
+				"updated_at":                 now,
+				"auto_retry_attempt":         0,
+				"auto_retry_next_at":         nil,
+				"auto_retry_last_error_code": nil,
 			}, AssistantStateNone, now),
 		)
+		m.cancelAutoRetryTimer(session.ID)
 		m.broadcastSessionSummary(context.Background(), session.ID)
 		return
 	}
@@ -3780,8 +3784,11 @@ func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, se
 		context.Background(),
 		session.ID,
 		applyAssistantStateUpdates(map[string]any{
-			"status":     string(finalStatus),
-			"updated_at": now,
+			"status":                     string(finalStatus),
+			"updated_at":                 now,
+			"auto_retry_attempt":         0,
+			"auto_retry_next_at":         nil,
+			"auto_retry_last_error_code": nil,
 		}, finalAssistantState, now),
 	)
 	if run.deferredUserInput {
@@ -3789,6 +3796,7 @@ func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, se
 			m.deleteClaudeHookAnswerForSession(session, pending.ItemID)
 		}
 	}
+	m.cancelAutoRetryTimer(session.ID)
 	m.broadcastSessionSummary(context.Background(), session.ID)
 	run.syncSourceAfterRun = true
 }

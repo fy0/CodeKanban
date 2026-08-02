@@ -3997,6 +3997,14 @@ func TestAutoRetryEnabledSessionContinuesAfterFailure(t *testing.T) {
 	if record.Status != string(StatusDone) {
 		t.Fatalf("expected session status %q after auto retry, got %q", StatusDone, record.Status)
 	}
+	if record.AutoRetryAttempt != 0 || record.AutoRetryNextAt != nil || record.AutoRetryLastErrorCode != nil {
+		t.Fatalf(
+			"expected successful auto retry to reset failure sequence, got attempt=%d next=%v code=%v",
+			record.AutoRetryAttempt,
+			record.AutoRetryNextAt,
+			record.AutoRetryLastErrorCode,
+		)
+	}
 
 	rawEvents, err := manager.store.readEvents(created.ID)
 	if err != nil {
