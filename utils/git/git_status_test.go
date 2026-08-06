@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,6 +41,15 @@ func TestHasTrackedWorktreeChanges(t *testing.T) {
 	}
 	runGit(t, repoDir, "add", "README.md")
 	assertChanged(true)
+}
+
+func TestHasTrackedWorktreeChangesContextHonorsCancellation(t *testing.T) {
+	repoDir := initTestRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := HasTrackedWorktreeChangesContext(ctx, repoDir); err == nil {
+		t.Fatal("HasTrackedWorktreeChangesContext succeeded with a canceled context")
+	}
 }
 
 func TestParseGitStatusOutput(t *testing.T) {

@@ -33,7 +33,8 @@ var (
 	scheduledIdlePollInterval = 10 * time.Second
 	// IdleSince is recorded by the first successful check. Two more intervals
 	// provide three checks over roughly 30 seconds from scheduling.
-	scheduledIdleStablePeriod = time.Duration(scheduledIdleRequiredChecks-1) * scheduledIdlePollInterval
+	scheduledIdleStablePeriod     = time.Duration(scheduledIdleRequiredChecks-1) * scheduledIdlePollInterval
+	scheduledIdleConditionTimeout = 30 * time.Second
 )
 
 type scheduledIdleGitCheck struct {
@@ -50,6 +51,12 @@ type scheduledIdleSweepCache struct {
 	gitByPath         map[string]scheduledIdleGitCheck
 	sessionsByProject map[string]scheduledIdleSessionCheck
 }
+
+type scheduledIdleConditionEvaluator func(
+	ctx context.Context,
+	target tables.WebSessionTable,
+	cache *scheduledIdleSweepCache,
+) ([]ScheduledInputBlockingReason, string, error)
 
 func newScheduledIdleSweepCache() *scheduledIdleSweepCache {
 	return &scheduledIdleSweepCache{
@@ -757,6 +764,7 @@ func (m *Manager) UpdateScheduledInput(
 	}
 
 	var updated ScheduledInput
+	shouldBroadcast := false
 	err := m.withScheduledInputLock(normalizedInputID, func() error {
 		record, err := loadScheduledInputRecord(ctx, normalizedSessionID, normalizedInputID)
 		if err != nil {
@@ -843,7 +851,7 @@ func (m *Manager) UpdateScheduledInput(
 				if shouldExpireScheduledPlanExecution(err) {
 					_ = m.expireScheduledInputByID(ctx, record.ID, err.Error())
 					m.cancelScheduledInputTimer(record.ID)
-					m.broadcastScheduledInputs(normalizedSessionID)
+					shouldBroadcast = true
 				}
 				return err
 			}
@@ -903,9 +911,12 @@ func (m *Manager) UpdateScheduledInput(
 		} else if updated.ScheduleKind == ScheduledInputScheduleWhenIdle {
 			m.ensureScheduledIdleMonitor(scheduledIdlePollInterval)
 		}
-		m.broadcastScheduledInputs(normalizedSessionID)
+		shouldBroadcast = true
 		return nil
 	})
+	if shouldBroadcast {
+		m.broadcastScheduledInputs(normalizedSessionID)
+	}
 	return updated, err
 }
 
@@ -915,7 +926,8 @@ func (m *Manager) DispatchScheduledInputNow(ctx context.Context, sessionID, inpu
 	if normalizedSessionID == "" || normalizedInputID == "" {
 		return errScheduledInputNotFound
 	}
-	return m.withScheduledInputLock(normalizedInputID, func() error {
+	shouldBroadcast := false
+	err := m.withScheduledInputLock(normalizedInputID, func() error {
 		record, err := loadScheduledInputRecord(ctx, normalizedSessionID, normalizedInputID)
 		if err != nil {
 			return err
@@ -925,8 +937,14 @@ func (m *Manager) DispatchScheduledInputNow(ctx context.Context, sessionID, inpu
 			return errScheduledInputNotExecutable
 		}
 		m.cancelScheduledInputTimer(normalizedInputID)
-		return m.dispatchScheduledInputRecord(ctx, record)
+		err = m.dispatchScheduledInputRecord(ctx, record)
+		shouldBroadcast = true
+		return err
 	})
+	if shouldBroadcast {
+		m.broadcastScheduledInputs(normalizedSessionID)
+	}
+	return err
 }
 
 func (m *Manager) RemoveScheduledInput(ctx context.Context, sessionID, inputID string) error {
@@ -936,7 +954,7 @@ func (m *Manager) RemoveScheduledInput(ctx context.Context, sessionID, inputID s
 		return errScheduledInputNotFound
 	}
 
-	return m.withScheduledInputLock(normalizedInputID, func() error {
+	err := m.withScheduledInputLock(normalizedInputID, func() error {
 		db := model.GetDB()
 		if db == nil {
 			return model.ErrDBNotInitialized
@@ -959,9 +977,12 @@ func (m *Manager) RemoveScheduledInput(ctx context.Context, sessionID, inputID s
 		}
 
 		m.cancelScheduledInputTimer(normalizedInputID)
-		m.broadcastScheduledInputs(normalizedSessionID)
 		return nil
 	})
+	if err == nil {
+		m.broadcastScheduledInputs(normalizedSessionID)
+	}
+	return err
 }
 
 func (m *Manager) cancelActiveScheduledInputs(ctx context.Context, sessionID string) error {
@@ -1053,6 +1074,10 @@ func (m *Manager) setScheduledInputTimer(inputID, sessionID string, scheduledFor
 }
 
 func (m *Manager) broadcastScheduledInputs(sessionID string) {
+	lock := &m.scheduledBroadcastLocks[sessionRevisionLockIndex(sessionID)]
+	lock.Lock()
+	defer lock.Unlock()
+
 	record, err := m.GetSession(context.Background(), sessionID)
 	if err != nil || record.ArchivedAt != nil {
 		return
@@ -1184,84 +1209,161 @@ func (m *Manager) processScheduledIdleInput(
 	inputID string,
 	cache *scheduledIdleSweepCache,
 ) error {
-	return m.withScheduledInputLock(inputID, func() error {
-		db := model.GetDB()
-		if db == nil {
-			return model.ErrDBNotInitialized
+	return m.processScheduledIdleInputWithEvaluator(
+		ctx,
+		inputID,
+		cache,
+		m.evaluateScheduledIdleConditionsCached,
+	)
+}
+
+func (m *Manager) processScheduledIdleInputWithEvaluator(
+	ctx context.Context,
+	inputID string,
+	cache *scheduledIdleSweepCache,
+	evaluate scheduledIdleConditionEvaluator,
+) error {
+	if evaluate == nil {
+		evaluate = m.evaluateScheduledIdleConditionsCached
+	}
+	record, active, err := loadActiveScheduledIdleInput(ctx, inputID)
+	if err != nil || !active {
+		return err
+	}
+	now := time.Now()
+	if record.IdleSince == nil && !record.UpdatedAt.IsZero() &&
+		now.Sub(record.UpdatedAt) < scheduledIdlePollInterval {
+		return nil
+	}
+	applyValidationError := func(
+		expected tables.WebSessionScheduledInputTable,
+		validationErr error,
+	) error {
+		changed, applyErr := m.mutateCurrentScheduledIdleInput(ctx, expected, func(current tables.WebSessionScheduledInputTable) (bool, error) {
+			return m.handleScheduledIdleValidationError(ctx, current, validationErr)
+		})
+		if changed {
+			m.broadcastScheduledInputs(expected.WebSessionID)
 		}
-		var record tables.WebSessionScheduledInputTable
-		if err := db.WithContext(ctx).First(&record, "id = ?", strings.TrimSpace(inputID)).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
-			return err
+		return applyErr
+	}
+
+	session, validationErr := m.validateScheduledIdleInput(ctx, record)
+	if validationErr != nil {
+		return applyValidationError(record, validationErr)
+	}
+
+	readyToDispatch := record.IdleSince != nil && now.Sub(*record.IdleSince) >= scheduledIdleStablePeriod
+
+	evaluationCache := cache
+	if readyToDispatch {
+		evaluationCache = nil
+	}
+	reasons, conditionError, evaluateErr := evaluate(ctx, session, evaluationCache)
+	if evaluateErr != nil {
+		conditionError = evaluateErr.Error()
+	}
+	if len(reasons) > 0 || conditionError != "" {
+		changed, applyErr := m.mutateCurrentScheduledIdleInput(ctx, record, func(current tables.WebSessionScheduledInputTable) (bool, error) {
+			return m.updateScheduledIdleCondition(ctx, current, nil, reasons, conditionError)
+		})
+		if changed {
+			m.broadcastScheduledInputs(record.WebSessionID)
 		}
-		if normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)) != ScheduledInputStatusScheduled ||
-			normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind)) != ScheduledInputScheduleWhenIdle {
+		return applyErr
+	}
+
+	if !readyToDispatch {
+		if record.IdleSince != nil {
 			return nil
 		}
-		now := time.Now()
-		if record.IdleSince == nil && !record.UpdatedAt.IsZero() &&
-			now.Sub(record.UpdatedAt) < scheduledIdlePollInterval {
-			return nil
+		idleSince := time.Now()
+		changed, applyErr := m.mutateCurrentScheduledIdleInput(ctx, record, func(current tables.WebSessionScheduledInputTable) (bool, error) {
+			return m.updateScheduledIdleCondition(ctx, current, &idleSince, nil, "")
+		})
+		if changed {
+			m.broadcastScheduledInputs(record.WebSessionID)
 		}
+		return applyErr
+	}
 
-		session, err := m.validateScheduledIdleInput(ctx, record)
-		if err != nil {
-			return m.handleScheduledIdleValidationError(ctx, record, err)
-		}
-
-		if record.IdleSince == nil || now.Sub(*record.IdleSince) < scheduledIdleStablePeriod {
-			reasons, conditionError, evaluateErr := m.evaluateScheduledIdleConditionsCached(ctx, session, cache)
-			if evaluateErr != nil {
-				conditionError = evaluateErr.Error()
-			}
-			if len(reasons) > 0 || conditionError != "" {
-				changed, updateErr := m.updateScheduledIdleCondition(ctx, record, nil, reasons, conditionError)
-				if changed {
-					m.broadcastScheduledInputs(record.WebSessionID)
-				}
-				return updateErr
-			}
-			if record.IdleSince == nil {
-				changed, updateErr := m.updateScheduledIdleCondition(ctx, record, &now, nil, "")
-				if changed {
-					m.broadcastScheduledInputs(record.WebSessionID)
-				}
-				return updateErr
-			}
-			return nil
-		}
-
+	changed, dispatchErr := m.mutateCurrentScheduledIdleInput(ctx, record, func(current tables.WebSessionScheduledInputTable) (bool, error) {
 		projectLock := m.scheduledProjectLock(session.ProjectID)
 		projectLock.Lock()
 		defer projectLock.Unlock()
+		if current.IdleSince == nil || time.Since(*current.IdleSince) < scheduledIdleStablePeriod {
+			return false, nil
+		}
+		return true, m.dispatchScheduledInputRecord(ctx, current)
+	})
+	if changed {
+		m.broadcastScheduledInputs(record.WebSessionID)
+	}
+	return dispatchErr
+}
 
-		if err := db.WithContext(ctx).First(&record, "id = ?", record.ID).Error; err != nil {
+func loadActiveScheduledIdleInput(
+	ctx context.Context,
+	inputID string,
+) (tables.WebSessionScheduledInputTable, bool, error) {
+	db := model.GetDB()
+	if db == nil {
+		return tables.WebSessionScheduledInputTable{}, false, model.ErrDBNotInitialized
+	}
+	var record tables.WebSessionScheduledInputTable
+	if err := db.WithContext(ctx).First(&record, "id = ?", strings.TrimSpace(inputID)).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tables.WebSessionScheduledInputTable{}, false, nil
+		}
+		return tables.WebSessionScheduledInputTable{}, false, err
+	}
+	active := normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)) == ScheduledInputStatusScheduled &&
+		normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind)) == ScheduledInputScheduleWhenIdle
+	return record, active, nil
+}
+
+func (m *Manager) mutateCurrentScheduledIdleInput(
+	ctx context.Context,
+	expected tables.WebSessionScheduledInputTable,
+	mutate func(tables.WebSessionScheduledInputTable) (bool, error),
+) (bool, error) {
+	changed := false
+	err := m.withScheduledInputLock(expected.ID, func() error {
+		current, active, err := loadActiveScheduledIdleInput(ctx, expected.ID)
+		if err != nil || !active {
 			return err
 		}
-		if normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)) != ScheduledInputStatusScheduled ||
-			normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind)) != ScheduledInputScheduleWhenIdle {
+		if !scheduledIdleRecordVersionMatches(expected, current) {
 			return nil
 		}
-		session, err = m.validateScheduledIdleInput(ctx, record)
-		if err != nil {
-			return m.handleScheduledIdleValidationError(ctx, record, err)
-		}
-		reasons, conditionError, evaluateErr := m.evaluateScheduledIdleConditions(ctx, session)
-		if evaluateErr != nil {
-			conditionError = evaluateErr.Error()
-		}
-		if len(reasons) > 0 || conditionError != "" || record.IdleSince == nil ||
-			time.Since(*record.IdleSince) < scheduledIdleStablePeriod {
-			changed, updateErr := m.updateScheduledIdleCondition(ctx, record, nil, reasons, conditionError)
-			if changed {
-				m.broadcastScheduledInputs(record.WebSessionID)
-			}
-			return updateErr
-		}
-		return m.dispatchScheduledInputRecord(ctx, record)
+		changed, err = mutate(current)
+		return err
 	})
+	return changed, err
+}
+
+func scheduledIdleRecordVersionMatches(
+	expected tables.WebSessionScheduledInputTable,
+	current tables.WebSessionScheduledInputTable,
+) bool {
+	if expected.ID != current.ID ||
+		expected.WebSessionID != current.WebSessionID ||
+		expected.Status != current.Status ||
+		expected.ScheduleKind != current.ScheduleKind ||
+		!expected.ScheduledFor.Equal(current.ScheduledFor) ||
+		expected.BlockingReasons != current.BlockingReasons ||
+		expected.ConditionError != current.ConditionError ||
+		!expected.UpdatedAt.Equal(current.UpdatedAt) {
+		return false
+	}
+	return scheduledIdleOptionalTimeEqual(expected.IdleSince, current.IdleSince)
+}
+
+func scheduledIdleOptionalTimeEqual(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
 }
 
 func (m *Manager) validateScheduledIdleInput(
@@ -1296,28 +1398,21 @@ func (m *Manager) handleScheduledIdleValidationError(
 	ctx context.Context,
 	record tables.WebSessionScheduledInputTable,
 	err error,
-) error {
+) (bool, error) {
 	action := normalizeScheduledInputAction(ScheduledInputAction(record.Action))
 	switch {
 	case action == ScheduledInputActionExecutePlan && shouldExpireScheduledPlanExecution(err):
 		_ = m.expireScheduledInputByID(ctx, record.ID, err.Error())
-		m.broadcastScheduledInputs(record.WebSessionID)
-		return err
+		return true, err
 	case action == ScheduledInputActionMessage && shouldCancelScheduledInputDispatchError(err):
 		_ = m.cancelScheduledInputByID(ctx, record.ID)
-		m.broadcastScheduledInputs(record.WebSessionID)
-		return err
+		return true, err
 	case action == "":
 		_ = m.failScheduledInputByID(ctx, record.ID, err.Error())
-		m.broadcastScheduledInputs(record.WebSessionID)
-		return err
+		return true, err
 	}
 
-	changed, updateErr := m.updateScheduledIdleCondition(ctx, record, nil, nil, err.Error())
-	if changed {
-		m.broadcastScheduledInputs(record.WebSessionID)
-	}
-	return updateErr
+	return m.updateScheduledIdleCondition(ctx, record, nil, nil, err.Error())
 }
 
 func (m *Manager) evaluateScheduledIdleConditions(
@@ -1340,7 +1435,13 @@ func (m *Manager) evaluateScheduledIdleConditionsCached(
 		gitCheck, ok = cache.gitByPath[gitCacheKey]
 	}
 	if !ok {
-		gitCheck.dirty, gitCheck.err = gitutil.HasTrackedWorktreeChanges(worktreePath)
+		gitContext := ctx
+		cancel := func() {}
+		if scheduledIdleConditionTimeout > 0 {
+			gitContext, cancel = context.WithTimeout(ctx, scheduledIdleConditionTimeout)
+		}
+		gitCheck.dirty, gitCheck.err = gitutil.HasTrackedWorktreeChangesContext(gitContext, worktreePath)
+		cancel()
 		if cache != nil {
 			cache.gitByPath[gitCacheKey] = gitCheck
 		}
@@ -1451,6 +1552,8 @@ func (m *Manager) scheduledProjectLock(projectID string) *sync.Mutex {
 }
 
 func (m *Manager) executeScheduledInput(inputID string, expectedScheduledFor time.Time) {
+	sessionID := ""
+	shouldBroadcast := false
 	_ = m.withScheduledInputLock(inputID, func() error {
 		ctx := context.Background()
 		db := model.GetDB()
@@ -1461,6 +1564,7 @@ func (m *Manager) executeScheduledInput(inputID string, expectedScheduledFor tim
 		if err := db.WithContext(ctx).First(&record, "id = ?", strings.TrimSpace(inputID)).Error; err != nil {
 			return err
 		}
+		sessionID = record.WebSessionID
 		if normalizeScheduledInputStatus(ScheduledInputStatus(record.Status)) != ScheduledInputStatusScheduled {
 			return nil
 		}
@@ -1468,8 +1572,12 @@ func (m *Manager) executeScheduledInput(inputID string, expectedScheduledFor tim
 			record.ScheduledFor.UnixMilli() != expectedScheduledFor.UnixMilli() {
 			return nil
 		}
+		shouldBroadcast = true
 		return m.dispatchScheduledInputRecord(ctx, record)
 	})
+	if shouldBroadcast {
+		m.broadcastScheduledInputs(sessionID)
+	}
 }
 
 func (m *Manager) dispatchScheduledInputRecord(
@@ -1489,12 +1597,10 @@ func (m *Manager) dispatchScheduledInputRecord(
 		} else {
 			_ = m.cancelScheduledInputByID(ctx, record.ID)
 		}
-		m.broadcastScheduledInputs(record.WebSessionID)
 		return err
 	}
 	if err := m.ensureSessionMessagingAvailable(session); err != nil {
 		_ = m.failScheduledInputByID(ctx, record.ID, err.Error())
-		m.broadcastScheduledInputs(record.WebSessionID)
 		return err
 	}
 
@@ -1516,14 +1622,12 @@ func (m *Manager) dispatchScheduledInputRecord(
 		} else {
 			_ = m.failScheduledInputByID(ctx, record.ID, err.Error())
 		}
-		m.broadcastScheduledInputs(record.WebSessionID)
 		return err
 	}
 
 	if err := m.markScheduledInputDispatched(ctx, record.ID); err != nil {
 		return err
 	}
-	m.broadcastScheduledInputs(record.WebSessionID)
 	return nil
 }
 

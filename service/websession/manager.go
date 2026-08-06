@@ -138,6 +138,7 @@ type Manager struct {
 	scheduledIdleSweepMu        sync.Mutex
 	scheduledInputLocks         [64]sync.Mutex
 	scheduledProjectLocks       [64]sync.Mutex
+	scheduledBroadcastLocks     [64]sync.Mutex
 	sessionDispatchLocks        [64]sync.Mutex
 	revisionBroadcastLocks      [64]sync.Mutex
 	pendingInputs               map[string][]PendingInput

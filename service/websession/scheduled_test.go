@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -181,6 +182,163 @@ func TestScheduledInputWhenIdleDispatchesAfterStableCleanPeriod(t *testing.T) {
 	}
 	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "Run this when idle" {
 		t.Fatalf("expected idle message to dispatch once, got %#v", got)
+	}
+}
+
+func TestScheduledIdleCheckDoesNotHoldManagementLock(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	initScheduledTestGitRepository(t, project.Path)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	previousPollInterval := scheduledIdlePollInterval
+	previousStablePeriod := scheduledIdleStablePeriod
+	defer func() {
+		manager.cancelScheduledIdleMonitor()
+		scheduledIdlePollInterval = previousPollInterval
+		scheduledIdleStablePeriod = previousStablePeriod
+	}()
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	// Keep the automatic monitor out of the test and make the condition check
+	// eligible immediately. The evaluator below deliberately blocks.
+	scheduledIdlePollInterval = time.Hour
+	scheduledIdleStablePeriod = time.Hour
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Management lock test")
+
+	runBlockedCheck := func(inputID string, operation func() error) {
+		t.Helper()
+		manager.cancelScheduledIdleMonitor()
+		scheduledIdlePollInterval = 0
+		started := make(chan struct{})
+		release := make(chan struct{})
+		checkDone := make(chan error, 1)
+		go func() {
+			checkDone <- manager.processScheduledIdleInputWithEvaluator(
+				context.Background(),
+				inputID,
+				newScheduledIdleSweepCache(),
+				func(
+					context.Context,
+					tables.WebSessionTable,
+					*scheduledIdleSweepCache,
+				) ([]ScheduledInputBlockingReason, string, error) {
+					close(started)
+					<-release
+					return nil, "", nil
+				},
+			)
+		}()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("scheduled idle evaluator did not start")
+		}
+
+		operationDone := make(chan error, 1)
+		go func() { operationDone <- operation() }()
+		select {
+		case operationErr := <-operationDone:
+			if operationErr != nil {
+				t.Fatalf("scheduled management operation failed while check was blocked: %v", operationErr)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("scheduled management operation waited for the idle evaluator")
+		}
+		close(release)
+		select {
+		case checkErr := <-checkDone:
+			if checkErr != nil {
+				t.Fatalf("blocked scheduled idle check returned error: %v", checkErr)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("scheduled idle check did not finish after release")
+		}
+	}
+
+	item, err := manager.SchedulePlanExecutionWhenIdle(
+		context.Background(), created.ID, plan.ID, scheduledPlanExecutionPayload{},
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecutionWhenIdle returned error: %v", err)
+	}
+	atTime := ScheduledInputScheduleAtTime
+	runBlockedCheck(item.ID, func() error {
+		_, updateErr := manager.UpdateScheduledInput(context.Background(), created.ID, item.ID, scheduledInputUpdate{
+			ScheduleKind: &atTime,
+			ScheduledFor: time.Now().Add(time.Hour),
+		})
+		return updateErr
+	})
+	var updatedRecord tables.WebSessionScheduledInputTable
+	if err := model.GetDB().First(&updatedRecord, "id = ?", item.ID).Error; err != nil {
+		t.Fatalf("load updated schedule: %v", err)
+	}
+	if updatedRecord.ScheduleKind != string(ScheduledInputScheduleAtTime) || updatedRecord.IdleSince != nil {
+		t.Fatalf("blocked idle check overwrote the updated schedule: %#v", updatedRecord)
+	}
+	manager.cancelScheduledInputTimer(item.ID)
+	if err := manager.RemoveScheduledInput(context.Background(), created.ID, item.ID); err != nil {
+		t.Fatalf("remove updated schedule: %v", err)
+	}
+
+	scheduledIdlePollInterval = time.Hour
+	item, err = manager.SchedulePlanExecutionWhenIdle(
+		context.Background(), created.ID, plan.ID, scheduledPlanExecutionPayload{},
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecutionWhenIdle (remove case) returned error: %v", err)
+	}
+	runBlockedCheck(item.ID, func() error {
+		return manager.RemoveScheduledInput(context.Background(), created.ID, item.ID)
+	})
+	var removedRecord tables.WebSessionScheduledInputTable
+	if err := model.GetDB().First(&removedRecord, "id = ?", item.ID).Error; err != nil {
+		t.Fatalf("load canceled schedule: %v", err)
+	}
+	if removedRecord.Status != string(ScheduledInputStatusCanceled) {
+		t.Fatalf("blocked idle check revived the canceled schedule: %#v", removedRecord)
+	}
+
+	scheduledIdlePollInterval = time.Hour
+	messageItem, err := manager.ScheduleInputWhenIdle(
+		context.Background(), created.ID, "Dispatch while checking", nil, ScheduledInputModeSend,
+	)
+	if err != nil {
+		t.Fatalf("ScheduleInputWhenIdle returned error: %v", err)
+	}
+	runBlockedCheck(messageItem.ID, func() error {
+		if updateErr := model.GetDB().Model(&tables.WebSessionScheduledInputTable{}).
+			Where("id = ?", messageItem.ID).
+			Update("mode", "invalid").Error; updateErr != nil {
+			return updateErr
+		}
+		dispatchErr := manager.DispatchScheduledInputNow(context.Background(), created.ID, messageItem.ID)
+		if !errors.Is(dispatchErr, errInvalidScheduledInputMode) {
+			return fmt.Errorf("unexpected immediate dispatch result: %w", dispatchErr)
+		}
+		return nil
+	})
+	var dispatchedRecord tables.WebSessionScheduledInputTable
+	if err := model.GetDB().First(&dispatchedRecord, "id = ?", messageItem.ID).Error; err != nil {
+		t.Fatalf("load immediately dispatched schedule: %v", err)
+	}
+	if dispatchedRecord.Status != string(ScheduledInputStatusFailed) {
+		t.Fatalf("blocked idle check overwrote the immediate dispatch result: %#v", dispatchedRecord)
 	}
 }
 

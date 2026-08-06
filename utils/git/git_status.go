@@ -3,6 +3,7 @@ package git
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -34,7 +35,14 @@ type CommitInfo struct {
 // HasTrackedWorktreeChanges reports whether tracked files have staged,
 // unstaged, or conflicted changes. Untracked files are intentionally ignored.
 func HasTrackedWorktreeChanges(path string) (bool, error) {
-	cmd := newGitCommand(
+	return HasTrackedWorktreeChangesContext(context.Background(), path)
+}
+
+// HasTrackedWorktreeChangesContext is the context-aware form of
+// HasTrackedWorktreeChanges.
+func HasTrackedWorktreeChangesContext(ctx context.Context, path string) (bool, error) {
+	cmd := newGitCommandContext(
+		ctx,
 		path,
 		"--no-optional-locks",
 		"status",
