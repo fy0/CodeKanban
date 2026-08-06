@@ -2340,6 +2340,7 @@
                     <n-button
                       secondary
                       class="composer-queue-btn"
+                      :loading="isSubmittingQueuedMessage"
                       :disabled="!canStageDuringRun"
                       @click="handlePreinput('queue')"
                     >
@@ -2349,6 +2350,7 @@
                       <n-button
                         type="primary"
                         class="composer-send-btn"
+                        :loading="isSubmittingRedirectedMessage"
                         :disabled="!canStageDuringRun"
                         @pointerdown="handlePrimarySendPointerDown"
                         @pointermove="handlePrimarySendPointerMove"
@@ -3043,6 +3045,7 @@ import { useDeveloperConfigStore } from '@/stores/developerConfig';
 import {
   useWebSessionStore,
   type WebSessionBlock,
+  type WebSessionDraftState,
   type WebSessionHistoryAnswerEntry,
   type WebSessionLiveState,
   type WebSessionPendingInput,
@@ -4120,10 +4123,25 @@ const composerText = computed({
   },
 });
 
-function clearComposerDraftAfterSubmit(sessionId: string) {
+function clearComposerDraftAfterSubmit(sessionId: string, projectId = props.projectId) {
   const restoreFocus = isComposerFocused.value;
-  webSessionStore.clearDraft(props.projectId, sessionId);
-  if (sessionId === currentDraftSessionId.value) {
+  webSessionStore.clearDraft(projectId, sessionId);
+  if (projectId === props.projectId && sessionId === currentDraftSessionId.value) {
+    composerEditorResetVersion.value += 1;
+    if (restoreFocus) {
+      nextTick(() => composerInputRef.value?.focus());
+    }
+  }
+}
+
+function restoreComposerDraftAfterFailedSubmit(
+  sessionId: string,
+  draft: WebSessionDraftState,
+  projectId = props.projectId
+) {
+  const restoreFocus = isComposerFocused.value;
+  webSessionStore.restoreDraft(projectId, sessionId, draft);
+  if (projectId === props.projectId && sessionId === currentDraftSessionId.value) {
     composerEditorResetVersion.value += 1;
     if (restoreFocus) {
       nextTick(() => composerInputRef.value?.focus());
@@ -5466,6 +5484,12 @@ const isSendConflictConfirmationArmed = computed(
 const isSubmittingMessage = computed(() =>
   isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
 );
+const isSubmittingRedirectedMessage = computed(
+  () => currentSubmitEntry.value?.kind === 'redirect_message'
+);
+const isSubmittingQueuedMessage = computed(
+  () => currentSubmitEntry.value?.kind === 'queue_message'
+);
 const isRunActive = computed(() => liveState.value.running);
 const hasDraftContent = computed(
   () => composerText.value.trim().length > 0 || draftAttachments.value.length > 0
@@ -5482,6 +5506,7 @@ const canStageDuringRun = computed(
   () =>
     !isMessageCapabilityBlocked.value &&
     isRunActive.value &&
+    !isSubmittingMessage.value &&
     hasDraftContent.value &&
     !isDraftAttachmentUploading.value
 );
@@ -10351,15 +10376,19 @@ async function handleImportCodexSession(sessionId: string) {
   }
 }
 
-async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
+async function handleCreateSession(
+  forceAgent?: 'claude' | 'codex',
+  options: { onCreated?: (session: WebSessionSummary) => void } = {}
+) {
   try {
+    const projectId = props.projectId;
     const source = currentSession.value;
     const agent = forceAgent ?? source?.agent ?? selectedAgent.value;
     if (!(await ensureMessageCapabilityAvailable(agent))) {
       return undefined;
     }
     const worktreeId = resolveCreateSessionWorktreeId(source);
-    const session = await webSessionStore.createSession(props.projectId, {
+    const session = await webSessionStore.createSession(projectId, {
       worktreeId,
       agent,
       claudeRuntime:
@@ -10397,12 +10426,13 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
           : webSessionAutoRetryDispatchPendingOnFailure.value,
     });
     if (isDraftSession(source)) {
-      webSessionStore.moveDraft(props.projectId, source.id, session.id);
+      webSessionStore.moveDraft(projectId, source.id, session.id);
       replaceTabIdInNavigationState(source.id, session.id);
       removeDraftSessionRecord(source.id, {
         preserveDraftState: true,
       });
     }
+    options.onCreated?.(session);
     draftAgent.value = session.agent;
     draftClaudeRuntime.value = session.claudeRuntime === 'ccr' ? 'ccr' : 'claude';
     draftModel.value = session.model;
@@ -11178,13 +11208,19 @@ async function continueErroredSession(session: WebSessionSummary) {
 }
 
 async function handleSubmit() {
+  const submitProjectId = props.projectId;
   const initialSubmitOwnerId = currentDraftSessionId.value;
+  const initialSession = currentSession.value;
+  const initialRealSession = currentRealSession.value;
+  const draft = webSessionStore.getDraft(submitProjectId, initialSubmitOwnerId);
+  const draftText = draft.text;
+  const attachments = [...draft.attachments];
   if (
     !initialSubmitOwnerId ||
-    isSubmittingMessage.value ||
+    isWebSessionSubmitting(submitStateBySessionId.value, initialSubmitOwnerId) ||
     isRunActive.value ||
     isDraftAttachmentUploading.value ||
-    !hasDraftContent.value
+    (draftText.trim().length === 0 && attachments.length === 0)
   ) {
     return;
   }
@@ -11197,26 +11233,32 @@ async function handleSubmit() {
     clearSendConflictConfirmation();
   }
   let submitOwnerId = initialSubmitOwnerId;
+  let draftSessionId = initialSubmitOwnerId;
+  let submissionSucceeded = false;
   beginSessionSubmit(submitOwnerId, submitKind);
+  clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
   try {
-    let session = currentRealSession.value;
-    if (!session || isDraftSession(currentSession.value)) {
-      const created = await handleCreateSession();
+    let session = initialRealSession;
+    if (!session || isDraftSession(initialSession)) {
+      const created = await handleCreateSession(undefined, {
+        onCreated: createdSession => {
+          if (isDraftSession(initialSession)) {
+            draftSessionId = createdSession.id;
+          }
+          if (createdSession.id !== submitOwnerId) {
+            transferSessionSubmit(submitOwnerId, createdSession.id);
+            submitOwnerId = createdSession.id;
+          }
+        },
+      });
       if (!created) {
         return;
       }
       session = created;
-      if (created.id !== submitOwnerId) {
-        transferSessionSubmit(submitOwnerId, created.id);
-        submitOwnerId = created.id;
-      }
     }
     if (!session) {
       return;
     }
-    const draftSessionId = currentDraftSessionId.value;
-    const draftText = composerText.value;
-    const attachments = [...draftAttachments.value];
     const prepared = await prepareSessionForSend(session);
     session = prepared.session;
     if (session.id !== submitOwnerId) {
@@ -11243,9 +11285,9 @@ async function handleSubmit() {
       } else {
         await webSessionStore.bootstrapGoal(session.id, goalCommand.objective, 'active');
       }
+      submissionSucceeded = true;
       settingsStore.recordWebSessionRecentInput(draftText);
       void settingsStore.syncWebSessionQuickInputToServer();
-      clearComposerDraftAfterSubmit(draftSessionId);
       message.success('Goal updated');
       return;
     }
@@ -11257,9 +11299,9 @@ async function handleSubmit() {
       draftText,
       attachments.map(item => item.id)
     );
+    submissionSucceeded = true;
     settingsStore.recordWebSessionRecentInput(draftText);
     void settingsStore.syncWebSessionQuickInputToServer();
-    clearComposerDraftAfterSubmit(draftSessionId);
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, session.id));
@@ -11270,6 +11312,9 @@ async function handleSubmit() {
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
+    if (!submissionSucceeded) {
+      restoreComposerDraftAfterFailedSubmit(draftSessionId, draft, submitProjectId);
+    }
     endSessionSubmit(submitOwnerId);
   }
 }
@@ -11441,27 +11486,45 @@ async function handleConfirmScheduledInputUpdate() {
 }
 
 async function handlePreinput(mode: 'redirect' | 'queue') {
-  if (!currentRealSession.value || isDraftAttachmentUploading.value || !hasDraftContent.value) {
+  const submitProjectId = props.projectId;
+  const session = currentRealSession.value;
+  const draftSessionId = currentDraftSessionId.value;
+  const draft = webSessionStore.getDraft(submitProjectId, draftSessionId);
+  const draftText = draft.text;
+  const attachments = [...draft.attachments];
+  if (
+    !session ||
+    !draftSessionId ||
+    isWebSessionSubmitting(submitStateBySessionId.value, draftSessionId) ||
+    isDraftAttachmentUploading.value ||
+    (draftText.trim().length === 0 && attachments.length === 0)
+  ) {
     return;
   }
-  if (!(await ensureMessageCapabilityAvailable(currentRealSession.value.agent))) {
-    return;
-  }
+  let submissionSucceeded = false;
+  beginSessionSubmit(draftSessionId, mode === 'redirect' ? 'redirect_message' : 'queue_message');
+  clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
   try {
-    const draftText = composerText.value;
-    const attachments = draftAttachments.value;
+    if (!(await ensureMessageCapabilityAvailable(session.agent))) {
+      return;
+    }
     await webSessionStore.sendMessage(
-      currentRealSession.value.id,
+      session.id,
       draftText,
       attachments.map(item => item.id),
       mode
     );
+    submissionSucceeded = true;
     settingsStore.recordWebSessionRecentInput(draftText);
     void settingsStore.syncWebSessionQuickInputToServer();
-    clearComposerDraftAfterSubmit(currentRealSession.value.id);
     isMobileComposerSettingsExpanded.value = false;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    if (!submissionSucceeded) {
+      restoreComposerDraftAfterFailedSubmit(draftSessionId, draft, submitProjectId);
+    }
+    endSessionSubmit(draftSessionId);
   }
 }
 

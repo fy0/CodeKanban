@@ -79,6 +79,25 @@ describe('webSessionSubmitState', () => {
     expect(shouldShowWebSessionExecuteFeedback({ kind: 'execute_send' })).toBe(true);
     expect(shouldShowWebSessionExecuteFeedback({ kind: 'execute_plan' })).toBe(true);
     expect(shouldShowWebSessionExecuteFeedback({ kind: 'plan_message' })).toBe(false);
+    expect(shouldShowWebSessionExecuteFeedback({ kind: 'redirect_message' })).toBe(false);
+    expect(shouldShowWebSessionExecuteFeedback({ kind: 'queue_message' })).toBe(false);
+  });
+
+  it('keeps the first in-flight staged-message lock when submit is clicked repeatedly', () => {
+    const initial = beginWebSessionSubmit({}, 'session-a', {
+      kind: 'redirect_message',
+      startedAt: 100,
+    });
+    const duplicate = beginWebSessionSubmit(initial, 'session-a', {
+      kind: 'queue_message',
+      startedAt: 200,
+    });
+
+    expect(duplicate).toBe(initial);
+    expect(getWebSessionSubmitEntry(duplicate, 'session-a')).toEqual({
+      kind: 'redirect_message',
+      startedAt: 100,
+    });
   });
 
   it('creates an optimistic starting state for execute-plan submissions', () => {

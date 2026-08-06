@@ -572,6 +572,35 @@ export interface WebSessionDraftState {
   updatedAt: number;
 }
 
+export function mergeWebSessionDraftForRestore(
+  current: WebSessionDraftState,
+  submitted: WebSessionDraftState,
+  restoredAt = Date.now()
+): WebSessionDraftState {
+  const submittedText = String(submitted.text ?? '');
+  const currentText = String(current.text ?? '');
+  const text =
+    currentText.trim().length === 0
+      ? submittedText
+      : submittedText.trim().length === 0 || currentText === submittedText
+        ? currentText
+        : `${submittedText}\n\n${currentText}`;
+  const attachmentIds = new Set<string>();
+  const attachments = [...submitted.attachments, ...current.attachments].filter(attachment => {
+    if (attachmentIds.has(attachment.id)) {
+      return false;
+    }
+    attachmentIds.add(attachment.id);
+    return true;
+  });
+
+  return {
+    text,
+    attachments,
+    updatedAt: restoredAt,
+  };
+}
+
 export interface WebSessionPendingUserInputDraftState {
   selections: Record<string, string[]>;
   drafts: Record<string, string>;
@@ -2554,6 +2583,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function clearDraft(projectId: string, sessionId: string) {
     updateDraft(projectId, sessionId, () => null);
+  }
+
+  function restoreDraft(
+    projectId: string,
+    sessionId: string,
+    submittedDraft: WebSessionDraftState
+  ) {
+    updateDraft(projectId, sessionId, currentDraft =>
+      mergeWebSessionDraftForRestore(currentDraft, submittedDraft)
+    );
   }
 
   function moveDraft(projectId: string, fromSessionId: string, toSessionId: string) {
@@ -6443,6 +6482,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     clearPendingInputs,
     removeScheduledInput,
     clearDraft,
+    restoreDraft,
     moveDraft,
     openEventStream,
     setEventSessionFocus,

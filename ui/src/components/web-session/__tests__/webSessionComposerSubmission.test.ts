@@ -1,0 +1,77 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import { describe, expect, it } from 'vitest';
+
+const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
+const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
+
+function sourceBetween(start: string, end: string) {
+  const startIndex = webSessionPanelSource.indexOf(start);
+  const endIndex = webSessionPanelSource.indexOf(end, startIndex + start.length);
+  expect(startIndex).toBeGreaterThanOrEqual(0);
+  expect(endIndex).toBeGreaterThan(startIndex);
+  return webSessionPanelSource.slice(startIndex, endIndex);
+}
+
+describe('web session composer submission', () => {
+  it('locks both running-session actions and shows feedback on the action being submitted', () => {
+    const stageGuardSource = sourceBetween(
+      'const canStageDuringRun = computed(',
+      'const canOpenSendQuickActions = computed('
+    );
+
+    expect(stageGuardSource).toContain('!isSubmittingMessage.value');
+    expect(webSessionPanelSource).toContain(':loading="isSubmittingRedirectedMessage"');
+    expect(webSessionPanelSource).toContain(':loading="isSubmittingQueuedMessage"');
+  });
+
+  it('uses the captured session and draft after the user switches tabs', () => {
+    const handlerSource = sourceBetween(
+      "async function handlePreinput(mode: 'redirect' | 'queue')",
+      'async function triggerPrimaryComposerAction()'
+    );
+
+    expect(handlerSource).toContain('const session = currentRealSession.value;');
+    expect(handlerSource).toContain('const draftSessionId = currentDraftSessionId.value;');
+    expect(handlerSource).toContain(
+      'isWebSessionSubmitting(submitStateBySessionId.value, draftSessionId)'
+    );
+    expect(handlerSource).toContain('beginSessionSubmit(draftSessionId');
+    expect(handlerSource).toMatch(/webSessionStore\.sendMessage\(\s*session\.id,/);
+    expect(handlerSource).toContain(
+      'clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);'
+    );
+    expect(handlerSource).toContain(
+      'restoreComposerDraftAfterFailedSubmit(draftSessionId, draft, submitProjectId);'
+    );
+    expect(handlerSource).toContain('endSessionSubmit(draftSessionId);');
+    expect(handlerSource).not.toContain(
+      'clearComposerDraftAfterSubmit(currentRealSession.value.id)'
+    );
+  });
+
+  it('snapshots a regular send before its first asynchronous operation', () => {
+    const handlerSource = sourceBetween(
+      'async function handleSubmit()',
+      'async function handleConfirmScheduledSend()'
+    );
+    const snapshotIndex = handlerSource.indexOf(
+      'const draft = webSessionStore.getDraft(submitProjectId, initialSubmitOwnerId);'
+    );
+    const firstAwaitIndex = handlerSource.indexOf('await ');
+    const clearIndex = handlerSource.indexOf(
+      'clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);'
+    );
+
+    expect(snapshotIndex).toBeGreaterThanOrEqual(0);
+    expect(clearIndex).toBeGreaterThan(snapshotIndex);
+    expect(firstAwaitIndex).toBeGreaterThan(clearIndex);
+    expect(handlerSource).toContain(
+      'isWebSessionSubmitting(submitStateBySessionId.value, initialSubmitOwnerId)'
+    );
+    expect(handlerSource).toContain(
+      'clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);'
+    );
+  });
+});

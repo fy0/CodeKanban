@@ -1,6 +1,11 @@
 import type { WebSessionLiveState } from '@/stores/webSession';
 
-export type WebSessionSubmitKind = 'execute_send' | 'execute_plan' | 'plan_message';
+export type WebSessionSubmitKind =
+  | 'execute_send'
+  | 'execute_plan'
+  | 'plan_message'
+  | 'redirect_message'
+  | 'queue_message';
 
 export interface WebSessionSubmitEntry {
   kind: WebSessionSubmitKind;
