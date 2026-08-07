@@ -1218,6 +1218,15 @@
           </section>
 
           <section
+            v-show="isSettingsSectionVisible('git')"
+            :ref="el => registerSettingsSectionRef('git', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('git')"
+          >
+            <GitSettingsSection />
+          </section>
+
+          <section
             v-show="isSettingsSectionVisible('worktree')"
             :ref="el => registerSettingsSectionRef('worktree', el as HTMLElement | null)"
             class="settings-card-shell"
@@ -1969,6 +1978,7 @@ import { webSessionApi } from '@/api/webSession';
 import { useReq, useInit } from '@/api/composable';
 import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
 import WebSessionHistoryCleanup from '@/components/settings/WebSessionHistoryCleanup.vue';
+import GitSettingsSection from '@/components/settings/GitSettingsSection.vue';
 import type {
   DeveloperConfig,
   AvailableShellsResponse,
@@ -3948,6 +3958,18 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
       description: t('settings.developerScrollback'),
       dirty: developerBehaviorDirty.value,
       searchTerms: [t('settings.developerScrollback')],
+    },
+    {
+      id: 'git',
+      title: t('settings.gitSettings'),
+      description: t('settings.gitSettingsDescription'),
+      searchTerms: [
+        t('settings.gitReadEngine'),
+        t('settings.gitWriteEngine'),
+        t('settings.gitExecutable'),
+        t('settings.gitEngineBuiltin'),
+        t('settings.gitEngineSystem'),
+      ],
     },
     {
       id: 'worktree',

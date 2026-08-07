@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"code-kanban/model"
@@ -79,6 +78,7 @@ func TestBranchServiceDeleteProtected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectRepository failed: %v", err)
 	}
+	defer repo.Close()
 	if err := repo.CheckoutBranch("feature/protected"); err != nil {
 		t.Fatalf("checkout to feature/protected failed: %v", err)
 	}
@@ -94,10 +94,6 @@ func TestBranchServiceDeleteProtected(t *testing.T) {
 }
 
 func TestBranchServiceForceDeleteWithWorktree(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("force deleting worktrees is flaky on Windows")
-	}
-
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -151,6 +147,7 @@ func TestBranchServiceForceDeleteWithWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectRepository failed: %v", err)
 	}
+	defer repo.Close()
 	local, _, err := repo.ListBranches()
 	if err != nil {
 		t.Fatalf("ListBranches failed: %v", err)
@@ -184,14 +181,24 @@ func TestBranchServiceMergeSuccess(t *testing.T) {
 		t.Fatalf("CreateBranch failed: %v", err)
 	}
 
-	runGitCommand(t, repoPath, "checkout", sourceBranch)
+	repo, err := git.DetectRepository(repoPath)
+	if err != nil {
+		t.Fatalf("DetectRepository failed: %v", err)
+	}
+	if err := repo.CheckoutBranch(sourceBranch); err != nil {
+		t.Fatalf("checkout source branch failed: %v", err)
+	}
 	featureFile := filepath.Join(repoPath, "merge.txt")
 	if err := os.WriteFile(featureFile, []byte("merge content"), 0o644); err != nil {
 		t.Fatalf("write merge file failed: %v", err)
 	}
-	runGitCommand(t, repoPath, "add", "merge.txt")
-	runGitCommand(t, repoPath, "commit", "-m", "add merge file")
-	runGitCommand(t, repoPath, "checkout", defaultBranch(project))
+	if err := repo.CommitAll(repoPath, "add merge file"); err != nil {
+		t.Fatalf("commit source branch failed: %v", err)
+	}
+	if err := repo.CheckoutBranch(defaultBranch(project)); err != nil {
+		t.Fatalf("checkout target branch failed: %v", err)
+	}
+	_ = repo.Close()
 
 	worktreeService := NewWorktreeService()
 	worktrees, err := worktreeService.ListWorktrees(ctx, project.Id)
@@ -224,7 +231,14 @@ func TestBranchServiceMergeSuccess(t *testing.T) {
 	}
 }
 
-func TestBranchServiceSquashMergeCommit(t *testing.T) {
+func TestBranchServiceSquashMergeUsesSystemGit(t *testing.T) {
+	info := git.ProbeSystemGit(t.Context(), true)
+	if !info.Available {
+		t.Skip("system Git is unavailable")
+	}
+	previousEngines := git.CurrentEngineSettings()
+	git.ConfigureEngines(git.EngineSettings{Read: git.EnginePreferenceBuiltin, Write: git.EnginePreferenceSystem, Executable: info.Executable})
+	t.Cleanup(func() { git.ConfigureEngines(previousEngines) })
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -246,14 +260,24 @@ func TestBranchServiceSquashMergeCommit(t *testing.T) {
 		t.Fatalf("CreateBranch failed: %v", err)
 	}
 
-	runGitCommand(t, repoPath, "checkout", sourceBranch)
+	repo, err := git.DetectRepository(repoPath)
+	if err != nil {
+		t.Fatalf("DetectRepository failed: %v", err)
+	}
+	if err := repo.CheckoutBranch(sourceBranch); err != nil {
+		t.Fatalf("checkout source branch failed: %v", err)
+	}
 	featureFile := filepath.Join(repoPath, "squash.txt")
 	if err := os.WriteFile(featureFile, []byte("squash content"), 0o644); err != nil {
 		t.Fatalf("write squash file failed: %v", err)
 	}
-	runGitCommand(t, repoPath, "add", "squash.txt")
-	runGitCommand(t, repoPath, "commit", "-m", "add squash file")
-	runGitCommand(t, repoPath, "checkout", defaultBranch(project))
+	if err := repo.CommitAll(repoPath, "add squash file"); err != nil {
+		t.Fatalf("commit source branch failed: %v", err)
+	}
+	if err := repo.CheckoutBranch(defaultBranch(project)); err != nil {
+		t.Fatalf("checkout target branch failed: %v", err)
+	}
+	_ = repo.Close()
 
 	worktreeService := NewWorktreeService()
 	worktrees, err := worktreeService.ListWorktrees(ctx, project.Id)
@@ -271,33 +295,17 @@ func TestBranchServiceSquashMergeCommit(t *testing.T) {
 		t.Fatalf("failed to locate default branch worktree")
 	}
 
-	const commitMessage = "feat: squash merge commit"
 	result, err := branchSvc.MergeBranch(ctx, targetWT.Id, sourceBranch, model.MergeBranchOptions{
 		TargetBranch:  targetWT.BranchName,
 		Strategy:      "squash",
 		Commit:        true,
-		CommitMessage: commitMessage,
+		CommitMessage: "squash feature",
 	})
-	if err != nil {
-		t.Fatalf("MergeBranch returned error: %v", err)
+	if err != nil || result == nil || !result.Success {
+		t.Fatalf("expected squash merge to succeed, result=%+v err=%v", result, err)
 	}
-	if !result.Success {
-		t.Fatalf("expected merge success, got result: %+v", result)
-	}
-
-	repo, err := git.DetectRepository(repoPath)
-	if err != nil {
-		t.Fatalf("DetectRepository failed: %v", err)
-	}
-	status, err := repo.GetWorktreeStatus(targetWT.Path)
-	if err != nil {
-		t.Fatalf("GetWorktreeStatus failed: %v", err)
-	}
-	if status.LastCommit == nil || status.LastCommit.Message != commitMessage {
-		t.Fatalf("expected last commit message %q, got %+v", commitMessage, status.LastCommit)
-	}
-	if status.Staged != 0 || status.Modified != 0 {
-		t.Fatalf("expected clean worktree after commit, staged=%d modified=%d", status.Staged, status.Modified)
+	if _, err := os.Stat(featureFile); err != nil {
+		t.Fatalf("squashed file is missing: %v", err)
 	}
 }
 

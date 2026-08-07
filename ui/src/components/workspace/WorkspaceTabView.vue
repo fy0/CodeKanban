@@ -239,7 +239,7 @@ import {
   type DesktopWorkspaceRouteTab,
 } from '@/utils/workspaceRoute';
 import { resolveWorkspaceShortcutTarget } from '@/utils/workspaceTabShortcut';
-import { projectSupportsGit } from '@/utils/projectGitCapability';
+import { gitOperationAvailable } from '@/utils/projectGitCapability';
 import { fileManagerApi } from '@/api/fileManager';
 
 const props = defineProps<{
@@ -268,7 +268,7 @@ const changesTabDisabled = computed(
   () =>
     Boolean(projectStore.currentProject) &&
     !projectStore.loading &&
-    !projectSupportsGit(projectStore.currentProject, projectStore.worktrees)
+    !gitOperationAvailable(projectStore.gitCapabilities, 'status', projectStore.selectedWorktreeId)
 );
 
 function coerceWorkspaceTab(tab: WorkspaceTab): WorkspaceTab {

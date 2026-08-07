@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +12,11 @@ import (
 
 	"code-kanban/model"
 	"code-kanban/utils"
+
+	goGit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 func TestDetectModExtensionAsText(t *testing.T) {
@@ -421,7 +425,6 @@ func TestStatusOnlyChangesRequestsDoNotRunDiffStats(t *testing.T) {
 	defer cleanup()
 
 	repoDir := initFileManagerGitRepo(t)
-	installFailingNumstatGitWrapper(t)
 
 	service, err := NewService(Config{
 		DataDir: t.TempDir(),
@@ -653,12 +656,11 @@ func TestListChangesMarksTruncatedWhenEntryLimitExceeded(t *testing.T) {
 	}
 }
 
-func TestListChangesReturnsPartialStatsWhenTimedOut(t *testing.T) {
+func TestListChangesReturnsPartialStatsWhenCanceled(t *testing.T) {
 	cleanup := initFileManagerTestDB(t)
 	defer cleanup()
 
 	repoDir := initFileManagerGitRepo(t)
-	installSlowGitDiffWrapper(t)
 
 	service, err := NewService(Config{
 		DataDir: t.TempDir(),
@@ -679,7 +681,7 @@ func TestListChangesReturnsPartialStatsWhenTimedOut(t *testing.T) {
 	result, err := service.ListChanges(context.Background(), projectID, "", ListChangesOptions{
 		IncludeUntracked: boolRef(false),
 		WithStats:        boolRef(true),
-		Timeout:          150 * time.Millisecond,
+		Timeout:          time.Nanosecond,
 		MaxEntries:       1000,
 	})
 	if err != nil {
@@ -691,14 +693,8 @@ func TestListChangesReturnsPartialStatsWhenTimedOut(t *testing.T) {
 	if !result.StatsTimedOut {
 		t.Fatalf("expected statsTimedOut=true: %#v", result)
 	}
-
-	for _, entry := range result.Entries {
-		if entry.StatsAvailable {
-			t.Fatalf("timed out batch stats should not mark any entry complete: %#v", entry)
-		}
-		if entry.Additions != 0 || entry.Deletions != 0 {
-			t.Fatalf("timed out stats should keep zero counts: %#v", entry)
-		}
+	if len(result.Entries) != 0 {
+		t.Fatalf("canceled status scan should not return partial entries: %#v", result.Entries)
 	}
 }
 
@@ -707,7 +703,6 @@ func TestListChangesUntrackedStatsDoNotShellOutPerFile(t *testing.T) {
 	defer cleanup()
 
 	repoDir := initFileManagerGitRepo(t)
-	installFailingNoIndexNumstatGitWrapper(t)
 
 	service, err := NewService(Config{
 		DataDir: t.TempDir(),
@@ -777,7 +772,20 @@ func initFileManagerGitRepo(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	runFileManagerGit(t, dir, "init", "-b", "main")
+	repository, err := goGit.PlainInit(dir, false, goGit.WithDefaultBranch(plumbing.NewBranchReferenceName("main")))
+	if err != nil {
+		t.Fatalf("init repository: %v", err)
+	}
+	cfg, err := repository.Config()
+	if err != nil {
+		t.Fatalf("read repository config: %v", err)
+	}
+	cfg.User.Name = "Test User"
+	cfg.User.Email = "test@example.com"
+	cfg.Commit.GpgSign = config.OptBoolFalse
+	if err := repository.SetConfig(cfg); err != nil {
+		t.Fatalf("write repository config: %v", err)
+	}
 	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
 	}
@@ -787,8 +795,19 @@ func initFileManagerGitRepo(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "docs", "guide.md"), []byte("guide\n"), 0o644); err != nil {
 		t.Fatalf("write docs/guide.md: %v", err)
 	}
-	runFileManagerGit(t, dir, "add", "README.md", "docs/guide.md")
-	runFileManagerGit(t, dir, "commit", "-m", "initial commit")
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatalf("open worktree: %v", err)
+	}
+	if err := worktree.AddWithOptions(&goGit.AddOptions{All: true}); err != nil {
+		t.Fatalf("stage repository files: %v", err)
+	}
+	if _, err := worktree.Commit("initial commit", &goGit.CommitOptions{Author: &object.Signature{
+		Name: "Test User", Email: "test@example.com", When: time.Now(),
+	}}); err != nil {
+		t.Fatalf("commit repository files: %v", err)
+	}
+	_ = repository.Close()
 	return dir
 }
 
@@ -837,28 +856,6 @@ func seedFileManagerProjectScope(t *testing.T, repoDir string) string {
 	return project.Id
 }
 
-func runFileManagerGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
-
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_AUTHOR_NAME=Test User",
-		"GIT_AUTHOR_EMAIL=test@example.com",
-		"GIT_COMMITTER_NAME=Test User",
-		"GIT_COMMITTER_EMAIL=test@example.com",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"HOME="+os.TempDir(),
-	)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
-	}
-}
-
 func searchResultPaths(entries []Entry) []string {
 	paths := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -878,85 +875,4 @@ func containsString(values []string, target string) bool {
 
 func boolRef(value bool) *bool {
 	return &value
-}
-
-func installSlowGitDiffWrapper(t *testing.T) {
-	t.Helper()
-
-	realGit, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatalf("LookPath git: %v", err)
-	}
-
-	wrapperDir := t.TempDir()
-	wrapperPath := filepath.Join(wrapperDir, "git")
-	script := strings.Join([]string{
-		"#!/bin/sh",
-		"if [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--numstat\" ]; then",
-		"  sleep \"${CODEKANBAN_TEST_GIT_DIFF_SLEEP:-0}\"",
-		"fi",
-		"exec \"$REAL_GIT\" \"$@\"",
-		"",
-	}, "\n")
-	if err := os.WriteFile(wrapperPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write wrapper: %v", err)
-	}
-
-	t.Setenv("REAL_GIT", realGit)
-	t.Setenv("CODEKANBAN_TEST_GIT_DIFF_SLEEP", "0.2")
-	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
-
-func installFailingNumstatGitWrapper(t *testing.T) {
-	t.Helper()
-
-	realGit, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatalf("LookPath git: %v", err)
-	}
-
-	wrapperDir := t.TempDir()
-	wrapperPath := filepath.Join(wrapperDir, "git")
-	script := strings.Join([]string{
-		"#!/bin/sh",
-		"if [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--numstat\" ]; then",
-		"  echo 'unexpected numstat invocation' >&2",
-		"  exit 9",
-		"fi",
-		"exec \"$REAL_GIT\" \"$@\"",
-		"",
-	}, "\n")
-	if err := os.WriteFile(wrapperPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write wrapper: %v", err)
-	}
-
-	t.Setenv("REAL_GIT", realGit)
-	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
-
-func installFailingNoIndexNumstatGitWrapper(t *testing.T) {
-	t.Helper()
-
-	realGit, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatalf("LookPath git: %v", err)
-	}
-
-	wrapperDir := t.TempDir()
-	wrapperPath := filepath.Join(wrapperDir, "git")
-	script := strings.Join([]string{
-		"#!/bin/sh",
-		"if [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--numstat\" ] && [ \"$3\" = \"--no-index\" ]; then",
-		"  echo 'unexpected no-index numstat invocation' >&2",
-		"  exit 9",
-		"fi",
-		"exec \"$REAL_GIT\" \"$@\"",
-		"",
-	}, "\n")
-	if err := os.WriteFile(wrapperPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write wrapper: %v", err)
-	}
-
-	t.Setenv("REAL_GIT", realGit)
-	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

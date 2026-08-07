@@ -22,7 +22,7 @@
           <LanguageSwitcher />
           <n-button
             quaternary
-            :disabled="!currentProjectId || !gitFeaturesAvailable"
+            :disabled="!currentProjectId || !canReadBranches"
             :loading="projectStore.loading"
             @click="reloadBranches(true)"
           >
@@ -33,7 +33,7 @@
           </n-button>
           <n-button
             type="primary"
-            :disabled="!currentProjectId || !gitFeaturesAvailable"
+            :disabled="!currentProjectId || !canWriteBranches"
             @click="openCreateModal()"
           >
             <template #icon>
@@ -212,8 +212,12 @@
                 <n-form-item :label="t('branch.strategy')">
                   <n-radio-group v-model:value="mergeForm.strategy">
                     <n-radio value="merge">{{ t('branch.merge') }}</n-radio>
-                    <n-radio value="rebase">{{ t('branch.rebase') }}</n-radio>
-                    <n-radio value="squash">{{ t('branch.squash') }}</n-radio>
+                    <n-radio value="rebase" :disabled="!canUseMergeStrategy('rebase')">
+                      {{ t('branch.rebase') }}
+                    </n-radio>
+                    <n-radio value="squash" :disabled="!canUseMergeStrategy('squash')">
+                      {{ t('branch.squash') }}
+                    </n-radio>
                   </n-radio-group>
                 </n-form-item>
                 <template v-if="showSquashCommitOptions">
@@ -239,6 +243,21 @@
                   </n-form-item>
                 </template>
 
+                <n-alert
+                  v-if="
+                    gitOperationEngine(
+                      projectStore.gitCapabilities,
+                      mergeOperation,
+                      mergeForm.worktreeId
+                    ) === 'builtin'
+                  "
+                  type="info"
+                  :show-icon="false"
+                  class="merge-result"
+                >
+                  {{ t('branch.fastForwardOnly') }}
+                </n-alert>
+
                 <n-space>
                   <n-button
                     type="primary"
@@ -248,7 +267,10 @@
                   >
                     {{ t('branch.executeMerge') }}
                   </n-button>
-                  <n-button @click="refreshMergeStatus" :disabled="!mergeForm.worktreeId">
+                  <n-button
+                    @click="refreshMergeStatus"
+                    :disabled="!mergeForm.worktreeId || !canReadStatus"
+                  >
                     {{ t('branch.refreshWorktreeStatus') }}
                   </n-button>
                 </n-space>
@@ -342,7 +364,7 @@ import { useReq } from '@/api/composable';
 import { extractItem } from '@/api/response';
 import BranchListItem from '@/components/branch/BranchListItem.vue';
 import { useHotkeys } from '@/composables/useHotkeys';
-import { projectSupportsGit } from '@/utils/projectGitCapability';
+import { gitOperationAvailable, gitOperationEngine } from '@/utils/projectGitCapability';
 
 const route = useRoute();
 const router = useRouter();
@@ -359,9 +381,14 @@ const pageHeading = computed(() =>
     ? `${projectStore.currentProject.name} · ${t('branch.title')}`
     : t('branch.title')
 );
-const gitFeaturesAvailable = computed(() =>
-  projectSupportsGit(projectStore.currentProject, projectStore.worktrees)
+const gitFeaturesAvailable = computed(() => Boolean(projectStore.gitCapabilities?.repository));
+const canReadBranches = computed(() =>
+  gitOperationAvailable(projectStore.gitCapabilities, 'branchesRead')
 );
+const canWriteBranches = computed(() =>
+  gitOperationAvailable(projectStore.gitCapabilities, 'branchesWrite')
+);
+const canReadStatus = computed(() => gitOperationAvailable(projectStore.gitCapabilities, 'status'));
 const showGitWarning = computed(
   () => Boolean(projectStore.currentProject) && !projectStore.loading && !gitFeaturesAvailable.value
 );
@@ -442,6 +469,11 @@ const mergeForm = reactive({
   commitImmediately: true,
   commitMessage: '',
 });
+const mergeOperation = computed(() => {
+  if (mergeForm.strategy === 'rebase') return 'rebase' as const;
+  if (mergeForm.strategy === 'squash') return 'squash' as const;
+  return 'merge' as const;
+});
 const showSquashCommitOptions = computed(() => mergeForm.strategy === 'squash');
 const shouldCommitAfterSquash = computed(
   () => showSquashCommitOptions.value && mergeForm.commitImmediately
@@ -462,6 +494,30 @@ const mergeFormRules: FormRules = {
     },
   ],
 };
+
+function canUseMergeStrategy(strategy: 'merge' | 'rebase' | 'squash') {
+  return gitOperationAvailable(projectStore.gitCapabilities, strategy, mergeForm.worktreeId);
+}
+
+watch(
+  [() => mergeForm.worktreeId, () => projectStore.gitCapabilities],
+  () => {
+    if (!canUseMergeStrategy(mergeForm.strategy)) {
+      mergeForm.strategy = 'merge';
+    }
+  },
+  { deep: true }
+);
+
+watch(
+  () => mergeForm.strategy,
+  strategy => {
+    if (strategy !== 'squash') {
+      mergeForm.commitImmediately = true;
+      mergeForm.commitMessage = '';
+    }
+  }
+);
 
 watch(
   () => route.params.id,
@@ -487,21 +543,11 @@ watch(
   }
 );
 
-watch(
-  () => mergeForm.strategy,
-  strategy => {
-    if (strategy !== 'squash') {
-      mergeForm.commitMessage = '';
-      mergeForm.commitImmediately = true;
-    }
-  }
-);
-
 async function initializeProject(id: string) {
   try {
     await projectStore.fetchProject(id);
     createForm.base = projectStore.currentProject?.defaultBranch ?? '';
-    if (!gitFeaturesAvailable.value) {
+    if (!canReadBranches.value) {
       branchError.value = null;
       branchListReq.data.value = undefined as never;
       return;
@@ -513,7 +559,7 @@ async function initializeProject(id: string) {
 }
 
 async function reloadBranches(force = false) {
-  if (!currentProjectId.value || !gitFeaturesAvailable.value) {
+  if (!currentProjectId.value || !canReadBranches.value) {
     branchError.value = null;
     branchListReq.data.value = undefined as never;
     return;
@@ -596,7 +642,7 @@ function closeCreateModal() {
 }
 
 async function submitCreateBranch() {
-  if (!currentProjectId.value || !gitFeaturesAvailable.value) {
+  if (!currentProjectId.value || !canWriteBranches.value) {
     message.warning(t('branch.notGitRepoShort'));
     return;
   }
@@ -628,7 +674,7 @@ function handleCheckoutRemote(branch: BranchInfo) {
 }
 
 async function handleDeleteBranch(branch: BranchInfo) {
-  if (!currentProjectId.value || !gitFeaturesAvailable.value) {
+  if (!currentProjectId.value || !canWriteBranches.value) {
     message.warning(t('branch.notGitRepoShort'));
     return;
   }
@@ -654,7 +700,10 @@ async function handleDeleteBranch(branch: BranchInfo) {
 }
 
 async function handleCreateWorktree(branch: BranchInfo) {
-  if (!currentProjectId.value || !gitFeaturesAvailable.value) {
+  if (
+    !currentProjectId.value ||
+    !gitOperationAvailable(projectStore.gitCapabilities, 'worktreesWrite')
+  ) {
     message.warning(t('branch.notGitRepoShort'));
     return;
   }
@@ -686,7 +735,9 @@ function handleOpenWorktree(branch: BranchInfo) {
 }
 
 async function submitMerge() {
-  if (!gitFeaturesAvailable.value) {
+  if (
+    !gitOperationAvailable(projectStore.gitCapabilities, mergeOperation.value, mergeForm.worktreeId)
+  ) {
     message.warning(t('branch.notGitRepoShort'));
     return;
   }
@@ -713,7 +764,7 @@ async function submitMerge() {
       sourceBranch,
       strategy: mergeForm.strategy,
       commit: commitAfter,
-      commitMessage: commitMessage || '',
+      commitMessage,
     });
     const payload = extractItem(response) as MergeResult | undefined;
     if (payload) {
@@ -753,7 +804,7 @@ async function submitMerge() {
 }
 
 async function refreshMergeStatus() {
-  if (!gitFeaturesAvailable.value) {
+  if (!canReadStatus.value) {
     message.warning(t('branch.notGitRepoShort'));
     return;
   }
@@ -771,13 +822,6 @@ async function refreshMergeStatus() {
     message.error(error?.message ?? t('branch.refreshFailed'));
   }
 }
-
-const canMerge = computed(
-  () =>
-    gitFeaturesAvailable.value &&
-    projectStore.worktrees.length > 0 &&
-    branchList.value.local.length > 1
-);
 
 const canExecuteMerge = computed(() => {
   // 必须选择了worktree、目标分支和源分支
@@ -798,7 +842,15 @@ const canExecuteMerge = computed(() => {
     (selectedWorktree.statusModified ?? 0) > 0 ||
     (selectedWorktree.statusStaged ?? 0) > 0 ||
     (selectedWorktree.statusUntracked ?? 0) > 0;
-  return !hasUncommittedChanges;
+  return (
+    !hasUncommittedChanges &&
+    gitOperationAvailable(
+      projectStore.gitCapabilities,
+      mergeOperation.value,
+      mergeForm.worktreeId
+    ) &&
+    (!shouldCommitAfterSquash.value || Boolean(mergeForm.commitMessage.trim()))
+  );
 });
 
 function goBackToWorkspace() {

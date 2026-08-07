@@ -51,7 +51,7 @@ import { useMessage, type FormInst, type FormRules } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
 import type { Worktree } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
-import { projectSupportsGit } from '@/utils/projectGitCapability';
+import { gitOperationAvailable } from '@/utils/projectGitCapability';
 
 const { t } = useLocale();
 
@@ -152,7 +152,7 @@ async function handleCreate() {
     message.error(t('project.selectProjectFirst'));
     return false;
   }
-  if (!projectSupportsGit(projectStore.currentProject, projectStore.worktrees)) {
+  if (!gitOperationAvailable(projectStore.gitCapabilities, 'worktreesWrite')) {
     message.warning(t('worktree.notGitRepoShort'));
     return false;
   }

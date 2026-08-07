@@ -243,7 +243,7 @@ import { useResponsive } from '@/composables/useResponsive';
 import { useProjectStore } from '@/stores/project';
 import { fileManagerApi } from '@/api/fileManager';
 import { renderHighlightedCodeBlock, renderMarkdown } from '@/utils/markdown';
-import { projectSupportsGit } from '@/utils/projectGitCapability';
+import { gitOperationAvailable } from '@/utils/projectGitCapability';
 import type {
   FileManagerChangeEntry,
   FileManagerChangesResult,
@@ -301,7 +301,7 @@ const changesLoadController = createGitChangesLoadController();
 const changesUpdateCheckController = createGitChangesLoadController();
 
 const gitFeaturesAvailable = computed(() =>
-  projectSupportsGit(projectStore.currentProject, projectStore.worktrees)
+  gitOperationAvailable(projectStore.gitCapabilities, 'status', selectedWorktreeId.value)
 );
 const showGitWarning = computed(
   () => Boolean(projectStore.currentProject) && !projectStore.loading && !gitFeaturesAvailable.value

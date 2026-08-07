@@ -1,21 +1,27 @@
 package git
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
+	"unicode/utf8"
+
+	goGit "github.com/go-git/go-git/v6"
+	gitconfig "github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	objectformat "github.com/go-git/go-git/v6/plumbing/format/config"
+	formatdiff "github.com/go-git/go-git/v6/plumbing/format/diff"
+	gitdiff "github.com/go-git/go-git/v6/utils/diff"
+	dmp "github.com/sergi/go-diff/diffmatchpatch"
 )
 
 type FileChangeKind string
@@ -41,8 +47,6 @@ type DiffStat struct {
 	Deletions int64
 }
 
-const emptyTreeObjectID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-
 type FileStatusResult struct {
 	Statuses    map[string]FileStatus
 	Truncated   bool
@@ -50,687 +54,650 @@ type FileStatusResult struct {
 	ChangeToken string
 }
 
+const maxDiffFileBytes int64 = 32 << 20
+
 func ListFileStatuses(path string) (map[string]FileStatus, error) {
 	return ListFileStatusesContext(context.Background(), path, true)
 }
 
-func ListFileStatusesContext(
-	ctx context.Context,
-	path string,
-	includeUntracked bool,
-) (map[string]FileStatus, error) {
+func ListFileStatusesContext(ctx context.Context, path string, includeUntracked bool) (map[string]FileStatus, error) {
 	result, err := ListFileStatusesLimitedContext(ctx, path, includeUntracked, 0)
 	return result.Statuses, err
 }
 
-func ListFileStatusesLimitedContext(
-	ctx context.Context,
-	path string,
-	includeUntracked bool,
-	maxEntries int,
-) (FileStatusResult, error) {
-	untrackedMode := "--untracked-files=no"
-	if includeUntracked {
-		untrackedMode = "--untracked-files=all"
-	}
+func ListFileStatusesLimitedContext(ctx context.Context, path string, includeUntracked bool, maxEntries int) (FileStatusResult, error) {
+	return listFileStatusesLimitedContext(ctx, path, includeUntracked, maxEntries, false)
+}
 
-	cmd, stdout, err := startGitCommandStdoutPipe(
-		ctx,
-		path,
-		"status",
-		"--porcelain=2",
-		"-z",
-		untrackedMode,
-	)
+// ListFileStatusesFastContext skips content hashing and exact rename detection.
+// It is intended for polling badges where a cheap invalidation token matters
+// more than a fully classified change list.
+func ListFileStatusesFastContext(ctx context.Context, path string, includeUntracked bool, maxEntries int) (FileStatusResult, error) {
+	return listFileStatusesLimitedContext(ctx, path, includeUntracked, maxEntries, true)
+}
+
+func listFileStatusesLimitedContext(ctx context.Context, path string, includeUntracked bool, maxEntries int, fast bool) (FileStatusResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	repo, err := DetectRepository(path)
 	if err != nil {
 		return FileStatusResult{}, err
 	}
-	defer stdout.Close()
-
-	parser := newGitPorcelainStatusStreamParser(maxEntries)
-	readErr := parser.consume(stdout)
-	waitErr := cmd.Wait()
-	result := parser.result()
-	result.ChangeToken = buildFileStatusChangeToken(path, result.Statuses, parser.changeDigest())
-
-	if readErr != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return result, ctxErr
-		}
-		return result, readErr
+	defer repo.Close()
+	engine, err := repo.requireEngine(path, OperationStatus)
+	if err != nil {
+		return FileStatusResult{}, err
 	}
-	if waitErr != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return result, ctxErr
-		}
-		return result, waitErr
+	if engine == EngineSystem {
+		return listFileStatusesSystem(ctx, path, includeUntracked, maxEntries, fast)
 	}
+	if repo.repository == nil {
+		return FileStatusResult{}, errors.New("built-in Git repository is not initialized")
+	}
+
+	repo.lock.RLock()
+	defer repo.lock.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return FileStatusResult{}, err
+	}
+	repository, err := repo.openWorktreeRepository(path)
+	if err != nil {
+		return FileStatusResult{}, err
+	}
+	defer repository.Close()
+	worktree, err := repository.Worktree()
+	if err != nil {
+		return FileStatusResult{}, err
+	}
+	snapshot, err := worktree.StatusWithOptions(goGit.StatusOptions{Strategy: goGit.Preload})
+	if err != nil {
+		return FileStatusResult{}, mapGoGitError(OperationStatus, err)
+	}
+	conflicts, err := conflictPaths(repository)
+	if err != nil {
+		return FileStatusResult{}, err
+	}
+
+	statuses := make(map[string]FileStatus)
+	for path := range conflicts {
+		statuses[path] = FileStatus{Path: path, Kind: FileChangeKindConflicted}
+	}
+	for rawPath, rawStatus := range snapshot {
+		if err := ctx.Err(); err != nil {
+			return FileStatusResult{Statuses: statuses}, err
+		}
+		normalized := normalizeGitRelativePath(rawPath)
+		if normalized == "" {
+			continue
+		}
+		if _, conflicted := conflicts[normalized]; conflicted {
+			continue
+		}
+		status, changed := classifyGoGitStatus(normalized, rawStatus, includeUntracked)
+		if changed {
+			statuses[normalized] = status
+		}
+	}
+	if !fast {
+		detectExactRenames(ctx, repository, path, statuses)
+	}
+
+	keys := make([]string, 0, len(statuses))
+	for key := range statuses {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := FileStatusResult{
+		Statuses:   make(map[string]FileStatus),
+		TotalCount: len(keys),
+	}
+	limit := len(keys)
+	if maxEntries > 0 && limit > maxEntries {
+		limit = maxEntries
+		result.Truncated = true
+	}
+	for _, key := range keys[:limit] {
+		result.Statuses[key] = statuses[key]
+	}
+	result.ChangeToken = buildFileStatusChangeToken(repository, path, statuses)
 	return result, nil
 }
 
+func classifyGoGitStatus(path string, status *goGit.FileStatus, includeUntracked bool) (FileStatus, bool) {
+	result := FileStatus{Path: path}
+	if status == nil {
+		return result, false
+	}
+	if status.Staging == goGit.Untracked || status.Worktree == goGit.Untracked {
+		if !includeUntracked {
+			return result, false
+		}
+		result.Kind = FileChangeKindUntracked
+		return result, true
+	}
+	if status.Staging == goGit.Renamed {
+		result.Kind = FileChangeKindRenamed
+		result.PreviousPath = normalizeGitRelativePath(status.Extra)
+		return result, true
+	}
+	if status.Staging == goGit.Deleted || status.Worktree == goGit.Deleted {
+		result.Kind = FileChangeKindDeleted
+		return result, true
+	}
+	if status.Staging == goGit.Added || status.Worktree == goGit.Added {
+		result.Kind = FileChangeKindAdded
+		return result, true
+	}
+	if status.Staging != goGit.Unmodified || status.Worktree != goGit.Unmodified {
+		result.Kind = FileChangeKindModified
+		return result, true
+	}
+	return result, false
+}
+
 func GenerateUnifiedDiffAgainstHEAD(path, relativePath, previousPath string) (string, error) {
-	normalizedPath := normalizeGitRelativePath(relativePath)
-	if normalizedPath == "" {
-		return "", fmt.Errorf("path is required")
-	}
-
-	if repositoryHasHead(path) {
-		args := []string{
-			"diff",
-			"--no-ext-diff",
-			"--no-color",
-			"-M",
-			"HEAD",
-			"--",
-		}
-		args = append(args, normalizedPath)
-		if normalizedPrevious := normalizeGitRelativePath(previousPath); normalizedPrevious != "" && normalizedPrevious != normalizedPath {
-			args = append(args, normalizedPrevious)
-		}
-		output, err := runGitOutputAllowDiffExit(path, args...)
-		if err != nil {
-			return "", err
-		}
-		return string(output), nil
-	}
-
-	output, err := runGitOutputAllowDiffExit(
-		path,
-		"diff",
-		"--no-index",
-		"--no-color",
-		"--src-prefix=a/",
-		"--dst-prefix=b/",
-		"--",
-		os.DevNull,
-		filepath.FromSlash(normalizedPath),
-	)
+	repo, err := DetectRepository(path)
 	if err != nil {
 		return "", err
 	}
-	return string(output), nil
+	defer repo.Close()
+	engine, err := repo.requireEngine(path, OperationDiff)
+	if err != nil {
+		return "", err
+	}
+	if engine == EngineSystem {
+		return generateUnifiedDiffSystem(context.Background(), path, relativePath, previousPath)
+	}
+	if repo.repository == nil {
+		return "", errors.New("built-in Git repository is not initialized")
+	}
+	repo.lock.RLock()
+	defer repo.lock.RUnlock()
+	repository, err := repo.openWorktreeRepository(path)
+	if err != nil {
+		return "", err
+	}
+	defer repository.Close()
+
+	currentPath := normalizeGitRelativePath(relativePath)
+	if currentPath == "" {
+		return "", errors.New("path is required")
+	}
+	oldPath := normalizeGitRelativePath(previousPath)
+	if oldPath == "" {
+		oldPath = currentPath
+	}
+	from, fromErr := loadHeadDiffFile(repository, oldPath)
+	if fromErr != nil {
+		return "", fromErr
+	}
+	to, toErr := loadWorktreeDiffFile(path, currentPath)
+	if toErr != nil && !errors.Is(toErr, os.ErrNotExist) {
+		return "", toErr
+	}
+	if errors.Is(toErr, os.ErrNotExist) {
+		to = nil
+	}
+	if from == nil && to == nil {
+		return "", nil
+	}
+	if normalizeDiffLineEndings(repository) {
+		if from != nil {
+			from.content = []byte(normalizeCRLF(string(from.content)))
+		}
+		if to != nil {
+			to.content = []byte(normalizeCRLF(string(to.content)))
+		}
+	}
+	patch := newContentPatch(from, to)
+	buffer := new(bytes.Buffer)
+	if err := formatdiff.NewUnifiedEncoder(buffer, formatdiff.DefaultContextLines).Encode(patch); err != nil {
+		return "", err
+	}
+	return buffer.String(), nil
 }
 
 func GenerateDiffStatAgainstHEAD(path string, status FileStatus) (DiffStat, error) {
 	return GenerateDiffStatAgainstHEADContext(context.Background(), path, status)
 }
 
-func GenerateDiffStatsAgainstHEAD(
-	path string,
-	statuses []FileStatus,
-) (map[string]DiffStat, error) {
+func GenerateDiffStatsAgainstHEAD(path string, statuses []FileStatus) (map[string]DiffStat, error) {
 	return GenerateDiffStatsAgainstHEADContext(context.Background(), path, statuses)
 }
 
-func GenerateDiffStatsAgainstHEADContext(
-	ctx context.Context,
-	path string,
-	statuses []FileStatus,
-) (map[string]DiffStat, error) {
-	stats := make(map[string]DiffStat, len(statuses))
+func GenerateDiffStatsAgainstHEADContext(ctx context.Context, path string, statuses []FileStatus) (map[string]DiffStat, error) {
+	result := make(map[string]DiffStat, len(statuses))
 	if len(statuses) == 0 {
-		return stats, nil
+		return result, nil
 	}
-
-	trackedStatuses := make([]FileStatus, 0, len(statuses))
-	for _, status := range statuses {
-		if normalizeGitRelativePath(status.Path) == "" {
-			continue
-		}
-		if status.Kind == FileChangeKindUntracked {
-			continue
-		}
-		trackedStatuses = append(trackedStatuses, status)
+	if ctx == nil {
+		ctx = context.Background()
 	}
-
-	if len(trackedStatuses) > 0 {
-		reference := emptyTreeObjectID
-		if repositoryHasHeadContext(ctx, path) {
-			reference = "HEAD"
-		}
-
-		args := []string{
-			"diff",
-			"--numstat",
-			"-z",
-			"--no-ext-diff",
-			"--no-color",
-			"-M",
-			reference,
-			"--",
-		}
-		args = append(args, collectGitDiffPathspecs(trackedStatuses)...)
-
-		output, err := runGitOutputAllowDiffExitContext(ctx, path, args...)
-		if err != nil {
-			return nil, err
-		}
-		for changedPath, stat := range parseGitDiffStatsZOutput(output) {
-			stats[changedPath] = stat
-		}
+	repo, err := DetectRepository(path)
+	if err != nil {
+		return nil, err
 	}
+	defer repo.Close()
+	engine, err := repo.requireEngine(path, OperationDiff)
+	if err != nil {
+		return nil, err
+	}
+	if engine == EngineSystem {
+		return generateDiffStatsSystem(ctx, path, statuses)
+	}
+	if repo.repository == nil {
+		return nil, errors.New("built-in Git repository is not initialized")
+	}
+	repo.lock.RLock()
+	defer repo.lock.RUnlock()
+	repository, err := repo.openWorktreeRepository(path)
+	if err != nil {
+		return nil, err
+	}
+	defer repository.Close()
 
 	for _, status := range statuses {
-		if status.Kind != FileChangeKindUntracked {
-			continue
+		if err := ctx.Err(); err != nil {
+			return result, err
 		}
-		stat, err := generateLocalUntrackedDiffStat(path, status)
-		if err != nil {
-			return nil, err
+		stat, statErr := generateDiffStat(repository, path, status)
+		if statErr != nil {
+			return result, statErr
 		}
-		stats[normalizeGitRelativePath(status.Path)] = stat
+		result[normalizeGitRelativePath(status.Path)] = stat
 	}
-
-	return stats, nil
+	return result, nil
 }
 
-func GenerateDiffStatAgainstHEADContext(
-	ctx context.Context,
-	path string,
-	status FileStatus,
-) (DiffStat, error) {
-	normalizedPath := normalizeGitRelativePath(status.Path)
-	if normalizedPath == "" {
-		return DiffStat{}, fmt.Errorf("path is required")
+func GenerateDiffStatAgainstHEADContext(ctx context.Context, path string, status FileStatus) (DiffStat, error) {
+	stats, err := GenerateDiffStatsAgainstHEADContext(ctx, path, []FileStatus{status})
+	if err != nil {
+		return DiffStat{}, err
 	}
+	return stats[normalizeGitRelativePath(status.Path)], nil
+}
 
-	if repositoryHasHeadContext(ctx, path) && status.Kind != FileChangeKindUntracked {
-		args := []string{
-			"diff",
-			"--numstat",
-			"--no-ext-diff",
-			"--no-color",
-			"-M",
-			"HEAD",
-			"--",
-			normalizedPath,
-		}
-		if normalizedPrevious := normalizeGitRelativePath(status.PreviousPath); normalizedPrevious != "" && normalizedPrevious != normalizedPath {
-			args = append(args, normalizedPrevious)
-		}
-		output, err := runGitOutputAllowDiffExitContext(ctx, path, args...)
+func generateDiffStat(repository *goGit.Repository, root string, status FileStatus) (DiffStat, error) {
+	path := normalizeGitRelativePath(status.Path)
+	if path == "" {
+		return DiffStat{}, errors.New("path is required")
+	}
+	oldPath := normalizeGitRelativePath(status.PreviousPath)
+	if oldPath == "" {
+		oldPath = path
+	}
+	var from *contentDiffFile
+	var to *contentDiffFile
+	var err error
+	if status.Kind != FileChangeKindUntracked && status.Kind != FileChangeKindAdded {
+		from, err = loadHeadDiffFile(repository, oldPath)
 		if err != nil {
 			return DiffStat{}, err
 		}
-		return parseGitDiffStatOutput(output), nil
 	}
-	if status.Kind == FileChangeKindUntracked {
-		return generateLocalUntrackedDiffStat(path, status)
-	}
-
-	return generateUntrackedDiffStatContext(ctx, path, status)
-}
-
-func repositoryHasHead(path string) bool {
-	return repositoryHasHeadContext(context.Background(), path)
-}
-
-func repositoryHasHeadContext(ctx context.Context, path string) bool {
-	cmd := newGitCommandContext(ctx, path, "rev-parse", "--verify", "HEAD^{commit}")
-	return cmd.Run() == nil
-}
-
-func parseGitFileStatusesPorcelainV2(raw []byte) map[string]FileStatus {
-	parser := newGitPorcelainStatusStreamParser(0)
-	if err := parser.consume(bytes.NewReader(raw)); err != nil {
-		return map[string]FileStatus{}
-	}
-	return parser.result().Statuses
-}
-
-type gitPorcelainStatusStreamParser struct {
-	maxEntries    int
-	statuses      map[string]FileStatus
-	truncated     bool
-	totalCount    int
-	pendingRename *FileStatus
-	changeHash    hash.Hash
-}
-
-func newGitPorcelainStatusStreamParser(maxEntries int) *gitPorcelainStatusStreamParser {
-	return &gitPorcelainStatusStreamParser{
-		maxEntries: maxEntries,
-		statuses:   make(map[string]FileStatus),
-		changeHash: sha256.New(),
-	}
-}
-
-func (p *gitPorcelainStatusStreamParser) changeDigest() []byte {
-	return p.changeHash.Sum(nil)
-}
-
-func (p *gitPorcelainStatusStreamParser) result() FileStatusResult {
-	return FileStatusResult{
-		Statuses:   p.statuses,
-		Truncated:  p.truncated,
-		TotalCount: p.totalCount,
-	}
-}
-
-func (p *gitPorcelainStatusStreamParser) consume(reader io.Reader) error {
-	buffered := bufio.NewReader(reader)
-	for {
-		recordBytes, err := buffered.ReadBytes(0)
-		if len(recordBytes) > 0 {
-			if recordBytes[len(recordBytes)-1] == 0 {
-				recordBytes = recordBytes[:len(recordBytes)-1]
-			}
-			p.consumeRecord(string(recordBytes))
-		}
-
-		if err == nil {
-			continue
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		return err
-	}
-
-	if p.pendingRename != nil {
-		p.storeStatus(*p.pendingRename)
-		p.pendingRename = nil
-	}
-	return nil
-}
-
-func (p *gitPorcelainStatusStreamParser) consumeRecord(record string) {
-	writeChangeTokenField(p.changeHash, record)
-	if p.pendingRename != nil {
-		p.pendingRename.PreviousPath = normalizeGitRelativePath(record)
-		p.storeStatus(*p.pendingRename)
-		p.pendingRename = nil
-		return
-	}
-	if record == "" {
-		return
-	}
-
-	switch record[0] {
-	case '#':
-		return
-	case '?':
-		path := normalizeGitRelativePath(strings.TrimPrefix(record, "? "))
-		if path == "" {
-			return
-		}
-		p.storeStatus(FileStatus{
-			Path: path,
-			Kind: FileChangeKindUntracked,
-		})
-	case '1':
-		fields, path, ok := splitGitPorcelainRecord(record, 8)
-		if !ok {
-			return
-		}
-		normalizedPath := normalizeGitRelativePath(path)
-		if normalizedPath == "" {
-			return
-		}
-		p.storeStatus(FileStatus{
-			Path: normalizedPath,
-			Kind: classifyGitFileChange(fields[1], false),
-		})
-	case '2':
-		fields, path, ok := splitGitPorcelainRecord(record, 9)
-		if !ok {
-			return
-		}
-		normalizedPath := normalizeGitRelativePath(path)
-		if normalizedPath == "" {
-			return
-		}
-		status := FileStatus{
-			Path: normalizedPath,
-			Kind: classifyGitFileChange(fields[1], true),
-		}
-		p.pendingRename = &status
-	case 'u':
-		_, path, ok := splitGitPorcelainRecord(record, 10)
-		if !ok {
-			return
-		}
-		normalizedPath := normalizeGitRelativePath(path)
-		if normalizedPath == "" {
-			return
-		}
-		p.storeStatus(FileStatus{
-			Path: normalizedPath,
-			Kind: FileChangeKindConflicted,
-		})
-	}
-}
-
-func buildFileStatusChangeToken(rootPath string, statuses map[string]FileStatus, statusDigest []byte) string {
-	hasher := sha256.New()
-	_, _ = hasher.Write(statusDigest)
-
-	paths := make([]string, 0, len(statuses))
-	for path := range statuses {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-
-	for _, path := range paths {
-		status := statuses[path]
-		writeChangeTokenField(hasher, status.Path)
-		writeChangeTokenField(hasher, string(status.Kind))
-		writeChangeTokenField(hasher, status.PreviousPath)
-
-		info, err := os.Lstat(filepath.Join(rootPath, filepath.FromSlash(status.Path)))
+	if status.Kind != FileChangeKindDeleted {
+		to, err = loadWorktreeDiffFile(root, path)
 		if err != nil {
-			writeChangeTokenField(hasher, "missing")
+			return DiffStat{}, err
+		}
+	}
+	if (from != nil && from.binary) || (to != nil && to.binary) {
+		return DiffStat{}, nil
+	}
+	fromContent := ""
+	toContent := ""
+	if from != nil {
+		fromContent = string(from.content)
+	}
+	if to != nil {
+		toContent = string(to.content)
+	}
+	if normalizeDiffLineEndings(repository) {
+		fromContent = normalizeCRLF(fromContent)
+		toContent = normalizeCRLF(toContent)
+	}
+	matcher := dmp.New()
+	fromLines, toLines, _ := matcher.DiffLinesToRunes(fromContent, toContent)
+	var stat DiffStat
+	for _, item := range matcher.DiffMainRunes(fromLines, toLines, false) {
+		switch item.Type {
+		case dmp.DiffDelete:
+			stat.Deletions += int64(utf8.RuneCountInString(item.Text))
+		case dmp.DiffInsert:
+			stat.Additions += int64(utf8.RuneCountInString(item.Text))
+		}
+	}
+	return stat, nil
+}
+
+func normalizeDiffLineEndings(repository *goGit.Repository) bool {
+	if repository == nil {
+		return false
+	}
+	cfg, err := repository.ConfigScoped(gitconfig.SystemScope)
+	if err != nil {
+		cfg, err = repository.Config()
+	}
+	if err != nil || cfg == nil {
+		return false
+	}
+	value := strings.ToLower(strings.TrimSpace(cfg.Core.AutoCRLF))
+	return value == "true" || value == "input"
+}
+
+func normalizeCRLF(content string) string {
+	return strings.ReplaceAll(content, "\r\n", "\n")
+}
+
+func loadHeadDiffFile(repository *goGit.Repository, path string) (*contentDiffFile, error) {
+	head, err := repository.Head()
+	if errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	commit, err := repository.CommitObject(head.Hash())
+	if err != nil {
+		return nil, err
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, err
+	}
+	file, err := tree.File(path)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, plumbing.ErrObjectNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, nil
+	}
+	reader, err := file.Reader()
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	content, err := readLimitedContent(reader, maxDiffFileBytes)
+	if err != nil {
+		return nil, err
+	}
+	return &contentDiffFile{
+		path:    path,
+		mode:    file.Mode,
+		hash:    file.Hash,
+		content: content,
+		binary:  isBinaryContent(content),
+	}, nil
+}
+
+func loadWorktreeDiffFile(root, path string) (*contentDiffFile, error) {
+	absPath, err := safeWorktreePath(root, path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(absPath)
+	if err != nil {
+		return nil, err
+	}
+	mode := filemode.Regular
+	var content []byte
+	if info.Mode()&os.ModeSymlink != 0 {
+		mode = filemode.Symlink
+		target, readErr := os.Readlink(absPath)
+		if readErr != nil {
+			return nil, readErr
+		}
+		content = []byte(target)
+	} else {
+		if !info.Mode().IsRegular() {
+			return nil, errors.New("diff path is not a regular file")
+		}
+		if info.Size() > maxDiffFileBytes {
+			return nil, fmt.Errorf("file exceeds diff limit of %d bytes", maxDiffFileBytes)
+		}
+		file, openErr := os.Open(absPath)
+		if openErr != nil {
+			return nil, openErr
+		}
+		content, err = readLimitedContent(file, maxDiffFileBytes)
+		_ = file.Close()
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&0o111 != 0 {
+			mode = filemode.Executable
+		}
+	}
+	return &contentDiffFile{
+		path:    path,
+		mode:    mode,
+		hash:    hashBlob(content),
+		content: content,
+		binary:  isBinaryContent(content),
+	}, nil
+}
+
+func detectExactRenames(ctx context.Context, repository *goGit.Repository, root string, statuses map[string]FileStatus) {
+	deletedByDigest := make(map[string][]string)
+	for path, status := range statuses {
+		if status.Kind != FileChangeKindDeleted {
 			continue
 		}
-		writeChangeTokenField(hasher, strconv.FormatInt(info.Size(), 10))
-		writeChangeTokenField(hasher, strconv.FormatUint(uint64(info.Mode()), 10))
-		writeChangeTokenField(hasher, strconv.FormatInt(info.ModTime().UnixNano(), 10))
+		file, err := loadHeadDiffFile(repository, path)
+		if err == nil && file != nil {
+			digest := sha256.Sum256(file.content)
+			deletedByDigest[hex.EncodeToString(digest[:])] = append(deletedByDigest[hex.EncodeToString(digest[:])], path)
+		}
 	}
+	for path, status := range statuses {
+		if ctx.Err() != nil || (status.Kind != FileChangeKindAdded && status.Kind != FileChangeKindUntracked) {
+			continue
+		}
+		file, err := loadWorktreeDiffFile(root, path)
+		if err != nil || file == nil {
+			continue
+		}
+		digest := sha256.Sum256(file.content)
+		key := hex.EncodeToString(digest[:])
+		candidates := deletedByDigest[key]
+		if len(candidates) == 0 {
+			continue
+		}
+		previous := candidates[0]
+		deletedByDigest[key] = candidates[1:]
+		delete(statuses, previous)
+		statuses[path] = FileStatus{Path: path, Kind: FileChangeKindRenamed, PreviousPath: previous}
+	}
+}
 
+func buildFileStatusChangeToken(repository *goGit.Repository, rootPath string, statuses map[string]FileStatus) string {
+	headID := ""
+	if head, err := repository.Head(); err == nil {
+		headID = head.Hash().String()
+	}
+	return buildStatusSnapshotToken(rootPath, headID, statuses)
+}
+
+func buildStatusSnapshotToken(rootPath, headID string, statuses map[string]FileStatus) string {
+	hasher := sha256.New()
+	writeChangeTokenField(hasher, "head:"+headID)
+	if _, layout, err := discoverRepository(rootPath); err == nil {
+		if info, statErr := os.Lstat(filepath.Join(layout.gitDir, "index")); statErr == nil {
+			writeChangeTokenField(hasher, fmt.Sprintf("index:%d:%d:%d", info.Size(), info.ModTime().UnixNano(), info.Mode()))
+		} else {
+			writeChangeTokenField(hasher, "index:missing")
+		}
+	}
+	paths := make(map[string]struct{}, len(statuses)*2)
+	for _, status := range statuses {
+		if path := normalizeGitRelativePath(status.Path); path != "" {
+			paths[path] = struct{}{}
+		}
+		if path := normalizeGitRelativePath(status.PreviousPath); path != "" {
+			paths[path] = struct{}{}
+		}
+	}
+	keys := make([]string, 0, len(paths))
+	for path := range paths {
+		keys = append(keys, path)
+	}
+	sort.Strings(keys)
+	for _, path := range keys {
+		writeChangeTokenField(hasher, "path:"+path)
+		if absPath, err := safeWorktreePath(rootPath, path); err == nil {
+			if info, statErr := os.Lstat(absPath); statErr == nil {
+				writeChangeTokenField(hasher, fmt.Sprintf("file:%d:%d:%d", info.Size(), info.ModTime().UnixNano(), info.Mode()))
+				continue
+			}
+		}
+		writeChangeTokenField(hasher, "file:missing")
+	}
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
 func writeChangeTokenField(writer io.Writer, value string) {
-	_, _ = io.WriteString(writer, strconv.Itoa(len(value)))
-	_, _ = io.WriteString(writer, ":")
+	_, _ = io.WriteString(writer, fmt.Sprintf("%d:", len(value)))
 	_, _ = io.WriteString(writer, value)
 }
 
-func (p *gitPorcelainStatusStreamParser) storeStatus(status FileStatus) {
-	if status.Path == "" {
-		return
-	}
-
-	if _, exists := p.statuses[status.Path]; exists {
-		p.statuses[status.Path] = status
-		return
-	}
-
-	p.totalCount++
-	if p.maxEntries > 0 && len(p.statuses) >= p.maxEntries {
-		p.truncated = true
-		return
-	}
-	p.statuses[status.Path] = status
-}
-
-func splitGitPorcelainRecord(record string, fieldsBeforePath int) ([]string, string, bool) {
-	fields := make([]string, 0, fieldsBeforePath)
-	remaining := record
-	for len(fields) < fieldsBeforePath {
-		spaceIndex := strings.IndexByte(remaining, ' ')
-		if spaceIndex == -1 {
-			return nil, "", false
-		}
-		fields = append(fields, remaining[:spaceIndex])
-		remaining = remaining[spaceIndex+1:]
-	}
-	if remaining == "" {
-		return nil, "", false
-	}
-	return fields, remaining, true
-}
-
-func classifyGitFileChange(xy string, renamed bool) FileChangeKind {
-	if renamed {
-		return FileChangeKindRenamed
-	}
-	if isGitConflictXY(xy) {
-		return FileChangeKindConflicted
-	}
-	if len(xy) < 2 {
-		return FileChangeKindModified
-	}
-	x := xy[0]
-	y := xy[1]
-	if x == 'R' || y == 'R' {
-		return FileChangeKindRenamed
-	}
-	if x == 'D' || y == 'D' {
-		return FileChangeKindDeleted
-	}
-	if x == 'A' || y == 'A' {
-		return FileChangeKindAdded
-	}
-	return FileChangeKindModified
-}
-
-func isGitConflictXY(xy string) bool {
-	if len(xy) < 2 {
-		return false
-	}
-	return xy[0] == 'U' || xy[1] == 'U'
-}
-
 func normalizeGitRelativePath(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" || strings.IndexByte(value, 0) >= 0 || strings.HasPrefix(value, "/") {
 		return ""
 	}
-	trimmed = filepath.ToSlash(trimmed)
-	trimmed = strings.TrimPrefix(trimmed, "./")
-	return strings.TrimPrefix(trimmed, "/")
+	cleaned := filepath.ToSlash(filepath.Clean(filepath.FromSlash(value)))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || filepath.IsAbs(filepath.FromSlash(cleaned)) {
+		return ""
+	}
+	return cleaned
 }
 
-func runGitOutputAllowDiffExit(path string, args ...string) ([]byte, error) {
-	return runGitOutputAllowDiffExitContext(context.Background(), path, args...)
-}
-
-func runGitOutputAllowDiffExitContext(
-	ctx context.Context,
-	path string,
-	args ...string,
-) ([]byte, error) {
-	cmd := newGitCommandContext(ctx, path, args...)
-	output, err := cmd.Output()
-	if err == nil {
-		return output, nil
+func safeWorktreePath(root, relative string) (string, error) {
+	normalized := normalizeGitRelativePath(relative)
+	if normalized == "" {
+		return "", errors.New("invalid repository-relative path")
 	}
-	if ctx != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-	}
-
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return output, nil
-	}
-	return nil, err
-}
-
-func collectGitDiffPathspecs(statuses []FileStatus) []string {
-	pathspecs := make([]string, 0, len(statuses)*2)
-	seen := make(map[string]struct{}, len(statuses)*2)
-	for _, status := range statuses {
-		if normalizedPath := normalizeGitRelativePath(status.Path); normalizedPath != "" {
-			if _, ok := seen[normalizedPath]; !ok {
-				seen[normalizedPath] = struct{}{}
-				pathspecs = append(pathspecs, normalizedPath)
-			}
-		}
-		if normalizedPreviousPath := normalizeGitRelativePath(status.PreviousPath); normalizedPreviousPath != "" {
-			if _, ok := seen[normalizedPreviousPath]; !ok {
-				seen[normalizedPreviousPath] = struct{}{}
-				pathspecs = append(pathspecs, normalizedPreviousPath)
-			}
-		}
-	}
-	return pathspecs
-}
-
-func generateUntrackedDiffStatContext(
-	ctx context.Context,
-	path string,
-	status FileStatus,
-) (DiffStat, error) {
-	normalizedPath := normalizeGitRelativePath(status.Path)
-	if normalizedPath == "" {
-		return DiffStat{}, fmt.Errorf("path is required")
-	}
-
-	args := []string{
-		"diff",
-		"--numstat",
-		"--no-index",
-		"--no-color",
-		"--",
-		os.DevNull,
-		filepath.FromSlash(normalizedPath),
-	}
-	if status.Kind == FileChangeKindDeleted {
-		args = []string{
-			"diff",
-			"--numstat",
-			"--no-index",
-			"--no-color",
-			"--",
-			filepath.FromSlash(normalizedPath),
-			os.DevNull,
-		}
-	}
-
-	output, err := runGitOutputAllowDiffExitContext(ctx, path, args...)
+	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return DiffStat{}, err
+		return "", err
 	}
-	return parseGitDiffStatOutput(output), nil
+	absRoot = filepath.Clean(absRoot)
+	target := filepath.Join(absRoot, filepath.FromSlash(normalized))
+	rootResolved := canonicalPathWithExistingParent(absRoot)
+	parentResolved := canonicalPathWithExistingParent(filepath.Dir(target))
+	if !pathWithin(parentResolved, rootResolved) {
+		return "", errors.New("path escapes worktree root")
+	}
+	if info, statErr := os.Lstat(target); statErr == nil && info.Mode()&os.ModeSymlink == 0 {
+		targetResolved := canonicalPathWithExistingParent(target)
+		if !pathWithin(targetResolved, rootResolved) {
+			return "", errors.New("path escapes worktree root")
+		}
+	}
+	rel, err := filepath.Rel(absRoot, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", errors.New("path escapes worktree root")
+	}
+	return target, nil
 }
 
-func generateLocalUntrackedDiffStat(path string, status FileStatus) (DiffStat, error) {
-	normalizedPath := normalizeGitRelativePath(status.Path)
-	if normalizedPath == "" {
-		return DiffStat{}, fmt.Errorf("path is required")
-	}
+func hashBlob(content []byte) plumbing.Hash {
+	hasher := plumbing.NewHasher(objectformat.SHA1, plumbing.BlobObject, int64(len(content)))
+	_, _ = hasher.Write(content)
+	return hasher.Sum()
+}
 
-	filePath := filepath.Join(path, filepath.FromSlash(normalizedPath))
-	info, err := os.Lstat(filePath)
+func readLimitedContent(reader io.Reader, limit int64) ([]byte, error) {
+	limited := io.LimitReader(reader, limit+1)
+	content, err := io.ReadAll(limited)
 	if err != nil {
-		return DiffStat{}, err
+		return nil, err
 	}
-	if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return DiffStat{}, nil
+	if int64(len(content)) > limit {
+		return nil, fmt.Errorf("file exceeds diff limit of %d bytes", limit)
 	}
+	return content, nil
+}
 
-	file, err := os.Open(filePath)
-	if err != nil {
-		return DiffStat{}, err
-	}
-	defer file.Close()
+func isBinaryContent(content []byte) bool {
+	limit := min(len(content), 8000)
+	return bytes.IndexByte(content[:limit], 0) >= 0
+}
 
-	buffer := make([]byte, 32*1024)
-	var additions int64
-	var sawContent bool
-	endsWithNewline := true
+type contentDiffFile struct {
+	path    string
+	mode    filemode.FileMode
+	hash    plumbing.Hash
+	content []byte
+	binary  bool
+}
 
-	for {
-		n, err := file.Read(buffer)
-		if n > 0 {
-			chunk := buffer[:n]
-			if bytes.IndexByte(chunk, 0) >= 0 {
-				return DiffStat{}, nil
+func (f *contentDiffFile) Hash() plumbing.Hash     { return f.hash }
+func (f *contentDiffFile) Mode() filemode.FileMode { return f.mode }
+func (f *contentDiffFile) Path() string            { return f.path }
+func (f *contentDiffFile) StringContent() string   { return string(f.content) }
+func (f *contentDiffFile) IsBinaryContent() bool   { return f.binary }
+
+type contentPatch struct {
+	files []formatdiff.FilePatch
+}
+
+func newContentPatch(from, to *contentDiffFile) formatdiff.Patch {
+	filePatch := &contentFilePatch{from: from, to: to}
+	if (from != nil && from.binary) || (to != nil && to.binary) {
+		filePatch.binary = true
+	} else {
+		fromContent := ""
+		toContent := ""
+		if from != nil {
+			fromContent = string(from.content)
+		}
+		if to != nil {
+			toContent = string(to.content)
+		}
+		for _, item := range gitdiff.Do(fromContent, toContent) {
+			operation := formatdiff.Equal
+			switch item.Type {
+			case dmp.DiffDelete:
+				operation = formatdiff.Delete
+			case dmp.DiffInsert:
+				operation = formatdiff.Add
 			}
-			sawContent = true
-			additions += int64(bytes.Count(chunk, []byte{'\n'}))
-			endsWithNewline = chunk[n-1] == '\n'
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return DiffStat{}, err
+			filePatch.chunks = append(filePatch.chunks, contentChunk{content: item.Text, operation: operation})
 		}
 	}
-
-	if sawContent && !endsWithNewline {
-		additions++
-	}
-
-	return DiffStat{
-		Additions: additions,
-		Deletions: 0,
-	}, nil
+	return contentPatch{files: []formatdiff.FilePatch{filePatch}}
 }
 
-func parseGitDiffStatOutput(output []byte) DiffStat {
-	line := strings.TrimSpace(string(output))
-	if line == "" {
-		return DiffStat{}
-	}
+func (p contentPatch) FilePatches() []formatdiff.FilePatch { return p.files }
+func (p contentPatch) Message() string                     { return "" }
 
-	firstLine := strings.Split(line, "\n")[0]
-	fields := strings.Split(firstLine, "\t")
-	if len(fields) < 3 {
-		return DiffStat{}
-	}
-
-	return DiffStat{
-		Additions: parseGitNumstatField(fields[0]),
-		Deletions: parseGitNumstatField(fields[1]),
-	}
+type contentFilePatch struct {
+	from   *contentDiffFile
+	to     *contentDiffFile
+	binary bool
+	chunks []formatdiff.Chunk
 }
 
-func parseGitDiffStatsZOutput(output []byte) map[string]DiffStat {
-	stats := make(map[string]DiffStat)
-	for len(output) > 0 {
-		additionsField, rest, ok := splitGitDiffStatField(output, '\t')
-		if !ok {
-			break
-		}
-		deletionsField, rest, ok := splitGitDiffStatField(rest, '\t')
-		if !ok {
-			break
-		}
-		pathField, rest, ok := splitGitDiffStatField(rest, 0)
-		if !ok {
-			break
-		}
-
-		stat := DiffStat{
-			Additions: parseGitNumstatField(string(additionsField)),
-			Deletions: parseGitNumstatField(string(deletionsField)),
-		}
-
-		if len(pathField) > 0 {
-			if normalizedPath := normalizeGitRelativePath(string(pathField)); normalizedPath != "" {
-				stats[normalizedPath] = stat
-			}
-			output = rest
-			continue
-		}
-
-		_, rest, ok = splitGitDiffStatField(rest, 0)
-		if !ok {
-			break
-		}
-		renamedPath, rest, ok := splitGitDiffStatField(rest, 0)
-		if !ok {
-			break
-		}
-		if normalizedPath := normalizeGitRelativePath(string(renamedPath)); normalizedPath != "" {
-			stats[normalizedPath] = stat
-		}
-		output = rest
+func (p *contentFilePatch) IsBinary() bool { return p.binary }
+func (p *contentFilePatch) Files() (formatdiff.File, formatdiff.File) {
+	var from formatdiff.File
+	var to formatdiff.File
+	if p.from != nil {
+		from = p.from
 	}
-	return stats
+	if p.to != nil {
+		to = p.to
+	}
+	return from, to
+}
+func (p *contentFilePatch) Chunks() []formatdiff.Chunk { return p.chunks }
+
+type contentChunk struct {
+	content   string
+	operation formatdiff.Operation
 }
 
-func splitGitDiffStatField(input []byte, separator byte) ([]byte, []byte, bool) {
-	index := bytes.IndexByte(input, separator)
-	if index < 0 {
-		return nil, nil, false
-	}
-	return input[:index], input[index+1:], true
-}
-
-func parseGitNumstatField(value string) int64 {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || trimmed == "-" {
-		return 0
-	}
-	parsed, err := strconv.ParseInt(trimmed, 10, 64)
-	if err != nil || parsed < 0 {
-		return 0
-	}
-	return parsed
-}
+func (c contentChunk) Content() string            { return c.content }
+func (c contentChunk) Type() formatdiff.Operation { return c.operation }

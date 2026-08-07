@@ -8,7 +8,7 @@
 
 [核心特性](#核心特性) • [快速体验](#快速体验) • [开发指南](#开发指南) • [关于](#关于)
 
-![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)
+![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)
 ![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
@@ -43,7 +43,8 @@ npm install -g codekanban@latest
   可视化方式管理开发任务，清晰直观。
 
 - **🌿 Worktree 管理**  
-  简单支持了 worktree 分支的创建与管理，帮助你进行并行开发。
+  采用混合 Git 引擎：go-git 在进程内快速读取状态、Diff 和增删行，提交及仓库写操作则
+  优先使用系统 Git，以保留 hook、签名、filter 和用户配置。可在设置中分别选择读取与写入引擎。
 
 - **📝 笔记功能**  
   支持多标签页笔记，随手记录灵感与问题（快捷键 `1`）。
@@ -52,7 +53,7 @@ npm install -g codekanban@latest
 
 ### 环境要求
 - **Node.js**: v20.19.0+ 或 v22.12.0+
-- **Go**: 1.24.6+
+- **Go**: 1.25+
 - **包管理器**: pnpm 9.15.9
 
 ### 安装依赖

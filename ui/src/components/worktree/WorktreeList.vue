@@ -7,7 +7,7 @@
           <n-button
             text
             size="small"
-            :disabled="!projectStore.currentProject || !gitFeaturesAvailable"
+            :disabled="!projectStore.currentProject || !canReadBranches"
             @click="goToBranchManagement"
           >
             <template #icon>
@@ -19,7 +19,7 @@
             text
             @click="handleRefreshAll"
             :loading="refreshAllWorktreesReq.loading.value"
-            :disabled="!projectStore.currentProject || !gitFeaturesAvailable"
+            :disabled="!projectStore.currentProject || !canReadStatus"
           >
             <template #icon>
               <n-icon><RefreshOutline /></n-icon>
@@ -29,7 +29,7 @@
             type="primary"
             size="small"
             @click="showCreateDialog = true"
-            :disabled="!projectStore.currentProject || !gitFeaturesAvailable"
+            :disabled="!projectStore.currentProject || !canWriteWorktrees"
           >
             <template #icon>
               <n-icon><AddOutline /></n-icon>
@@ -61,12 +61,10 @@
           :key="worktree.id"
           :worktree="worktree"
           :selected="projectStore.selectedWorktreeId === worktree.id"
-          :can-refresh="gitFeaturesAvailable"
-          :can-sync="canSyncWorktree(worktree)"
+          :can-refresh="canRefreshWorktree(worktree)"
           :can-merge="canMergeWorktree(worktree)"
           :can-commit="canCommitWorktree(worktree)"
-          :refresh-disabled-reason="gitFeaturesAvailable ? '' : t('worktree.refreshDisabledGit')"
-          :sync-disabled-reason="getSyncDisabledReason(worktree)"
+          :refresh-disabled-reason="getRefreshDisabledReason(worktree)"
           :merge-disabled-reason="getMergeDisabledReason(worktree)"
           :commit-disabled-reason="getCommitDisabledReason(worktree)"
           :is-deleting="deletingWorktreeId === worktree.id"
@@ -78,7 +76,6 @@
           @open-explorer="handleOpenExplorer"
           @open-terminal="handleOpenTerminal"
           @open-editor="handleOpenEditor"
-          @sync-default="openSyncDialog"
           @merge-to-default="openMergeDialog"
           @commit-worktree="openCommitDialog"
         />
@@ -95,7 +92,7 @@
     <n-modal
       v-model:show="branchOperation.visible"
       preset="dialog"
-      :title="branchOperationTitle"
+      :title="t('worktree.mergeTo')"
       :mask-closable="false"
     >
       <n-space vertical size="large">
@@ -109,35 +106,8 @@
             :placeholder="t('worktree.selectBranch')"
           />
           <n-alert v-else type="warning" show-icon>
-            {{
-              branchOperation.type === 'merge'
-                ? t('worktree.noTargetWorktree')
-                : t('worktree.noUpstreamBranch')
-            }}
+            {{ t('worktree.noTargetWorktree') }}
           </n-alert>
-        </div>
-        <div v-if="branchOperation.type === 'merge'">
-          <n-radio-group v-model:value="branchOperation.strategy" size="small">
-            <n-radio value="merge">Merge</n-radio>
-            <n-radio value="squash">Squash</n-radio>
-          </n-radio-group>
-        </div>
-        <div v-if="showSquashCommitOptions">
-          <n-space vertical size="small">
-            <n-space align="center">
-              <n-checkbox v-model:checked="branchOperation.commitImmediately">{{
-                t('branch.commitImmediately')
-              }}</n-checkbox>
-              <n-text depth="3">{{ t('branch.commitImmediatelyHint') }}</n-text>
-            </n-space>
-            <n-input
-              v-if="shouldCommitAfterSquash"
-              v-model:value="branchOperation.commitMessage"
-              type="textarea"
-              :autosize="{ minRows: 2, maxRows: 4 }"
-              :placeholder="t('branch.commitMessagePlaceholder')"
-            />
-          </n-space>
         </div>
       </n-space>
       <template #action>
@@ -147,7 +117,7 @@
         <n-button
           type="primary"
           :loading="branchOperationLoading"
-          :disabled="!branchOperationOptions.length"
+          :disabled="!branchOperationOptions.length || !canExecuteBranchOperation"
           @click="confirmBranchOperation"
         >
           {{ t('branch.executeMerge') }}
@@ -208,10 +178,10 @@ import { useLocale } from '@/composables/useLocale';
 import Apis from '@/api';
 import { useReq } from '@/api/composable';
 import { extractItem } from '@/api/response';
-import type { BranchListResult, MergeResult, Worktree } from '@/types/models';
+import type { MergeResult, Worktree } from '@/types/models';
 import type { EditorPreference } from '@/stores/settings';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, EDITOR_LABEL_MAP } from '@/constants/editor';
-import { projectSupportsGit } from '@/utils/projectGitCapability';
+import { gitOperationAvailable } from '@/utils/projectGitCapability';
 
 const emit = defineEmits<{
   'open-terminal': [payload: Worktree];
@@ -256,8 +226,13 @@ const defaultBranch = computed(() => projectStore.currentProject?.defaultBranch 
 const mainWorktree = computed(
   () => projectStore.worktrees.find(worktree => worktree.isMain) ?? null
 );
-const gitFeaturesAvailable = computed(() =>
-  projectSupportsGit(projectStore.currentProject, projectStore.worktrees)
+const gitFeaturesAvailable = computed(() => Boolean(projectStore.gitCapabilities?.repository));
+const canReadBranches = computed(() =>
+  gitOperationAvailable(projectStore.gitCapabilities, 'branchesRead')
+);
+const canReadStatus = computed(() => gitOperationAvailable(projectStore.gitCapabilities, 'status'));
+const canWriteWorktrees = computed(() =>
+  gitOperationAvailable(projectStore.gitCapabilities, 'worktreesWrite')
 );
 const showGitWarning = computed(
   () => Boolean(projectStore.currentProject) && !projectStore.loading && !gitFeaturesAvailable.value
@@ -272,60 +247,42 @@ function hasPendingChanges(worktree: Worktree): boolean {
   return hasTrackedChanges(worktree) || (worktree.statusUntracked ?? 0) > 0;
 }
 
-// 判断worktree是否可以进行sync/rebase操作
-function canSyncWorktree(worktree: Worktree): boolean {
-  // 需要有默认分支，worktree是干净的，且当前分支不是默认分支
-  // 注意：isMain 是指主worktree（项目根目录），不是main分支，所以要用 branchName 判断
-  return (
-    gitFeaturesAvailable.value &&
-    Boolean(defaultBranch.value) &&
-    !hasTrackedChanges(worktree) &&
-    worktree.branchName !== defaultBranch.value
-  );
+function canRefreshWorktree(worktree: Worktree): boolean {
+  return gitOperationAvailable(projectStore.gitCapabilities, 'status', worktree.id);
 }
 
 // 判断worktree是否可以进行merge操作
 function canMergeWorktree(worktree: Worktree): boolean {
-  // 需要有主worktree，worktree是干净的，且当前分支不是默认分支
-  // 注意：isMain 是指主worktree（项目根目录），不是main分支，所以要用 branchName 判断
+  const target = mainWorktree.value;
   return (
-    gitFeaturesAvailable.value &&
-    Boolean(mainWorktree.value) &&
-    !hasTrackedChanges(worktree) &&
+    Boolean(target) &&
+    gitOperationAvailable(projectStore.gitCapabilities, 'status', worktree.id) &&
+    gitOperationAvailable(projectStore.gitCapabilities, 'merge', target?.id) &&
+    !hasPendingChanges(worktree) &&
     worktree.branchName !== defaultBranch.value
   );
 }
 
 // 判断worktree是否可以进行commit操作
 function canCommitWorktree(worktree: Worktree): boolean {
-  // git功能可用，且有待提交的内容
-  return gitFeaturesAvailable.value && hasPendingChanges(worktree);
+  return (
+    gitOperationAvailable(projectStore.gitCapabilities, 'commit', worktree.id) &&
+    hasPendingChanges(worktree)
+  );
 }
 
-function getSyncDisabledReason(worktree: Worktree): string {
-  if (canSyncWorktree(worktree)) {
+function getRefreshDisabledReason(worktree: Worktree): string {
+  if (canRefreshWorktree(worktree)) {
     return '';
   }
-  if (!gitFeaturesAvailable.value) {
-    return t('worktree.notGitRepoShort');
-  }
-  if (!defaultBranch.value) {
-    return t('worktree.rebaseDisabledNoDefault');
-  }
-  if (worktree.branchName === defaultBranch.value) {
-    return t('worktree.rebaseDisabledOnDefault');
-  }
-  if (hasTrackedChanges(worktree)) {
-    return t('worktree.rebaseDisabledDirty');
-  }
-  return t('worktree.actionDisabledGeneric');
+  return t('worktree.refreshDisabledGit');
 }
 
 function getMergeDisabledReason(worktree: Worktree): string {
   if (canMergeWorktree(worktree)) {
     return '';
   }
-  if (!gitFeaturesAvailable.value) {
+  if (!gitOperationAvailable(projectStore.gitCapabilities, 'merge', mainWorktree.value?.id)) {
     return t('worktree.mergeDisabledGit');
   }
   if (!mainWorktree.value) {
@@ -334,7 +291,7 @@ function getMergeDisabledReason(worktree: Worktree): string {
   if (worktree.branchName === defaultBranch.value) {
     return t('worktree.mergeDisabledOnDefault');
   }
-  if (hasTrackedChanges(worktree)) {
+  if (hasPendingChanges(worktree)) {
     return t('worktree.mergeDisabledDirty');
   }
   return t('worktree.actionDisabledGeneric');
@@ -344,7 +301,7 @@ function getCommitDisabledReason(worktree: Worktree): string {
   if (canCommitWorktree(worktree)) {
     return '';
   }
-  if (!gitFeaturesAvailable.value) {
+  if (!gitOperationAvailable(projectStore.gitCapabilities, 'commit', worktree.id)) {
     return t('worktree.commitDisabledGit');
   }
   if (!hasPendingChanges(worktree)) {
@@ -353,22 +310,12 @@ function getCommitDisabledReason(worktree: Worktree): string {
   return t('worktree.actionDisabledGeneric');
 }
 
-type BranchOperationType = 'rebase' | 'merge';
-
 const branchOperation = reactive({
   visible: false,
-  type: null as BranchOperationType | null,
   worktree: null as Worktree | null,
   targetBranch: '',
-  strategy: 'merge' as 'merge' | 'squash' | 'rebase',
-  commitImmediately: true,
-  commitMessage: '',
 });
 const branchOperationLoading = ref(false);
-const showSquashCommitOptions = computed(() => branchOperation.strategy === 'squash');
-const shouldCommitAfterSquash = computed(
-  () => showSquashCommitOptions.value && branchOperation.commitImmediately
-);
 const commitDialog = reactive({
   visible: false,
   worktree: null as Worktree | null,
@@ -388,7 +335,7 @@ const branchMergeReq = useReq(
     payload: {
       targetBranch: string;
       sourceBranch: string;
-      strategy: 'merge' | 'rebase' | 'squash';
+      strategy: 'merge';
       commit: boolean;
       commitMessage: string;
     }
@@ -397,25 +344,6 @@ const branchMergeReq = useReq(
       pathParams: { id: worktreeId },
       data: payload,
     })
-);
-
-const branchListReq = useReq((projectId: string, force = false) =>
-  Apis.branch.list({
-    pathParams: { projectId },
-    ...(force ? { params: { force: true } } : {}),
-  } as any)
-);
-
-const branchList = computed<BranchListResult>(() => {
-  const payload = extractItem(branchListReq.data.value) as BranchListResult | undefined;
-  return payload ?? { local: [], remote: [] };
-});
-
-const localBranchOptions = computed(() =>
-  branchList.value.local.map(branch => ({
-    label: branch.name,
-    value: branch.name,
-  }))
 );
 
 const mergeTargetOptions = computed(() =>
@@ -427,19 +355,20 @@ const mergeTargetOptions = computed(() =>
     }))
 );
 
-watch(
-  [() => projectStore.currentProject?.id, gitFeaturesAvailable],
-  ([id, gitEnabled]) => {
-    if (id && gitEnabled) {
-      void branchListReq.send(id).catch(() => {
-        branchListReq.data.value = undefined as any;
-      });
-      return;
-    }
-    branchListReq.data.value = undefined as any;
-  },
-  { immediate: true }
-);
+const canExecuteBranchOperation = computed(() => {
+  const source = branchOperation.worktree;
+  const target = projectStore.worktrees.find(
+    worktree => worktree.branchName === branchOperation.targetBranch
+  );
+  return Boolean(
+    source &&
+      target &&
+      source.id !== target.id &&
+      !hasPendingChanges(source) &&
+      !hasPendingChanges(target) &&
+      gitOperationAvailable(projectStore.gitCapabilities, 'merge', target.id)
+  );
+});
 
 watch(gitFeaturesAvailable, enabled => {
   if (!enabled) {
@@ -449,13 +378,6 @@ watch(gitFeaturesAvailable, enabled => {
 
 const hasWorktreeForBranch = (branchName: string) =>
   projectStore.worktrees.some(worktree => worktree.branchName === branchName);
-
-const resolveSyncBranchDefault = () => {
-  if (defaultBranch.value) {
-    return defaultBranch.value;
-  }
-  return localBranchOptions.value[0]?.value ?? '';
-};
 
 const resolveMergeTargetDefault = () => {
   if (defaultBranch.value && hasWorktreeForBranch(defaultBranch.value)) {
@@ -468,7 +390,7 @@ async function handleRefreshAll() {
   if (!projectStore.currentProject) {
     return;
   }
-  if (!gitFeaturesAvailable.value) {
+  if (!canReadStatus.value) {
     message.warning(t('worktree.notGitRepoCannotRefresh'));
     return;
   }
@@ -479,7 +401,6 @@ async function handleRefreshAll() {
     await refreshAllWorktreesReq.send(projectStore.currentProject.id);
     // 最后重新获取列表以确保 UI 显示最新的状态
     await projectStore.fetchWorktrees(projectStore.currentProject.id);
-    await branchListReq.forceReload(projectStore.currentProject.id, true);
     message.success(t('worktree.allWorktreesRefreshed'));
   } catch (error: any) {
     message.error(error?.message ?? t('branch.refreshFailed'), {
@@ -648,31 +569,14 @@ function goToBranchManagement() {
     message.warning(t('project.selectProjectFirst'));
     return;
   }
-  if (!gitFeaturesAvailable.value) {
+  if (!canReadBranches.value) {
     message.warning(t('worktree.notGitRepoShort'));
     return;
   }
   router.push({ name: 'project-branches', params: { id: projectStore.currentProject.id } });
 }
 
-function openSyncDialog(worktree: Worktree) {
-  const initial = resolveSyncBranchDefault();
-  if (!initial) {
-    message.error(t('worktree.noUpstreamBranch'), {
-      duration: 0,
-      closable: true,
-      keepAliveOnHover: true,
-    });
-    return;
-  }
-  branchOperation.visible = true;
-  branchOperation.type = 'rebase';
-  branchOperation.worktree = worktree;
-  branchOperation.targetBranch = initial;
-  branchOperation.strategy = 'rebase';
-}
-
-function openMergeDialog(payload: { worktree: Worktree; strategy?: 'merge' | 'squash' }) {
+function openMergeDialog(payload: { worktree: Worktree }) {
   const initial = resolveMergeTargetDefault();
   if (!initial) {
     message.error(t('worktree.noTargetWorktree'), {
@@ -683,60 +587,29 @@ function openMergeDialog(payload: { worktree: Worktree; strategy?: 'merge' | 'sq
     return;
   }
   branchOperation.visible = true;
-  branchOperation.type = 'merge';
   branchOperation.worktree = payload.worktree;
   branchOperation.targetBranch = initial;
-  branchOperation.strategy = payload.strategy ?? 'squash';
 }
 
 function closeBranchOperation() {
   branchOperation.visible = false;
-  branchOperation.type = null;
   branchOperation.worktree = null;
   branchOperation.targetBranch = '';
-  branchOperation.strategy = 'merge';
-  branchOperation.commitImmediately = true;
-  branchOperation.commitMessage = '';
 }
 
-const branchOperationTitle = computed(() => {
-  if (branchOperation.type === 'rebase') {
-    return 'Rebase';
-  }
-  if (branchOperation.type === 'merge') {
-    return t('worktree.mergeTo');
-  }
-  return t('worktree.branchOperation');
-});
-
 const branchOperationDescription = computed(() => {
-  if (!branchOperation.worktree || !branchOperation.type) {
+  if (!branchOperation.worktree) {
     return '';
   }
-  if (branchOperation.type === 'rebase') {
-    return t('worktree.rebaseDescription', {
-      branch: branchOperation.worktree.branchName,
-      source: branchOperation.targetBranch || defaultBranch.value || '',
-    });
-  }
-  const strategyLabel = branchOperation.strategy === 'squash' ? 'squash' : 'merge';
   const target = branchOperation.targetBranch || defaultBranch.value || '';
   return t('worktree.mergeDescription', {
-    strategy: strategyLabel,
+    strategy: 'merge',
     source: branchOperation.worktree.branchName,
     target,
   });
 });
 
-const branchOperationOptions = computed(() => {
-  if (branchOperation.type === 'rebase') {
-    return localBranchOptions.value;
-  }
-  if (branchOperation.type === 'merge') {
-    return mergeTargetOptions.value;
-  }
-  return [];
-});
+const branchOperationOptions = mergeTargetOptions;
 
 watch(
   () => branchOperationOptions.value,
@@ -753,36 +626,6 @@ watch(
     }
   },
   { deep: true }
-);
-
-watch(
-  () => branchOperation.type,
-  type => {
-    if (!type) {
-      branchOperation.targetBranch = '';
-      branchOperation.strategy = 'merge';
-      return;
-    }
-    if (type === 'rebase') {
-      branchOperation.strategy = 'rebase';
-      branchOperation.targetBranch = resolveSyncBranchDefault();
-    } else if (type === 'merge') {
-      if (branchOperation.strategy === 'rebase') {
-        branchOperation.strategy = 'merge';
-      }
-      branchOperation.targetBranch = resolveMergeTargetDefault();
-    }
-  }
-);
-
-watch(
-  () => branchOperation.strategy,
-  strategy => {
-    if (strategy !== 'squash') {
-      branchOperation.commitMessage = '';
-      branchOperation.commitImmediately = true;
-    }
-  }
 );
 
 function openCommitDialog(worktree: Worktree) {
@@ -825,58 +668,39 @@ async function submitCommit() {
 }
 
 async function confirmBranchOperation() {
-  if (!branchOperation.worktree || !branchOperation.type || !branchOperation.targetBranch) {
+  if (!branchOperation.worktree || !branchOperation.targetBranch) {
     message.warning(t('worktree.selectTargetBranch'));
     return;
   }
-  if (shouldCommitAfterSquash.value && !branchOperation.commitMessage.trim()) {
-    message.warning(t('worktree.commitMessagePlaceholder'));
+  if (!canExecuteBranchOperation.value) {
+    message.warning(t('worktree.mergeDisabledDirty'));
     return;
   }
   branchOperationLoading.value = true;
   try {
-    if (branchOperation.type === 'rebase') {
-      await performMerge(branchOperation.worktree.id, {
-        targetBranch: branchOperation.worktree.branchName,
-        sourceBranch: branchOperation.targetBranch,
-        strategy: 'rebase',
-      });
-      const result = await refreshWorktreeStatusReq.send(branchOperation.worktree.id);
-      const updated = extractItem(result);
-      if (updated) {
-        projectStore.updateWorktreeInList(branchOperation.worktree.id, updated);
-      }
-    } else {
-      const targetWorktree = projectStore.worktrees.find(
-        worktree => worktree.branchName === branchOperation.targetBranch
-      );
-      if (!targetWorktree) {
-        throw new Error(t('worktree.targetWorktreeNotFound'));
-      }
-      const strategy = branchOperation.strategy === 'squash' ? 'squash' : 'merge';
-      const shouldCommit = strategy === 'squash' && branchOperation.commitImmediately;
-      const commitMsg = shouldCommit ? branchOperation.commitMessage.trim() : '';
-      await performMerge(targetWorktree.id, {
-        targetBranch: targetWorktree.branchName,
-        sourceBranch: branchOperation.worktree.branchName,
-        strategy,
-        commit: shouldCommit,
-        commitMessage: commitMsg,
-      });
-      const refreshIds = Array.from(new Set([targetWorktree.id, branchOperation.worktree.id]));
-      await Promise.all(
-        refreshIds.map(async id => {
-          const result = await refreshWorktreeStatusReq.send(id);
-          const updated = extractItem(result);
-          if (updated) {
-            projectStore.updateWorktreeInList(id, updated);
-          }
-        })
-      );
-      if (shouldCommit) {
-        branchOperation.commitMessage = '';
-      }
+    const targetWorktree = projectStore.worktrees.find(
+      worktree => worktree.branchName === branchOperation.targetBranch
+    );
+    if (!targetWorktree) {
+      throw new Error(t('worktree.targetWorktreeNotFound'));
     }
+    await performMerge(targetWorktree.id, {
+      targetBranch: targetWorktree.branchName,
+      sourceBranch: branchOperation.worktree.branchName,
+      strategy: 'merge',
+      commit: false,
+      commitMessage: '',
+    });
+    const refreshIds = Array.from(new Set([targetWorktree.id, branchOperation.worktree.id]));
+    await Promise.all(
+      refreshIds.map(async id => {
+        const result = await refreshWorktreeStatusReq.send(id);
+        const updated = extractItem(result);
+        if (updated) {
+          projectStore.updateWorktreeInList(id, updated);
+        }
+      })
+    );
     closeBranchOperation();
   } catch (error: any) {
     message.error(error?.message ?? t('common.error'), {
@@ -894,17 +718,17 @@ async function performMerge(
   payload: {
     targetBranch: string;
     sourceBranch: string;
-    strategy: 'merge' | 'rebase' | 'squash';
-    commit?: boolean;
-    commitMessage?: string;
+    strategy: 'merge';
+    commit: boolean;
+    commitMessage: string;
   }
 ) {
   const response = await branchMergeReq.send(worktreeId, {
     targetBranch: payload.targetBranch,
     sourceBranch: payload.sourceBranch,
     strategy: payload.strategy,
-    commit: payload.commit ?? false,
-    commitMessage: payload.commitMessage ?? '',
+    commit: payload.commit,
+    commitMessage: payload.commitMessage,
   });
   const result = extractItem(response) as MergeResult | undefined;
   if (!result) {

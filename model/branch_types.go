@@ -8,7 +8,7 @@ type BranchListResult struct {
 	Remote []git.BranchInfo `json:"remote"`
 }
 
-// MergeResult captures merge command outcomes.
+// MergeResult captures merge outcomes.
 type MergeResult struct {
 	Success   bool     `json:"success"`
 	Conflicts []string `json:"conflicts"`

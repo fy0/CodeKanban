@@ -8,7 +8,7 @@ Manage all your terminals and AI coding tools (Claude Code / Codex) from one uni
 
 [Core Features](#core-features) • [Quick Start](#quick-start) • [Development Guide](#development-guide) • [About](#about)
 
-![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)
+![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)
 ![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
@@ -44,7 +44,9 @@ codekanban
   Visualize development task management, clear and intuitive.
 
 - **🌿 Worktree Management**
-  Basic support for worktree branch creation and management, enabling parallel development.
+  A hybrid Git engine uses go-git for fast in-process status, diff, and line statistics, while
+  preferring system Git for commits and repository mutations so hooks, signing, filters, and user
+  configuration continue to work. Read and write engines can be selected independently in Settings.
 
 - **📝 Notes**
   Multi-tab notes for quick recording of ideas and issues (Hotkey: `1`).
@@ -75,7 +77,7 @@ After installing the CLI and skills, restart Codex so the new skill is discovere
 
 ### Requirements
 - **Node.js**: v20.19.0+ or v22.12.0+
-- **Go**: 1.24.6+
+- **Go**: 1.25+
 - **Package Manager**: pnpm 9.15.9
 
 ### Install Dependencies

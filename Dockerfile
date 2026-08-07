@@ -19,12 +19,12 @@ COPY ui/ ./
 RUN pnpm build
 
 # Build stage for backend
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS backend-builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS backend-builder
 
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache git gcc musl-dev sqlite-dev
+RUN apk add --no-cache gcc musl-dev sqlite-dev
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -54,6 +54,7 @@ FROM alpine:latest
 # Install runtime dependencies
 RUN apk add --no-cache \
     ca-certificates \
+    git \
     tzdata \
     sqlite-libs
 

@@ -456,12 +456,22 @@ func (s *Service) ListChanges(
 	requestCtx, cancel := context.WithTimeout(ctx, resolved.timeout)
 	defer cancel()
 
-	statusResult, err := git.ListFileStatusesLimitedContext(
-		requestCtx,
-		scope.RootPath,
-		resolved.includeUntracked,
-		resolved.maxEntries,
-	)
+	var statusResult git.FileStatusResult
+	if resolved.withStats {
+		statusResult, err = git.ListFileStatusesLimitedContext(
+			requestCtx,
+			scope.RootPath,
+			resolved.includeUntracked,
+			resolved.maxEntries,
+		)
+	} else {
+		statusResult, err = git.ListFileStatusesFastContext(
+			requestCtx,
+			scope.RootPath,
+			resolved.includeUntracked,
+			resolved.maxEntries,
+		)
+	}
 	result.ChangeToken = statusResult.ChangeToken
 	if statusResult.Truncated {
 		result.Truncated = true
@@ -567,12 +577,22 @@ func (s *Service) ChangesSummary(
 	statusCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	statusResult, err := git.ListFileStatusesLimitedContext(
-		statusCtx,
-		scope.RootPath,
-		options.IncludeUntracked,
-		0,
-	)
+	var statusResult git.FileStatusResult
+	if options.WithStats {
+		statusResult, err = git.ListFileStatusesLimitedContext(
+			statusCtx,
+			scope.RootPath,
+			options.IncludeUntracked,
+			0,
+		)
+	} else {
+		statusResult, err = git.ListFileStatusesFastContext(
+			statusCtx,
+			scope.RootPath,
+			options.IncludeUntracked,
+			0,
+		)
+	}
 	result.ChangeToken = statusResult.ChangeToken
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {

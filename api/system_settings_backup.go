@@ -10,6 +10,7 @@ import (
 
 	"code-kanban/api/h"
 	"code-kanban/utils"
+	gitutil "code-kanban/utils/git"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/danielgtaylor/huma/v2"
@@ -222,6 +223,11 @@ func addPayloadSections(result *utils.SettingsBackupPreviewResult, backup utils.
 				Key: "server.worktree", Label: "Worktree settings", Action: "replace", Target: "server", ChangedKeys: []string{"globalBaseDir", "globalDirNamePattern"},
 			})
 		}
+		if server.Git != nil {
+			result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
+				Key: "server.git", Label: "Git settings", Action: "replace", Target: "server", ChangedKeys: []string{"readEngine", "writeEngine", "executable"},
+			})
+		}
 		if server.TerminalShell != nil {
 			result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
 				Key: "server.terminalShell", Label: "Terminal shell", Action: "replace", Target: "server", ChangedKeys: []string{"platform", "shell"},
@@ -256,6 +262,10 @@ func validateServerPayload(result *utils.SettingsBackupPreviewResult, payload *u
 	if payload.AuthAccess != nil {
 		sanitized := utils.SanitizeAuthAccessConfig(*payload.AuthAccess)
 		payload.AuthAccess = &sanitized
+	}
+	if payload.Git != nil {
+		normalized := utils.NormalizeGitConfig(*payload.Git)
+		payload.Git = &normalized
 	}
 	if payload.PageTitle != nil {
 		pageTitle, err := utils.NormalizePageTitle(*payload.PageTitle)
@@ -350,6 +360,10 @@ func applySettingsBackup(
 		server.PageTitle = &pageTitle
 	}
 	server.WebSessionQuickInput = utils.NormalizeSettingsBackupQuickInputSection(server.WebSessionQuickInput)
+	if server.Git != nil {
+		normalized := utils.NormalizeGitConfig(*server.Git)
+		server.Git = &normalized
+	}
 	if server.AuthAccess != nil {
 		authAccess, err := utils.NormalizeAuthAccessConfig(*server.AuthAccess)
 		if err != nil {
@@ -382,6 +396,9 @@ func applySettingsBackup(
 			c.Worktree.GlobalBaseDir = strings.TrimSpace(server.Worktree.GlobalBaseDir)
 			c.Worktree.GlobalDirNamePattern = strings.TrimSpace(server.Worktree.GlobalDirNamePattern)
 		}
+		if server.Git != nil {
+			c.Git = *server.Git
+		}
 		if server.TerminalShell != nil {
 			utils.ApplyCurrentPlatformShell(&c.Terminal.Shell, strings.TrimSpace(server.TerminalShell.Shell))
 		}
@@ -403,6 +420,13 @@ func applySettingsBackup(
 	}
 	if webSessionManager != nil && server.Developer != nil {
 		webSessionManager.RefreshDeveloperConfig()
+	}
+	if server.Git != nil {
+		gitutil.ConfigureEngines(gitutil.EngineSettings{
+			Read:       gitutil.EnginePreference(server.Git.ReadEngine),
+			Write:      gitutil.EnginePreference(server.Git.WriteEngine),
+			Executable: server.Git.Executable,
+		})
 	}
 	return nil
 }

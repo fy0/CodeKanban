@@ -81,6 +81,7 @@ func (s *WorktreeService) CreateWorktree(
 	if err != nil {
 		return nil, err
 	}
+	defer gitRepo.Close()
 
 	targetBranch := strings.TrimSpace(branchName)
 	if opts.CreateBranch {
@@ -258,6 +259,7 @@ func (s *WorktreeService) DeleteWorktree(ctx context.Context, id string, force, 
 				zap.String("worktreeId", id),
 			)
 		} else {
+			defer gitRepo.Close()
 			// 尝试从 git 中移除 worktree
 			if err := gitRepo.RemoveWorktree(worktree.Path, force); err != nil {
 				// 如果 worktree 路径已不存在，可以继续处理
@@ -452,6 +454,7 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 		)
 		return nil
 	}
+	defer gitRepo.Close()
 
 	gitWorktrees, err := gitRepo.ListWorktrees()
 	if err != nil {
@@ -577,6 +580,7 @@ func (s *WorktreeService) CommitWorktree(ctx context.Context, id, message string
 	if err != nil {
 		return nil, err
 	}
+	defer repo.Close()
 
 	status, err := repo.GetWorktreeStatus(worktree.Path)
 	if err != nil {
@@ -586,10 +590,7 @@ func (s *WorktreeService) CommitWorktree(ctx context.Context, id, message string
 		return nil, model.ErrWorktreeClean
 	}
 
-	if err := repo.AddAll(worktree.Path); err != nil {
-		return nil, err
-	}
-	if err := repo.Commit(worktree.Path, trimmedMessage); err != nil {
+	if err := repo.CommitAll(worktree.Path, trimmedMessage); err != nil {
 		if strings.Contains(err.Error(), "nothing to commit") {
 			return nil, model.ErrWorktreeClean
 		}

@@ -20,6 +20,7 @@ export interface Worktree {
   branchName: string;
   path: string;
   isMain: boolean;
+  isBare?: boolean;
   headCommit: string | null;
   headCommitMessage?: string | null;
   headCommitDate: string | null;
@@ -28,9 +29,53 @@ export interface Worktree {
   statusModified: number | null;
   statusStaged: number | null;
   statusUntracked: number | null;
+  statusConflicts?: number | null;
   statusUpdatedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type GitCapabilityMode = 'read_write' | 'read_only' | 'unavailable';
+
+export interface GitOperationCapabilities {
+  branchesRead: boolean;
+  branchesWrite: boolean;
+  status: boolean;
+  diff: boolean;
+  worktreesRead: boolean;
+  worktreesWrite: boolean;
+  commit: boolean;
+  fastForwardMerge: boolean;
+  merge: boolean;
+  rebase: boolean;
+  squash: boolean;
+}
+
+export type GitEngine = 'builtin' | 'system' | 'unavailable';
+
+export type GitOperationEngines = {
+  [K in keyof GitOperationCapabilities]: GitEngine;
+};
+
+export interface GitCapabilityReason {
+  code: string;
+  detail?: string;
+}
+
+export interface GitWorktreeCapabilityResult {
+  id: string;
+  operations: GitOperationCapabilities;
+  engines: GitOperationEngines;
+  reasons: GitCapabilityReason[];
+}
+
+export interface GitCapabilityResult {
+  repository: boolean;
+  mode: GitCapabilityMode;
+  operations: GitOperationCapabilities;
+  engines: GitOperationEngines;
+  reasons: GitCapabilityReason[];
+  worktrees: GitWorktreeCapabilityResult[];
 }
 
 export interface Task {

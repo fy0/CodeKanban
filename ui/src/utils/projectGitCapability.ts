@@ -1,33 +1,56 @@
-import type { Project, Worktree } from '@/types/models';
+import type { GitCapabilityResult, GitEngine, GitOperationCapabilities } from '@/types/models';
 
-export function projectSupportsGit(
-  project: Pick<Project, 'path' | 'remoteUrl'> | null | undefined,
-  worktrees: Pick<Worktree, 'isMain' | 'path' | 'headCommit'>[] = []
+export type GitOperation = keyof GitOperationCapabilities;
+
+export function projectSupportsGit(capabilities: GitCapabilityResult | null | undefined): boolean {
+  return Boolean(capabilities?.repository && capabilities.mode !== 'unavailable');
+}
+
+export function gitOperationEngine(
+  capabilities: GitCapabilityResult | null | undefined,
+  operation: GitOperation,
+  worktreeId?: string | null
+): GitEngine {
+  if (!capabilities?.repository) {
+    return 'unavailable';
+  }
+  if (worktreeId) {
+    return (
+      capabilities.worktrees.find(item => item.id === worktreeId)?.engines?.[operation] ??
+      'unavailable'
+    );
+  }
+  return capabilities.engines?.[operation] ?? 'unavailable';
+}
+
+export function gitOperationAvailable(
+  capabilities: GitCapabilityResult | null | undefined,
+  operation: GitOperation,
+  worktreeId?: string | null
 ): boolean {
-  if (!project) {
+  if (!capabilities?.repository) {
     return false;
   }
-
-  if (typeof project.remoteUrl === 'string' && project.remoteUrl.trim()) {
-    return true;
+  if (worktreeId) {
+    const worktree = capabilities.worktrees.find(item => item.id === worktreeId);
+    return Boolean(worktree?.operations[operation]);
   }
+  return Boolean(capabilities.operations[operation]);
+}
 
-  const mainWorktree = worktrees.find(worktree => worktree.isMain);
-  if (!mainWorktree) {
-    return false;
+export function gitCapabilityReason(
+  capabilities: GitCapabilityResult | null | undefined,
+  operation: GitOperation,
+  worktreeId?: string | null
+): string | null {
+  if (!capabilities) {
+    return 'git_capabilities_unavailable';
   }
-
-  const normalizedProjectPath = project.path.replace(/[\\/]+$/, '');
-  const normalizedMainPath = mainWorktree.path.replace(/[\\/]+$/, '');
-  const hasCommit =
-    typeof mainWorktree.headCommit === 'string' && mainWorktree.headCommit.trim() !== '';
-
-  // Non-git projects currently get a single virtual main worktree that mirrors the
-  // project directory but has no commit metadata. Real git projects will either have
-  // commit metadata or additional worktree metadata beyond this virtual placeholder shape.
-  if (worktrees.length === 1 && normalizedProjectPath === normalizedMainPath && !hasCommit) {
-    return false;
+  if (gitOperationAvailable(capabilities, operation, worktreeId)) {
+    return null;
   }
-
-  return true;
+  const worktree = worktreeId
+    ? capabilities.worktrees.find(item => item.id === worktreeId)
+    : undefined;
+  return worktree?.reasons[0]?.code ?? capabilities.reasons[0]?.code ?? 'git_operation_unsupported';
 }

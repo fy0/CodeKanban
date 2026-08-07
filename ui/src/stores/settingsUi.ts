@@ -7,6 +7,7 @@ export const SETTINGS_SECTION_IDS = [
   'session',
   'security',
   'developer',
+  'git',
   'worktree',
   'theme',
   'maintenance',

@@ -86,6 +86,12 @@ func (s *ProjectService) CreateProject(ctx context.Context, params CreateProject
 	cleanPath := filepath.Clean(absPath)
 
 	var gitRepo *git.GitRepo
+	repoOwnershipTransferred := false
+	defer func() {
+		if gitRepo != nil && !repoOwnershipTransferred {
+			_ = gitRepo.Close()
+		}
+	}()
 	if repo, detectErr := git.DetectRepository(cleanPath); detectErr == nil {
 		gitRepo = repo
 	} else {
@@ -157,6 +163,7 @@ func (s *ProjectService) CreateProject(ctx context.Context, params CreateProject
 
 	// 如果是 git 仓库，同步 worktrees；否则创建一个虚拟的 main worktree
 	if gitRepo != nil {
+		repoOwnershipTransferred = true
 		s.dispatchWorktreeSync(ctx, project.Id, gitRepo)
 	} else {
 		// 为非 git 目录创建虚拟 worktree，使终端等功能可用
@@ -359,6 +366,7 @@ func (s *ProjectService) syncWorktrees(ctx context.Context, projectID string, re
 	if repo == nil {
 		return
 	}
+	defer repo.Close()
 	if ctx == nil {
 		ctx = context.Background()
 	}

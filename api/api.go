@@ -26,6 +26,7 @@ import (
 	"code-kanban/service/terminal"
 	"code-kanban/service/websession"
 	"code-kanban/utils"
+	gitutil "code-kanban/utils/git"
 )
 
 const (
@@ -45,6 +46,12 @@ var appInfo *AppInfo
 
 // Init 初始化 Fiber + Huma 的初始化，启动 HTTP 服务
 func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppInfo) error {
+	cfg.Git = utils.NormalizeGitConfig(cfg.Git)
+	gitutil.ConfigureEngines(gitutil.EngineSettings{
+		Read:       gitutil.EnginePreference(cfg.Git.ReadEngine),
+		Write:      gitutil.EnginePreference(cfg.Git.WriteEngine),
+		Executable: cfg.Git.Executable,
+	})
 	appInfo = info
 	theLogger := utils.LoggerFromContext(ctx)
 

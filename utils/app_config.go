@@ -161,6 +161,36 @@ type WorktreeConfig struct {
 	GlobalDirNamePattern string `json:"globalDirNamePattern" yaml:"globalDirNamePattern"` // 全局目录命名模式（支持 {projectName}、{branch}）
 }
 
+const (
+	GitEngineAuto    = "auto"
+	GitEngineBuiltin = "builtin"
+	GitEngineSystem  = "system"
+)
+
+type GitConfig struct {
+	ReadEngine  string `json:"readEngine" yaml:"readEngine" enum:"auto,builtin,system"`
+	WriteEngine string `json:"writeEngine" yaml:"writeEngine" enum:"auto,builtin,system"`
+	Executable  string `json:"executable" yaml:"executable"`
+}
+
+func NormalizeGitConfig(config GitConfig) GitConfig {
+	normalizeEngine := func(value string) string {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case GitEngineBuiltin:
+			return GitEngineBuiltin
+		case GitEngineSystem:
+			return GitEngineSystem
+		default:
+			return GitEngineAuto
+		}
+	}
+	return GitConfig{
+		ReadEngine:  normalizeEngine(config.ReadEngine),
+		WriteEngine: normalizeEngine(config.WriteEngine),
+		Executable:  strings.TrimSpace(config.Executable),
+	}
+}
+
 type TerminalConfig struct {
 	Shell                 TerminalShellConfig `json:"shell" yaml:"shell"`
 	IdleTimeout           string              `json:"idleTimeout" yaml:"idleTimeout"`
@@ -219,6 +249,7 @@ type AppConfig struct {
 	Developer              DeveloperConfig  `json:"developer" yaml:"developer"`
 	UI                     UIConfig         `json:"ui" yaml:"ui"`
 	Worktree               WorktreeConfig   `json:"worktree" yaml:"worktree"`
+	Git                    GitConfig        `json:"git" yaml:"git"`
 }
 
 var configStore = koanf.New(".")
@@ -312,6 +343,7 @@ func ReadConfig() *AppConfig {
 			GlobalBaseDir:        "",
 			GlobalDirNamePattern: "{projectName}-{branch}",
 		},
+		Git: NormalizeGitConfig(GitConfig{}),
 	}
 
 	lo.Must0(configStore.Load(structs.Provider(&defaults, "yaml"), nil))
@@ -352,6 +384,7 @@ func ReadConfig() *AppConfig {
 	config.UI.PageTitle = pageTitle
 	config.UI.WebSessionQuickInput = NormalizeWebSessionQuickInputConfig(config.UI.WebSessionQuickInput)
 	config.Developer = NormalizeDeveloperConfig(config.Developer)
+	config.Git = NormalizeGitConfig(config.Git)
 	if webSessionActiveCallTimeoutConfigNeedsRewrite(fileConfigStore) {
 		if writeErr := WriteConfigToPath(&config, configPath); writeErr != nil {
 			fmt.Printf("Failed to rewrite migrated config: %v\n", writeErr)

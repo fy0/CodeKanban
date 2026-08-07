@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	goGit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 func TestProjectServiceCreateProject(t *testing.T) {
@@ -231,26 +235,38 @@ func createProjectTestRepo(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	runGitCommand(t, dir, "init", "-b", "main")
-	runGitCommand(t, dir, "config", "user.email", "test@example.com")
-	runGitCommand(t, dir, "config", "user.name", "Test User")
+	repository, err := goGit.PlainInit(dir, false, goGit.WithDefaultBranch(plumbing.NewBranchReferenceName("main")))
+	if err != nil {
+		t.Fatalf("init repository: %v", err)
+	}
+	cfg, err := repository.Config()
+	if err != nil {
+		t.Fatalf("read repository config: %v", err)
+	}
+	cfg.User.Name = "Test User"
+	cfg.User.Email = "test@example.com"
+	cfg.Commit.GpgSign = config.OptBoolFalse
+	if err := repository.SetConfig(cfg); err != nil {
+		t.Fatalf("write repository config: %v", err)
+	}
 
 	readme := filepath.Join(dir, "README.md")
 	if err := os.WriteFile(readme, []byte("demo"), 0o644); err != nil {
 		t.Fatalf("write readme: %v", err)
 	}
 
-	runGitCommand(t, dir, "add", "README.md")
-	runGitCommand(t, dir, "commit", "-m", "init")
-	return dir
-}
-
-func runGitCommand(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatalf("open worktree: %v", err)
 	}
+	if err := worktree.AddWithOptions(&goGit.AddOptions{All: true}); err != nil {
+		t.Fatalf("stage readme: %v", err)
+	}
+	if _, err := worktree.Commit("init", &goGit.CommitOptions{Author: &object.Signature{
+		Name: "Test User", Email: "test@example.com", When: time.Now(),
+	}}); err != nil {
+		t.Fatalf("commit readme: %v", err)
+	}
+	_ = repository.Close()
+	return dir
 }

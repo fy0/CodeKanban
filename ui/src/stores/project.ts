@@ -1,10 +1,10 @@
 import { defineStore, storeToRefs } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import { projectApi, systemApi, worktreeApi } from '@/api/project';
-import type { Project, Worktree } from '@/types/models';
+import type { GitCapabilityResult, Project, Worktree } from '@/types/models';
 import { useSettingsStore } from '@/stores/settings';
 import type { EditorPreference } from '@/stores/settings';
-import { projectSupportsGit } from '@/utils/projectGitCapability';
+import { gitOperationAvailable } from '@/utils/projectGitCapability';
 
 const DEFAULT_MAX_RECENT_PROJECTS = 10;
 
@@ -15,6 +15,7 @@ export const useProjectStore = defineStore('project', () => {
   const projects = ref<Project[]>([]);
   const currentProject = ref<Project | null>(null);
   const worktrees = ref<Worktree[]>([]);
+  const gitCapabilities = ref<GitCapabilityResult | null>(null);
   const projectsLoading = ref(false);
   const projectDetailLoading = ref(false);
   const loading = computed(() => projectsLoading.value || projectDetailLoading.value);
@@ -73,6 +74,7 @@ export const useProjectStore = defineStore('project', () => {
       // actions using an outdated worktreeId).
       if (currentProject.value?.id !== id) {
         worktrees.value = [];
+        gitCapabilities.value = null;
       }
       currentProject.value = await projectApi.get(id);
       selectedWorktreeId.value = null;
@@ -108,24 +110,41 @@ export const useProjectStore = defineStore('project', () => {
     if (currentProject.value?.id === id) {
       currentProject.value = null;
       worktrees.value = [];
+      gitCapabilities.value = null;
       selectedWorktreeId.value = null;
     }
   }
 
   async function fetchWorktrees(projectId: string) {
     worktrees.value = await worktreeApi.list(projectId);
-    if (
-      currentProject.value?.id === projectId &&
-      projectSupportsGit(currentProject.value, worktrees.value)
-    ) {
+    if (currentProject.value?.id === projectId) {
+      await fetchGitCapabilities(projectId);
+    }
+    if (gitOperationAvailable(gitCapabilities.value, 'status')) {
       void refreshWorktreeCommitInfo(projectId);
+    }
+  }
+
+  async function fetchGitCapabilities(projectId: string) {
+    try {
+      const capabilities = await projectApi.gitCapabilities(projectId);
+      if (currentProject.value?.id === projectId) {
+        gitCapabilities.value = capabilities;
+      }
+      return capabilities;
+    } catch (error) {
+      if (currentProject.value?.id === projectId) {
+        gitCapabilities.value = null;
+      }
+      console.warn('Failed to load Git capabilities', error);
+      return null;
     }
   }
 
   async function refreshWorktreeCommitInfo(projectId: string) {
     if (
       currentProject.value?.id === projectId &&
-      !projectSupportsGit(currentProject.value, worktrees.value)
+      !gitOperationAvailable(gitCapabilities.value, 'status')
     ) {
       return;
     }
@@ -248,6 +267,7 @@ export const useProjectStore = defineStore('project', () => {
     projects,
     currentProject,
     worktrees,
+    gitCapabilities,
     selectedWorktree,
     selectedWorktreeId,
     projectsLoading,
@@ -261,6 +281,7 @@ export const useProjectStore = defineStore('project', () => {
     updateProject,
     deleteProject,
     fetchWorktrees,
+    fetchGitCapabilities,
     refreshWorktreeCommitInfo,
     createWorktree,
     deleteWorktree,

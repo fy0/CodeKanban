@@ -117,6 +117,9 @@ func registerBranchRoutes(group *huma.Group) {
 }
 
 func mapBranchError(err error) error {
+	if mapped := mapGitOperationError(err); mapped != nil {
+		return mapped
+	}
 	switch {
 	case err == nil:
 		return nil

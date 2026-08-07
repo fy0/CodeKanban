@@ -274,7 +274,7 @@ export default {
     selectTargetBranch: 'Please select target branch',
     sourceBranch: 'Source Branch',
     selectSourceBranch: 'Please select the branch to merge',
-    strategy: 'Strategy',
+    strategy: 'Merge mode',
     merge: 'Merge',
     rebase: 'Rebase',
     squash: 'Squash',
@@ -283,6 +283,8 @@ export default {
     commitImmediatelyHint: 'When checked, a commit will be created immediately after squash',
     commitMessage: 'Commit Message',
     commitMessagePlaceholder: 'feat: describe the changes in this squash',
+    fastForwardOnly:
+      'The built-in Git engine supports fast-forward merges only; the target must be an ancestor of the source.',
     executeMerge: 'Execute Merge',
     refreshWorktreeStatus: 'Refresh Worktree Status',
     // Create Branch Dialog
@@ -517,19 +519,14 @@ export default {
     // Merge messages
     conflictFiles: 'Conflict files: {files}',
     hasConflictsManual: 'Conflicts detected, please resolve manually',
-    rebaseDescription: 'Will execute rebase in Worktree "{branch}", source branch: {source}',
     mergeDisabledGit: 'Merge is available only for Git projects',
     // Disabled reasons
     actionDisabledGeneric: 'This action is currently unavailable for the selected Worktree.',
-    rebaseDisabledNoDefault: 'Configure a default branch for the project before running Rebase.',
-    rebaseDisabledOnDefault: 'You are already on the default branch, rebase is unnecessary.',
-    rebaseDisabledDirty:
-      'Rebase requires a clean working tree. Commit or stash tracked changes first.',
     mergeDisabledNoMainWorktree:
       'The main Worktree is missing. Refresh Worktrees to sync it before merging.',
     mergeDisabledOnDefault:
       'The default branch cannot be used as the source branch for this merge.',
-    mergeDisabledDirty: 'Please commit or stash tracked changes before merging.',
+    mergeDisabledDirty: 'Please commit or remove untracked changes before merging.',
     commitDisabledGit:
       'Git features are unavailable until the main Worktree is detected for this project.',
     commitDisabledClean: 'There are no changes to commit in this Worktree.',
@@ -1274,6 +1271,25 @@ export default {
     securityAccessRulesSaveTip:
       'Source rules can be prepared before password protection is enabled. Once protection is on, only an authenticated administrator session can modify them. Saved changes apply to new requests immediately.',
     securityAccessRulesSaveSuccess: 'Source rules saved',
+    gitSettings: 'Git',
+    gitSettingsDescription: 'Choose the engines used for repository inspection and writes',
+    gitReadEngine: 'Change inspection engine',
+    gitReadEngineTip:
+      'Auto uses the built-in engine for status, diff, and line statistics, then falls back to system Git when needed.',
+    gitWriteEngine: 'Repository write engine',
+    gitWriteEngineTip:
+      'Auto prefers system Git so commits honor hooks, signing, filters, and the user Git configuration.',
+    gitEngineAuto: 'Auto',
+    gitEngineBuiltin: 'Built-in',
+    gitEngineSystem: 'System Git',
+    gitExecutable: 'Git executable',
+    gitExecutablePlaceholder: 'Auto-detect from PATH',
+    gitExecutableTip: 'Leave empty to resolve git from PATH, or enter a specific executable path.',
+    gitSystemStatus: 'System Git status',
+    gitProbe: 'Detect system Git again',
+    gitProbeFailed: 'Failed to detect system Git',
+    gitUnavailable: 'System Git is unavailable',
+    gitSettingsSaved: 'Git settings saved',
     worktreeSettings: 'Worktree Settings',
     worktreeGlobalBaseDir: 'Global Worktree Directory',
     worktreeGlobalBaseDirPlaceholder:

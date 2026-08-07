@@ -13,6 +13,7 @@ import (
 
 	"code-kanban/api/h"
 	"code-kanban/utils"
+	gitutil "code-kanban/utils/git"
 	"code-kanban/utils/system"
 )
 
@@ -64,12 +65,29 @@ type pageTitleSettings struct {
 	Title string `json:"title" doc:"浏览器标签页使用的应用标题"`
 }
 
+type gitSettingsResult struct {
+	ReadEngine  string                `json:"readEngine" enum:"auto,builtin,system"`
+	WriteEngine string                `json:"writeEngine" enum:"auto,builtin,system"`
+	Executable  string                `json:"executable,omitempty"`
+	SystemGit   gitutil.SystemGitInfo `json:"systemGit"`
+}
+
+func applyGitRuntimeConfig(config utils.GitConfig) {
+	normalized := utils.NormalizeGitConfig(config)
+	gitutil.ConfigureEngines(gitutil.EngineSettings{
+		Read:       gitutil.EnginePreference(normalized.ReadEngine),
+		Write:      gitutil.EnginePreference(normalized.WriteEngine),
+		Executable: normalized.Executable,
+	})
+}
+
 func registerSystemRoutes(
 	group *huma.Group,
 	cfg *utils.AppConfig,
 	terminalManager systemTerminalManager,
 	webSessionManager *websession.Manager,
 ) {
+	applyGitRuntimeConfig(cfg.Git)
 	registerSystemSettingsBackupRoutes(group, cfg, terminalManager, webSessionManager)
 	registerSystemHistoryCleanupRoutes(group, webSessionManager)
 
@@ -82,6 +100,51 @@ func registerSystemRoutes(
 	}, func(op *huma.Operation) {
 		op.OperationID = "system-version"
 		op.Summary = "获取应用版本信息"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Get(group, "/system/git-settings", func(ctx context.Context, input *struct {
+		Refresh bool `query:"refresh"`
+	}) (*h.ItemResponse[gitSettingsResult], error) {
+		normalized := utils.NormalizeGitConfig(cfg.Git)
+		resp := h.NewItemResponse(gitSettingsResult{
+			ReadEngine:  normalized.ReadEngine,
+			WriteEngine: normalized.WriteEngine,
+			Executable:  normalized.Executable,
+			SystemGit:   gitutil.ProbeSystemGit(ctx, input.Refresh),
+		})
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-git-settings-get"
+		op.Summary = "获取 Git 引擎设置"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/git-settings/update", func(ctx context.Context, input *struct {
+		Body utils.GitConfig `json:"body"`
+	}) (*h.ItemResponse[gitSettingsResult], error) {
+		if strings.IndexByte(input.Body.Executable, 0) >= 0 {
+			return nil, huma.Error400BadRequest("Git executable path is invalid")
+		}
+		normalized := utils.NormalizeGitConfig(input.Body)
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			c.Git = normalized
+		}); err != nil {
+			return nil, huma.Error500InternalServerError("failed to save Git settings")
+		}
+		applyGitRuntimeConfig(normalized)
+		resp := h.NewItemResponse(gitSettingsResult{
+			ReadEngine:  normalized.ReadEngine,
+			WriteEngine: normalized.WriteEngine,
+			Executable:  normalized.Executable,
+			SystemGit:   gitutil.ProbeSystemGit(ctx, true),
+		})
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-git-settings-update"
+		op.Summary = "更新 Git 引擎设置"
 		op.Tags = []string{systemTag}
 	})
 

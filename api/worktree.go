@@ -34,6 +34,26 @@ type commitWorktreeInput struct {
 
 func registerWorktreeRoutes(group *huma.Group, cfg *utils.AppConfig) {
 	worktreeSvc := service.NewWorktreeService()
+	capabilitySvc := service.NewGitCapabilityService()
+
+	huma.Get(group, "/projects/{projectId}/git-capabilities", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+		},
+	) (*h.ItemResponse[model.GitCapabilityResult], error) {
+		result, err := capabilitySvc.GetProjectCapabilities(ctx, input.ProjectID)
+		if err != nil {
+			return nil, mapWorktreeError(err)
+		}
+		resp := h.NewItemResponse(*result)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "project-git-capabilities"
+		op.Summary = "获取项目 Git 能力"
+		op.Tags = []string{worktreeTag}
+	})
 
 	huma.Post(group, "/projects/{projectId}/worktrees/create", func(
 		ctx context.Context,
@@ -228,6 +248,9 @@ func registerWorktreeRoutes(group *huma.Group, cfg *utils.AppConfig) {
 }
 
 func mapWorktreeError(err error) error {
+	if mapped := mapGitOperationError(err); mapped != nil {
+		return mapped
+	}
 	switch {
 	case err == nil:
 		return nil

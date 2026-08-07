@@ -118,26 +118,13 @@
     </n-space>
 
     <div class="worktree-card__actions" @click.stop>
-      <n-popover trigger="hover" placement="bottom" :disabled="!syncDisabledReason">
-        <template #trigger>
-          <n-button
-            size="tiny"
-            tertiary
-            :disabled="!canSync"
-            @click="emit('sync-default', worktree)"
-          >
-            Rebase
-          </n-button>
-        </template>
-        <span>{{ syncDisabledReason }}</span>
-      </n-popover>
       <n-popover trigger="hover" placement="bottom" :disabled="!mergeDisabledReason">
         <template #trigger>
           <n-button
             size="tiny"
             tertiary
             :disabled="!canMerge"
-            @click="emit('merge-to-default', { worktree, strategy: 'squash' })"
+            @click="emit('merge-to-default', { worktree })"
           >
             {{ t('worktree.mergeTo') }}
           </n-button>
@@ -199,11 +186,9 @@ const props = withDefaults(
     worktree: Worktree;
     selected?: boolean;
     canRefresh?: boolean;
-    canSync?: boolean;
     canMerge?: boolean;
     canCommit?: boolean;
     refreshDisabledReason?: string;
-    syncDisabledReason?: string;
     mergeDisabledReason?: string;
     commitDisabledReason?: string;
     isDeleting?: boolean;
@@ -215,7 +200,6 @@ const props = withDefaults(
     editorOptions: () => EDITOR_OPTIONS.map(option => ({ ...option })),
     canRefresh: true,
     refreshDisabledReason: '',
-    syncDisabledReason: '',
     mergeDisabledReason: '',
     commitDisabledReason: '',
   }
@@ -228,8 +212,7 @@ const emit = defineEmits<{
   'open-terminal': [worktree: Worktree];
   'open-editor': [payload: { worktree: Worktree; editor: EditorPreference }];
   select: [id: string];
-  'sync-default': [worktree: Worktree];
-  'merge-to-default': [payload: { worktree: Worktree; strategy: 'merge' | 'squash' }];
+  'merge-to-default': [payload: { worktree: Worktree }];
   'commit-worktree': [worktree: Worktree];
 }>();
 
@@ -239,21 +222,10 @@ const actions = computed<DropdownOption[]>(() => {
     { label: t('worktree.openTerminal'), key: 'terminal' },
   ];
 
-  if (props.canSync) {
-    baseActions.push({
-      label: 'Rebase',
-      key: 'sync-rebase',
-    });
-  }
-
   if (props.canMerge) {
     baseActions.push({
       label: t('worktree.mergeTo'),
       key: 'merge-group',
-      children: [
-        { label: 'Merge', key: 'merge-merge' },
-        { label: 'Squash', key: 'merge-squash' },
-      ],
     });
   }
 
@@ -319,14 +291,8 @@ function handleAction(key: string | number) {
     case 'terminal':
       emit('open-terminal', props.worktree);
       break;
-    case 'sync-rebase':
-      emit('sync-default', props.worktree);
-      break;
-    case 'merge-merge':
-      emit('merge-to-default', { worktree: props.worktree, strategy: 'merge' });
-      break;
-    case 'merge-squash':
-      emit('merge-to-default', { worktree: props.worktree, strategy: 'squash' });
+    case 'merge-group':
+      emit('merge-to-default', { worktree: props.worktree });
       break;
     case 'commit':
       emit('commit-worktree', props.worktree);

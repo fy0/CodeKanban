@@ -161,8 +161,8 @@
               <n-space vertical>
                 <n-text depth="3"> 在你感觉合适的时候进行代码提交。 </n-text>
                 <n-text depth="3">
-                  如果你是从分支进行提交，那我建议最好在提交前进行一下rebase，Code
-                  Kanban提供了这个功能，然后以squash或者merge的方式并入主分支，又或者去发起一个PR，根据当前项目的要求而定。
+                  如果你是从分支进行提交，请先确保工作区干净。系统 Git 引擎支持 merge、rebase 和
+                  squash；内置 Git 引擎仅支持快进合并。
                 </n-text>
               </n-space>
             </n-step>
@@ -518,19 +518,12 @@
                 </n-space>
               </n-step>
 
-              <n-step title="从主分支 Rebase">
+              <n-step title="准备合并">
                 <n-space vertical size="small">
+                  <n-text depth="3"> 开发过程中，请定期提交并保持工作区干净，再准备合并。 </n-text>
                   <n-text depth="3">
-                    开发过程中，在工作区的分支卡片上点击「Rebase」快捷按钮，选择要 rebase
-                    的目标分支（通常是 develop 或 main）。
-                  </n-text>
-                  <n-text depth="3">
-                    系统会自动执行 rebase 操作，如有冲突需要在终端中手动解决。
-                  </n-text>
-                  <n-text depth="3" type="info">
-                    💡 也可以在终端手动执行：<n-text code
-                      >git fetch origin && git rebase origin/main</n-text
-                    >
+                    在分支管理中选择 merge、rebase 或 squash。使用内置 Git 时，merge 仅支持快进；
+                    自动写入模式会优先使用系统 Git。
                   </n-text>
                 </n-space>
               </n-step>

@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"code-kanban/model"
 	"code-kanban/utils/git"
+
+	goGit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 func TestWorktreeServiceCreateAndRefresh(t *testing.T) {
@@ -82,10 +85,6 @@ func TestWorktreeServiceDeleteAndSync(t *testing.T) {
 		t.Fatalf("create project failed: %v", err)
 	}
 
-	if runtime.GOOS == "windows" {
-		t.Skip("DeleteWorktree integration test is flaky on Windows due to git worktree remove permissions")
-	}
-
 	svc := NewWorktreeService()
 	svc.AsyncRefresh(false)
 	ctx := context.Background()
@@ -106,8 +105,25 @@ func TestWorktreeServiceDeleteAndSync(t *testing.T) {
 		t.Fatalf("expected worktree to be deleted")
 	}
 
-	runGitCommand(t, repoPath, "worktree", "add", "-b", "feature/manual-sync", filepath.Join(repoPath, "manual"), "main")
-	defer runGitCommand(t, repoPath, "worktree", "remove", filepath.Join(repoPath, "manual"))
+	manualPath := filepath.Join(repoPath, "manual")
+	repository, err := git.DetectRepository(repoPath)
+	if err != nil {
+		t.Fatalf("detect repository: %v", err)
+	}
+	if err := repository.CreateBranch("feature/manual-sync", "main"); err != nil {
+		t.Fatalf("create manual branch: %v", err)
+	}
+	if err := repository.AddWorktree(manualPath, "feature/manual-sync", false); err != nil {
+		t.Fatalf("create manual worktree: %v", err)
+	}
+	_ = repository.Close()
+	defer func() {
+		cleanupRepo, openErr := git.DetectRepository(repoPath)
+		if openErr == nil {
+			_ = cleanupRepo.RemoveWorktree(manualPath, true)
+			_ = cleanupRepo.Close()
+		}
+	}()
 
 	if err := svc.SyncWorktrees(ctx, project.Id); err != nil {
 		t.Fatalf("SyncWorktrees returned error: %v", err)
@@ -321,11 +337,7 @@ func initTestDB(t *testing.T) func() {
 		t.Fatalf("InitWithDSN: %v", err)
 	}
 
-	// Set up git test environment to avoid GPG signing prompts
-	git.SetTestEnvOverride(testGitEnv())
-
 	return func() {
-		git.SetTestEnvOverride(nil)
 		model.DBClose()
 	}
 }
@@ -334,40 +346,40 @@ func createProjectTestRepo(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	runGitCommand(t, dir, "init", "-b", "main")
+	repository, err := goGit.PlainInit(dir, false, goGit.WithDefaultBranch(plumbing.NewBranchReferenceName("main")))
+	if err != nil {
+		t.Fatalf("init repository: %v", err)
+	}
+	cfg, err := repository.Config()
+	if err != nil {
+		t.Fatalf("read repository config: %v", err)
+	}
+	cfg.User.Name = "Test User"
+	cfg.User.Email = "test@example.com"
+	cfg.Commit.GpgSign = config.OptBoolFalse
+	if err := repository.SetConfig(cfg); err != nil {
+		t.Fatalf("write repository config: %v", err)
+	}
 
 	readme := filepath.Join(dir, "README.md")
 	if err := os.WriteFile(readme, []byte("demo"), 0o644); err != nil {
 		t.Fatalf("write readme: %v", err)
 	}
 
-	runGitCommand(t, dir, "add", "README.md")
-	runGitCommand(t, dir, "commit", "-m", "init")
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatalf("open worktree: %v", err)
+	}
+	if err := worktree.AddWithOptions(&goGit.AddOptions{All: true}); err != nil {
+		t.Fatalf("stage readme: %v", err)
+	}
+	if _, err := worktree.Commit("init", &goGit.CommitOptions{Author: &object.Signature{
+		Name: "Test User", Email: "test@example.com", When: time.Now(),
+	}}); err != nil {
+		t.Fatalf("commit readme: %v", err)
+	}
+	_ = repository.Close()
 	return dir
-}
-
-// testGitEnv 返回用于测试的 git 环境变量，包含独立的用户信息和禁用 GPG 签名
-func testGitEnv() []string {
-	return []string{
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_AUTHOR_NAME=Test User",
-		"GIT_AUTHOR_EMAIL=test@example.com",
-		"GIT_COMMITTER_NAME=Test User",
-		"GIT_COMMITTER_EMAIL=test@example.com",
-		"GIT_CONFIG_NOSYSTEM=1",       // 忽略系统级配置
-		"GIT_CONFIG_GLOBAL=/dev/null", // 忽略全局配置
-		"HOME=" + os.TempDir(),        // 防止读取用户目录下的配置
-	}
-}
-
-func runGitCommand(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), testGitEnv()...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
-	}
 }
 
 // TestSanitizeBranchName_Security tests that sanitizeBranchName correctly handles

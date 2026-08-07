@@ -19,7 +19,7 @@ func TestListFileStatuses(t *testing.T) {
 	if err := os.Rename(filepath.Join(repoDir, "notes.txt"), filepath.Join(repoDir, "docs.txt")); err != nil {
 		t.Fatalf("rename tracked file: %v", err)
 	}
-	runGit(t, repoDir, "add", "docs.txt", "notes.txt")
+	stageAllTestFiles(t, repoDir)
 	if err := os.MkdirAll(filepath.Join(repoDir, "scratch"), 0o755); err != nil {
 		t.Fatalf("mkdir scratch: %v", err)
 	}
@@ -46,26 +46,6 @@ func TestListFileStatuses(t *testing.T) {
 	}
 	if statuses["scratch/draft.md"].Kind != FileChangeKindUntracked {
 		t.Fatalf("scratch/draft.md status = %#v", statuses["scratch/draft.md"])
-	}
-}
-
-func TestParseGitFileStatusesPorcelainV2HandlesConflicts(t *testing.T) {
-	output := strings.Join([]string{
-		"1 M. N... 100644 100644 100644 abcdef0 abcdef0 README.md",
-		"u UU N... 100644 100644 100644 100644 abcdef0 abcdef0 abcdef0 conflict.txt",
-		"? new file.txt",
-		"",
-	}, "\x00")
-
-	statuses := parseGitFileStatusesPorcelainV2([]byte(output))
-	if statuses["README.md"].Kind != FileChangeKindModified {
-		t.Fatalf("README.md status = %#v", statuses["README.md"])
-	}
-	if statuses["conflict.txt"].Kind != FileChangeKindConflicted {
-		t.Fatalf("conflict.txt status = %#v", statuses["conflict.txt"])
-	}
-	if statuses["new file.txt"].Kind != FileChangeKindUntracked {
-		t.Fatalf("new file.txt status = %#v", statuses["new file.txt"])
 	}
 }
 
@@ -184,8 +164,7 @@ func TestGenerateUnifiedDiffAgainstHEAD(t *testing.T) {
 }
 
 func TestGenerateUnifiedDiffAgainstHEADWithoutCommit(t *testing.T) {
-	repoDir := t.TempDir()
-	runGit(t, repoDir, "init", "-b", "main")
+	repoDir := initTestRepoWithoutCommit(t)
 
 	filePath := filepath.Join(repoDir, "draft.txt")
 	if err := os.WriteFile(filePath, []byte("draft\n"), 0o644); err != nil {
@@ -226,6 +205,24 @@ func TestGenerateDiffStatAgainstHEAD(t *testing.T) {
 	}
 	if stat.Additions != 1 || stat.Deletions != 0 {
 		t.Fatalf("unexpected diff stat: %#v", stat)
+	}
+}
+
+func TestGenerateDiffStatAgainstHEADPreservesCRLFLineAccounting(t *testing.T) {
+	repoDir := initTestRepoWithTrackedFile(t, "crlf.txt", "one\r\ntwo\r\n")
+	if err := os.WriteFile(filepath.Join(repoDir, "crlf.txt"), []byte("one\r\nchanged\r\n"), 0o644); err != nil {
+		t.Fatalf("rewrite CRLF file: %v", err)
+	}
+
+	stat, err := GenerateDiffStatAgainstHEAD(repoDir, FileStatus{
+		Path: "crlf.txt",
+		Kind: FileChangeKindModified,
+	})
+	if err != nil {
+		t.Fatalf("GenerateDiffStatAgainstHEAD returned error: %v", err)
+	}
+	if stat.Additions != 1 || stat.Deletions != 1 {
+		t.Fatalf("unexpected CRLF diff stat: %#v", stat)
 	}
 }
 
@@ -299,7 +296,7 @@ func TestGenerateDiffStatsAgainstHEADContextBatchesTrackedAndUntrackedChanges(t 
 	if err := os.WriteFile(filepath.Join(repoDir, "scratch.txt"), []byte("draft\n"), 0o644); err != nil {
 		t.Fatalf("write scratch.txt: %v", err)
 	}
-	runGit(t, repoDir, "add", "docs.txt", "notes.txt")
+	stageAllTestFiles(t, repoDir)
 
 	statusMap, err := ListFileStatuses(repoDir)
 	if err != nil {
@@ -327,18 +324,6 @@ func TestGenerateDiffStatsAgainstHEADContextBatchesTrackedAndUntrackedChanges(t 
 	}
 }
 
-func TestParseGitDiffStatsZOutputHandlesRenames(t *testing.T) {
-	output := []byte("1\t0\tREADME.md\x000\t0\t\x00notes.txt\x00docs.txt\x00")
-
-	stats := parseGitDiffStatsZOutput(output)
-	if stat := stats["README.md"]; stat.Additions != 1 || stat.Deletions != 0 {
-		t.Fatalf("unexpected README.md diff stat: %#v", stat)
-	}
-	if stat := stats["docs.txt"]; stat.Additions != 0 || stat.Deletions != 0 {
-		t.Fatalf("unexpected docs.txt diff stat: %#v", stat)
-	}
-}
-
 func initTestRepoWithTrackedFile(t *testing.T, name, content string) string {
 	t.Helper()
 
@@ -347,7 +332,6 @@ func initTestRepoWithTrackedFile(t *testing.T, name, content string) string {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
-	runGit(t, dir, "add", name)
-	runGit(t, dir, "commit", "-m", "add "+name)
+	commitAllTestFiles(t, dir, "add "+name)
 	return dir
 }

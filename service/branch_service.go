@@ -54,6 +54,7 @@ func (s *BranchService) ListBranches(ctx context.Context, projectID string, forc
 	if err != nil {
 		return nil, err
 	}
+	defer repo.Close()
 
 	local, remote, err := repo.ListBranches()
 	if err != nil {
@@ -99,6 +100,7 @@ func (s *BranchService) CreateBranch(ctx context.Context, projectID, name, base 
 	if err != nil {
 		return err
 	}
+	defer repo.Close()
 
 	branchName := strings.TrimSpace(name)
 	if branchName == "" {
@@ -161,6 +163,7 @@ func (s *BranchService) DeleteBranch(ctx context.Context, projectID, name string
 	if err != nil {
 		return err
 	}
+	defer repo.Close()
 
 	branchName := strings.TrimSpace(name)
 	if branchName == "" {
@@ -260,6 +263,7 @@ func (s *BranchService) MergeBranch(ctx context.Context, worktreeID, sourceBranc
 	if err != nil {
 		return nil, err
 	}
+	defer repo.Close()
 
 	targetBranch := strings.TrimSpace(opts.TargetBranch)
 	if targetBranch == "" {
@@ -268,21 +272,29 @@ func (s *BranchService) MergeBranch(ctx context.Context, worktreeID, sourceBranc
 	if targetBranch == "" {
 		return nil, fmt.Errorf("target branch is required")
 	}
+	if targetBranch != strings.TrimSpace(worktree.BranchName) {
+		return nil, fmt.Errorf("target branch must match the selected worktree branch")
+	}
 
 	strategy := parseMergeStrategy(opts.Strategy)
 	if strategy == "" {
-		return nil, fmt.Errorf("unsupported merge strategy: %s", opts.Strategy)
+		return nil, &git.OperationError{
+			Code:      git.ErrorCodeOperationUnsupported,
+			Operation: git.OperationFastForwardMerge,
+			Detail:    fmt.Sprintf("unsupported merge strategy: %s", opts.Strategy),
+		}
 	}
-
 	if opts.Commit && strategy != git.MergeStrategySquash {
 		return nil, errors.New("commit option is only available for squash merges")
 	}
-
-	status, err := git.GetWorktreeStatus(worktree.Path)
+	status, err := repo.GetWorktreeStatusContext(ctx, worktree.Path)
 	if err != nil {
 		return nil, err
 	}
-	if status.Modified > 0 || status.Staged > 0 || status.Conflicted > 0 {
+	if status.Branch != targetBranch {
+		return nil, fmt.Errorf("selected worktree currently has branch %q checked out", status.Branch)
+	}
+	if status.Modified > 0 || status.Staged > 0 || status.Untracked > 0 || status.Conflicted > 0 {
 		logger.Warn("worktree dirty before merge",
 			zap.String("projectId", project.Id),
 			zap.String("worktreeId", worktree.Id),
@@ -301,11 +313,7 @@ func (s *BranchService) MergeBranch(ctx context.Context, worktreeID, sourceBranc
 				zap.String("target", targetBranch),
 				zap.Strings("conflicts", conflicts),
 			)
-			return &model.MergeResult{
-				Success:   false,
-				Conflicts: conflicts,
-				Message:   "merge has conflicts",
-			}, nil
+			return &model.MergeResult{Success: false, Conflicts: conflicts, Message: "merge has conflicts"}, nil
 		}
 		logger.Error("merge failed",
 			zap.Error(err),
@@ -323,20 +331,8 @@ func (s *BranchService) MergeBranch(ctx context.Context, worktreeID, sourceBranc
 			commitMessage = fmt.Sprintf("merge %s into %s", source, targetBranch)
 		}
 		if err := repo.Commit(worktree.Path, commitMessage); err != nil {
-			logger.Error("commit after squash failed",
-				zap.Error(err),
-				zap.String("projectId", project.Id),
-				zap.String("worktreeId", worktree.Id),
-				zap.String("source", source),
-			)
 			return nil, err
 		}
-		logger.Info("squash merge committed",
-			zap.String("projectId", project.Id),
-			zap.String("worktreeId", worktree.Id),
-			zap.String("source", source),
-			zap.String("message", commitMessage),
-		)
 	}
 
 	s.refreshBranches(ctx, worktreeService, project.Id, targetBranch, source)
@@ -349,14 +345,11 @@ func (s *BranchService) MergeBranch(ctx context.Context, worktreeID, sourceBranc
 		zap.String("strategy", string(strategy)),
 	)
 
-	resultMsg := "merged successfully"
+	message := "merged successfully"
 	if opts.Commit {
-		resultMsg = "merged and committed successfully"
+		message = "merged and committed successfully"
 	}
-	return &model.MergeResult{
-		Success: true,
-		Message: resultMsg,
-	}, nil
+	return &model.MergeResult{Success: true, Message: message, Conflicts: []string{}}, nil
 }
 
 func (s *BranchService) refreshBranches(ctx context.Context, worktreeService *WorktreeService, projectID string, branches ...string) {

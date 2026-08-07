@@ -1,18 +1,16 @@
 package git
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
-	"strconv"
+	"fmt"
 	"strings"
 	"time"
 
-	goGit "github.com/go-git/go-git/v5"
+	goGit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 )
 
-// WorktreeStatus aggregates repository state insights for a worktree.
 type WorktreeStatus struct {
 	Branch     string
 	Ahead      int
@@ -24,7 +22,6 @@ type WorktreeStatus struct {
 	LastCommit *CommitInfo
 }
 
-// CommitInfo describes a git commit summary.
 type CommitInfo struct {
 	SHA     string
 	Message string
@@ -32,264 +29,258 @@ type CommitInfo struct {
 	Date    time.Time
 }
 
-// HasTrackedWorktreeChanges reports whether tracked files have staged,
-// unstaged, or conflicted changes. Untracked files are intentionally ignored.
 func HasTrackedWorktreeChanges(path string) (bool, error) {
 	return HasTrackedWorktreeChangesContext(context.Background(), path)
 }
 
-// HasTrackedWorktreeChangesContext is the context-aware form of
-// HasTrackedWorktreeChanges.
 func HasTrackedWorktreeChangesContext(ctx context.Context, path string) (bool, error) {
-	cmd := newGitCommandContext(
-		ctx,
-		path,
-		"--no-optional-locks",
-		"status",
-		"--porcelain=2",
-		"--untracked-files=no",
-		"--ignore-submodules=untracked",
-		"--no-renames",
-	)
-	output, err := cmd.Output()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	repo, err := DetectRepository(path)
 	if err != nil {
 		return false, err
 	}
-	return len(bytes.TrimSpace(output)) > 0, nil
-}
-
-// GetWorktreeStatus gathers branch, diff, and status metrics for a worktree path.
-func GetWorktreeStatus(path string) (*WorktreeStatus, error) {
-	if status, err := collectWorktreeStatusViaGit(path); err == nil {
-		return status, nil
+	defer repo.Close()
+	engine, err := repo.requireEngine(path, OperationStatus)
+	if err != nil {
+		return false, err
 	}
-	return getWorktreeStatusWithGoGit(path)
+	if engine == EngineSystem {
+		return hasTrackedWorktreeChangesSystem(ctx, path)
+	}
+	if repo.repository == nil {
+		return false, errors.New("built-in Git repository is not initialized")
+	}
+
+	repo.lock.RLock()
+	defer repo.lock.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	repository, err := repo.openWorktreeRepository(path)
+	if err != nil {
+		return false, err
+	}
+	defer repository.Close()
+	worktree, err := repository.Worktree()
+	if err != nil {
+		return false, err
+	}
+	status, err := worktree.StatusWithOptions(goGit.StatusOptions{Strategy: goGit.Preload})
+	if err != nil {
+		return false, mapGoGitError(OperationStatus, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	for _, fileStatus := range status {
+		if fileStatus.Staging == goGit.Untracked || fileStatus.Worktree == goGit.Untracked {
+			continue
+		}
+		if fileStatus.Staging != goGit.Unmodified || fileStatus.Worktree != goGit.Unmodified {
+			return true, nil
+		}
+	}
+	conflicts, err := conflictPaths(repository)
+	return len(conflicts) > 0, err
 }
 
-// GetWorktreeStatus returns the status for the provided worktree path. When
-// path is empty the receiver's repository path is used.
+func GetWorktreeStatus(path string) (*WorktreeStatus, error) {
+	return GetWorktreeStatusContext(context.Background(), path)
+}
+
+func GetWorktreeStatusContext(ctx context.Context, path string) (*WorktreeStatus, error) {
+	repo, err := DetectRepository(path)
+	if err != nil {
+		return nil, err
+	}
+	defer repo.Close()
+	return repo.GetWorktreeStatusContext(ctx, path)
+}
+
 func (r *GitRepo) GetWorktreeStatus(path string) (*WorktreeStatus, error) {
+	return r.GetWorktreeStatusContext(context.Background(), path)
+}
+
+func (r *GitRepo) GetWorktreeStatusContext(ctx context.Context, path string) (*WorktreeStatus, error) {
 	if r == nil {
 		return nil, errors.New("git repository is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	target := strings.TrimSpace(path)
 	if target == "" {
 		target = r.Path
 	}
-	return GetWorktreeStatus(target)
-}
-
-func collectWorktreeStatusViaGit(path string) (*WorktreeStatus, error) {
-	cmd := newGitCommand(path, "status", "--porcelain=2", "--branch")
-	output, err := cmd.Output()
+	engine, err := r.requireEngine(target, OperationStatus)
 	if err != nil {
 		return nil, err
 	}
-
-	status := parseGitStatusOutput(string(output))
-	if status == nil {
-		return nil, errors.New("failed to parse git status output")
+	if engine == EngineSystem {
+		return collectWorktreeStatusSystem(ctx, target)
 	}
-
-	if status.Branch == "" {
-		status.Branch = describeBranch(path)
+	if r.repository == nil {
+		return nil, errors.New("built-in Git repository is not initialized")
 	}
-	if status.LastCommit == nil {
-		if commit, err := lastCommitInfo(path); err == nil {
-			status.LastCommit = commit
-		}
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	if status.Ahead == 0 && status.Behind == 0 {
-		status.Ahead, status.Behind = getAheadBehind(path)
-	}
-	return status, nil
-}
-
-func getWorktreeStatusWithGoGit(path string) (*WorktreeStatus, error) {
-	repo, err := goGit.PlainOpen(path)
+	repository, err := r.openWorktreeRepository(target)
 	if err != nil {
 		return nil, err
 	}
+	defer repository.Close()
+	return collectWorktreeStatus(ctx, repository)
+}
 
-	status := &WorktreeStatus{}
-
-	if head, err := repo.Head(); err == nil {
-		status.Branch = head.Name().Short()
-		if status.Branch == "" || status.Branch == "HEAD" {
-			status.Branch = describeBranch(path)
+func collectWorktreeStatus(ctx context.Context, repository *goGit.Repository) (*WorktreeStatus, error) {
+	if repository == nil {
+		return nil, errors.New("git repository is not initialized")
+	}
+	result := &WorktreeStatus{}
+	head, headErr := repository.Head()
+	if headErr != nil && !errors.Is(headErr, plumbing.ErrReferenceNotFound) {
+		return nil, headErr
+	}
+	if head != nil {
+		if head.Name().IsBranch() {
+			result.Branch = head.Name().Short()
 		}
-		if commit, err := repo.CommitObject(head.Hash()); err == nil {
-			status.LastCommit = &CommitInfo{
+		if commit, err := repository.CommitObject(head.Hash()); err == nil {
+			result.LastCommit = &CommitInfo{
 				SHA:     shortCommit(commit.Hash.String()),
 				Message: firstLine(commit.Message),
 				Author:  commit.Author.Name,
 				Date:    commit.Author.When,
 			}
 		}
-	} else {
-		status.Branch = describeBranch(path)
 	}
 
-	worktree, err := repo.Worktree()
+	worktree, err := repository.Worktree()
 	if err != nil {
 		return nil, err
 	}
-
-	snap, err := worktree.Status()
+	snapshot, err := worktree.StatusWithOptions(goGit.StatusOptions{Strategy: goGit.Preload})
+	if err != nil {
+		return nil, mapGoGitError(OperationStatus, err)
+	}
+	conflicts, err := conflictPaths(repository)
 	if err != nil {
 		return nil, err
 	}
+	result.Conflicted = len(conflicts)
 
-	for _, fs := range snap {
-		if fs.Staging == goGit.Untracked || fs.Worktree == goGit.Untracked {
-			status.Untracked++
+	for path, fileStatus := range snapshot {
+		if _, conflicted := conflicts[path]; conflicted {
 			continue
 		}
-		if fs.Staging == goGit.UpdatedButUnmerged || fs.Worktree == goGit.UpdatedButUnmerged {
-			status.Conflicted++
+		if fileStatus.Staging == goGit.Untracked || fileStatus.Worktree == goGit.Untracked {
+			result.Untracked++
 			continue
 		}
-		switch fs.Worktree {
-		case goGit.Modified, goGit.Added, goGit.Deleted, goGit.Renamed:
-			status.Modified++
+		switch fileStatus.Worktree {
+		case goGit.Modified, goGit.Added, goGit.Deleted, goGit.Renamed, goGit.Copied:
+			result.Modified++
 		}
-		if fs.Staging != goGit.Unmodified && fs.Staging != goGit.Untracked {
-			status.Staged++
-		}
-	}
-
-	status.Ahead, status.Behind = getAheadBehind(path)
-	return status, nil
-}
-
-func parseGitStatusOutput(output string) *WorktreeStatus {
-	if strings.TrimSpace(output) == "" {
-		return nil
-	}
-
-	status := &WorktreeStatus{}
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(line, "# "):
-			parseStatusHeader(status, strings.TrimSpace(line[2:]))
-		case line[0] == '?':
-			status.Untracked++
-		case line[0] == '1' || line[0] == '2':
-			parseTrackedStatus(status, line)
-		case line[0] == 'u':
-			status.Conflicted++
+		switch fileStatus.Staging {
+		case goGit.Modified, goGit.Added, goGit.Deleted, goGit.Renamed, goGit.Copied:
+			result.Staged++
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil
-	}
-	return status
-}
-
-func parseStatusHeader(status *WorktreeStatus, line string) {
-	fields := strings.Fields(line)
-	if len(fields) == 0 {
-		return
-	}
-
-	switch fields[0] {
-	case "branch.head":
-		if len(fields) > 1 && fields[1] != "(detached)" {
-			status.Branch = fields[1]
-		}
-	case "branch.ab":
-		if len(fields) >= 3 {
-			status.Ahead = parseAheadBehindToken(fields[1])
-			status.Behind = parseAheadBehindToken(fields[2])
-		}
-	}
-}
-
-func parseTrackedStatus(status *WorktreeStatus, line string) {
-	fields := strings.Fields(line)
-	if len(fields) < 2 {
-		return
-	}
-
-	xy := fields[1]
-	if len(xy) < 2 {
-		return
-	}
-	x := rune(xy[0])
-	y := rune(xy[1])
-
-	if x == 'U' || y == 'U' {
-		status.Conflicted++
-		return
-	}
-
-	if x != '.' {
-		status.Staged++
-	}
-	if y != '.' {
-		status.Modified++
-	}
-}
-
-func parseAheadBehindToken(token string) int {
-	value := strings.TrimSpace(token)
-	if value == "" {
-		return 0
-	}
-	if strings.HasPrefix(value, "+") || strings.HasPrefix(value, "-") {
-		value = value[1:]
-	}
-	num, err := strconv.Atoi(value)
-	if err != nil || num < 0 {
-		return 0
-	}
-	return num
-}
-
-func lastCommitInfo(path string) (*CommitInfo, error) {
-	cmd := newGitCommand(path, "log", "-1", "--pretty=format:%H%x00%an%x00%ad%x00%s", "--date=iso-strict")
-	output, err := cmd.Output()
-	if err != nil || len(output) == 0 {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
-	parts := bytes.SplitN(output, []byte{0}, 4)
-	if len(parts) < 4 {
-		return nil, errors.New("unexpected git log output")
+	if head != nil && head.Name().IsBranch() {
+		result.Ahead, result.Behind = aheadBehind(ctx, repository, head)
 	}
-
-	dateStr := strings.TrimSpace(string(parts[2]))
-	timestamp, err := time.Parse(time.RFC3339, dateStr)
-	if err != nil {
-		timestamp = time.Time{}
-	}
-
-	return &CommitInfo{
-		SHA:     shortCommit(strings.TrimSpace(string(parts[0]))),
-		Author:  strings.TrimSpace(string(parts[1])),
-		Date:    timestamp,
-		Message: strings.TrimSpace(string(parts[3])),
-	}, nil
+	return result, nil
 }
 
-func getAheadBehind(path string) (ahead, behind int) {
-	cmd := newGitCommand(path, "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
-	output, err := cmd.Output()
+func conflictPaths(repository *goGit.Repository) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	idx, err := repository.Storer.Index()
+	if errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int)
+	for _, entry := range idx.Entries {
+		if entry.Stage != 0 {
+			counts[entry.Name]++
+		}
+	}
+	for path, count := range counts {
+		if count > 1 {
+			result[filepathSlash(path)] = struct{}{}
+		}
+	}
+	return result, nil
+}
+
+func aheadBehind(ctx context.Context, repository *goGit.Repository, head *plumbing.Reference) (ahead, behind int) {
+	cfg, err := repository.Config()
 	if err != nil {
 		return 0, 0
 	}
-
-	parts := strings.Fields(string(output))
-	if len(parts) >= 2 {
-		ahead, _ = strconv.Atoi(parts[0])
-		behind, _ = strconv.Atoi(parts[1])
+	branch, ok := cfg.Branches[head.Name().Short()]
+	if !ok || branch.Merge == "" {
+		return 0, 0
+	}
+	upstreamName := branch.Merge
+	if branch.Remote != "" && branch.Remote != "." {
+		upstreamName = plumbing.NewRemoteReferenceName(branch.Remote, branch.Merge.Short())
+	}
+	upstream, err := repository.Reference(upstreamName, true)
+	if err != nil {
+		return 0, 0
+	}
+	headSet, err := reachableCommits(ctx, repository, head.Hash())
+	if err != nil {
+		return 0, 0
+	}
+	upstreamSet, err := reachableCommits(ctx, repository, upstream.Hash())
+	if err != nil {
+		return 0, 0
+	}
+	for hash := range headSet {
+		if _, ok := upstreamSet[hash]; !ok {
+			ahead++
+		}
+	}
+	for hash := range upstreamSet {
+		if _, ok := headSet[hash]; !ok {
+			behind++
+		}
 	}
 	return ahead, behind
+}
+
+func reachableCommits(ctx context.Context, repository *goGit.Repository, start plumbing.Hash) (map[plumbing.Hash]struct{}, error) {
+	seen := make(map[plumbing.Hash]struct{})
+	stack := []plumbing.Hash{start}
+	for len(stack) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		hash := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, ok := seen[hash]; ok {
+			continue
+		}
+		commit, err := repository.CommitObject(hash)
+		if err != nil {
+			return nil, err
+		}
+		seen[hash] = struct{}{}
+		stack = append(stack, commit.ParentHashes...)
+	}
+	return seen, nil
 }
 
 func shortCommit(hash string) string {
@@ -306,15 +297,13 @@ func firstLine(msg string) string {
 	return strings.TrimSpace(msg)
 }
 
-func describeBranch(path string) string {
-	cmd := newGitCommand(path, "rev-parse", "--abbrev-ref", "HEAD")
-	output, err := cmd.Output()
-	if err != nil {
+func filepathSlash(path string) string {
+	return strings.ReplaceAll(path, "\\", "/")
+}
+
+func statusSummary(status *WorktreeStatus) string {
+	if status == nil {
 		return ""
 	}
-	name := strings.TrimSpace(string(output))
-	if name == "HEAD" {
-		return ""
-	}
-	return name
+	return fmt.Sprintf("modified=%d staged=%d untracked=%d conflicted=%d", status.Modified, status.Staged, status.Untracked, status.Conflicted)
 }

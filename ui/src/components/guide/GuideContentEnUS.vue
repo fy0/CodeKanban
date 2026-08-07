@@ -194,9 +194,9 @@
               <n-space vertical>
                 <n-text depth="3"> Commit code when you feel appropriate. </n-text>
                 <n-text depth="3">
-                  If you're committing from a branch, I suggest rebasing before committing. Code
-                  Kanban provides this feature. Then merge into the main branch using squash or
-                  merge, or create a PR, depending on your project requirements.
+                  If you're committing from a branch, keep the worktree clean before merging. The
+                  system Git engine supports merge, rebase, and squash; the built-in engine supports
+                  fast-forward merges only.
                 </n-text>
               </n-space>
             </n-step>
@@ -618,19 +618,14 @@
                 </n-space>
               </n-step>
 
-              <n-step title="Rebase from Main Branch">
+              <n-step title="Prepare the Merge">
                 <n-space vertical size="small">
                   <n-text depth="3">
-                    During development, click the "Rebase" shortcut button on the worktree's branch
-                    card, select the target branch to rebase (usually develop or main).
+                    Commit your work regularly and keep the worktree clean before preparing a merge.
                   </n-text>
                   <n-text depth="3">
-                    The system will automatically execute the rebase operation. If there are
-                    conflicts, they need to be resolved manually in the terminal.
-                  </n-text>
-                  <n-text depth="3" type="info">
-                    💡 Or manually execute in terminal:
-                    <n-text code>git fetch origin && git rebase origin/main</n-text>
+                    Choose merge, rebase, or squash in Branch Management. With the built-in Git
+                    engine, merge is limited to fast-forward; automatic writes prefer system Git.
                   </n-text>
                 </n-space>
               </n-step>

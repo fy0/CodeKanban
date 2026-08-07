@@ -1,4 +1,9 @@
-import type { CodexSkillSummary, Project, Worktree } from '@/types/models';
+import type {
+  CodexSkillSummary,
+  GitCapabilityResult,
+  Project,
+  Worktree,
+} from '@/types/models';
 import { http } from './http';
 
 type ListProjectsResponse = {
@@ -79,6 +84,19 @@ export const projectApi = {
       (await http.Post<ItemResponse<Project>>(`/projects/${id}/access/clear`, {}).send()) ?? {};
     if (!body.item) {
       throw new Error('failed to clear project access');
+    }
+    return body.item;
+  },
+
+  async gitCapabilities(id: string): Promise<GitCapabilityResult> {
+    const body =
+      (await http
+        .Get<ItemResponse<GitCapabilityResult>>(`/projects/${id}/git-capabilities`, {
+          cacheFor: 0,
+        })
+        .send(true)) ?? {};
+    if (!body.item) {
+      throw new Error('failed to load Git capabilities');
     }
     return body.item;
   },

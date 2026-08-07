@@ -570,23 +570,100 @@ export interface Worktree_commit_request {
    */
   message: string;
 }
+export interface CapabilityReason {
+  code: string;
+  detail?: string;
+}
+export interface OperationCapabilities {
+  branchesRead: boolean;
+  branchesWrite: boolean;
+  status: boolean;
+  diff: boolean;
+  worktreesRead: boolean;
+  worktreesWrite: boolean;
+  commit: boolean;
+  fastForwardMerge: boolean;
+  merge: boolean;
+  rebase: boolean;
+  squash: boolean;
+}
+export type GitEngine = 'builtin' | 'system' | 'unavailable';
+export interface OperationEngines {
+  branchesRead: GitEngine;
+  branchesWrite: GitEngine;
+  status: GitEngine;
+  diff: GitEngine;
+  worktreesRead: GitEngine;
+  worktreesWrite: GitEngine;
+  commit: GitEngine;
+  fastForwardMerge: GitEngine;
+  merge: GitEngine;
+  rebase: GitEngine;
+  squash: GitEngine;
+}
+export interface GitWorktreeCapabilityResult {
+  id: string;
+  operations: OperationCapabilities;
+  engines: OperationEngines;
+  reasons: CapabilityReason[] | null;
+}
+export interface GitCapabilityResult {
+  repository: boolean;
+  mode: string;
+  operations: OperationCapabilities;
+  engines: OperationEngines;
+  reasons: CapabilityReason[] | null;
+  worktrees: GitWorktreeCapabilityResult[] | null;
+}
+export interface ItemResponseGitCapabilityResultBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应对象
+   */
+  item: GitCapabilityResult;
+}
+export type GitEnginePreference = 'auto' | 'builtin' | 'system';
+export interface GitConfig {
+  /** A URL to the JSON Schema for this object. */
+  $schema?: string;
+  readEngine: GitEnginePreference;
+  writeEngine: GitEnginePreference;
+  executable: string;
+}
+export interface SystemGitInfo {
+  available: boolean;
+  executable?: string;
+  version?: string;
+  error?: string;
+}
+export interface GitSettingsResult {
+  readEngine: GitEnginePreference;
+  writeEngine: GitEnginePreference;
+  executable?: string;
+  systemGit: SystemGitInfo;
+}
+export interface ItemResponseGitSettingsResultBody {
+  /** A URL to the JSON Schema for this object. */
+  $schema?: string;
+  /** 响应对象 */
+  item: GitSettingsResult;
+}
 export interface MergeBranchBody {
   /**
    * A URL to the JSON Schema for this object.
    */
   $schema?: string;
   /**
-   * Squash 合并后立即提交
-   */
-  commit: boolean;
-  /**
-   * 提交信息（仅 squash 合并生效）
-   */
-  commitMessage: string;
-  /**
    * 源分支
    */
   sourceBranch: string;
+  /** Squash 合并后立即提交 */
+  commit: boolean;
+  /** 提交信息（仅 squash 合并生效） */
+  commitMessage: string;
   /**
    * 合并策略
    */
@@ -1651,6 +1728,20 @@ declare global {
       >(
         config: Config
       ): Alova2Method<ItemResponseProjectBody, 'project.update', Config>;
+      /**
+       * [GET] 获取项目 Git 能力
+       *
+       * **path:** /api/v1/projects/{projectId}/git-capabilities
+       */
+      gitCapabilities<
+        Config extends Alova2MethodConfig<ItemResponseGitCapabilityResultBody> & {
+          pathParams: {
+            projectId: string;
+          };
+        },
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseGitCapabilityResultBody, 'project.gitCapabilities', Config>;
     };
     branch: {
       /**
@@ -3796,6 +3887,32 @@ declare global {
       ): Alova2Method<ItemResponseDebugInfoBody, 'terminalSession.debug', Config>;
     };
     system: {
+      /**
+       * [GET] 获取 Git 引擎设置
+       *
+       * **path:** /api/v1/system/git-settings
+       */
+      gitSettingsGet<
+        Config extends Alova2MethodConfig<ItemResponseGitSettingsResultBody> & {
+          params?: {
+            refresh?: boolean;
+          };
+        },
+      >(
+        config?: Config
+      ): Alova2Method<ItemResponseGitSettingsResultBody, 'system.gitSettingsGet', Config>;
+      /**
+       * [POST] 更新 Git 引擎设置
+       *
+       * **path:** /api/v1/system/git-settings/update
+       */
+      gitSettingsUpdate<
+        Config extends Alova2MethodConfig<ItemResponseGitSettingsResultBody> & {
+          data: GitConfig;
+        },
+      >(
+        config: Config
+      ): Alova2Method<ItemResponseGitSettingsResultBody, 'system.gitSettingsUpdate', Config>;
       /**
        * ---
        *

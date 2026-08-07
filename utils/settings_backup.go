@@ -35,6 +35,7 @@ type SettingsBackupServerPayload struct {
 	DailyTip             *BackupDailyTipSettings          `json:"dailyTip,omitempty"`
 	WebSessionQuickInput *SettingsBackupQuickInputSection `json:"webSessionQuickInput,omitempty"`
 	Worktree             *WorktreeConfig                  `json:"worktree,omitempty"`
+	Git                  *GitConfig                       `json:"git,omitempty"`
 	TerminalShell        *SettingsBackupShellConfig       `json:"terminalShell,omitempty"`
 	AuthAccess           *AuthAccessConfig                `json:"authAccess,omitempty"`
 }
@@ -45,6 +46,7 @@ func (p *SettingsBackupServerPayload) HasContent() bool {
 		p.DailyTip != nil ||
 		p.WebSessionQuickInput.HasContent() ||
 		p.Worktree != nil ||
+		p.Git != nil ||
 		p.TerminalShell != nil ||
 		p.AuthAccess != nil)
 }
@@ -128,6 +130,7 @@ func BuildSettingsBackupServerPayload(cfg *AppConfig) SettingsBackupServerPayloa
 	developer := NormalizeDeveloperConfig(cfg.Developer)
 	dailyTip := BackupDailyTipSettings{Enabled: cfg.UI.DailyTipEnabled}
 	worktree := cfg.Worktree
+	gitConfig := NormalizeGitConfig(cfg.Git)
 	terminalShell := SettingsBackupShellConfig{
 		Platform: runtime.GOOS,
 		Shell:    currentShell,
@@ -143,6 +146,7 @@ func BuildSettingsBackupServerPayload(cfg *AppConfig) SettingsBackupServerPayloa
 			Recent: ptrStringSlice(quickInput.Recent),
 		},
 		Worktree:      ptrValue(worktree),
+		Git:           ptrValue(gitConfig),
 		TerminalShell: ptrValue(terminalShell),
 		AuthAccess:    ptrValue(authAccess),
 	}
