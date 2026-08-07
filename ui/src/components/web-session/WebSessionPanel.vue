@@ -1089,12 +1089,7 @@
                   <button
                     type="button"
                     class="live-card"
-                    :class="[
-                      `phase-${displayLiveState.phase}`,
-                      {
-                        'show-jump-hint': showJumpToBottom,
-                      },
-                    ]"
+                    :class="`phase-${displayLiveState.phase}`"
                     :aria-label="liveCardAriaLabel"
                     @click="handleLiveCardClick"
                   >
@@ -1116,9 +1111,6 @@
                         <span class="live-activity-bar"></span>
                         <span class="live-activity-bar"></span>
                         <span class="live-activity-bar"></span>
-                      </span>
-                      <span v-if="showJumpToBottom" class="live-jump-hint">
-                        {{ t('webSession.jumpToBottom') }}
                       </span>
                       <n-tooltip placement="top-end" :delay="120">
                         <template #trigger>
@@ -17082,38 +17074,6 @@ defineExpose({
   animation-delay: 0.28s;
 }
 
-.live-jump-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--n-primary-color) 12%, transparent);
-  color: var(--n-primary-color);
-  font-size: 10px;
-  font-weight: 600;
-  white-space: nowrap;
-  opacity: 0;
-  transform: translateX(6px);
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease,
-    background-color 0.18s ease;
-}
-
-.live-jump-hint::before {
-  content: '↓';
-  font-size: 11px;
-  line-height: 1;
-}
-
-.live-card:hover .live-jump-hint,
-.live-card:focus-visible .live-jump-hint,
-.live-card.show-jump-hint .live-jump-hint {
-  opacity: 1;
-  transform: translateX(0);
-}
-
 .live-orb {
   position: relative;
   width: 10px;
@@ -19416,7 +19376,6 @@ defineExpose({
 
 @media (prefers-reduced-motion: reduce) {
   .live-card,
-  .live-jump-hint,
   .live-activity-bar,
   .live-orb,
   .live-orb::after,
