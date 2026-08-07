@@ -51,4 +51,3 @@ func TestAddSchemaVisibilityToOpenAPI(t *testing.T) {
 		t.Fatalf("expected nested.bar.visible=true, got %#v", got)
 	}
 }
-

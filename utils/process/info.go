@@ -18,13 +18,13 @@ var (
 
 // ProcessInfo contains basic information about a process.
 type ProcessInfo struct {
-	PID           int32    `json:"pid"`
-	Name          string   `json:"name,omitempty"`
-	Cmdline       string   `json:"cmdline,omitempty"`
-	Status        string   `json:"status"`
-	HasChildren   bool     `json:"hasChildren"`
-	ChildrenCount int      `json:"childrenCount"`
-	Children      []int32  `json:"children,omitempty"`
+	PID           int32   `json:"pid"`
+	Name          string  `json:"name,omitempty"`
+	Cmdline       string  `json:"cmdline,omitempty"`
+	Status        string  `json:"status"`
+	HasChildren   bool    `json:"hasChildren"`
+	ChildrenCount int     `json:"childrenCount"`
+	Children      []int32 `json:"children,omitempty"`
 }
 
 // GetProcessInfo retrieves information about a process by PID.
@@ -182,7 +182,6 @@ func findForegroundCommandRecursive(pid int32, depth, maxDepth int) string {
 
 	return ""
 }
-
 
 // isShellProcess checks if a process is an intermediate shell that should be skipped.
 func isShellProcess(proc *process.Process) bool {
