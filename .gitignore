@@ -40,3 +40,32 @@ worktrees/
 /package.json
 /npm-bin/
 *.tgz
+
+# 本地实验与临时产物（不纳入版本控制）
+*.tmp
+*.testbak
+*~
+.tmp_remote_*
+1.txt
+中文测试.txt
+test_permission.txt
+analysis.json
+aicode-kanban.zip
+config.yaml.testbak
+*.zip
+*.png
+
+# 构建 / 运行产物
+ui/dist-temp/
+node_modules/
+artifacts/
+
+# Playwright MCP 生成的快照与日志
+.playwright-mcp/
+
+# opencode 捕获素材
+opencode-windows-capture/
+opencode-windows-capture-reference.md
+
+# GoLand 自动备份文件（*.go.<时间戳>）
+*.go.*
