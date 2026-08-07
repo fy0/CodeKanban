@@ -30,7 +30,6 @@ func (s *SettingsBackupQuickInputSection) HasContent() bool {
 }
 
 type SettingsBackupServerPayload struct {
-	AIAssistantStatus    *AIAssistantStatusConfig         `json:"aiAssistantStatus,omitempty"`
 	Developer            *DeveloperConfig                 `json:"developer,omitempty"`
 	PageTitle            *string                          `json:"pageTitle,omitempty"`
 	DailyTip             *BackupDailyTipSettings          `json:"dailyTip,omitempty"`
@@ -41,8 +40,7 @@ type SettingsBackupServerPayload struct {
 }
 
 func (p *SettingsBackupServerPayload) HasContent() bool {
-	return p != nil && (p.AIAssistantStatus != nil ||
-		p.Developer != nil ||
+	return p != nil && (p.Developer != nil ||
 		p.PageTitle != nil ||
 		p.DailyTip != nil ||
 		p.WebSessionQuickInput.HasContent() ||
@@ -127,7 +125,6 @@ type SettingsBackupPreviewResult struct {
 func BuildSettingsBackupServerPayload(cfg *AppConfig) SettingsBackupServerPayload {
 	currentShell := strings.TrimSpace(CurrentPlatformShell(cfg.Terminal.Shell))
 	quickInput := NormalizeWebSessionQuickInputConfig(cfg.UI.WebSessionQuickInput)
-	aiStatus := cfg.Terminal.AIAssistantStatus
 	developer := NormalizeDeveloperConfig(cfg.Developer)
 	dailyTip := BackupDailyTipSettings{Enabled: cfg.UI.DailyTipEnabled}
 	worktree := cfg.Worktree
@@ -138,10 +135,9 @@ func BuildSettingsBackupServerPayload(cfg *AppConfig) SettingsBackupServerPayloa
 	authAccess := SanitizeAuthAccessConfig(AuthAccessConfigFromAuthConfig(cfg.Auth))
 
 	return SettingsBackupServerPayload{
-		AIAssistantStatus: ptrValue(aiStatus),
-		Developer:         ptrValue(developer),
-		PageTitle:         ptrValue(cfg.UI.PageTitle),
-		DailyTip:          ptrValue(dailyTip),
+		Developer: ptrValue(developer),
+		PageTitle: ptrValue(cfg.UI.PageTitle),
+		DailyTip:  ptrValue(dailyTip),
 		WebSessionQuickInput: &SettingsBackupQuickInputSection{
 			Pinned: ptrStringSlice(quickInput.Pinned),
 			Recent: ptrStringSlice(quickInput.Recent),

@@ -1,22 +1,7 @@
 export const DEFAULT_MOBILE_VIEW = 'projects' as const;
 
-const MOBILE_VIEWS = [
-  'kanban',
-  'terminal',
-  'webSession',
-  'files',
-  'changes',
-  'projects',
-  'notifications',
-] as const;
-const MOBILE_ROUTE_TABS = [
-  'projects',
-  'terminal',
-  'web',
-  'files',
-  'changes',
-  'notifications',
-] as const;
+const MOBILE_VIEWS = ['kanban', 'terminal', 'webSession', 'files', 'changes', 'projects'] as const;
+const MOBILE_ROUTE_TABS = ['projects', 'terminal', 'web', 'files', 'changes'] as const;
 
 export type MobileView = (typeof MOBILE_VIEWS)[number];
 export type MobileRouteTab = (typeof MOBILE_ROUTE_TABS)[number];
@@ -34,9 +19,6 @@ export function normalizeMobileView(value: unknown): MobileView {
 
 export function restorePersistedMobileView(value: unknown): MobileView {
   const normalized = normalizeMobileView(value);
-  if (normalized === 'notifications') {
-    return DEFAULT_MOBILE_VIEW;
-  }
   return normalized;
 }
 
@@ -50,8 +32,6 @@ export function mobileViewToRouteTab(value: unknown): MobileRouteTab {
       return 'files';
     case 'changes':
       return 'changes';
-    case 'notifications':
-      return 'notifications';
     case 'projects':
     case 'kanban':
     default:
@@ -69,8 +49,6 @@ export function routeTabToMobileView(value: unknown): MobileView {
       return 'files';
     case 'changes':
       return 'changes';
-    case 'notifications':
-      return 'notifications';
     case 'projects':
     case 'kanban':
     default:

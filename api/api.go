@@ -82,15 +82,13 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	humaTypesRegister()
 
 	terminalManager := terminal.NewManager(terminal.Config{
-		Shell:                  cfg.Terminal.Shell,
-		IdleTimeout:            cfg.Terminal.IdleDuration(),
-		MaxSessionsPerProject:  cfg.Terminal.MaxSessionsPerProject,
-		Encoding:               cfg.Terminal.Encoding,
-		ScrollbackBytes:        cfg.Terminal.ScrollbackBytes,
-		AIAssistantStatus:      cfg.Terminal.AIAssistantStatus,
-		ScrollbackEnabled:      cfg.Developer.EnableTerminalScrollback,
-		TerminalStateSnapshot:  cfg.Developer.EnableTerminalStateSnapshot,
-		RenameTitleEachCommand: cfg.Developer.RenameSessionTitleEachCommand,
+		Shell:                 cfg.Terminal.Shell,
+		IdleTimeout:           cfg.Terminal.IdleDuration(),
+		MaxSessionsPerProject: cfg.Terminal.MaxSessionsPerProject,
+		Encoding:              cfg.Terminal.Encoding,
+		ScrollbackBytes:       cfg.Terminal.ScrollbackBytes,
+		ScrollbackEnabled:     cfg.Developer.EnableTerminalScrollback,
+		TerminalStateSnapshot: cfg.Developer.EnableTerminalStateSnapshot,
 	}, theLogger)
 	terminalManager.StartBackground(ctx)
 

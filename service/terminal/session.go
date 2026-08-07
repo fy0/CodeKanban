@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -20,12 +19,8 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 
-	"code-kanban/model"
-	"code-kanban/model/tables"
 	"code-kanban/utils"
 	"code-kanban/utils/ai_assistant2"
-	"code-kanban/utils/ai_assistant2/log_watcher"
-	"code-kanban/utils/ai_assistant2/types"
 	"code-kanban/utils/process"
 )
 
@@ -86,15 +81,13 @@ type StreamEvent struct {
 }
 
 type SessionMetadata struct {
-	Title                  string                         `json:"title,omitempty"`
-	ProcessPID             int32                          `json:"processPid,omitempty"`
-	ProcessStatus          string                         `json:"processStatus,omitempty"`
-	ProcessHasChildren     bool                           `json:"processHasChildren,omitempty"`
-	RunningCommand         string                         `json:"runningCommand,omitempty"`
-	AIAssistant            *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
-	TaskID                 string                         `json:"taskId,omitempty"`
-	AIAssistantRecentInput string                         `json:"aiAssistantRecentInput,omitempty"`
-	AISessionID            string                         `json:"aiSessionId,omitempty"`
+	Title              string                         `json:"title,omitempty"`
+	ProcessPID         int32                          `json:"processPid,omitempty"`
+	ProcessStatus      string                         `json:"processStatus,omitempty"`
+	ProcessHasChildren bool                           `json:"processHasChildren,omitempty"`
+	RunningCommand     string                         `json:"runningCommand,omitempty"`
+	AIAssistant        *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
+	TaskID             string                         `json:"taskId,omitempty"`
 }
 
 type TerminalStateCell struct {
@@ -157,8 +150,7 @@ type sessionSubscriber struct {
 }
 
 const (
-	subscriberBufferSize  = 128
-	maxSessionTitleLength = 64
+	subscriberBufferSize = 128
 
 	// Metadata polling interval levels
 	MetadataIntervalShort  = 2 * time.Second  // Active usage
@@ -199,30 +191,10 @@ type Session struct {
 	encoding encoding.Encoding
 	encName  string
 
-	assistantTracker        *ai_assistant2.StatusTracker
-	getAIConfig             func() *utils.AIAssistantStatusConfig
-	assistantOutputNotifyCh chan struct{}
-	assistantOutputMu       sync.Mutex
-	assistantOutputQueue    [][]byte
-	assistantOutputQueueMax int
-
 	associatedTaskID             string
 	lockedTitle                  string
-	lastRecentInput              string
-	renameTitleEachCommand       atomic.Bool
-	autoTitleAssigned            atomic.Bool
 	terminalStateEnabled         atomic.Bool
 	terminalStateSuppressReplies atomic.Bool
-
-	// LogWatcher for capturing user input from AI assistant session logs
-	logWatcherMu          sync.RWMutex
-	logWatcher            *log_watcher.LogWatcher
-	lastLogWatcherMessage string
-	aiProcessStartTime    time.Time // AI process creation time (from proc.CreateTime)
-	aiProcessWorkingDir   string    // AI process working directory (from proc.Cwd)
-	currentAISessionID    string    // Current AI session ID (found synchronously)
-	currentAISessionFile  string    // Current AI session file path
-	linkedAISessionID     string    // The session ID that has been linked to task (to avoid repeated linking)
 
 	mu sync.RWMutex
 
@@ -276,10 +248,8 @@ type SessionParams struct {
 	Logger                      *zap.Logger
 	Encoding                    string
 	ScrollbackLimit             int
-	GetAIConfig                 func() *utils.AIAssistantStatusConfig
 	EnableTerminalStateSnapshot bool
 	TaskID                      string
-	RenameTitleEachCommand      bool
 	OrderIndex                  float64
 	ShellIntegration            shellIntegrationConfig
 	StartupReplayCommand        string
@@ -340,23 +310,15 @@ func NewSession(params SessionParams) (*Session, error) {
 		encName:            encName,
 		scrollbackLimit:    scrollbackLimit,
 		subscribers:        make(map[string]*sessionSubscriber),
-		assistantTracker:   ai_assistant2.NewStatusTracker(),
-		getAIConfig:        params.GetAIConfig,
 		associatedTaskID:   params.TaskID,
 		shellEventCallback: params.OnShellEvent,
 	}
-	session.renameTitleEachCommand.Store(params.RenameTitleEachCommand)
 	session.terminalStateEnabled.Store(params.EnableTerminalStateSnapshot && runtime.GOOS != "windows")
 	session.shellIntegration.family = params.ShellIntegration.Family
 	session.shellIntegration.supported = params.ShellIntegration.Supported
 	session.shellIntegration.cleanup = params.ShellIntegration.Cleanup
 	session.shellIntegration.shellState = terminalRestoreShellStateIdle
 	session.shellIntegration.startupReplayCommand = strings.TrimSpace(params.StartupReplayCommand)
-
-	session.assistantTracker.SetCaptureFunc(session.captureTerminalLines)
-	// Set state change callback for periodic checking
-	session.assistantTracker.SetStateChangeCallback(session.handleStateChangeFromTracker)
-	session.assistantTracker.SetTerminalSize(session.rows, session.cols)
 
 	if session.title == "" {
 		session.title = session.id
@@ -425,20 +387,12 @@ func (s *Session) Start(ctx context.Context) error {
 
 	s.setStatus(SessionStatusRunning)
 
-	s.assistantOutputNotifyCh = make(chan struct{}, 1)
-	if s.assistantTracker != nil {
-		s.assistantTracker.SetTerminalSize(rows, cols)
-	}
-
 	go s.wait(sessionCtx)
 	go s.consumePTY(sessionCtx)
 	go s.monitorMetadata(sessionCtx)
-	go s.processAssistantOutput(sessionCtx)
 
-	// 立即执行一次 metadata 检测，确保 AI assistant tracker 尽早激活
-	// 避免第一次状态变化时 tracker 还未激活的问题
+	// Detect the foreground process once after the shell has started.
 	go func() {
-		// 等待一小段时间让进程启动
 		time.Sleep(50 * time.Millisecond)
 		s.checkAndBroadcastMetadata()
 	}()
@@ -476,7 +430,6 @@ func (s *Session) consumePTY(ctx context.Context) {
 				if modeChanged {
 					s.broadcast(StreamEvent{Type: StreamEventModes, Modes: modeSnapshot})
 				}
-				s.enqueueAssistantOutput(normalized)
 			}
 		}
 		if err != nil {
@@ -569,71 +522,6 @@ func (s *Session) resetMetadataInterval() {
 	}
 }
 
-func (s *Session) enqueueAssistantOutput(chunk []byte) {
-	if len(chunk) == 0 {
-		return
-	}
-
-	notifyCh := s.assistantOutputNotifyCh
-	if notifyCh == nil {
-		s.handleAssistantOutput(chunk)
-		return
-	}
-
-	s.assistantOutputMu.Lock()
-	s.assistantOutputQueue = append(s.assistantOutputQueue, chunk)
-	if len(s.assistantOutputQueue) > s.assistantOutputQueueMax {
-		s.assistantOutputQueueMax = len(s.assistantOutputQueue)
-	}
-	s.assistantOutputMu.Unlock()
-
-	select {
-	case notifyCh <- struct{}{}:
-	default:
-	}
-}
-
-func (s *Session) processAssistantOutput(ctx context.Context) {
-	notifyCh := s.assistantOutputNotifyCh
-	if notifyCh == nil {
-		return
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-notifyCh:
-			for {
-				chunk := s.dequeueAssistantOutput()
-				if len(chunk) == 0 {
-					break
-				}
-				s.handleAssistantOutput(chunk)
-			}
-		}
-	}
-}
-
-func (s *Session) dequeueAssistantOutput() []byte {
-	s.assistantOutputMu.Lock()
-	defer s.assistantOutputMu.Unlock()
-
-	if len(s.assistantOutputQueue) == 0 {
-		return nil
-	}
-
-	chunk := s.assistantOutputQueue[0]
-	s.assistantOutputQueue[0] = nil
-	s.assistantOutputQueue = s.assistantOutputQueue[1:]
-
-	if len(s.assistantOutputQueue) == 0 {
-		s.assistantOutputQueue = nil
-	}
-
-	return chunk
-}
-
 func (s *Session) checkAndBroadcastMetadata() {
 	pid := s.getPID()
 	if pid <= 0 {
@@ -641,61 +529,23 @@ func (s *Session) checkAndBroadcastMetadata() {
 	}
 
 	metadata := &SessionMetadata{
-		ProcessPID:             pid,
-		ProcessStatus:          process.GetProcessStatus(pid),
-		ProcessHasChildren:     process.IsProcessBusy(pid),
-		TaskID:                 s.TaskID(),
-		Title:                  s.Title(),
-		AIAssistantRecentInput: s.LastRecentInput(),
+		ProcessPID:         pid,
+		ProcessStatus:      process.GetProcessStatus(pid),
+		ProcessHasChildren: process.IsProcessBusy(pid),
+		TaskID:             s.TaskID(),
+		Title:              s.Title(),
 	}
 
-	tracker := s.assistantTracker
 	if metadata.ProcessHasChildren {
 		if cmd := process.GetForegroundCommand(pid); cmd != "" {
 			metadata.RunningCommand = cmd
 
-			// Detect AI Assistant
-			aiInfo := ai_assistant2.DetectFromCommand(cmd)
-			metadata.AIAssistant = s.enrichAssistantInfo(aiInfo)
+			metadata.AIAssistant = ai_assistant2.ToAIAssistantInfo(
+				ai_assistant2.DetectFromCommand(cmd),
+			)
 
-			// Start LogWatcher for supported assistant types
-			// Use FindAIAssistantProcess to get accurate working directory and process start time
-			if aiInfo != nil {
-				aiProcInfo := process.FindAIAssistantProcess(pid, func(cmdline string) bool {
-					return ai_assistant2.DetectFromCommand(cmdline) != nil
-				})
-				if aiProcInfo != nil {
-					// Synchronously find session file and get session ID
-					sessionID, sessionFile := s.findAISessionSync(aiInfo.Type, aiProcInfo.Cwd, aiProcInfo.CreateTime)
-					if sessionID != "" {
-						metadata.AISessionID = sessionID
-					}
-					s.ensureLogWatcherStarted(aiInfo.Type, aiProcInfo.Cwd, aiProcInfo.CreateTime)
-
-					// Auto-link to task if session found
-					if sessionID != "" && sessionFile != "" {
-						go s.autoLinkAISession(sessionID, sessionFile)
-					}
-				} else {
-					// Fallback: start without working directory info
-					s.ensureLogWatcherStarted(aiInfo.Type, "", time.Time{})
-				}
-			}
-		} else if tracker != nil {
-			tracker.Deactivate()
-			s.stopLogWatcher()
 		}
-	} else if tracker != nil {
-		tracker.Deactivate()
-		s.stopLogWatcher()
 	}
-
-	// Populate cached AI session ID (LogWatcher found it asynchronously).
-	s.logWatcherMu.RLock()
-	if metadata.AISessionID == "" && s.currentAISessionID != "" {
-		metadata.AISessionID = s.currentAISessionID
-	}
-	s.logWatcherMu.RUnlock()
 
 	// Check if metadata changed
 	s.metaMu.RLock()
@@ -728,9 +578,7 @@ func (s *Session) metadataChanged(old, new *SessionMetadata) bool {
 		old.ProcessStatus != new.ProcessStatus ||
 		old.ProcessHasChildren != new.ProcessHasChildren ||
 		old.RunningCommand != new.RunningCommand ||
-		old.TaskID != new.TaskID ||
-		old.AISessionID != new.AISessionID ||
-		old.AIAssistantRecentInput != new.AIAssistantRecentInput {
+		old.TaskID != new.TaskID {
 		return true
 	}
 
@@ -741,9 +589,7 @@ func (s *Session) metadataChanged(old, new *SessionMetadata) bool {
 	if old.AIAssistant != nil && new.AIAssistant != nil {
 		if old.AIAssistant.Type != new.AIAssistant.Type ||
 			old.AIAssistant.DisplayName != new.AIAssistant.DisplayName ||
-			old.AIAssistant.Command != new.AIAssistant.Command ||
-			old.AIAssistant.State != new.AIAssistant.State ||
-			!old.AIAssistant.StateUpdatedAt.Equal(new.AIAssistant.StateUpdatedAt) {
+			old.AIAssistant.Command != new.AIAssistant.Command {
 			return true
 		}
 	}
@@ -803,10 +649,6 @@ func (s *Session) Resize(cols, rows int) error {
 	s.rows = rows
 	s.mu.Unlock()
 
-	// Also resize terminal emulator
-	if s.assistantTracker != nil {
-		s.assistantTracker.SetTerminalSize(rows, cols)
-	}
 	s.resizeTerminalState(cols, rows)
 
 	s.Touch()
@@ -929,8 +771,6 @@ func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		s.setStatus(SessionStatusClosed)
 
-		// Stop LogWatcher first
-		s.stopLogWatcher()
 		s.cleanupShellIntegration()
 
 		if s.cancel != nil {
@@ -1134,18 +974,6 @@ func (s *Session) restoreStateSnapshot() terminalRestoreStateSnapshot {
 	}
 }
 
-// SetRenameTitleEachCommand toggles whether AI input renames should run on each instruction.
-func (s *Session) SetRenameTitleEachCommand(enabled bool) {
-	s.renameTitleEachCommand.Store(enabled)
-}
-
-// LastRecentInput returns the last user input captured by the AI assistant.
-func (s *Session) LastRecentInput() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastRecentInput
-}
-
 // CreatedAt returns the spawn timestamp.
 func (s *Session) CreatedAt() time.Time {
 	return s.createdAt
@@ -1188,8 +1016,6 @@ func (s *Session) Snapshot() SessionSnapshot {
 		TerminalModes: s.TerminalModesSnapshot(),
 	}
 	pid := s.getPID()
-	rows := s.rows
-	cols := s.cols
 	s.mu.RUnlock()
 
 	// Get process information
@@ -1202,7 +1028,9 @@ func (s *Session) Snapshot() SessionSnapshot {
 		if snapshot.ProcessHasChildren {
 			if cmd := process.GetForegroundCommand(pid); cmd != "" {
 				snapshot.RunningCommand = cmd
-				snapshot.AIAssistant = s.enrichAssistantInfoWithSize(ai_assistant2.DetectFromCommand(cmd), rows, cols)
+				snapshot.AIAssistant = ai_assistant2.ToAIAssistantInfo(
+					ai_assistant2.DetectFromCommand(cmd),
+				)
 			}
 		}
 	}
@@ -1378,232 +1206,6 @@ func (s *Session) removeSubscriber(id string) {
 	}
 }
 
-func (s *Session) handleAssistantOutput(chunk []byte) {
-	tracker := s.assistantTracker
-	if len(chunk) == 0 || tracker == nil {
-		return
-	}
-	tracker.ProcessChunkInvoke(chunk)
-}
-
-func (s *Session) captureTerminalLines(rows, cols int) ([]string, error) {
-	if rows <= 0 || cols <= 0 {
-		s.mu.RLock()
-		if rows <= 0 {
-			rows = s.rows
-		}
-		if cols <= 0 {
-			cols = s.cols
-		}
-		s.mu.RUnlock()
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	chunk, err := s.CaptureNextChunk(ctx, time.Second)
-	if err != nil {
-		return nil, err
-	}
-	return ai_assistant2.RenderLinesFromBuffer(chunk.Data, rows, cols), nil
-}
-
-// handleStateChangeFromTracker is called by tracker when periodic check detects state change
-func (s *Session) handleStateChangeFromTracker(event ai_assistant2.StateChangeEvent) {
-	// 优先使用终端检测的用户输入，LogWatcher 作为备选
-	// 这样可以避免第一次状态变化时 LogWatcher 还没准备好的问题
-	if event.PreviousState == types.StateWaitingInput && event.State == types.StateWorking {
-		if event.RecentInput == "" {
-			s.logWatcherMu.RLock()
-			if s.logWatcher != nil {
-				if msg := s.logWatcher.LastUserMessage(); msg != nil && msg.Message != "" {
-					event.RecentInput = msg.Message
-				}
-			}
-			s.logWatcherMu.RUnlock()
-		}
-	}
-
-	s.applyAssistantState(event)
-	if event.RecentInput != "" {
-		go s.handleRecentInput(event)
-	}
-}
-
-func (s *Session) applyAssistantState(event ai_assistant2.StateChangeEvent) {
-	s.metaMu.Lock()
-
-	var metadata *SessionMetadata
-	if s.lastMetadata == nil {
-		// 第一次状态变化时 lastMetadata 可能为 nil，创建新的
-		metadata = &SessionMetadata{
-			Title:       s.Title(),
-			TaskID:      s.TaskID(),
-			AIAssistant: &ai_assistant2.AIAssistantInfo{},
-		}
-	} else if s.lastMetadata.AIAssistant == nil {
-		// lastMetadata 存在但 AIAssistant 为 nil，克隆并创建 AIAssistant
-		metadata = cloneSessionMetadata(s.lastMetadata)
-		metadata.AIAssistant = &ai_assistant2.AIAssistantInfo{}
-	} else {
-		metadata = cloneSessionMetadata(s.lastMetadata)
-	}
-
-	ai_assistant2.SetState(metadata.AIAssistant, event.State, event.Timestamp)
-	metadata.TaskID = s.TaskID()
-	metadata.AIAssistantRecentInput = ""
-	if event.PreviousState == types.StateWaitingInput &&
-		event.State == types.StateWorking &&
-		event.RecentInput != "" {
-		metadata.AIAssistantRecentInput = event.RecentInput
-	}
-	// 从缓存获取 AI session ID
-	s.logWatcherMu.RLock()
-	if s.currentAISessionID != "" {
-		metadata.AISessionID = s.currentAISessionID
-	}
-	s.logWatcherMu.RUnlock()
-	s.lastMetadata = metadata
-	s.metaMu.Unlock()
-
-	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: metadata})
-}
-
-func (s *Session) handleRecentInput(event ai_assistant2.StateChangeEvent) {
-	input := strings.TrimSpace(event.RecentInput)
-	if input == "" {
-		return
-	}
-
-	s.mu.Lock()
-	if input == s.lastRecentInput {
-		s.mu.Unlock()
-		return
-	}
-	s.lastRecentInput = input
-	s.mu.Unlock()
-
-	if s.autoUpdateTitleFromInput(input) {
-		s.notifyTitleChanged()
-	}
-}
-
-func (s *Session) autoUpdateTitleFromInput(input string) bool {
-	candidate := truncateString(sanitizeCapturedInput(input), maxSessionTitleLength)
-	candidate = strings.TrimSpace(candidate)
-	if candidate == "" {
-		return false
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.lockedTitle != "" {
-		return false
-	}
-
-	if !s.renameTitleEachCommand.Load() && s.autoTitleAssigned.Load() {
-		return false
-	}
-
-	if s.title == candidate {
-		if !s.autoTitleAssigned.Load() {
-			s.autoTitleAssigned.Store(true)
-		}
-		return false
-	}
-
-	s.title = candidate
-	s.autoTitleAssigned.Store(true)
-	return true
-}
-
-func (s *Session) notifyTitleChanged() {
-	title := s.Title()
-	s.metaMu.Lock()
-	if s.lastMetadata == nil {
-		s.lastMetadata = &SessionMetadata{}
-	}
-	s.lastMetadata.Title = title
-	meta := cloneSessionMetadata(s.lastMetadata)
-	s.metaMu.Unlock()
-	if meta == nil {
-		meta = &SessionMetadata{Title: title}
-	}
-	meta.TaskID = s.TaskID()
-	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: meta})
-}
-
-func sanitizeCapturedInput(value string) string {
-	fields := strings.Fields(value)
-	return strings.Join(fields, " ")
-}
-
-func truncateString(value string, max int) string {
-	if max <= 0 {
-		return ""
-	}
-	runes := []rune(value)
-	if len(runes) <= max {
-		return value
-	}
-	if max == 1 {
-		return string(runes[:1])
-	}
-	return string(runes[:max-1]) + "…"
-}
-
-func (s *Session) enrichAssistantInfo(info *types.AssistantInfo) *ai_assistant2.AIAssistantInfo {
-	s.mu.RLock()
-	cols, rows := s.cols, s.rows
-	s.mu.RUnlock()
-	return s.enrichAssistantInfoWithSize(info, rows, cols)
-}
-
-func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, cols int) *ai_assistant2.AIAssistantInfo {
-	tracker := s.assistantTracker
-	if info == nil {
-		if tracker != nil {
-			tracker.Deactivate()
-		}
-		return nil
-	}
-
-	// Check if this assistant type is enabled in config
-	if s.getAIConfig != nil {
-		config := s.getAIConfig()
-		if config != nil && !config.IsEnabled(string(info.Type)) {
-			// Config disabled this assistant type, deactivate tracker
-			if tracker != nil {
-				tracker.Deactivate()
-			}
-			// Return AIAssistantInfo with unknown state to indicate it's disabled
-			aiInfo := ai_assistant2.ToAIAssistantInfo(info)
-			ai_assistant2.SetState(aiInfo, types.StateUnknown, time.Now())
-			return aiInfo
-		}
-	}
-
-	// Convert to AIAssistantInfo
-	aiInfo := ai_assistant2.ToAIAssistantInfo(info)
-
-	// Activate tracker with terminal size
-	if tracker != nil {
-		tracker.Activate(info.Type, rows, cols)
-
-		// 立即触发一次 PTY resize，让终端重新绘制完整内容
-		// 这样虚拟终端就能同步到真实终端的当前状态
-		_ = s.ForceRedraw()
-
-		// Get current state
-		if state, ts := tracker.State(); state != types.StateUnknown {
-			ai_assistant2.SetState(aiInfo, state, ts)
-		}
-	}
-
-	return aiInfo
-}
-
 // DebugInfo collects comprehensive debug information about the session.
 type DebugInfo struct {
 	SessionID                 string                         `json:"sessionId"`
@@ -1617,10 +1219,6 @@ type DebugInfo struct {
 	ScrollbackSize            int                            `json:"scrollbackSize"`
 	ScrollbackLimit           int                            `json:"scrollbackLimit"`
 	AIAssistant               *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
-	AIChunkCount              int64                          `json:"aiChunkCount,omitempty"`
-	AssistantOutputQueueLen   int                            `json:"assistantOutputQueueLen,omitempty"`
-	AssistantOutputQueueCap   int                            `json:"assistantOutputQueueCap,omitempty"`
-	AssistantOutputQueueMax   int                            `json:"assistantOutputQueueMax,omitempty"`
 	Traffic                   *SessionTrafficStats           `json:"traffic,omitempty"`
 }
 
@@ -1640,12 +1238,6 @@ func (s *Session) GetDebugInfo() *DebugInfo {
 		Cols:            cols,
 		ScrollbackLimit: s.scrollbackLimit,
 	}
-
-	s.assistantOutputMu.Lock()
-	info.AssistantOutputQueueLen = len(s.assistantOutputQueue)
-	info.AssistantOutputQueueCap = cap(s.assistantOutputQueue)
-	info.AssistantOutputQueueMax = s.assistantOutputQueueMax
-	s.assistantOutputMu.Unlock()
 
 	// Get scrollback chunks and timestamps
 	scrollback := s.Scrollback()
@@ -1673,10 +1265,6 @@ func (s *Session) GetDebugInfo() *DebugInfo {
 		info.AIAssistant = &aiCopy
 	}
 	s.metaMu.RUnlock()
-
-	if s.assistantTracker != nil {
-		info.AIChunkCount = s.assistantTracker.ChunkCount()
-	}
 
 	info.Traffic = s.TrafficStatsSnapshot()
 
@@ -1786,438 +1374,4 @@ func resolveEncoding(name string) (encoding.Encoding, string, error) {
 	default:
 		return nil, normalized, ErrInvalidEncoding
 	}
-}
-
-// ensureLogWatcherStarted starts a LogWatcher for the given assistant type if not already running.
-// It uses the AI process's actual working directory and creation time for accurate session file lookup.
-func (s *Session) ensureLogWatcherStarted(assistantType types.AssistantType, workingDir string, processStartTime time.Time) {
-	s.logWatcherMu.Lock()
-	defer s.logWatcherMu.Unlock()
-
-	// Already have a watcher running
-	if s.logWatcher != nil {
-		return
-	}
-
-	// Store the AI process info
-	s.aiProcessStartTime = processStartTime
-	s.aiProcessWorkingDir = workingDir
-
-	// Use current time as fallback if no process start time provided
-	if s.aiProcessStartTime.IsZero() {
-		s.aiProcessStartTime = time.Now()
-	}
-
-	// Create watcher with working directory for accurate session file lookup
-	watcher, err := log_watcher.CreateWatcherForAssistantWithWorkingDir(
-		assistantType,
-		s.aiProcessStartTime,
-		s.aiProcessWorkingDir,
-		s.logger,
-		s.handleLogWatcherEvent,
-	)
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Warn("failed to create log watcher",
-				zap.String("assistantType", string(assistantType)),
-				zap.String("workingDir", workingDir),
-				zap.Error(err))
-		}
-		return
-	}
-
-	if watcher == nil {
-		// Assistant type doesn't support log watching
-		return
-	}
-
-	s.logWatcher = watcher
-
-	// Start the watcher in background
-	go func() {
-		if err := watcher.Start(context.Background()); err != nil {
-			if s.logger != nil {
-				s.logger.Warn("failed to start log watcher", zap.Error(err))
-			}
-		}
-	}()
-
-	if s.logger != nil {
-		s.logger.Debug("log watcher started",
-			zap.String("assistantType", string(assistantType)),
-			zap.String("workingDir", s.aiProcessWorkingDir),
-			zap.Time("processStartTime", s.aiProcessStartTime))
-	}
-}
-
-// stopLogWatcher stops the current LogWatcher if running
-func (s *Session) stopLogWatcher() {
-	s.logWatcherMu.Lock()
-	defer s.logWatcherMu.Unlock()
-
-	if s.logWatcher == nil {
-		return
-	}
-
-	s.logWatcher.Stop()
-	s.logWatcher = nil
-	s.aiProcessStartTime = time.Time{}
-	s.aiProcessWorkingDir = ""
-	s.currentAISessionID = ""
-	s.currentAISessionFile = ""
-	// Note: linkedAISessionID is NOT reset here, so if the same session is restarted,
-	// it won't be linked again. It will only be linked again if a NEW session is created.
-
-	if s.logger != nil {
-		s.logger.Debug("log watcher stopped")
-	}
-}
-
-// handleLogWatcherEvent handles events from the LogWatcher
-func (s *Session) handleLogWatcherEvent(event log_watcher.WatcherEvent) {
-	switch event.Type {
-	case log_watcher.EventTypeNewMessage:
-		if event.Message != nil && event.Message.Message != "" {
-			s.handleLogWatcherMessage(event.Message)
-		}
-
-	case log_watcher.EventTypeSessionFound:
-		s.logWatcherMu.RLock()
-		watcher := s.logWatcher
-		s.logWatcherMu.RUnlock()
-
-		if watcher != nil {
-			info := watcher.Info()
-			sessionID := info.SessionID
-			filePath := info.FilePath
-			metaCwd := ""
-			if info.SessionMeta != nil {
-				metaCwd = info.SessionMeta.Cwd
-			}
-
-			if sessionID == "" && filePath != "" {
-				base := filepath.Base(filePath)
-				if strings.HasPrefix(base, log_watcher.CodexRolloutPrefix) && strings.HasSuffix(base, log_watcher.CodexRolloutSuffix) {
-					sessionID = log_watcher.ExtractSessionIDFromFilename(base)
-				} else if strings.HasSuffix(base, ".jsonl") {
-					sessionID = strings.TrimSuffix(base, ".jsonl")
-				} else {
-					sessionID = strings.TrimSuffix(base, filepath.Ext(base))
-				}
-			}
-
-			if sessionID != "" || filePath != "" || metaCwd != "" {
-				s.logWatcherMu.Lock()
-				if sessionID != "" {
-					s.currentAISessionID = sessionID
-				}
-				if filePath != "" {
-					s.currentAISessionFile = filePath
-				}
-				// Fill working dir from session_meta when process introspection is limited.
-				if s.aiProcessWorkingDir == "" && metaCwd != "" {
-					s.aiProcessWorkingDir = metaCwd
-				}
-				s.logWatcherMu.Unlock()
-			}
-
-			if s.logger != nil {
-				s.logger.Info("log watcher found session",
-					zap.String("sessionId", sessionID),
-					zap.String("filePath", filePath),
-					zap.String("metaCwd", metaCwd))
-			}
-
-			// Auto-link AI session to associated task
-			go s.autoLinkAISession(sessionID, filePath)
-			// Trigger a metadata refresh so UI can pick up `aiSessionId` even if status tracking is disabled.
-			go s.checkAndBroadcastMetadata()
-		}
-
-	case log_watcher.EventTypeError:
-		if s.logger != nil && event.Error != nil {
-			s.logger.Warn("log watcher error", zap.Error(event.Error))
-		}
-	}
-}
-
-// handleLogWatcherMessage processes a user message from the LogWatcher
-func (s *Session) handleLogWatcherMessage(msg *log_watcher.UserMessage) {
-	if msg == nil || msg.Message == "" {
-		return
-	}
-
-	s.logWatcherMu.Lock()
-	// Check if this is a new message
-	if msg.Message == s.lastLogWatcherMessage {
-		s.logWatcherMu.Unlock()
-		return
-	}
-	s.lastLogWatcherMessage = msg.Message
-	s.logWatcherMu.Unlock()
-
-	// Create a state change event to trigger the same flow as terminal-based detection
-	event := ai_assistant2.StateChangeEvent{
-		State:         types.StateWorking,
-		PreviousState: types.StateWaitingInput,
-		Timestamp:     msg.Timestamp,
-		RecentInput:   msg.Message,
-	}
-
-	// Reuse the same recent-input path so terminal title updates stay consistent.
-	go s.handleRecentInput(event)
-
-	if s.logger != nil {
-		s.logger.Debug("log watcher captured user message",
-			zap.String("message", truncateString(msg.Message, 100)),
-			zap.Time("timestamp", msg.Timestamp))
-	}
-}
-
-// GetLogWatcherInfo returns the current LogWatcher status
-func (s *Session) GetLogWatcherInfo() *log_watcher.WatcherInfo {
-	s.logWatcherMu.RLock()
-	defer s.logWatcherMu.RUnlock()
-
-	if s.logWatcher == nil {
-		return nil
-	}
-
-	info := s.logWatcher.Info()
-	return &info
-}
-
-// autoLinkAISession automatically links the discovered AI session to the associated task.
-// It creates a minimal AI session record if it doesn't exist, then creates the link.
-func (s *Session) autoLinkAISession(sessionID, filePath string) {
-	if sessionID == "" || filePath == "" {
-		return
-	}
-
-	// Check if this specific session has already been linked
-	s.logWatcherMu.RLock()
-	alreadyLinked := s.linkedAISessionID == sessionID
-	s.logWatcherMu.RUnlock()
-
-	if alreadyLinked {
-		return
-	}
-
-	// Get the associated task ID
-	s.mu.RLock()
-	taskID := s.associatedTaskID
-	s.mu.RUnlock()
-
-	if taskID == "" {
-		if s.logger != nil {
-			s.logger.Debug("no associated task for auto-linking AI session",
-				zap.String("sessionId", sessionID))
-		}
-		return
-	}
-
-	// Get the working directory
-	s.logWatcherMu.RLock()
-	workingDir := s.aiProcessWorkingDir
-	s.logWatcherMu.RUnlock()
-
-	// Determine session type from the file path
-	// Claude Code sessions are stored in ~/.claude/projects/
-	// Codex sessions are stored in ~/.codex/sessions/YYYY/MM/DD/
-	var sessionType tables.AISessionType
-	if strings.Contains(filePath, ".codex") || strings.Contains(filePath, "codex-rollout") {
-		sessionType = tables.AISessionTypeCodex
-	} else {
-		sessionType = tables.AISessionTypeClaudeCode
-	}
-
-	ctx := context.Background()
-
-	// Ensure AI session exists and link to task
-	taskAISessionService := &model.TaskAISessionService{}
-	if err := taskAISessionService.EnsureAISessionAndLinkToTask(ctx, taskID, sessionID, filePath, workingDir, sessionType); err != nil {
-		if s.logger != nil {
-			s.logger.Debug("failed to auto-link AI session to task",
-				zap.String("sessionId", sessionID),
-				zap.String("taskId", taskID),
-				zap.Error(err))
-		}
-		return
-	}
-
-	// Mark this session as linked to avoid repeated logging
-	s.logWatcherMu.Lock()
-	s.linkedAISessionID = sessionID
-	s.logWatcherMu.Unlock()
-
-	if s.logger != nil {
-		s.logger.Info("auto-linked AI session to task",
-			zap.String("sessionId", sessionID),
-			zap.String("taskId", taskID),
-			zap.String("filePath", filePath))
-	}
-}
-
-// AISessionLinkInfo contains current AI session link information for recheck
-type AISessionLinkInfo struct {
-	SessionID       string
-	TaskID          string
-	FilePath        string
-	LinkedSessionID string // The session ID that was previously linked
-}
-
-// GetAISessionLinkInfo returns the current AI session link information
-func (s *Session) GetAISessionLinkInfo() AISessionLinkInfo {
-	s.logWatcherMu.RLock()
-	currentSessionID := s.currentAISessionID
-	currentFilePath := s.currentAISessionFile
-	linkedSessionID := s.linkedAISessionID
-	s.logWatcherMu.RUnlock()
-
-	s.mu.RLock()
-	taskID := s.associatedTaskID
-	s.mu.RUnlock()
-
-	return AISessionLinkInfo{
-		SessionID:       currentSessionID,
-		TaskID:          taskID,
-		FilePath:        currentFilePath,
-		LinkedSessionID: linkedSessionID,
-	}
-}
-
-// RecheckAISessionLink checks if the current AI session link is valid and triggers re-linking if needed.
-// This can be called when anomalies are detected (e.g., session file deleted, task changed, etc.)
-// Returns true if re-linking was triggered, false otherwise.
-func (s *Session) RecheckAISessionLink(info AISessionLinkInfo) bool {
-	// TODO: Implement recheck logic
-	// Possible checks:
-	// 1. Session file no longer exists
-	// 2. Task association changed
-	// 3. Session ID mismatch
-	// 4. Database link record is missing/invalid
-
-	needRelink := s.checkNeedRelink(info)
-	if !needRelink {
-		return false
-	}
-
-	// Reset linked session ID to trigger re-linking
-	s.logWatcherMu.Lock()
-	s.linkedAISessionID = ""
-	s.logWatcherMu.Unlock()
-
-	// Trigger re-link if we have current session info
-	if info.SessionID != "" && info.FilePath != "" {
-		go s.autoLinkAISession(info.SessionID, info.FilePath)
-	}
-
-	return true
-}
-
-// checkNeedRelink checks if re-linking is needed based on the provided info.
-// Override this method to implement custom recheck logic.
-func (s *Session) checkNeedRelink(info AISessionLinkInfo) bool {
-	// TODO: Implement actual checks
-	// For now, always return false (no recheck needed)
-	return false
-}
-
-// findAISessionSync synchronously finds the AI session file and returns session ID and file path.
-// This is called when AI assistant is detected to immediately get the session ID for metadata.
-func (s *Session) findAISessionSync(assistantType types.AssistantType, workingDir string, processStartTime time.Time) (string, string) {
-	if assistantType == types.AssistantTypeClaudeCode && workingDir == "" {
-		return "", ""
-	}
-
-	s.logWatcherMu.Lock()
-	// Check if we already have the session ID cached
-	if s.currentAISessionID != "" && (assistantType == types.AssistantTypeCodex || s.aiProcessWorkingDir == workingDir) {
-		sessionID := s.currentAISessionID
-		sessionFile := s.currentAISessionFile
-		s.logWatcherMu.Unlock()
-		return sessionID, sessionFile
-	}
-	s.logWatcherMu.Unlock()
-
-	var sessionFile string
-	var sessionID string
-
-	switch assistantType {
-	case types.AssistantTypeClaudeCode:
-		searcher, err := log_watcher.NewClaudeCodeFileSearcher(workingDir)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Debug("failed to create Claude Code file searcher", zap.Error(err))
-			}
-			return "", ""
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		filePath, err := searcher.FindSessionFile(ctx, processStartTime)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Debug("failed to find Claude Code session file", zap.Error(err))
-			}
-			return "", ""
-		}
-
-		if filePath == "" {
-			return "", ""
-		}
-
-		sessionFile = filePath
-		// Extract session ID from file name (e.g., "abc-123.jsonl" -> "abc-123")
-		baseName := filepath.Base(filePath)
-		sessionID = strings.TrimSuffix(baseName, ".jsonl")
-
-	case types.AssistantTypeCodex:
-		searcher, err := log_watcher.NewCodexFileSearcherWithWorkingDir(workingDir)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Debug("failed to create Codex file searcher", zap.Error(err))
-			}
-			return "", ""
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		filePath, err := searcher.FindSessionFile(ctx, processStartTime)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Debug("failed to find Codex session file", zap.Error(err))
-			}
-			return "", ""
-		}
-
-		if filePath == "" {
-			return "", ""
-		}
-
-		sessionFile = filePath
-		sessionID = log_watcher.ExtractSessionIDFromFilename(filepath.Base(filePath))
-
-	default:
-		return "", ""
-	}
-
-	if sessionID != "" {
-		// Cache the result
-		s.logWatcherMu.Lock()
-		s.currentAISessionID = sessionID
-		s.currentAISessionFile = sessionFile
-		s.logWatcherMu.Unlock()
-
-		if s.logger != nil {
-			s.logger.Info("found AI session synchronously",
-				zap.String("assistantType", string(assistantType)),
-				zap.String("sessionId", sessionID),
-				zap.String("filePath", sessionFile))
-		}
-	}
-
-	return sessionID, sessionFile
 }

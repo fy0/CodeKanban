@@ -1,10 +1,6 @@
 package ai_assistant2
 
-import (
-	"time"
-
-	"code-kanban/utils/ai_assistant2/types"
-)
+import "code-kanban/utils/ai_assistant2/types"
 
 // AIAssistantInfo is exported from types package for convenience
 type AIAssistantInfo = types.AIAssistantInfo
@@ -22,14 +18,4 @@ func ToAIAssistantInfo(info *types.AssistantInfo) *AIAssistantInfo {
 		Detected:    info.Detected,
 		Command:     info.Command,
 	}
-}
-
-// SetState updates the state of AIAssistantInfo
-func SetState(info *AIAssistantInfo, state types.State, timestamp time.Time) {
-	if info == nil {
-		return
-	}
-
-	info.State = string(state)
-	info.StateUpdatedAt = timestamp
 }

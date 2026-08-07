@@ -75,7 +75,7 @@ import { useLocale } from '@/composables/useLocale';
 
 type LinkedTerminalSummary = {
   sessionId: string;
-  status?: string;
+  agentName: string;
   sessionTitle: string;
 };
 

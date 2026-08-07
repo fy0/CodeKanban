@@ -64,7 +64,6 @@ type TerminalRemoteSnapshotFrame = TerminalRemoteSnapshot | TerminalRemoteSnapsh
 export interface TerminalTabState extends TerminalSession {
   clientStatus: ClientStatus;
   connectionRole: TerminalConnectionRole;
-  lastAgentCommand?: string;
   renderMode: TerminalRenderMode;
   snapshotIntervalMs: number;
   useGlobalRenderMode: boolean;
@@ -103,18 +102,13 @@ export type ServerMessage = {
     processStatus?: string;
     processHasChildren?: boolean;
     runningCommand?: string;
-    aiAssistantRecentInput?: string;
     taskId?: string;
-    aiSessionId?: string;
     aiAssistant?: {
       type: string;
       name: string;
       displayName: string;
       detected: boolean;
       command?: string;
-      state?: string;
-      stateUpdatedAt?: string;
-      interrupted?: boolean;
     };
   };
 };
@@ -619,8 +613,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     clearTerminalEventReconnectTimer();
     eventConnectPromise = null;
     eventReconnectAttempt = 0;
-    const socketsToClose = [eventSocket, eventPendingSocket].filter(
-      (socket): socket is WebSocket => Boolean(socket)
+    const socketsToClose = [eventSocket, eventPendingSocket].filter((socket): socket is WebSocket =>
+      Boolean(socket)
     );
     eventSocket = null;
     eventPendingSocket = null;
@@ -1746,11 +1740,6 @@ export const useTerminalStore = defineStore('terminal', () => {
 
     const nextTaskId = metadata.taskId ?? bucket[index].taskId;
     const nextTitle = metadata.title;
-    const latestCommand =
-      typeof metadata.aiAssistantRecentInput === 'string' && metadata.aiAssistantRecentInput.trim()
-        ? metadata.aiAssistantRecentInput.trim()
-        : '';
-
     bucket[index] = {
       ...bucket[index],
       processPid: metadata.processPid,
@@ -1759,9 +1748,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       runningCommand: metadata.runningCommand,
       aiAssistant: metadata.aiAssistant,
       taskId: nextTaskId,
-      aiSessionId: metadata.aiSessionId || bucket[index].aiSessionId,
       title: typeof nextTitle === 'string' ? nextTitle : bucket[index].title,
-      lastAgentCommand: latestCommand || bucket[index].lastAgentCommand,
     };
     record.tab = bucket[index];
     updateSessionTaskMapping(sessionId, nextTaskId ?? undefined);
@@ -1853,22 +1840,6 @@ export const useTerminalStore = defineStore('terminal', () => {
           } else if (payload.type === 'metadata' && payload.metadata) {
             // Update tab metadata in realtime
             updateTabMetadata(tab.id, payload.metadata);
-
-            const trimmedAssistantInput =
-              typeof payload.metadata.aiAssistantRecentInput === 'string'
-                ? payload.metadata.aiAssistantRecentInput.trim()
-                : '';
-
-            if (trimmedAssistantInput) {
-              console.log(
-                `[Terminal] AI Input Captured: ${payload.metadata.aiAssistantRecentInput}`,
-                {
-                  sessionId: tab.id,
-                  sessionTitle: tab.title,
-                  assistant: payload.metadata.aiAssistant,
-                }
-              );
-            }
           }
           // Check if there are any listeners for this session
           // If not, buffer the message for later replay when component remounts

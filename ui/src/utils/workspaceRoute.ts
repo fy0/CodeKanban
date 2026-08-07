@@ -6,14 +6,7 @@ export const WORKSPACE_TAB_QUERY_KEY = 'tab';
 
 type RouteQueryLike = LocationQuery | LocationQueryRaw;
 
-export type WorkspaceRouteTab =
-  | 'projects'
-  | 'terminal'
-  | 'web'
-  | 'changes'
-  | 'files'
-  | 'kanban'
-  | 'notifications';
+export type WorkspaceRouteTab = 'projects' | 'terminal' | 'web' | 'changes' | 'files' | 'kanban';
 
 export type DesktopWorkspaceRouteTab = Extract<
   WorkspaceRouteTab,
@@ -21,7 +14,7 @@ export type DesktopWorkspaceRouteTab = Extract<
 >;
 export type MobileWorkspaceRouteTab = Extract<
   WorkspaceRouteTab,
-  'projects' | 'terminal' | 'web' | 'files' | 'changes' | 'notifications'
+  'projects' | 'terminal' | 'web' | 'files' | 'changes'
 >;
 
 /** The first desktop workspace surface shown when no tab has been selected yet. */
@@ -40,7 +33,6 @@ const MOBILE_WORKSPACE_ROUTE_TAB_SET = new Set<MobileWorkspaceRouteTab>([
   'web',
   'files',
   'changes',
-  'notifications',
 ]);
 
 export function normalizeWorkspaceRouteTab(value: unknown): WorkspaceRouteTab | '' {
@@ -63,7 +55,6 @@ export function normalizeWorkspaceRouteTab(value: unknown): WorkspaceRouteTab | 
     case 'changes':
     case 'files':
     case 'kanban':
-    case 'notifications':
       return normalizedValue as WorkspaceRouteTab;
     default:
       return '';

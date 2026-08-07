@@ -6,11 +6,9 @@ import { zhCN, dateZhCN, enUS, dateEnUS, darkTheme, type GlobalThemeOverrides } 
 import { useI18n } from 'vue-i18n';
 import AppInitializer from '@/components/common/AppInitializer.vue';
 import NotePad from '@/components/notepad/NotePad.vue';
-import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
-import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useResponsive } from '@/composables/useResponsive';
 import { useAiStatusSummary } from '@/composables/useAiStatusSummary';
 import { darkenColor, lightenColor, isDarkHex } from '@/utils/color';
@@ -22,7 +20,6 @@ import { APP_NAME } from '@/constants/app';
 const settingsStore = useSettingsStore();
 const authStore = useAuthStore();
 const projectStore = useProjectStore();
-const reminderStore = useTerminalReminderStore();
 const {
   activeTheme: theme,
   followSystemTheme,
@@ -66,16 +63,6 @@ const shouldShowGlobalNotepad = computed(() => {
   return true;
 });
 
-const shouldShowGlobalNotificationBar = computed(() => {
-  if (isMobile.value) {
-    return false;
-  }
-  if (route.name === 'project' || route.name === 'settings') {
-    return false;
-  }
-  return true;
-});
-
 // 获取预设主题中的终端标签颜色（用于 fallback）
 // 当 followSystemTheme 为 true 时，根据系统主题选择预设
 const presetTerminalTabColors = computed(() => {
@@ -89,10 +76,6 @@ const presetTerminalTabColors = computed(() => {
     tabBg: preset?.colors.terminalTabBg,
     tabActiveBg: preset?.colors.terminalTabActiveBg,
     headerBorder: preset?.colors.terminalHeaderBorder,
-    completionBg: preset?.colors.terminalTabCompletionBg,
-    completionBorder: preset?.colors.terminalTabCompletionBorder,
-    approvalBg: preset?.colors.terminalTabApprovalBg,
-    approvalBorder: preset?.colors.terminalTabApprovalBorder,
     kanbanBoardBg: preset?.colors.kanbanBoardBg,
     kanbanCardBg: preset?.colors.kanbanCardBg,
     kanbanBorderEnabled: preset?.colors.kanbanBorderEnabled,
@@ -135,12 +118,6 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
 
 // 使用 watch 直接设置全局 CSS 变量到 :root，确保所有组件都能访问
 // （useCssVars 只设置在组件根元素上，无法被 :deep() 选择器访问）
-// 默认的完成/审批颜色（暗色主题）
-const defaultCompletionBg = 'rgba(16, 185, 129, 0.1)';
-const defaultCompletionBorder = 'rgba(16, 185, 129, 0.3)';
-const defaultApprovalBg = 'rgba(247, 144, 9, 0.12)';
-const defaultApprovalBorder = 'rgba(247, 144, 9, 0.35)';
-
 // 解析终端头部边框值：支持 boolean | string
 const resolvedTerminalHeaderBorder = computed(() => {
   const borderValue =
@@ -174,30 +151,8 @@ const cssVarsToSet = computed(() => ({
     presetTerminalTabColors.value.tabActiveBg ||
     theme.value.surfaceColor,
   '--kanban-terminal-header-border': resolvedTerminalHeaderBorder.value,
-  // 完成提醒颜色
-  '--kanban-terminal-tab-completion-bg':
-    theme.value.terminalTabCompletionBg ||
-    presetTerminalTabColors.value.completionBg ||
-    defaultCompletionBg,
-  '--kanban-terminal-tab-completion-border':
-    theme.value.terminalTabCompletionBorder ||
-    presetTerminalTabColors.value.completionBorder ||
-    defaultCompletionBorder,
-  // 审批提醒颜色
-  '--kanban-terminal-tab-approval-bg':
-    theme.value.terminalTabApprovalBg ||
-    presetTerminalTabColors.value.approvalBg ||
-    defaultApprovalBg,
-  '--kanban-terminal-tab-approval-border':
-    theme.value.terminalTabApprovalBorder ||
-    presetTerminalTabColors.value.approvalBorder ||
-    defaultApprovalBorder,
   // 空终端引导文字颜色
   '--kanban-terminal-empty-guide-fg': theme.value.terminalEmptyGuideFg || theme.value.terminalFg,
-  // AI 通知按钮颜色
-  '--kanban-notification-button-border':
-    theme.value.notificationButtonBorder || 'rgba(0, 0, 0, 0.2)',
-  '--kanban-notification-button-fg': theme.value.notificationButtonFg || theme.value.textColor,
   // 看板颜色
   '--kanban-board-bg':
     theme.value.kanbanBoardBg ||
@@ -249,7 +204,6 @@ onMounted(() => {
     return;
   }
 
-  reminderStore.retain();
   if (canLoadProtectedContent.value) {
   }
   if (canLoadProtectedContent.value && projectStore.projects.length === 0) {
@@ -284,7 +238,6 @@ watch(canLoadProtectedContent, value => {
 });
 
 onBeforeUnmount(() => {
-  reminderStore.release();
   if (mediaQuery && handleChange) {
     mediaQuery.removeEventListener('change', handleChange);
   }
@@ -321,9 +274,6 @@ watch(
               <AppInitializer />
               <RouterView />
               <NotePad v-if="shouldRenderWorkspaceOverlays && shouldShowGlobalNotepad" />
-              <AINotificationBar
-                v-if="shouldRenderWorkspaceOverlays && shouldShowGlobalNotificationBar"
-              />
             </n-modal-provider>
           </n-message-provider>
         </n-notification-provider>

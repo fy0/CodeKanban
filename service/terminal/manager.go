@@ -13,24 +13,19 @@ import (
 	"go.uber.org/zap"
 
 	"code-kanban/utils"
-	"code-kanban/utils/ai_assistant2"
-	"code-kanban/utils/ai_assistant2/log_watcher"
-	"code-kanban/utils/ai_assistant2/types"
 )
 
 const terminalSessionOrderStep = 1000.0
 
 // Config defines runtime constraints for terminal sessions.
 type Config struct {
-	Shell                  utils.TerminalShellConfig
-	IdleTimeout            time.Duration
-	MaxSessionsPerProject  int
-	Encoding               string
-	ScrollbackBytes        int
-	AIAssistantStatus      utils.AIAssistantStatusConfig
-	ScrollbackEnabled      bool
-	TerminalStateSnapshot  bool
-	RenameTitleEachCommand bool
+	Shell                 utils.TerminalShellConfig
+	IdleTimeout           time.Duration
+	MaxSessionsPerProject int
+	Encoding              string
+	ScrollbackBytes       int
+	ScrollbackEnabled     bool
+	TerminalStateSnapshot bool
 }
 
 // CreateSessionParams describes API level inputs.
@@ -59,15 +54,13 @@ type SessionListEvent struct {
 
 // Manager orchestrates PTY sessions.
 type Manager struct {
-	cfg           Config
-	sessionMu     sync.Mutex
-	sessions      utils.SyncMap[string, *Session]
-	logger        *zap.Logger
-	encoding      string
-	baseCtx       context.Context
-	baseCtxMu     sync.RWMutex
-	recordManager *RecordManager
-
+	cfg                     Config
+	sessionMu               sync.Mutex
+	sessions                utils.SyncMap[string, *Session]
+	logger                  *zap.Logger
+	encoding                string
+	baseCtx                 context.Context
+	baseCtxMu               sync.RWMutex
 	sessionEventMu          sync.RWMutex
 	sessionEventSubscribers map[chan SessionListEvent]struct{}
 }
@@ -87,7 +80,6 @@ func NewManager(cfg Config, logger *zap.Logger) *Manager {
 		logger:                  logger.Named("terminal-manager"),
 		encoding:                cfg.Encoding,
 		baseCtx:                 context.Background(),
-		recordManager:           NewRecordManager(),
 		sessionEventSubscribers: make(map[chan SessionListEvent]struct{}),
 	}
 	return mgr
@@ -131,27 +123,20 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 
 	var session *Session
 	session, err = NewSession(SessionParams{
-		ID:              params.ID,
-		ProjectID:       params.ProjectID,
-		WorktreeID:      params.WorktreeID,
-		WorkingDir:      params.WorkingDir,
-		Title:           params.Title,
-		Command:         command,
-		Env:             env,
-		Rows:            params.Rows,
-		Cols:            params.Cols,
-		Logger:          m.logger,
-		Encoding:        m.cfg.Encoding,
-		ScrollbackLimit: m.scrollbackLimit(),
-		GetAIConfig: func() *utils.AIAssistantStatusConfig {
-			m.sessionMu.Lock()
-			defer m.sessionMu.Unlock()
-			cfg := m.cfg.AIAssistantStatus
-			return &cfg
-		},
+		ID:                          params.ID,
+		ProjectID:                   params.ProjectID,
+		WorktreeID:                  params.WorktreeID,
+		WorkingDir:                  params.WorkingDir,
+		Title:                       params.Title,
+		Command:                     command,
+		Env:                         env,
+		Rows:                        params.Rows,
+		Cols:                        params.Cols,
+		Logger:                      m.logger,
+		Encoding:                    m.cfg.Encoding,
+		ScrollbackLimit:             m.scrollbackLimit(),
 		EnableTerminalStateSnapshot: m.cfg.TerminalStateSnapshot,
 		TaskID:                      params.TaskID,
-		RenameTitleEachCommand:      m.cfg.RenameTitleEachCommand,
 		OrderIndex:                  params.OrderIndex,
 		ShellIntegration:            shellIntegration,
 		StartupReplayCommand:        params.StartupReplayCommand,
@@ -188,25 +173,14 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 		return nil, err
 	}
 
-	// 在 session.Start() 之前同步订阅，确保 monitorAssistantRecords
-	// 在 PTY 输出开始之前就订阅好，避免错过早期的状态变化事件
-	stream, err := session.Subscribe(startCtx)
-	if err != nil {
-		m.sessions.Delete(session.ID())
-		_ = session.Close()
-		_ = m.deleteRestoreSession(context.Background(), session.ID())
-		return nil, err
-	}
-
 	if err := session.Start(startCtx); err != nil {
-		stream.Close()
 		m.sessions.Delete(session.ID())
 		_ = session.Close()
 		_ = m.deleteRestoreSession(context.Background(), session.ID())
 		return nil, err
 	}
 
-	go m.watchSessionWithStream(session, stream)
+	go m.watchSession(session)
 	m.broadcastProjectSessions(session.ProjectID())
 
 	return session, nil
@@ -398,16 +372,6 @@ func (m *Manager) GetSessionDebugInfo(id string) (*DebugInfo, error) {
 	return session.GetDebugInfo(), nil
 }
 
-// GetLogWatcherInfo returns the LogWatcher info for a session.
-func (m *Manager) GetLogWatcherInfo(id string) (*log_watcher.WatcherInfo, error) {
-	session, err := m.GetSession(id)
-	if err != nil {
-		return nil, err
-	}
-	info := session.GetLogWatcherInfo()
-	return info, nil
-}
-
 // CaptureChunk triggers a resize and captures the next output chunk from a session.
 func (m *Manager) CaptureChunk(ctx context.Context, id string, timeout time.Duration) (*CapturedChunk, error) {
 	session, err := m.GetSession(id)
@@ -422,31 +386,7 @@ func (m *Manager) shellCommand() ([]string, error) {
 }
 
 func (m *Manager) watchSession(session *Session) {
-	go m.monitorAssistantRecords(session)
 	<-session.Closed()
-	m.recordManager.ClearSessionRecords(session.ID())
-	projectID := session.ProjectID()
-	m.sessionMu.Lock()
-	m.sessions.Delete(session.ID())
-	m.normalizeProjectOrderLocked(projectID)
-	m.sessionMu.Unlock()
-	if err := m.deleteRestoreSession(context.Background(), session.ID()); err != nil && m.logger != nil {
-		m.logger.Warn("failed to delete terminal restore session",
-			zap.String("sessionId", session.ID()),
-			zap.Error(err))
-	}
-	if err := m.persistProjectRestoreSessions(context.Background(), projectID); err != nil && m.logger != nil {
-		m.logger.Warn("failed to normalize terminal restore ordering after close",
-			zap.String("projectId", projectID),
-			zap.Error(err))
-	}
-	m.broadcastProjectSessions(projectID)
-}
-
-func (m *Manager) watchSessionWithStream(session *Session, stream *SessionStream) {
-	go m.monitorAssistantRecordsWithStream(session, stream)
-	<-session.Closed()
-	m.recordManager.ClearSessionRecords(session.ID())
 	projectID := session.ProjectID()
 	m.sessionMu.Lock()
 	m.sessions.Delete(session.ID())
@@ -696,23 +636,6 @@ func (m *Manager) sessionContext() context.Context {
 	return context.Background()
 }
 
-// UpdateAIAssistantStatusConfig updates the AI assistant status configuration for all sessions.
-// This allows hot-reloading configuration without restarting the service.
-func (m *Manager) UpdateAIAssistantStatusConfig(newConfig utils.AIAssistantStatusConfig) {
-	m.sessionMu.Lock()
-	m.cfg.AIAssistantStatus = newConfig
-	m.sessionMu.Unlock()
-
-	// Trigger metadata refresh for all active sessions
-	// This will cause them to re-check their AI assistant status with the new config
-	m.sessions.Range(func(_ string, session *Session) bool {
-		// Just touching the session will trigger the next metadata update cycle
-		// to re-evaluate the AI assistant with the new config
-		session.Touch()
-		return true
-	})
-}
-
 // UpdateScrollbackEnabled toggles scrollback buffering in real time for all sessions.
 func (m *Manager) UpdateScrollbackEnabled(enabled bool) {
 	m.sessionMu.Lock()
@@ -741,185 +664,9 @@ func (m *Manager) UpdateTerminalStateSnapshotEnabled(enabled bool) {
 	})
 }
 
-// UpdateRenameTitleEachCommand toggles whether AI inputs rename terminal titles every time.
-func (m *Manager) UpdateRenameTitleEachCommand(enabled bool) {
-	m.sessionMu.Lock()
-	m.cfg.RenameTitleEachCommand = enabled
-	m.sessionMu.Unlock()
-
-	m.sessions.Range(func(_ string, session *Session) bool {
-		session.SetRenameTitleEachCommand(enabled)
-		return true
-	})
-}
-
 // UpdateShellConfig updates the shell configuration for new terminal sessions.
 func (m *Manager) UpdateShellConfig(shellConfig utils.TerminalShellConfig) {
 	m.sessionMu.Lock()
 	m.cfg.Shell = shellConfig
 	m.sessionMu.Unlock()
-}
-
-// GetRecordManager 返回记录管理器实例
-func (m *Manager) GetRecordManager() *RecordManager {
-	return m.recordManager
-}
-
-func (m *Manager) monitorAssistantRecords(session *Session) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream, err := session.Subscribe(ctx)
-	if err != nil {
-		return
-	}
-
-	m.monitorAssistantRecordsWithStream(session, stream)
-}
-
-func (m *Manager) monitorAssistantRecordsWithStream(session *Session, stream *SessionStream) {
-	defer stream.Close()
-
-	lastState := string(types.StateUnknown)
-
-	for event := range stream.Events() {
-		switch event.Type {
-		case StreamEventMetadata:
-			metadata := event.Metadata
-			if metadata == nil || metadata.AIAssistant == nil || !metadata.AIAssistant.Detected {
-				// AI 助手 detach 或关闭时，清除该 session 的所有记录
-				if lastState != string(types.StateUnknown) {
-					m.recordManager.ClearSessionRecords(session.ID())
-					lastState = string(types.StateUnknown)
-				}
-				continue
-			}
-			state := metadata.AIAssistant.State
-			if state == lastState && state != string(types.StateWaitingApproval) {
-				continue
-			}
-
-			// 从元数据中获取最近的用户输入（仅在 waiting_input -> working 时有值）
-			recentInput := strings.TrimSpace(metadata.AIAssistantRecentInput)
-			leftApprovalState :=
-				lastState == string(types.StateWaitingApproval) &&
-					state != string(types.StateWaitingApproval)
-
-			if leftApprovalState {
-				m.recordManager.ClearApprovalsBySession(session.ID())
-			}
-
-			switch state {
-			case string(types.StateWaitingInput):
-				// 只有从 working 状态变为 waiting_input 才算完成任务
-				// 避免在初始化时（unknown -> waiting_input）错误地创建完成记录
-				if lastState == string(types.StateWorking) {
-					m.handleSessionCompletionRecord(session, metadata.AIAssistant, "")
-				}
-			case string(types.StateWaitingApproval):
-				if lastState != string(types.StateWaitingApproval) {
-					m.handleSessionApprovalRecord(session, metadata.AIAssistant)
-				}
-			case string(types.StateWorking):
-				// 确保有对应的通知，并标记为 working
-				// 同时更新 lastUserInput（如果有新输入）
-				m.logger.Debug("monitorAssistantRecords: StateWorking",
-					zap.String("sessionId", session.ID()),
-					zap.String("recentInput", recentInput),
-					zap.String("lastState", lastState))
-				if !m.recordManager.UpdateCompletionBySession(session.ID(), "working", recentInput) {
-					m.handleSessionWorkingRecord(session, metadata.AIAssistant, recentInput)
-				}
-			}
-
-			lastState = state
-		case StreamEventExit:
-			return
-		}
-	}
-}
-
-func (m *Manager) handleSessionCompletionRecord(session *Session, info *ai_assistant2.AIAssistantInfo, userInput string) {
-	if session == nil || info == nil {
-		return
-	}
-
-	// 优先使用传入的 userInput，其次使用 session 中保存的 lastRecentInput
-	lastInput := strings.TrimSpace(userInput)
-	if lastInput == "" {
-		lastInput = session.LastRecentInput()
-	}
-
-	record := &CompletionRecord{
-		ID:            utils.NewID(),
-		SessionID:     session.ID(),
-		ProjectID:     session.ProjectID(),
-		Title:         session.Title(),
-		Assistant:     cloneAssistantInfo(info),
-		CompletedAt:   time.Now(),
-		State:         "completed",
-		LastUserInput: lastInput,
-	}
-
-	m.recordManager.ClearCompletionsBySession(session.ID())
-	m.recordManager.AddCompletion(record)
-}
-
-func (m *Manager) handleSessionWorkingRecord(session *Session, info *ai_assistant2.AIAssistantInfo, userInput string) {
-	if session == nil {
-		return
-	}
-
-	// 优先使用传入的 userInput，其次使用 session 中保存的 lastRecentInput
-	lastInput := strings.TrimSpace(userInput)
-	if lastInput == "" {
-		lastInput = session.LastRecentInput()
-	}
-	m.logger.Debug("handleSessionWorkingRecord",
-		zap.String("sessionId", session.ID()),
-		zap.String("userInput", userInput),
-		zap.String("lastInput", lastInput),
-		zap.String("sessionLastRecentInput", session.LastRecentInput()))
-	startedAt := time.Now()
-
-	record := &CompletionRecord{
-		ID:            utils.NewID(),
-		SessionID:     session.ID(),
-		ProjectID:     session.ProjectID(),
-		Title:         session.Title(),
-		Assistant:     cloneAssistantInfo(info),
-		StartedAt:     &startedAt,
-		CompletedAt:   startedAt,
-		State:         "working",
-		LastUserInput: lastInput,
-	}
-
-	m.recordManager.ClearCompletionsBySession(session.ID())
-	m.recordManager.AddCompletion(record)
-}
-
-func (m *Manager) handleSessionApprovalRecord(session *Session, info *ai_assistant2.AIAssistantInfo) {
-	if session == nil || info == nil {
-		return
-	}
-
-	record := &ApprovalRecord{
-		ID:          utils.NewID(),
-		SessionID:   session.ID(),
-		ProjectID:   session.ProjectID(),
-		Title:       session.Title(),
-		Assistant:   cloneAssistantInfo(info),
-		RequestedAt: time.Now(),
-	}
-
-	m.recordManager.ClearApprovalsBySession(session.ID())
-	m.recordManager.AddApproval(record)
-}
-
-func cloneAssistantInfo(info *ai_assistant2.AIAssistantInfo) *ai_assistant2.AIAssistantInfo {
-	if info == nil {
-		return nil
-	}
-	copyInfo := *info
-	return &copyInfo
 }

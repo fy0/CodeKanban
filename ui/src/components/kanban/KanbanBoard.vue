@@ -183,7 +183,7 @@ const props = defineProps<{
 
 type LinkedTerminalSummary = {
   sessionId: string;
-  status?: string;
+  agentName: string;
   sessionTitle: string;
 };
 
@@ -269,7 +269,11 @@ const linkedTerminals = computed<Record<string, LinkedTerminalSummary>>(() => {
     }
     map[session.taskId] = {
       sessionId: session.id,
-      status: session.aiAssistant?.state,
+      agentName:
+        session.aiAssistant?.displayName ||
+        session.aiAssistant?.name ||
+        session.aiAssistant?.type ||
+        t('terminal.aiAssistantDetected'),
       sessionTitle: session.title,
     };
   });
@@ -451,8 +455,9 @@ function normalizeTerminalEnter(value: string) {
 
 function resolveAgentCommand(agent: Exclude<StartWorkAction, 'terminal'>): string {
   const commandFor = (id: string) =>
-    terminalQuickActions.value.find(action => action.id === id && action.enabled)?.command?.trim() ??
-    '';
+    terminalQuickActions.value
+      .find(action => action.id === id && action.enabled)
+      ?.command?.trim() ?? '';
   if (agent === 'claude') {
     return commandFor('claude') || commandFor('ccr') || 'claude';
   }

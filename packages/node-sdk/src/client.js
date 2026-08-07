@@ -1943,8 +1943,6 @@ export class CodeKanbanClient {
     connection.sendInput(normalizeTerminalEnter(launch.command));
     await sleep(500);
     connection.sendInput(normalizeTerminalEnter(launch.prompt));
-    const metadata = await connection.waitForMetadata();
-
     return {
       project,
       matchedBy,
@@ -1956,7 +1954,6 @@ export class CodeKanbanClient {
       command: launch.command,
       prompt: launch.prompt,
       promptAccepted: true,
-      aiSessionId: metadata?.aiSessionId,
       connection,
     };
   }

@@ -16,10 +16,8 @@ import (
 )
 
 type settingsBackupImportApplier interface {
-	UpdateAIAssistantStatusConfig(utils.AIAssistantStatusConfig)
 	UpdateScrollbackEnabled(bool)
 	UpdateTerminalStateSnapshotEnabled(bool)
-	UpdateRenameTitleEachCommand(bool)
 	UpdateShellConfig(utils.TerminalShellConfig)
 }
 
@@ -191,16 +189,10 @@ func addVersionWarnings(result *utils.SettingsBackupPreviewResult) {
 func addPayloadSections(result *utils.SettingsBackupPreviewResult, backup utils.SettingsBackupFile) {
 	if backup.Payload.Server.HasContent() {
 		server := backup.Payload.Server
-		if server.AIAssistantStatus != nil {
-			result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
-				Key: "server.aiAssistantStatus", Label: "AI assistant status", Action: "replace", Target: "server",
-				ChangedKeys: []string{"claudeCode", "codex", "qwenCode", "gemini", "cursor", "copilot"},
-			})
-		}
 		if server.Developer != nil {
 			result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
 				Key: "server.developer", Label: "Developer config", Action: "replace", Target: "server",
-				ChangedKeys: []string{"enableTerminalScrollback", "renameSessionTitleEachCommand", "enableTerminalStateSnapshot", "webSessionCodexDefaultModel", "webSessionCodexDefaultReasoningEffort", "webSessionCodexDefaultPermissionLevel", "webSessionCodexDefaultSyncMode", "webSessionActiveCallTimeout"},
+				ChangedKeys: []string{"enableTerminalScrollback", "enableTerminalStateSnapshot", "webSessionCodexDefaultModel", "webSessionCodexDefaultReasoningEffort", "webSessionCodexDefaultPermissionLevel", "webSessionCodexDefaultSyncMode", "webSessionActiveCallTimeout"},
 			})
 		}
 		if server.PageTitle != nil {
@@ -367,9 +359,6 @@ func applySettingsBackup(
 	}
 
 	if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
-		if server.AIAssistantStatus != nil {
-			c.Terminal.AIAssistantStatus = *server.AIAssistantStatus
-		}
 		if server.Developer != nil {
 			c.Developer = *server.Developer
 		}
@@ -404,13 +393,9 @@ func applySettingsBackup(
 	}
 
 	if terminalManager != nil {
-		if server.AIAssistantStatus != nil {
-			terminalManager.UpdateAIAssistantStatusConfig(*server.AIAssistantStatus)
-		}
 		if server.Developer != nil {
 			terminalManager.UpdateScrollbackEnabled(server.Developer.EnableTerminalScrollback)
 			terminalManager.UpdateTerminalStateSnapshotEnabled(server.Developer.EnableTerminalStateSnapshot)
-			terminalManager.UpdateRenameTitleEachCommand(server.Developer.RenameSessionTitleEachCommand)
 		}
 		if server.TerminalShell != nil {
 			terminalManager.UpdateShellConfig(cfg.Terminal.Shell)

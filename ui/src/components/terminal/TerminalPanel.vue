@@ -109,12 +109,8 @@
                 >
                   {{ t('terminal.snapshotModeTabBadge') }}
                 </span>
-                <!-- 任务图标：独立显示，不依赖 AI 助手状态 -->
                 <span
-                  v-if="
-                    resolveTabTaskId(tab as TerminalTabState) &&
-                    !showAssistantStatus(tab as TerminalTabState)
-                  "
+                  v-if="resolveTabTaskId(tab as TerminalTabState)"
                   class="standalone-task-icon"
                   role="button"
                   tabindex="0"
@@ -128,54 +124,17 @@
                   </n-icon>
                 </span>
                 <span
-                  v-if="showAssistantStatus(tab as TerminalTabState)"
-                  class="ai-status-pill"
-                  :class="[
-                    `state-${getAssistantStateClass(tab as TerminalTabState)}`,
-                    getAssistantPillSizeClass(tab as TerminalTabState),
-                  ]"
-                  :title="getAssistantTooltip(tab as TerminalTabState)"
+                  v-if="showAssistantIdentity(tab as TerminalTabState)"
+                  class="agent-identity"
+                  :title="getAssistantName(tab as TerminalTabState)"
                 >
                   <span
-                    v-if="resolveTabTaskId(tab as TerminalTabState)"
-                    class="ai-status-icon task-icon"
-                    role="button"
-                    tabindex="0"
-                    :title="t('terminal.viewLinkedTask')"
-                    @click.stop="handleViewTask(tab as TerminalTabState)"
-                    @keydown.enter.prevent.stop="handleViewTask(tab as TerminalTabState)"
-                    @keydown.space.prevent.stop="handleViewTask(tab as TerminalTabState)"
-                  >
-                    <n-icon size="12">
-                      <ClipboardOutline />
-                    </n-icon>
-                  </span>
-                  <span
-                    class="ai-status-clickable"
-                    :class="{
-                      active: tab.id === activeTabId && (tab as TerminalTabState).aiSessionId,
-                    }"
-                    role="button"
-                    :tabindex="(tab as TerminalTabState).aiSessionId ? 0 : -1"
-                    :title="
-                      (tab as TerminalTabState).aiSessionId
-                        ? t('terminal.viewConversation')
-                        : undefined
-                    "
-                    @click.stop="handleStatusClick(tab as TerminalTabState)"
-                    @keydown.enter.prevent.stop="handleStatusClick(tab as TerminalTabState)"
-                  >
-                    <span
-                      class="ai-status-icon"
-                      v-html="getAssistantIcon(tab as TerminalTabState)"
-                    ></span>
-                    <span class="ai-status-text">{{
-                      getAssistantStatusLabel(tab as TerminalTabState)
-                    }}</span>
-                    <span class="ai-status-emoji">{{
-                      getAssistantStatusEmoji(tab as TerminalTabState)
-                    }}</span>
-                  </span>
+                    class="agent-identity-icon"
+                    v-html="getAssistantIcon(tab as TerminalTabState)"
+                  ></span>
+                  <span class="agent-identity-name">{{
+                    getAssistantName(tab as TerminalTabState)
+                  }}</span>
                 </span>
               </span>
             </template>
@@ -448,10 +407,6 @@
     :claude-command="resolveAgentCommand('claude')"
     @resume="handleResumeSession"
   />
-  <ConversationViewerDialog
-    v-model:show="showConversationViewer"
-    :session-id="conversationSessionId"
-  />
 </template>
 
 <script setup lang="ts">
@@ -499,7 +454,6 @@ import {
 } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
 import AISessionHistoryDialog from './AISessionHistoryDialog.vue';
-import ConversationViewerDialog from './ConversationViewerDialog.vue';
 import {
   useTerminalClient,
   type TerminalCreateOptions,
@@ -511,7 +465,6 @@ import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
 import { useDeveloperConfigStore } from '@/stores/developerConfig';
 import { useProjectStore } from '@/stores/project';
-import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useTerminalSessionSnapshotStore } from '@/stores/terminalSessionSnapshot';
 import { getPresetById } from '@/constants/themes';
 import {
@@ -537,7 +490,6 @@ import {
   calculateCardTabIndicatorStyle,
   hiddenCardTabIndicatorStyle,
 } from '@/utils/cardTabIndicator';
-import { cloneDeveloperConfig } from '@/utils/developerConfig';
 
 const props = defineProps<{
   projectId: string;
@@ -557,9 +509,7 @@ const { copyText } = useAppClipboard();
 const panelRef = ref<HTMLElement | null>(null);
 const projectStore = useProjectStore();
 const { worktrees } = storeToRefs(projectStore);
-const reminderStore = useTerminalReminderStore();
 const sessionSnapshotStore = useTerminalSessionSnapshotStore();
-const { unreadCompletionSessionMap, approvalSessionMap } = storeToRefs(reminderStore);
 const { sessionsById: terminalSessionsById } = storeToRefs(sessionSnapshotStore);
 const terminalSessionSnapshotScopeId = `terminal-panel-${Math.random().toString(36).slice(2, 8)}`;
 const expanded = ref(true);
@@ -578,9 +528,7 @@ const panelSize = reactive({
 const isResizing = ref(false);
 const shouldAutoFocusTerminal = ref(true);
 const developerConfigStore = useDeveloperConfigStore();
-const { config: developerConfigState, loading: developerConfigLoading } =
-  storeToRefs(developerConfigStore);
-const renameTitleToggleLoading = ref(false);
+const { config: developerConfigState } = storeToRefs(developerConfigStore);
 
 // 右键菜单相关状态
 const contextMenuTab = ref<string | null>(null);
@@ -589,8 +537,6 @@ const contextMenuY = ref(0);
 
 // AI 会话历史对话框状态
 const showAISessionHistory = ref(false);
-const showConversationViewer = ref(false);
-const conversationSessionId = ref<string | null>(null);
 
 // 空终端标签状态
 const EMPTY_TAB_PREFIX = 'empty-';
@@ -775,22 +721,6 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
     },
     {
       type: 'divider',
-      key: 'ai-session-divider',
-    },
-    {
-      label: t('terminal.copyAISessionId'),
-      key: 'copy-ai-session-id',
-      icon: () => h(NIcon, null, { default: () => h(ClipboardOutline) }),
-      disabled: !tab?.aiSessionId,
-    },
-    {
-      label: t('terminal.viewConversation'),
-      key: 'view-conversation',
-      icon: () => h(NIcon, null, { default: () => h(ChatbubblesOutline) }),
-      disabled: !tab?.aiSessionId,
-    },
-    {
-      type: 'divider',
       key: 'close-tabs-divider',
     },
     {
@@ -864,20 +794,6 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
         ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
         : undefined,
   },
-  {
-    label: t('terminal.codeAgents'),
-    key: 'code-agents',
-    children: [
-      {
-        label: t('terminal.renameTitleEachCommand'),
-        key: 'rename-title-each-command',
-        icon: developerConfigState.value.renameSessionTitleEachCommand
-          ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
-          : undefined,
-        disabled: developerConfigLoading.value || renameTitleToggleLoading.value,
-      },
-    ],
-  },
 ]);
 
 async function ensureDeveloperConfigLoaded(force = false) {
@@ -888,29 +804,6 @@ async function ensureDeveloperConfigLoaded(force = false) {
     console.error('Failed to load developer config', error);
     message.error(t('common.loadFailed'));
     return false;
-  }
-}
-
-async function toggleRenameTitleEachCommandSetting() {
-  if (renameTitleToggleLoading.value) {
-    return;
-  }
-  const ready = await ensureDeveloperConfigLoaded(true);
-  if (!ready) {
-    return;
-  }
-  renameTitleToggleLoading.value = true;
-  const nextValue = !developerConfigState.value.renameSessionTitleEachCommand;
-  try {
-    const payload = cloneDeveloperConfig(developerConfigState.value);
-    payload.renameSessionTitleEachCommand = nextValue;
-    await developerConfigStore.update(payload);
-    message.success(t('common.saveSuccess'));
-  } catch (error) {
-    console.error('Failed to update rename title setting', error);
-    message.error(t('common.saveFailed'));
-  } finally {
-    renameTitleToggleLoading.value = false;
   }
 }
 
@@ -1502,14 +1395,12 @@ onMounted(() => {
   refreshTabSortable();
   updateActiveTabIndicator();
   setupTabScrollListener();
-  reminderStore.retain();
   void ensureDeveloperConfigLoaded();
 });
 
 onBeforeUnmount(() => {
   destroyTabSorting();
   cleanupTabScrollListener();
-  reminderStore.release();
   sessionSnapshotStore.releaseScope(terminalSessionSnapshotScopeId);
 });
 
@@ -1675,13 +1566,6 @@ watch(
     if (!newId) {
       return;
     }
-
-    void reminderStore.markSessionCompletionsRead(newId);
-
-    // Notify the backend-driven notification layer that this terminal has been viewed
-    emitter.emit('terminal:viewed', {
-      sessionId: newId,
-    });
 
     // Update active tab indicator
     updateActiveTabIndicator();
@@ -2490,67 +2374,22 @@ function createTabProps(tab: CombinedTab): HTMLAttributes {
   // 检查是否需要隐藏边框
   const hideHeaderBorder = theme.terminalHeaderBorder === false;
 
-  // 构建 class 列表
-  const classes: string[] = [];
-
-  // 优先级: 审批提醒 > 完成提醒 > 激活/非激活状态的默认颜色
-  if (hasUnviewedApproval(realTab)) {
-    classes.push('has-unviewed-approval');
-    if (isActive && hideHeaderBorder) {
-      props.style = {
-        borderBottom: 'none',
-      };
-    }
-  } else if (hasUnviewedCompletion(realTab)) {
-    classes.push('has-unviewed-completion');
-    if (isActive && hideHeaderBorder) {
-      props.style = {
-        borderBottom: 'none',
-      };
-    }
+  // 设置普通标签的背景色（根据激活状态）
+  if (isActive) {
+    const bgColor =
+      theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+    props.style = {
+      backgroundColor: bgColor,
+      ...(hideHeaderBorder ? { borderBottom: 'none' } : {}),
+    };
   } else {
-    // 设置普通标签的背景色（根据激活状态）
-    if (isActive) {
-      const bgColor =
-        theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
-      props.style = {
-        backgroundColor: bgColor,
-        ...(hideHeaderBorder ? { borderBottom: 'none' } : {}),
-      };
-    } else {
-      const bgColor = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
-      props.style = {
-        backgroundColor: bgColor,
-      };
-    }
-  }
-
-  // 添加 class 到 props
-  if (classes.length > 0) {
-    props.class = classes.join(' ');
+    const bgColor = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
+    props.style = {
+      backgroundColor: bgColor,
+    };
   }
 
   return props;
-}
-
-// Format duration from nanoseconds to human-readable string
-function formatDuration(ns: number): string {
-  if (!ns || ns <= 0) return '0s';
-
-  const seconds = Math.floor(ns / 1e9);
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  if (minutes < 60) {
-    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 function getTabTooltip(tab: TerminalTabState): string {
@@ -2561,10 +2400,9 @@ function getTabTooltip(tab: TerminalTabState): string {
     lines.push(getSnapshotModeTooltip(tab));
   }
 
-  // Add AI Assistant information if detected
   if (tab.aiAssistant && tab.aiAssistant.detected) {
     lines.push('');
-    lines.push(`🤖 ${getAssistantTooltip(tab)}`);
+    lines.push(`${t('terminal.aiAssistantLabel')}: ${getAssistantName(tab)}`);
   }
 
   // Add process information if available
@@ -2616,87 +2454,16 @@ function getTabTooltip(tab: TerminalTabState): string {
   return lines.join('\n');
 }
 
-function showAssistantStatus(tab: TerminalTabState) {
+function showAssistantIdentity(tab: TerminalTabState) {
   return Boolean(tab.aiAssistant?.detected);
 }
-
-function getAssistantStateClass(tab: TerminalTabState) {
-  const state = tab.aiAssistant?.state?.toLowerCase();
-  if (!state || state === 'unknown') {
-    return 'unknown';
-  }
-  return state;
-}
-
-function getAssistantStatusLabel(tab: TerminalTabState) {
-  const state = tab.aiAssistant?.state?.toLowerCase();
-  switch (state) {
-    case 'working':
-      return t('terminal.aiStatusWorking');
-    case 'waiting_approval':
-      return t('terminal.aiStatusWaitingApproval');
-    case 'waiting_input':
-      return t('terminal.aiStatusWaitingInput');
-    default:
-      return ''; // unknown or disabled - no label
-  }
-}
-
-function getAssistantTooltip(tab: TerminalTabState) {
-  const label = getAssistantStatusLabel(tab);
-  const name = tab.aiAssistant?.displayName || tab.aiAssistant?.name || tab.aiAssistant?.type || '';
-  if (!label) {
-    return name || t('terminal.aiAssistantDetected');
-  }
-  if (!name) {
-    return label;
-  }
-  return `${name} · ${label}`;
-}
-
-function hasUnviewedCompletion(tab: TerminalTabState): boolean {
-  return unreadCompletionSessionMap.value[tab.id] === true;
-}
-
-function hasUnviewedApproval(tab: TerminalTabState): boolean {
-  return approvalSessionMap.value[tab.id] === true;
-}
-
-// Total count of unviewed completions and approvals
-const totalUnviewedCount = computed(() => {
-  const completionCount = Object.keys(unreadCompletionSessionMap.value).length;
-  const approvalCount = Object.keys(approvalSessionMap.value).length;
-  return completionCount + approvalCount;
-});
 
 function getAssistantIcon(tab: TerminalTabState): string {
   return getAssistantIconByType(tab.aiAssistant?.type);
 }
 
-function getAssistantStatusEmoji(tab: TerminalTabState): string {
-  const state = tab.aiAssistant?.state?.toLowerCase();
-  switch (state) {
-    case 'working':
-      return '🤔';
-    case 'waiting_approval':
-      return '✋';
-    case 'waiting_input':
-      return '✓';
-    default:
-      return ''; // unknown - no emoji
-  }
-}
-
-function getAssistantPillSizeClass(tab: TerminalTabState): string {
-  // Use tab title max width as a proxy for available space
-  const width = tabTitleMaxWidth.value;
-
-  if (width < 60) {
-    return 'pill-size-icon-only';
-  } else if (width < 100) {
-    return 'pill-size-icon-emoji';
-  }
-  return 'pill-size-full';
+function getAssistantName(tab: TerminalTabState): string {
+  return tab.aiAssistant?.displayName || tab.aiAssistant?.name || tab.aiAssistant?.type || '';
 }
 
 function formatProcessInfo(tab: TerminalTabState): string {
@@ -2710,7 +2477,7 @@ function formatProcessInfo(tab: TerminalTabState): string {
   // Add AI Assistant info if detected
   if (tab.aiAssistant && tab.aiAssistant.detected) {
     lines.push('');
-    lines.push(`🤖 ${t('terminal.aiAssistantLabel')}: ${getAssistantTooltip(tab)}`);
+    lines.push(`${t('terminal.aiAssistantLabel')}: ${getAssistantName(tab)}`);
   }
 
   if (tab.processPid) {
@@ -2847,43 +2614,6 @@ async function browseDirectory(tab: TerminalTabState) {
   }
 }
 
-async function copyAISessionId(tab: TerminalTabState) {
-  const sessionId = tab.aiSessionId;
-  if (!sessionId) {
-    message.warning(t('terminal.noAISession'));
-    return;
-  }
-  await copyText(sessionId, {
-    failureMessage: t('terminal.copyFailed'),
-    successMessage: t('terminal.aiSessionIdCopied'),
-    onError: error => {
-      console.error('Failed to copy AI session ID:', error);
-    },
-  });
-}
-
-function viewConversation(tab: TerminalTabState) {
-  const sessionId = tab.aiSessionId;
-  if (!sessionId) {
-    message.warning(t('terminal.noAISession'));
-    return;
-  }
-  conversationSessionId.value = sessionId;
-  showConversationViewer.value = true;
-}
-
-function handleStatusClick(tab: TerminalTabState) {
-  if (tab.id === activeTabId.value) {
-    // 激活状态：打开对话记录
-    if (tab.aiSessionId) {
-      viewConversation(tab);
-    }
-  } else {
-    // 未激活状态：只切换到该标签
-    activeTabId.value = tab.id;
-  }
-}
-
 function handleTabContextMenu(event: MouseEvent, tab: TerminalTabState) {
   event.preventDefault();
   contextMenuX.value = event.clientX;
@@ -2953,14 +2683,6 @@ async function handleContextMenuSelect(key: string) {
     if (isEditorPreference(editorKey)) {
       await openEditorForTab(tab, editorKey);
     }
-    return;
-  }
-  if (key === 'copy-ai-session-id') {
-    copyAISessionId(tab);
-    return;
-  }
-  if (key === 'view-conversation') {
-    viewConversation(tab);
     return;
   }
   if (key === 'close-right-tabs') {
@@ -3113,8 +2835,6 @@ function handleSettingsMenuSelect(key: string) {
     settingsStore.updateDefaultTerminalRenderMode(
       defaultTerminalRenderMode.value === 'snapshot' ? 'live' : 'snapshot'
     );
-  } else if (key === 'rename-title-each-command') {
-    void toggleRenameTitleEachCommandSetting();
   }
 }
 
@@ -3462,86 +3182,13 @@ defineExpose({
   letter-spacing: 0.02em;
 }
 
-.ai-status-pill {
+.agent-identity {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 6px;
-  margin-bottom: 2px;
-  border-radius: 999px;
+  gap: 3px;
+  max-width: min(128px, 18vw);
   font-size: 10px;
   line-height: 16px;
-  background-color: #eef2ff;
-  color: #6366f1;
-  transition: all 0.2s ease;
-}
-
-/* Responsive pill states */
-.ai-status-pill.pill-size-full .ai-status-emoji {
-  display: none;
-}
-
-.ai-status-pill.pill-size-icon-emoji .ai-status-text {
-  display: none;
-}
-
-.ai-status-pill.pill-size-icon-emoji .ai-status-emoji {
-  display: inline;
-  font-size: 10px;
-  line-height: 1;
-}
-
-.ai-status-pill.pill-size-icon-only .ai-status-text,
-.ai-status-pill.pill-size-icon-only .ai-status-emoji {
-  display: none;
-}
-
-.ai-status-pill.pill-size-icon-only {
-  padding: 0 4px;
-}
-
-/* State colors */
-.ai-status-pill.state-working {
-  background-color: #eadffc;
-  color: #7c3aed;
-}
-
-.ai-status-pill.state-waiting_approval {
-  background-color: #fed7aa;
-  color: #f79009;
-}
-
-.ai-status-pill.state-waiting_input {
-  background-color: #eceef2;
-  color: #475467;
-}
-
-.ai-status-pill.state-unknown {
-  background-color: #f1f5f9;
-  color: #94a3b8;
-  padding: 0 4px;
-}
-
-.ai-status-pill.state-unknown .ai-status-text,
-.ai-status-pill.state-unknown .ai-status-emoji {
-  display: none;
-}
-
-.ai-status-icon {
-  display: inline-flex;
-  align-items: center;
-  line-height: 1;
-}
-
-.ai-status-icon.task-icon {
-  color: rgba(71, 84, 103, 0.9);
-  margin-right: 2px;
-  cursor: pointer;
-}
-
-.ai-status-icon.task-icon:focus-visible {
-  outline: 2px solid var(--n-color-primary);
-  border-radius: 4px;
 }
 
 /* 独立任务图标（不在 AI 状态条内） */
@@ -3565,68 +3212,15 @@ defineExpose({
   display: block;
 }
 
-.ai-status-icon :deep(svg) {
-  display: block;
-}
-
-.ai-status-emoji {
-  font-size: 10px;
+.agent-identity-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
   line-height: 1;
 }
 
-/* 可点击的状态区域 */
-.ai-status-clickable {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background-color 0.15s;
-}
-
-.ai-status-clickable:hover {
-  background-color: rgba(0, 0, 0, 0.1);
-}
-
-.ai-status-clickable:focus-visible {
-  outline: 2px solid var(--n-color-primary);
-  border-radius: 4px;
-}
-
-/* State tab backgrounds need to outrank the base card-tab rule. */
-.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion) {
-  background-color: var(--kanban-terminal-tab-completion-bg, rgba(16, 185, 129, 0.2)) !important;
-  border-color: var(--kanban-terminal-tab-completion-border, rgba(16, 185, 129, 0.5)) !important;
-}
-
-.panel-header
-  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
-  background-color: var(
-    --kanban-terminal-tab-completion-active-bg,
-    rgba(16, 185, 129, 0.25)
-  ) !important;
-  border-color: var(
-    --kanban-terminal-tab-completion-active-border,
-    rgba(16, 185, 129, 0.6)
-  ) !important;
-}
-
-/* Tab with unviewed approval - orange background (higher priority than completion) */
-.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval) {
-  background-color: var(--kanban-terminal-tab-approval-bg, rgba(247, 144, 9, 0.2)) !important;
-  border-color: var(--kanban-terminal-tab-approval-border, rgba(247, 144, 9, 0.5)) !important;
-}
-
-.panel-header
-  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
-  background-color: var(
-    --kanban-terminal-tab-approval-active-bg,
-    rgba(247, 144, 9, 0.25)
-  ) !important;
-  border-color: var(
-    --kanban-terminal-tab-approval-active-border,
-    rgba(247, 144, 9, 0.6)
-  ) !important;
+.agent-identity-icon :deep(svg) {
+  display: block;
 }
 
 .status-dot {
@@ -3666,57 +3260,6 @@ defineExpose({
   cursor: grabbing !important;
 }
 
-.terminal-floating-button {
-  position: fixed;
-  bottom: 16px;
-  right: 16px;
-  min-height: 42px;
-  padding: 0 16px;
-  border-radius: 21px;
-  border: 1px solid var(--n-border-color, rgba(255, 255, 255, 0.2));
-  background-color: var(--kanban-terminal-floating-button-bg, var(--n-card-color, #1a1a1a));
-  color: var(--kanban-terminal-floating-button-fg, var(--n-text-color-1, #fff));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  box-shadow: 0 4px 10px var(--n-box-shadow-color, rgba(0, 0, 0, 0.25));
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  animation: fadeInUp 0.3s ease-out;
-  transition: all 0.3s ease;
-}
-
-.terminal-floating-button.has-notifications {
-  animation: flashGlow 2s ease-in-out infinite;
-  background-color: #12b76a;
-  border-color: rgba(18, 183, 106, 0.5);
-}
-
-.notification-badge {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  background-color: #f04438;
-  color: white;
-  font-size: 11px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-  animation: bounceIn 0.5s ease-out;
-}
-
-.floating-button-label {
-  line-height: 1;
-}
-
 /* 折叠/展开按钮样式 */
 .toggle-button {
   transition: none;
@@ -3724,60 +3267,6 @@ defineExpose({
 
 .toggle-icon {
   transition: none;
-}
-
-/* 浮动按钮图标动画 */
-.floating-button-icon {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.8;
-    transform: scale(0.95);
-  }
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes flashGlow {
-  0%,
-  100% {
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
-  }
-  50% {
-    box-shadow:
-      0 4px 20px rgba(18, 183, 106, 0.6),
-      0 0 30px rgba(18, 183, 106, 0.4);
-  }
-}
-
-@keyframes bounceIn {
-  0% {
-    opacity: 0;
-    transform: scale(0.3);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.1);
-  }
-  100% {
-    transform: scale(1);
-  }
 }
 
 @keyframes expandPanel {
@@ -3979,13 +3468,6 @@ defineExpose({
 
 .mobile-tab-arrow.is-open {
   transform: rotate(180deg);
-}
-
-/* 移动端布局隐藏浮动按钮 */
-@media (max-width: 900px) {
-  .terminal-floating-button {
-    display: none !important;
-  }
 }
 </style>
 

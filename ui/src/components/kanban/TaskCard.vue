@@ -103,7 +103,7 @@ const { t } = useLocale();
 
 type LinkedTerminalSummary = {
   sessionId: string;
-  status?: string;
+  agentName: string;
   sessionTitle: string;
 };
 
@@ -147,20 +147,10 @@ const isOverdue = computed(() => {
 
 const formatDate = (value: string) => dayjs(value).format('MM-DD');
 
-const linkedTerminalStatus = computed(() => props.linkedTerminal?.status ?? 'unknown');
-const linkedTerminalLabel = computed(() => {
-  switch (linkedTerminalStatus.value) {
-    case 'working':
-      return t('terminal.aiStatusWorking');
-    case 'waiting_approval':
-      return t('terminal.aiStatusWaitingApproval');
-    case 'waiting_input':
-      return t('terminal.aiStatusWaitingInput');
-    default:
-      return t('terminal.processStatusUnknown');
-  }
-});
-const linkedTerminalStateClass = computed(() => `status-${linkedTerminalStatus.value}`);
+const linkedTerminalLabel = computed(
+  () => props.linkedTerminal?.agentName || t('terminal.aiAssistantDetected')
+);
+const linkedTerminalStateClass = 'status-linked';
 const linkedTerminalTitle = computed(() => props.linkedTerminal?.sessionTitle ?? '');
 
 const startWorkOptions = computed<DropdownOption[]>(() => [
@@ -255,11 +245,6 @@ const handleStartWorkSelect = (key: string | number) => {
   cursor: pointer;
 }
 
-.task-card__terminal-status.status-waiting_input {
-  background-color: var(--kanban-terminal-pill-bg-muted, #eceef2);
-  color: var(--kanban-terminal-pill-fg-muted, #475467);
-}
-
 .task-card__terminal-status:focus-visible {
   outline: 2px solid var(--n-color-primary);
   outline-offset: 2px;
@@ -272,12 +257,8 @@ const handleStartWorkSelect = (key: string | number) => {
   display: inline-block;
 }
 
-.task-card__status-dot.status-working {
-  background-color: #7c3aed;
-}
-
-.task-card__status-dot.status-waiting_approval {
-  background-color: #f79009;
+.task-card__status-dot.status-linked {
+  background-color: var(--n-primary-color, #4f8ff7);
 }
 
 .task-card__status-dot.status-waiting_input {

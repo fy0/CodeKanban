@@ -1,6 +1,6 @@
 import { extractItem } from '@/api/response';
 import { http } from '@/api/http';
-import type { AIAssistantStatusConfig, DeveloperConfig, WorktreeConfig } from '@/types/models';
+import type { DeveloperConfig, WorktreeConfig } from '@/types/models';
 import type {
   EditorSettings,
   ShortcutSettings,
@@ -43,7 +43,6 @@ export interface SettingsBackupQuickInputSection {
 }
 
 export interface SettingsBackupServerPayload {
-  aiAssistantStatus?: AIAssistantStatusConfig;
   developer?: DeveloperConfig;
   pageTitle?: string;
   dailyTip?: {
@@ -286,9 +285,6 @@ export function buildImportableSettingsBackup(
   const client = cloned.payload.client;
 
   if (server) {
-    if (!selectedKeys.has('server.aiAssistantStatus')) {
-      delete server.aiAssistantStatus;
-    }
     if (!selectedKeys.has('server.developer')) {
       delete server.developer;
     }
@@ -406,8 +402,7 @@ function hasServerPayloadContent(payload: SettingsBackupServerPayload | undefine
     return false;
   }
   return Boolean(
-    payload.aiAssistantStatus ||
-      payload.developer ||
+    payload.developer ||
       typeof payload.pageTitle === 'string' ||
       payload.dailyTip ||
       hasQuickInputSectionContent(payload.webSessionQuickInput) ||

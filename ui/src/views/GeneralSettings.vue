@@ -499,54 +499,6 @@
                 </n-form-item>
               </n-form>
             </n-card>
-
-            <n-card :title="t('settings.aiAssistantStatusTracking')" size="huge">
-              <template #header-extra>
-                <n-button
-                  size="small"
-                  :loading="saveLoading"
-                  :disabled="!aiStatusDirty"
-                  @click="handleSaveAIStatus"
-                >
-                  {{ t('common.save') }}
-                </n-button>
-              </template>
-              <n-spin :show="aiStatusLoading">
-                <n-form
-                  :label-placement="standardFormLabelPlacement"
-                  :label-width="standardFormLabelWidth"
-                >
-                  <n-form-item
-                    :label="t('settings.aiAssistantClaudeCode')"
-                    data-search-key="aiAssistantClaudeCode"
-                  >
-                    <n-space align="center">
-                      <n-switch v-model:value="aiStatusForm.claudeCode" />
-                      <span class="form-tip">{{ t('settings.aiStatusClaudeSupport') }}</span>
-                    </n-space>
-                  </n-form-item>
-                  <n-form-item
-                    :label="t('settings.aiAssistantCodex')"
-                    data-search-key="aiAssistantCodex"
-                  >
-                    <n-space align="center">
-                      <n-switch v-model:value="aiStatusForm.codex" />
-                      <span class="form-tip">{{ t('settings.aiStatusCodexSupport') }}</span>
-                    </n-space>
-                  </n-form-item>
-                  <n-form-item
-                    :label="t('settings.aiAssistantQwenCode')"
-                    data-search-key="aiAssistantQwenCode"
-                  >
-                    <n-space align="center">
-                      <n-switch v-model:value="aiStatusForm.qwenCode" />
-                      <span class="form-tip">{{ t('settings.aiStatusQwenSupport') }}</span>
-                    </n-space>
-                  </n-form-item>
-                </n-form>
-                <span class="form-tip">{{ t('settings.aiAssistantStatusTrackingTip') }}</span>
-              </n-spin>
-            </n-card>
           </section>
 
           <section
@@ -1260,20 +1212,6 @@
                       <span class="form-tip">{{ t('settings.developerScrollbackTip') }}</span>
                     </n-space>
                   </n-form-item>
-                  <n-form-item
-                    :label="t('settings.renameSessionTitleEachCommand')"
-                    data-search-key="renameSessionTitleEachCommand"
-                  >
-                    <n-space vertical size="small">
-                      <n-switch
-                        v-model:value="developerForm.renameSessionTitleEachCommand"
-                        :disabled="developerLoading"
-                      />
-                      <span class="form-tip">{{
-                        t('settings.renameSessionTitleEachCommandTip')
-                      }}</span>
-                    </n-space>
-                  </n-form-item>
                 </n-form>
               </n-spin>
             </n-card>
@@ -1601,49 +1539,6 @@
                   <n-color-picker
                     v-model:value="terminalTabActiveBg"
                     :modes="['hex']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-
-                <n-divider style="margin: 16px 0">{{ t('theme.statusColors') }}</n-divider>
-
-                <n-form-item
-                  :label="t('settings.terminalTabCompletionBg')"
-                  data-search-key="terminalTabCompletionBg"
-                >
-                  <n-color-picker
-                    v-model:value="terminalTabCompletionBg"
-                    :modes="['hex', 'rgb']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.terminalTabCompletionBorder')"
-                  data-search-key="terminalTabCompletionBorder"
-                >
-                  <n-color-picker
-                    v-model:value="terminalTabCompletionBorder"
-                    :modes="['hex', 'rgb']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.terminalTabApprovalBg')"
-                  data-search-key="terminalTabApprovalBg"
-                >
-                  <n-color-picker
-                    v-model:value="terminalTabApprovalBg"
-                    :modes="['hex', 'rgb']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.terminalTabApprovalBorder')"
-                  data-search-key="terminalTabApprovalBorder"
-                >
-                  <n-color-picker
-                    v-model:value="terminalTabApprovalBorder"
-                    :modes="['hex', 'rgb']"
                     :actions="['confirm']"
                   />
                 </n-form-item>
@@ -2075,7 +1970,6 @@ import { useReq, useInit } from '@/api/composable';
 import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
 import WebSessionHistoryCleanup from '@/components/settings/WebSessionHistoryCleanup.vue';
 import type {
-  AIAssistantStatusConfig,
   DeveloperConfig,
   AvailableShellsResponse,
   WebSessionCodexDefaultReasoningEffort,
@@ -2488,36 +2382,6 @@ async function handleFollowSystemModeChange(value: FollowSystemThemeSetting) {
   settingsStore.setFollowSystemThemeSetting(value);
 }
 
-// AI Assistant Status Tracking
-const aiStatusForm = reactive<AIAssistantStatusConfig>({
-  claudeCode: true,
-  codex: false,
-  qwenCode: true,
-  gemini: false,
-  cursor: false,
-  copilot: false,
-});
-const aiStatusOriginal = ref<AIAssistantStatusConfig | null>(null);
-const aiStatusDirty = computed(() => {
-  if (!aiStatusOriginal.value) return false;
-  return (
-    aiStatusForm.claudeCode !== aiStatusOriginal.value.claudeCode ||
-    aiStatusForm.codex !== aiStatusOriginal.value.codex ||
-    aiStatusForm.qwenCode !== aiStatusOriginal.value.qwenCode ||
-    aiStatusForm.gemini !== aiStatusOriginal.value.gemini ||
-    aiStatusForm.cursor !== aiStatusOriginal.value.cursor ||
-    aiStatusForm.copilot !== aiStatusOriginal.value.copilot
-  );
-});
-
-const { send: fetchAIStatus, loading: aiStatusLoading } = useReq(() =>
-  Apis.system.aiAssistantStatusGet()
-);
-
-const { send: updateAIStatus, loading: saveLoading } = useReq((config: AIAssistantStatusConfig) =>
-  Apis.system.aiAssistantStatusUpdate({ data: config })
-);
-
 const developerForm = reactive<DeveloperConfig>(sanitizeDeveloperConfig());
 const developerOriginal = ref<DeveloperConfig | null>(null);
 const codexModelCatalog = ref<WebSessionCodexModelInfo[]>([]);
@@ -2582,9 +2446,7 @@ const developerBehaviorDirty = computed(() => {
     return false;
   }
   return (
-    developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback ||
-    developerForm.renameSessionTitleEachCommand !==
-      developerOriginal.value.renameSessionTitleEachCommand
+    developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback
   );
 });
 const developerSessionDirty = computed(() => {
@@ -2630,30 +2492,6 @@ watch(
   },
   { deep: true }
 );
-
-async function loadAIStatus() {
-  try {
-    const resp = await fetchAIStatus();
-    const config = resp?.item;
-    if (config) {
-      Object.assign(aiStatusForm, config);
-      aiStatusOriginal.value = { ...config };
-    }
-  } catch (error) {
-    console.error('Failed to load AI status config:', error);
-  }
-}
-
-async function handleSaveAIStatus() {
-  try {
-    await updateAIStatus({ ...aiStatusForm });
-    aiStatusOriginal.value = { ...aiStatusForm };
-    message.success(t('common.saveSuccess'));
-  } catch (error) {
-    console.error('Failed to save AI status config:', error);
-    message.error(t('common.saveFailed'));
-  }
-}
 
 async function loadDeveloperConfig(force = true) {
   try {
@@ -2931,7 +2769,6 @@ const authAccessDirty = computed(() => {
 });
 
 useInit(() => {
-  loadAIStatus();
   loadDeveloperConfig();
   void loadCodexModelCatalog();
   loadWorktreeSettings();
@@ -3293,9 +3130,6 @@ async function refreshSettingsAfterBackupImport(importedBackup: SettingsBackupFi
   const tasks: Array<Promise<unknown>> = [];
   const server = importedBackup.payload.server;
 
-  if (server?.aiAssistantStatus) {
-    tasks.push(loadAIStatus());
-  }
   if (server?.developer) {
     tasks.push(loadDeveloperConfig());
   }
@@ -3494,40 +3328,6 @@ const terminalTabActiveBg = computed({
   get: () => theme.value.terminalTabActiveBg || theme.value.terminalBg,
   set: value => {
     settingsStore.applyCustomTheme({ terminalTabActiveBg: value || '#FFFFFF' });
-  },
-});
-
-const terminalTabCompletionBg = computed({
-  get: () => theme.value.terminalTabCompletionBg || 'rgba(16, 185, 129, 0.25)',
-  set: value => {
-    settingsStore.applyCustomTheme({
-      terminalTabCompletionBg: value || 'rgba(16, 185, 129, 0.25)',
-    });
-  },
-});
-
-const terminalTabCompletionBorder = computed({
-  get: () => theme.value.terminalTabCompletionBorder || 'rgba(16, 185, 129, 0.5)',
-  set: value => {
-    settingsStore.applyCustomTheme({
-      terminalTabCompletionBorder: value || 'rgba(16, 185, 129, 0.5)',
-    });
-  },
-});
-
-const terminalTabApprovalBg = computed({
-  get: () => theme.value.terminalTabApprovalBg || 'rgba(247, 144, 9, 0.25)',
-  set: value => {
-    settingsStore.applyCustomTheme({ terminalTabApprovalBg: value || 'rgba(247, 144, 9, 0.25)' });
-  },
-});
-
-const terminalTabApprovalBorder = computed({
-  get: () => theme.value.terminalTabApprovalBorder || 'rgba(247, 144, 9, 0.5)',
-  set: value => {
-    settingsStore.applyCustomTheme({
-      terminalTabApprovalBorder: value || 'rgba(247, 144, 9, 0.5)',
-    });
   },
 });
 
@@ -4078,7 +3878,7 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
       id: 'terminal',
       title: t('settings.terminalSettings'),
       description: t('settings.terminalDefaultRenderMode'),
-      dirty: developerTerminalDirty.value || aiStatusDirty.value,
+      dirty: developerTerminalDirty.value,
       searchTerms: [
         t('settings.terminalLimit'),
         t('settings.confirmTerminalClose'),
@@ -4094,10 +3894,6 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
         t('settings.terminalQuickActionsList'),
         t('settings.terminalQuickActionNamePlaceholder'),
         t('settings.terminalQuickActionCommandPlaceholder'),
-        t('settings.aiAssistantStatusTracking'),
-        t('settings.aiAssistantClaudeCode'),
-        t('settings.aiAssistantCodex'),
-        t('settings.aiAssistantQwenCode'),
       ],
     },
     {
@@ -4151,7 +3947,7 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
       title: t('settings.developerOptions'),
       description: t('settings.developerScrollback'),
       dirty: developerBehaviorDirty.value,
-      searchTerms: [t('settings.developerScrollback'), t('settings.renameSessionTitleEachCommand')],
+      searchTerms: [t('settings.developerScrollback')],
     },
     {
       id: 'worktree',
@@ -4185,10 +3981,6 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
         t('settings.terminalFg'),
         t('settings.terminalTabBg'),
         t('settings.terminalTabActiveBg'),
-        t('settings.terminalTabCompletionBg'),
-        t('settings.terminalTabCompletionBorder'),
-        t('settings.terminalTabApprovalBg'),
-        t('settings.terminalTabApprovalBorder'),
         t('settings.realtimePreview'),
         t('settings.previewTheme'),
         t('settings.sampleCard'),

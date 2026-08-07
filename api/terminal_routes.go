@@ -266,16 +266,6 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 			return nil, huma.Error500InternalServerError("failed to link task", err)
 		}
 
-		// 自动关联 AI Session（如果有的话）
-		if logWatcherInfo := session.GetLogWatcherInfo(); logWatcherInfo != nil && logWatcherInfo.SessionMeta != nil {
-			aiSessionID := logWatcherInfo.SessionMeta.ID
-			if aiSessionID != "" {
-				taskAISessionSvc := &model.TaskAISessionService{}
-				// 忽略错误，因为可能已经关联过了
-				_ = taskAISessionSvc.LinkTaskToAISessionBySessionID(ctx, taskID, aiSessionID)
-			}
-		}
-
 		view := c.viewFromSnapshot(session.Snapshot())
 		resp := h.NewItemResponse(view)
 		resp.Status = http.StatusOK
@@ -371,89 +361,6 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 		op.Description = "发送一个 resize 命令给终端，然后捕获并返回接下来的第一个输出 chunk，用于调试和测试"
 	})
 
-	// 完成记录相关 API
-	huma.Get(group, "/terminals/completion-records", func(
-		ctx context.Context,
-		input *struct{},
-	) (*h.ItemsResponse[*terminal.CompletionRecord], error) {
-		records := c.manager.GetRecordManager().GetCompletions()
-		resp := h.NewItemsResponse(records)
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-completion-records-list"
-		op.Summary = "获取所有未关闭的完成记录"
-		op.Tags = []string{terminalTag}
-	})
-
-	huma.Get(group, "/terminals/approval-records", func(
-		ctx context.Context,
-		input *struct{},
-	) (*h.ItemsResponse[*terminal.ApprovalRecord], error) {
-		records := c.manager.GetRecordManager().GetApprovals()
-		resp := h.NewItemsResponse(records)
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-approval-records-list"
-		op.Summary = "获取所有未关闭的审批记录"
-		op.Tags = []string{terminalTag}
-	})
-
-	huma.Post(group, "/terminals/completion-records/{recordId}/dismiss", func(
-		ctx context.Context,
-		input *struct {
-			RecordID string `path:"recordId"`
-		},
-	) (*h.MessageResponse, error) {
-		if !c.manager.GetRecordManager().DismissCompletion(input.RecordID) {
-			return nil, huma.Error404NotFound("record not found")
-		}
-		resp := h.NewMessageResponse("record dismissed")
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-completion-record-dismiss"
-		op.Summary = "关闭完成记录"
-		op.Tags = []string{terminalTag}
-	})
-
-	huma.Post(group, "/terminals/completion-records/{recordId}/read", func(
-		ctx context.Context,
-		input *struct {
-			RecordID string `path:"recordId"`
-		},
-	) (*h.MessageResponse, error) {
-		if !c.manager.GetRecordManager().MarkCompletionRead(input.RecordID) {
-			return nil, huma.Error404NotFound("record not found")
-		}
-		resp := h.NewMessageResponse("record read")
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-completion-record-read"
-		op.Summary = "标记完成记录为已读"
-		op.Tags = []string{terminalTag}
-	})
-
-	huma.Post(group, "/terminals/approval-records/{recordId}/dismiss", func(
-		ctx context.Context,
-		input *struct {
-			RecordID string `path:"recordId"`
-		},
-	) (*h.MessageResponse, error) {
-		if !c.manager.GetRecordManager().DismissApproval(input.RecordID) {
-			return nil, huma.Error404NotFound("record not found")
-		}
-		resp := h.NewMessageResponse("record dismissed")
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-approval-record-dismiss"
-		op.Summary = "关闭审批记录"
-		op.Tags = []string{terminalTag}
-	})
-
 	// 根据任务 ID 获取关联的终端列表
 	huma.Get(group, "/tasks/{taskId}/terminals", func(
 		ctx context.Context,
@@ -475,50 +382,6 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 		op.Tags = []string{terminalTag}
 	})
 
-	// AI Session 对话记录 API
-	huma.Get(group, "/terminals/{sessionId}/ai-messages", func(
-		ctx context.Context,
-		input *struct {
-			SessionID string `path:"sessionId"`
-		},
-	) (*h.ItemResponse[aiSessionMessagesView], error) {
-		info, err := c.manager.GetLogWatcherInfo(input.SessionID)
-		if err != nil {
-			if errors.Is(err, terminal.ErrSessionNotFound) {
-				return nil, huma.Error404NotFound(err.Error())
-			}
-			return nil, huma.Error500InternalServerError("failed to get AI session info", err)
-		}
-
-		view := aiSessionMessagesView{}
-		if info != nil {
-			view.SessionID = info.SessionID
-			if info.SessionMeta != nil {
-				view.SessionID = info.SessionMeta.ID
-				view.Model = info.SessionMeta.Model
-				view.CliVersion = info.SessionMeta.CliVersion
-			}
-			view.MessageCount = info.MessageCount
-			view.FilePath = info.FilePath
-			if info.UserMessages != nil {
-				view.Messages = make([]aiMessageView, 0, len(info.UserMessages))
-				for _, msg := range info.UserMessages {
-					view.Messages = append(view.Messages, aiMessageView{
-						Timestamp: msg.Timestamp,
-						Message:   msg.Message,
-					})
-				}
-			}
-		}
-		resp := h.NewItemResponse(view)
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-ai-messages"
-		op.Summary = "获取终端的 AI 对话记录"
-		op.Tags = []string{terminalTag}
-		op.Description = "返回从 AI 助手 session 文件中读取的用户消息列表"
-	})
 }
 
 func (c *terminalController) registerWebsocket(app *fiber.App) {
@@ -1292,18 +1155,4 @@ type terminalCountsResponse struct {
 	Body   struct {
 		Counts map[string]int `json:"counts" doc:"项目ID到终端数量的映射"`
 	} `json:"body"`
-}
-
-type aiMessageView struct {
-	Timestamp time.Time `json:"timestamp"`
-	Message   string    `json:"message"`
-}
-
-type aiSessionMessagesView struct {
-	SessionID    string          `json:"sessionId,omitempty"`
-	Model        string          `json:"model,omitempty"`
-	CliVersion   string          `json:"cliVersion,omitempty"`
-	FilePath     string          `json:"filePath,omitempty"`
-	MessageCount int             `json:"messageCount"`
-	Messages     []aiMessageView `json:"messages"`
 }

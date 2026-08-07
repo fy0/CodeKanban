@@ -105,14 +105,6 @@
           />
         </div>
 
-        <!-- 提醒视图 -->
-        <div
-          v-show="mobileActiveView === 'notifications'"
-          class="mobile-view mobile-notifications-view"
-        >
-          <AINotificationBar :is-mobile="true" />
-        </div>
-
         <!-- 移动端底部导航 -->
         <div class="mobile-bottom-nav safe-area-bottom">
           <button
@@ -258,7 +250,6 @@ import RecentProjects from '@/components/project/RecentProjects.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import WorkspaceTabView from '@/components/workspace/WorkspaceTabView.vue';
 import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
-import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
 import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
@@ -1017,11 +1008,6 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
 
 .mobile-projects-view {
   min-height: 0;
-}
-
-.mobile-notifications-view {
-  padding: 16px;
-  padding-bottom: calc(16px + var(--workspace-mobile-bottom-nav-space));
 }
 
 .mobile-websession-view {

@@ -51,17 +51,8 @@ export interface ThemeSettings {
   terminalTabBg?: string;
   terminalTabActiveBg?: string;
   terminalHeaderBorder?: boolean | string; // 终端 header 边框：false=无边框, true=默认边框, string=自定义边框
-  // 完成提醒标签颜色
-  terminalTabCompletionBg?: string;
-  terminalTabCompletionBorder?: string;
-  // 审批提醒标签颜色
-  terminalTabApprovalBg?: string;
-  terminalTabApprovalBorder?: string;
   // 空终端引导文字颜色
   terminalEmptyGuideFg?: string;
-  // AI 通知按钮颜色（边框和图标）
-  notificationButtonBorder?: string;
-  notificationButtonFg?: string;
   // 看板相关颜色
   kanbanBoardBg?: string;
   kanbanCardBg?: string;
@@ -1355,16 +1346,7 @@ function sanitizeThemeSettings(value: unknown): ThemeSettings {
     terminalTabBg: source.terminalTabBg ?? defaultTheme.terminalTabBg,
     terminalTabActiveBg: source.terminalTabActiveBg ?? defaultTheme.terminalTabActiveBg,
     terminalHeaderBorder: source.terminalHeaderBorder ?? defaultTheme.terminalHeaderBorder,
-    terminalTabCompletionBg: source.terminalTabCompletionBg ?? defaultTheme.terminalTabCompletionBg,
-    terminalTabCompletionBorder:
-      source.terminalTabCompletionBorder ?? defaultTheme.terminalTabCompletionBorder,
-    terminalTabApprovalBg: source.terminalTabApprovalBg ?? defaultTheme.terminalTabApprovalBg,
-    terminalTabApprovalBorder:
-      source.terminalTabApprovalBorder ?? defaultTheme.terminalTabApprovalBorder,
     terminalEmptyGuideFg: source.terminalEmptyGuideFg ?? defaultTheme.terminalEmptyGuideFg,
-    notificationButtonBorder:
-      source.notificationButtonBorder ?? defaultTheme.notificationButtonBorder,
-    notificationButtonFg: source.notificationButtonFg ?? defaultTheme.notificationButtonFg,
     kanbanBoardBg: source.kanbanBoardBg ?? defaultTheme.kanbanBoardBg,
     kanbanCardBg: source.kanbanCardBg ?? defaultTheme.kanbanCardBg,
     kanbanBorderEnabled: source.kanbanBorderEnabled ?? defaultTheme.kanbanBorderEnabled,

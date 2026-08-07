@@ -46,7 +46,6 @@ export function sanitizeDeveloperConfig(value?: Partial<DeveloperConfig> | null)
   const configuredModel = value?.webSessionCodexDefaultModel?.trim();
   return {
     enableTerminalScrollback: value?.enableTerminalScrollback ?? false,
-    renameSessionTitleEachCommand: value?.renameSessionTitleEachCommand ?? false,
     enableTerminalStateSnapshot: value?.enableTerminalStateSnapshot ?? false,
     webSessionCodexDefaultModel:
       configuredModel?.toLowerCase() === DEFAULT_WEB_SESSION_CODEX_MODEL

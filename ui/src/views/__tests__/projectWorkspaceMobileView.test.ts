@@ -17,7 +17,6 @@ describe('projectWorkspaceMobileView', () => {
     expect(normalizeMobileView('webSession')).toBe('webSession');
     expect(normalizeMobileView('files')).toBe('files');
     expect(normalizeMobileView('changes')).toBe('changes');
-    expect(normalizeMobileView('notifications')).toBe('notifications');
   });
 
   it('blocks kanban and falls back invalid values to the default mobile view', () => {
@@ -46,7 +45,6 @@ describe('projectWorkspaceMobileView', () => {
     expect(mobileViewToRouteTab('webSession')).toBe('web');
     expect(mobileViewToRouteTab('files')).toBe('files');
     expect(mobileViewToRouteTab('changes')).toBe('changes');
-    expect(mobileViewToRouteTab('notifications')).toBe('notifications');
     expect(mobileViewToRouteTab('kanban')).toBe('projects');
   });
 
@@ -56,7 +54,6 @@ describe('projectWorkspaceMobileView', () => {
     expect(routeTabToMobileView('web')).toBe('webSession');
     expect(routeTabToMobileView('files')).toBe('files');
     expect(routeTabToMobileView('changes')).toBe('changes');
-    expect(routeTabToMobileView('notifications')).toBe('notifications');
     expect(routeTabToMobileView('kanban')).toBe(DEFAULT_MOBILE_VIEW);
     expect(routeTabToMobileView('unknown')).toBe(DEFAULT_MOBILE_VIEW);
   });

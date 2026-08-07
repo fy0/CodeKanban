@@ -5,7 +5,6 @@ import {
   getWebSessionStatusBucket,
 } from '@/composables/aiStatusSummary';
 import { useProjectStore } from '@/stores/project';
-import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useWebSessionStore } from '@/stores/webSession';
 import type { AiStatusSummary } from '@/composables/aiStatusSummary';
 
@@ -74,36 +73,10 @@ function summarizeProjectBuckets(sessionBuckets?: Map<string, StatusBucket>): Ai
 
 export function useAiStatusSummary() {
   const projectStore = useProjectStore();
-  const reminderStore = useTerminalReminderStore();
   const webSessionStore = useWebSessionStore();
 
   const projectBucketMap = computed(() => {
     const buckets = new Map<string, Map<string, StatusBucket>>();
-
-    reminderStore.approvalRecords.forEach(record => {
-      if (!record.sessionId) {
-        return;
-      }
-      rememberSessionBucket(buckets, record.projectId, `terminal:${record.sessionId}`, 'blocking');
-    });
-
-    reminderStore.completionRecords.forEach(record => {
-      if (!record.sessionId) {
-        return;
-      }
-      if (record.state === 'working') {
-        rememberSessionBucket(buckets, record.projectId, `terminal:${record.sessionId}`, 'working');
-        return;
-      }
-      if (!record.readAt) {
-        rememberSessionBucket(
-          buckets,
-          record.projectId,
-          `terminal:${record.sessionId}`,
-          'unreadCompleted'
-        );
-      }
-    });
 
     projectStore.projects.forEach(project => {
       webSessionStore.getSessions(project.id).forEach(session => {

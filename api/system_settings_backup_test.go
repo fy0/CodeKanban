@@ -17,19 +17,13 @@ import (
 )
 
 type settingsBackupTerminalManagerStub struct {
-	aiStatus                     utils.AIAssistantStatusConfig
 	scrollbackEnabled            bool
 	terminalStateSnapshotEnabled bool
-	renameTitleEachCommand       bool
 	shellConfig                  utils.TerminalShellConfig
 }
 
 type settingsBackupResponseEnvelope[T any] struct {
 	Item T `json:"item"`
-}
-
-func (s *settingsBackupTerminalManagerStub) UpdateAIAssistantStatusConfig(config utils.AIAssistantStatusConfig) {
-	s.aiStatus = config
 }
 
 func (s *settingsBackupTerminalManagerStub) UpdateScrollbackEnabled(value bool) {
@@ -38,10 +32,6 @@ func (s *settingsBackupTerminalManagerStub) UpdateScrollbackEnabled(value bool) 
 
 func (s *settingsBackupTerminalManagerStub) UpdateTerminalStateSnapshotEnabled(value bool) {
 	s.terminalStateSnapshotEnabled = value
-}
-
-func (s *settingsBackupTerminalManagerStub) UpdateRenameTitleEachCommand(value bool) {
-	s.renameTitleEachCommand = value
 }
 
 func (s *settingsBackupTerminalManagerStub) UpdateShellConfig(config utils.TerminalShellConfig) {
@@ -205,9 +195,8 @@ func TestSystemSettingsBackupPreviewRejectsInvalidShell(t *testing.T) {
 		SourceApp:           utils.SettingsBackupSourceApp{Name: "Code Kanban", Version: "1.0.0", Channel: "stable"},
 		Payload: utils.SettingsBackupPayload{
 			Server: &utils.SettingsBackupServerPayload{
-				AIAssistantStatus: loPtr(cfg.Terminal.AIAssistantStatus),
-				Developer:         loPtr(cfg.Developer),
-				DailyTip:          loPtr(utils.BackupDailyTipSettings{Enabled: true}),
+				Developer: loPtr(cfg.Developer),
+				DailyTip:  loPtr(utils.BackupDailyTipSettings{Enabled: true}),
 				WebSessionQuickInput: &utils.SettingsBackupQuickInputSection{
 					Pinned: loPtr(append([]string(nil), cfg.UI.WebSessionQuickInput.Pinned...)),
 					Recent: loPtr(append([]string(nil), cfg.UI.WebSessionQuickInput.Recent...)),
@@ -318,17 +307,8 @@ terminal:
 		Payload: utils.SettingsBackupPayload{
 			Server: &utils.SettingsBackupServerPayload{
 				PageTitle: loPtr("Imported Board"),
-				AIAssistantStatus: loPtr(utils.AIAssistantStatusConfig{
-					ClaudeCode: false,
-					Codex:      false,
-					QwenCode:   true,
-					Gemini:     true,
-					Cursor:     false,
-					Copilot:    true,
-				}),
 				Developer: loPtr(utils.DeveloperConfig{
 					EnableTerminalScrollback:              true,
-					RenameSessionTitleEachCommand:         true,
 					EnableTerminalStateSnapshot:           true,
 					WebSessionCodexDefaultModel:           "custom-codex-model",
 					WebSessionCodexDefaultReasoningEffort: "high",
@@ -392,7 +372,7 @@ terminal:
 	if got := cfg.UI.PageTitle; got != "Imported Board" {
 		t.Fatalf("page title = %q, want Imported Board", got)
 	}
-	if !cfg.Developer.EnableTerminalScrollback || !cfg.Developer.RenameSessionTitleEachCommand {
+	if !cfg.Developer.EnableTerminalScrollback {
 		t.Fatalf("developer config not applied: %#v", cfg.Developer)
 	}
 	if got := strings.TrimSpace(utils.CurrentPlatformShell(cfg.Terminal.Shell)); got != "/bin/sh" {
@@ -467,7 +447,6 @@ ui:
     recent: ["keep"]
 developer:
   enableTerminalScrollback: false
-  renameSessionTitleEachCommand: false
 worktree:
   globalBaseDir: /tmp/original
   globalDirNamePattern: "{projectName}-{branch}"

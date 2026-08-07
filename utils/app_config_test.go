@@ -250,11 +250,10 @@ func TestMergeDeveloperConfigPreservesNestedTimeoutConfigForLegacyPayloads(t *te
 	})
 
 	merged := MergeDeveloperConfig(current, DeveloperConfig{
-		EnableTerminalScrollback:      true,
-		RenameSessionTitleEachCommand: true,
+		EnableTerminalScrollback: true,
 	})
 
-	if !merged.EnableTerminalScrollback || !merged.RenameSessionTitleEachCommand {
+	if !merged.EnableTerminalScrollback {
 		t.Fatalf("expected top-level developer config fields to update, got %#v", merged)
 	}
 	if merged.WebSessionActiveCallTimeout != current.WebSessionActiveCallTimeout {
@@ -412,59 +411,4 @@ func readDailyTipTestConfig(t *testing.T, content *string) (*AppConfig, string) 
 	})
 
 	return ReadConfig(), configPath
-}
-
-func TestUpdateConfigDropsLegacyAutoCreateTaskOnStartWorkField(t *testing.T) {
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.yaml")
-	legacyConfig := `
-developer:
-  autoCreateTaskOnStartWork: true
-  renameSessionTitleEachCommand: false
-`
-	if err := os.WriteFile(configPath, []byte(strings.TrimSpace(legacyConfig)+"\n"), 0o644); err != nil {
-		t.Fatalf("write legacy config failed: %v", err)
-	}
-
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd failed: %v", err)
-	}
-	if err := os.Chdir(tempDir); err != nil {
-		t.Fatalf("Chdir failed: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(oldWD)
-	})
-
-	oldStore := configStore
-	oldActivePath := activeConfigPath
-	oldUseHomeData := useHomeData
-	configStore = koanf.New(".")
-	activeConfigPath = ""
-	useHomeData = false
-	t.Cleanup(func() {
-		configStore = oldStore
-		activeConfigPath = oldActivePath
-		useHomeData = oldUseHomeData
-	})
-
-	config := ReadConfig()
-	if err := UpdateConfig(config, func(c *AppConfig) {
-		c.Developer.RenameSessionTitleEachCommand = true
-	}); err != nil {
-		t.Fatalf("UpdateConfig failed: %v", err)
-	}
-
-	rewritten, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-	content := string(rewritten)
-	if strings.Contains(content, "autoCreateTaskOnStartWork:") {
-		t.Fatalf("expected legacy autoCreateTaskOnStartWork key to be removed, got:\n%s", content)
-	}
-	if !strings.Contains(content, "renameSessionTitleEachCommand: true") {
-		t.Fatalf("expected renamed title flag to be persisted, got:\n%s", content)
-	}
 }

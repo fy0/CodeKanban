@@ -72,9 +72,7 @@ describe('workspaceRoute', () => {
 
   it('resolves mobile tabs with a projects fallback for unsupported values', () => {
     expect(resolveMobileWorkspaceRouteTab({ tab: 'changes' }, 'terminal')).toBe('changes');
-    expect(resolveMobileWorkspaceRouteTab({ tab: 'notifications' }, 'terminal')).toBe(
-      'notifications'
-    );
+    expect(resolveMobileWorkspaceRouteTab({ tab: 'notifications' }, 'terminal')).toBe('terminal');
     expect(resolveMobileWorkspaceRouteTab({ tab: 'kanban' }, 'web')).toBe('projects');
     expect(resolveMobileWorkspaceRouteTab({}, 'web')).toBe('web');
   });

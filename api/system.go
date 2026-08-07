@@ -19,10 +19,8 @@ import (
 const systemTag = "system-系统工具"
 
 type systemTerminalManager interface {
-	UpdateAIAssistantStatusConfig(utils.AIAssistantStatusConfig)
 	UpdateScrollbackEnabled(bool)
 	UpdateTerminalStateSnapshotEnabled(bool)
-	UpdateRenameTitleEachCommand(bool)
 	UpdateShellConfig(utils.TerminalShellConfig)
 }
 
@@ -164,43 +162,6 @@ func registerSystemRoutes(
 		op.Tags = []string{systemTag}
 	})
 
-	// AI 助手状态监测配置
-	huma.Get(group, "/system/ai-assistant-status", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.AIAssistantStatusConfig], error) {
-		resp := h.NewItemResponse(cfg.Terminal.AIAssistantStatus)
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "system-ai-assistant-status-get"
-		op.Summary = "获取 AI 助手状态监测配置"
-		op.Description = "获取当前 AI 助手状态监测的启用/禁用配置"
-		op.Tags = []string{systemTag}
-	})
-
-	huma.Post(group, "/system/ai-assistant-status/update", func(ctx context.Context, input *struct {
-		Body utils.AIAssistantStatusConfig `json:"body"`
-	}) (*h.MessageResponse, error) {
-		// 原子更新：在锁内完成修改+写盘
-		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
-			c.Terminal.AIAssistantStatus = input.Body
-		}); err != nil {
-			return nil, huma.Error500InternalServerError("failed to save configuration")
-		}
-
-		// 热重载：更新所有现有终端的配置
-		if terminalManager != nil {
-			terminalManager.UpdateAIAssistantStatusConfig(input.Body)
-		}
-
-		resp := h.NewMessageResponse("AI assistant status config updated and applied to all active terminals.")
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "system-ai-assistant-status-update"
-		op.Summary = "更新 AI 助手状态监测配置"
-		op.Description = "更新 AI 助手状态监测的启用/禁用配置，立即对所有终端生效"
-		op.Tags = []string{systemTag}
-	})
-
 	huma.Get(group, "/system/developer-config", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.DeveloperConfig], error) {
 		resp := h.NewItemResponse(utils.NormalizeDeveloperConfig(cfg.Developer))
 		resp.Status = http.StatusOK
@@ -227,7 +188,6 @@ func registerSystemRoutes(
 		if terminalManager != nil {
 			terminalManager.UpdateScrollbackEnabled(normalized.EnableTerminalScrollback)
 			terminalManager.UpdateTerminalStateSnapshotEnabled(normalized.EnableTerminalStateSnapshot)
-			terminalManager.UpdateRenameTitleEachCommand(normalized.RenameSessionTitleEachCommand)
 		}
 		if webSessionManager != nil {
 			webSessionManager.RefreshDeveloperConfig()

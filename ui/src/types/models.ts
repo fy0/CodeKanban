@@ -99,20 +99,8 @@ export interface TerminalSession {
     displayName: string;
     detected: boolean;
     command?: string;
-    state?: string;
-    stateUpdatedAt?: string;
-    interrupted?: boolean;
-    stats?: {
-      thinkingDuration: number;
-      executingDuration: number;
-      waitingApprovalDuration: number;
-      waitingInputDuration: number;
-      currentStateDuration: number;
-    };
   };
   taskId?: string;
-  aiSessionId?: string;
-  aiAssistantRecentInput?: string;
 }
 
 export interface AISessionMessage {
@@ -233,15 +221,6 @@ export interface NotePad {
   updatedAt: string;
 }
 
-export interface AIAssistantStatusConfig {
-  claudeCode: boolean;
-  codex: boolean;
-  qwenCode: boolean;
-  gemini: boolean;
-  cursor: boolean;
-  copilot: boolean;
-}
-
 export interface WebSessionActiveCallTimeoutKindsConfig {
   useDefault: boolean;
   mcp: boolean;
@@ -259,7 +238,6 @@ export interface WebSessionActiveCallTimeoutConfig {
 
 export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
-  renameSessionTitleEachCommand: boolean;
   enableTerminalStateSnapshot: boolean;
   webSessionCodexDefaultModel: string;
   webSessionCodexDefaultReasoningEffort: WebSessionCodexDefaultReasoningEffort;

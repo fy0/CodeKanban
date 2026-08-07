@@ -57,7 +57,6 @@ class FakeWebSocket {
     queueMicrotask(() => {
       this.emit('open', { type: 'open' });
       this.emit('message', { data: JSON.stringify({ type: 'ready', data: 'running' }) });
-      this.emit('message', { data: JSON.stringify({ type: 'metadata', metadata: { aiSessionId: 'ai-session-1' } }) });
     });
   }
 
@@ -136,7 +135,6 @@ test('startWorkflow creates a terminal and sends command plus prompt', async () 
   assert.equal(result.project.id, 'p1');
   assert.equal(result.worktree.id, 'w1');
   assert.equal(result.terminalSession.id, 't1');
-  assert.equal(result.aiSessionId, 'ai-session-1');
   assert.equal(FakeWebSocket.instances.length, 1);
   assert.equal(FakeWebSocket.instances[0].url, 'ws://127.0.0.1:3000/api/v1/terminal/ws?sessionId=t1');
   assert.match(FakeWebSocket.instances[0].sent[0].data, /codex -s workspace-write -a on-request --add-dir D:\/shared/);

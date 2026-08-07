@@ -39,17 +39,8 @@ describe('settingsBackup helpers', () => {
         },
         payload: {
           server: {
-            aiAssistantStatus: {
-              claudeCode: true,
-              codex: true,
-              qwenCode: true,
-              gemini: false,
-              cursor: false,
-              copilot: false,
-            },
             developer: {
               enableTerminalScrollback: false,
-              renameSessionTitleEachCommand: false,
               enableTerminalStateSnapshot: true,
               webSessionCodexDefaultModel: 'default',
               webSessionCodexDefaultReasoningEffort: 'default',
