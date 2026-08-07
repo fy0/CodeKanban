@@ -27,8 +27,8 @@ const (
 )
 
 var (
-	goalModeMinCodexVersion   = semver.MustParse("0.133.0")
-	webSessionMinCodexVersion = semver.MustParse("0.146.0")
+	goalModeMinCodexVersion     = semver.MustParse("0.133.0")
+	multiAgentV2MinCodexVersion = semver.MustParse("0.146.0")
 )
 
 var codexVersionPattern = regexp.MustCompile(`\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?`)
@@ -67,18 +67,22 @@ type CodexModelInfo struct {
 }
 
 type CodexRuntimeConfig struct {
-	Model                string              `json:"model,omitempty"`
-	ContextWindowTokens  int64               `json:"contextWindowTokens"`
-	CompactLimitTokens   int64               `json:"compactLimitTokens"`
-	Source               ContextWindowSource `json:"source"`
-	Models               []CodexModelInfo    `json:"models"`
-	HasCodex             bool                `json:"hasCodex"`
-	HasClaudeCode        bool                `json:"hasClaudeCode"`
-	CodexVersion         *string             `json:"codexVersion,omitempty"`
-	SupportsWebSession   bool                `json:"supportsWebSession"`
-	WebSessionMinVersion string              `json:"webSessionMinCodexVersion"`
-	SupportsGoalMode     bool                `json:"supportsGoalMode"`
-	GoalModeMinVersion   string              `json:"goalModeMinCodexVersion"`
+	Model               string              `json:"model,omitempty"`
+	ContextWindowTokens int64               `json:"contextWindowTokens"`
+	CompactLimitTokens  int64               `json:"compactLimitTokens"`
+	Source              ContextWindowSource `json:"source"`
+	Models              []CodexModelInfo    `json:"models"`
+	HasCodex            bool                `json:"hasCodex"`
+	HasClaudeCode       bool                `json:"hasClaudeCode"`
+	CodexVersion        *string             `json:"codexVersion,omitempty"`
+	// SupportsWebSession reports whether ordinary Codex web sessions can run.
+	SupportsWebSession   bool   `json:"supportsWebSession"`
+	WebSessionMinVersion string `json:"webSessionMinCodexVersion"`
+	// SupportsMultiAgentV2 gates only the V2 collaboration and rollout features.
+	SupportsMultiAgentV2   bool   `json:"supportsMultiAgentV2"`
+	MultiAgentV2MinVersion string `json:"multiAgentV2MinCodexVersion"`
+	SupportsGoalMode       bool   `json:"supportsGoalMode"`
+	GoalModeMinVersion     string `json:"goalModeMinCodexVersion"`
 }
 
 type CodexSkillSource string
@@ -108,6 +112,19 @@ func (m *Manager) decorateSessionSummary(summary *SessionSummary) {
 	if summary == nil {
 		return
 	}
+	if normalizeAgent(summary.Agent) == AgentClaude {
+		// Claude reports its authoritative context window on result.modelUsage.
+		// Preserve that observed value; there is no local Claude model catalog
+		// from which to infer an unknown window safely before the first result.
+		if summary.ContextWindowTokens != nil &&
+			*summary.ContextWindowTokens > 0 &&
+			summary.ContextWindowSource == ContextWindowSourceSessionUsage {
+			return
+		}
+		summary.ContextWindowTokens = nil
+		summary.ContextWindowSource = ContextWindowSourceUnavailable
+		return
+	}
 	if normalizeAgent(summary.Agent) != AgentCodex {
 		summary.ContextWindowTokens = nil
 		summary.ContextWindowSource = ContextWindowSourceUnavailable
@@ -130,14 +147,16 @@ func (m *Manager) decorateSessionSummary(summary *SessionSummary) {
 
 func (m *Manager) GetCodexRuntimeConfig() CodexRuntimeConfig {
 	defaultConfig := CodexRuntimeConfig{
-		Source:               ContextWindowSourceUnavailable,
-		Models:               []CodexModelInfo{},
-		HasCodex:             false,
-		HasClaudeCode:        false,
-		SupportsWebSession:   false,
-		WebSessionMinVersion: webSessionMinCodexVersion.String(),
-		SupportsGoalMode:     false,
-		GoalModeMinVersion:   goalModeMinCodexVersion.String(),
+		Source:                 ContextWindowSourceUnavailable,
+		Models:                 []CodexModelInfo{},
+		HasCodex:               false,
+		HasClaudeCode:          false,
+		SupportsWebSession:     false,
+		WebSessionMinVersion:   "",
+		SupportsMultiAgentV2:   false,
+		MultiAgentV2MinVersion: multiAgentV2MinCodexVersion.String(),
+		SupportsGoalMode:       false,
+		GoalModeMinVersion:     goalModeMinCodexVersion.String(),
 	}
 	if m == nil {
 		return defaultConfig
@@ -197,14 +216,15 @@ func (m *Manager) applyCodexRuntimeCapabilities(config CodexRuntimeConfig) Codex
 
 func (m *Manager) GetCodexRuntimeConfigWithModels() CodexRuntimeConfig {
 	config := m.GetCodexRuntimeConfig()
-	if config.SupportsWebSession {
+	if config.HasCodex {
 		config.Models = m.getCodexModelCatalog()
 	}
 	return config
 }
 
 func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntimeConfig {
-	config.WebSessionMinVersion = webSessionMinCodexVersion.String()
+	config.WebSessionMinVersion = ""
+	config.MultiAgentV2MinVersion = multiAgentV2MinCodexVersion.String()
 	config.GoalModeMinVersion = goalModeMinCodexVersion.String()
 	if m == nil {
 		return config
@@ -219,6 +239,8 @@ func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntim
 		result.CodexVersion = cached.config.CodexVersion
 		result.SupportsWebSession = cached.config.SupportsWebSession
 		result.WebSessionMinVersion = cached.config.WebSessionMinVersion
+		result.SupportsMultiAgentV2 = cached.config.SupportsMultiAgentV2
+		result.MultiAgentV2MinVersion = cached.config.MultiAgentV2MinVersion
 		result.SupportsGoalMode = cached.config.SupportsGoalMode
 		result.GoalModeMinVersion = cached.config.GoalModeMinVersion
 		m.codexContextWindow.mu.Unlock()
@@ -229,25 +251,27 @@ func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntim
 	hasCodex := hasExecutable(m.cfg.CodexPath)
 	hasClaude := hasExecutable(m.cfg.ClaudePath)
 	codexVersion := (*string)(nil)
-	supportsWebSession := false
+	supportsMultiAgentV2 := false
 	supportsGoalMode := false
 	if hasCodex {
 		if version := detectCodexVersion(m.cfg.CodexPath); version != nil {
 			copied := *version
 			codexVersion = &copied
-			supportsWebSession = codexVersionAtLeast(copied, webSessionMinCodexVersion)
-			supportsGoalMode = supportsWebSession && codexVersionAtLeast(copied, goalModeMinCodexVersion)
+			supportsMultiAgentV2 = codexVersionAtLeast(copied, multiAgentV2MinCodexVersion)
+			supportsGoalMode = codexVersionAtLeast(copied, goalModeMinCodexVersion)
 		}
 	}
 
 	binaryConfig := CodexRuntimeConfig{
-		HasCodex:             hasCodex,
-		HasClaudeCode:        hasClaude,
-		CodexVersion:         codexVersion,
-		SupportsWebSession:   supportsWebSession,
-		WebSessionMinVersion: webSessionMinCodexVersion.String(),
-		SupportsGoalMode:     supportsGoalMode,
-		GoalModeMinVersion:   goalModeMinCodexVersion.String(),
+		HasCodex:               hasCodex,
+		HasClaudeCode:          hasClaude,
+		CodexVersion:           codexVersion,
+		SupportsWebSession:     hasCodex,
+		WebSessionMinVersion:   "",
+		SupportsMultiAgentV2:   supportsMultiAgentV2,
+		MultiAgentV2MinVersion: multiAgentV2MinCodexVersion.String(),
+		SupportsGoalMode:       supportsGoalMode,
+		GoalModeMinVersion:     goalModeMinCodexVersion.String(),
 	}
 
 	m.codexContextWindow.mu.Lock()
@@ -261,7 +285,8 @@ func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntim
 	config.HasCodex = hasCodex
 	config.HasClaudeCode = hasClaude
 	config.CodexVersion = codexVersion
-	config.SupportsWebSession = supportsWebSession
+	config.SupportsWebSession = hasCodex
+	config.SupportsMultiAgentV2 = supportsMultiAgentV2
 	config.SupportsGoalMode = supportsGoalMode
 	return config
 }

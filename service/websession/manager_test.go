@@ -1207,7 +1207,7 @@ func TestHandleGoalSetCommandRejectsOldCodexVersion(t *testing.T) {
 	if conn.frames[0].Kind != "err" {
 		t.Fatalf("expected error frame, got %#v", conn.frames[0])
 	}
-	expected := "Codex web sessions require Codex >= 0.146.0. Current version: 0.132.9."
+	expected := "Goal mode requires Codex >= 0.133.0. Current version: 0.132.9."
 	if conn.frames[0].Message != expected {
 		t.Fatalf("expected message %q, got %q", expected, conn.frames[0].Message)
 	}
@@ -2027,8 +2027,11 @@ func TestGetCodexRuntimeConfigIncludesBinaryCapabilities(t *testing.T) {
 	if !config.SupportsWebSession {
 		t.Fatal("expected supportsWebSession true")
 	}
-	if config.WebSessionMinVersion != "0.146.0" {
-		t.Fatalf("expected webSessionMinCodexVersion 0.146.0, got %q", config.WebSessionMinVersion)
+	if config.WebSessionMinVersion != "" {
+		t.Fatalf("expected no minimum version for basic web sessions, got %q", config.WebSessionMinVersion)
+	}
+	if !config.SupportsMultiAgentV2 || config.MultiAgentV2MinVersion != "0.146.0" {
+		t.Fatalf("unexpected multi-agent V2 capability: %#v", config)
 	}
 	if !config.SupportsGoalMode {
 		t.Fatal("expected supportsGoalMode true")
@@ -2044,12 +2047,14 @@ func TestGetCodexRuntimeConfigIncludesBinaryCapabilities(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatalf("unmarshal runtime config: %v", err)
 	}
-	if payload["supportsWebSession"] != true || payload["webSessionMinCodexVersion"] != "0.146.0" {
+	if payload["supportsWebSession"] != true ||
+		payload["supportsMultiAgentV2"] != true ||
+		payload["multiAgentV2MinCodexVersion"] != "0.146.0" {
 		t.Fatalf("unexpected web-session capability payload: %#v", payload)
 	}
 }
 
-func TestGetCodexRuntimeConfigGoalModeDisabledForOldVersion(t *testing.T) {
+func TestGetCodexRuntimeConfigUsesCompatibilityModeForPreV2Version(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -2068,15 +2073,18 @@ func TestGetCodexRuntimeConfigGoalModeDisabledForOldVersion(t *testing.T) {
 	if config.CodexVersion == nil || *config.CodexVersion != "0.145.9" {
 		t.Fatalf("expected codexVersion 0.145.9, got %#v", config.CodexVersion)
 	}
-	if config.SupportsWebSession {
-		t.Fatal("expected supportsWebSession false")
+	if !config.SupportsWebSession {
+		t.Fatal("expected basic web sessions to remain supported")
 	}
-	if config.SupportsGoalMode {
-		t.Fatal("expected supportsGoalMode false")
+	if config.SupportsMultiAgentV2 {
+		t.Fatal("expected multi-agent V2 to be disabled")
+	}
+	if !config.SupportsGoalMode {
+		t.Fatal("expected goal mode to remain supported")
 	}
 }
 
-func TestGetCodexRuntimeConfigWebSessionDisabledForUnknownVersion(t *testing.T) {
+func TestGetCodexRuntimeConfigUsesCompatibilityModeForUnknownVersion(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -2095,15 +2103,18 @@ func TestGetCodexRuntimeConfigWebSessionDisabledForUnknownVersion(t *testing.T) 
 	if config.CodexVersion != nil {
 		t.Fatalf("expected unknown codexVersion, got %#v", config.CodexVersion)
 	}
-	if config.SupportsWebSession {
-		t.Fatal("expected supportsWebSession false")
+	if !config.SupportsWebSession {
+		t.Fatal("expected basic web sessions to remain supported")
 	}
-	if config.WebSessionMinVersion != "0.146.0" {
-		t.Fatalf("expected webSessionMinCodexVersion 0.146.0, got %q", config.WebSessionMinVersion)
+	if config.SupportsMultiAgentV2 {
+		t.Fatal("expected multi-agent V2 to be disabled")
+	}
+	if config.MultiAgentV2MinVersion != "0.146.0" {
+		t.Fatalf("expected multiAgentV2MinCodexVersion 0.146.0, got %q", config.MultiAgentV2MinVersion)
 	}
 }
 
-func TestCodexWebSessionSupportErrorReportsVersionState(t *testing.T) {
+func TestCodexMultiAgentV2SupportErrorReportsVersionState(t *testing.T) {
 	oldVersion := "0.145.9"
 	tests := []struct {
 		name     string
@@ -2113,28 +2124,28 @@ func TestCodexWebSessionSupportErrorReportsVersionState(t *testing.T) {
 		{
 			name: "detected old version",
 			config: CodexRuntimeConfig{
-				HasCodex:             true,
-				CodexVersion:         &oldVersion,
-				WebSessionMinVersion: "0.146.0",
+				HasCodex:               true,
+				CodexVersion:           &oldVersion,
+				MultiAgentV2MinVersion: "0.146.0",
 			},
-			expected: "Codex web sessions require Codex >= 0.146.0. Current version: 0.145.9.",
+			expected: "This Codex feature requires multi-agent V2 (Codex >= 0.146.0). Current version: 0.145.9.",
 		},
 		{
 			name: "unknown version",
 			config: CodexRuntimeConfig{
-				HasCodex:             true,
-				WebSessionMinVersion: "0.146.0",
+				HasCodex:               true,
+				MultiAgentV2MinVersion: "0.146.0",
 			},
-			expected: "Codex web sessions require Codex >= 0.146.0. The installed Codex version could not be determined.",
+			expected: "This Codex feature requires multi-agent V2 (Codex >= 0.146.0). The installed Codex version could not be determined.",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := codexWebSessionSupportError(test.config)
+			err := codexMultiAgentV2SupportError(test.config)
 			if err == nil || err.Error() != test.expected {
 				t.Fatalf("expected error %q, got %v", test.expected, err)
 			}
-			if !errors.Is(err, ErrCodexWebSessionUnavailable) {
+			if !errors.Is(err, ErrCodexMultiAgentV2Unavailable) {
 				t.Fatalf("expected runtime-unavailable classification, got %v", err)
 			}
 		})
@@ -3046,6 +3057,44 @@ func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	}
 	if !historyHasToolKind(rawEvents, "reasoning") {
 		t.Fatalf("expected raw history to retain reasoning items, got %#v", rawEvents)
+	}
+}
+
+func TestSendMessageCodexPreV2VersionUsesCompatibilityAppServerParams(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLIVersion(t, "verify_compatibility", "0.145.9"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	config := manager.GetCodexRuntimeConfig()
+	if !config.SupportsWebSession || config.SupportsMultiAgentV2 {
+		t.Fatalf("expected basic support with V2 disabled, got %#v", config)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "compatibility message", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected compatibility run to finish, got status=%q error=%v", record.Status, record.LastError)
 	}
 }
 
@@ -7520,6 +7569,25 @@ input.on('line', line => {
 func writeFakeClaudeStreamCLI(t *testing.T) string {
 	t.Helper()
 
+	if runtime.GOOS == "windows" {
+		dir := t.TempDir()
+		psPath := filepath.Join(dir, "fake-claude.ps1")
+		cmdPath := filepath.Join(dir, "fake-claude.cmd")
+		script := `[Console]::In.ReadLine() | Out-Null
+Write-Output '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
+Write-Output '{"type":"assistant","uuid":"assistant_1","message":{"type":"message","role":"assistant","id":"assistant_msg_1","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}'
+[Console]::In.ReadToEnd() | Out-Null
+`
+		if err := os.WriteFile(psPath, []byte(script), 0o644); err != nil {
+			t.Fatalf("write fake claude ps1 failed: %v", err)
+		}
+		cmd := "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-claude.ps1\"\r\nexit /b %ERRORLEVEL%\r\n"
+		if err := os.WriteFile(cmdPath, []byte(cmd), 0o755); err != nil {
+			t.Fatalf("write fake claude cmd failed: %v", err)
+		}
+		return cmdPath
+	}
+
 	path := filepath.Join(t.TempDir(), "fake-claude.sh")
 	script := `#!/bin/sh
 read first_line
@@ -7543,7 +7611,7 @@ func writeFakeClaudeDeferredCLI(t *testing.T) string {
 		cmdPath := filepath.Join(dir, "fake-claude-deferred.cmd")
 		psStateFile := strings.ReplaceAll(stateFile, "'", "''")
 		script := `$stateFile = '` + psStateFile + `'
-[Console]::In.ReadToEnd() | Out-Null
+	[Console]::In.ReadLine() | Out-Null
 $count = 0
 if (Test-Path -LiteralPath $stateFile) {
   $raw = Get-Content -LiteralPath $stateFile -Raw
@@ -7581,13 +7649,13 @@ fi
 count=$((count + 1))
 printf '%s' "$count" >"$state_file"
 if [ "$count" -eq 1 ]; then
-  cat >/dev/null
+	  IFS= read -r _ || true
   printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
   printf '%s\n' '{"type":"assistant","uuid":"assistant_tool","message":{"type":"message","role":"assistant","id":"assistant_tool_msg","content":[{"type":"tool_use","id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}],"stop_reason":"tool_use"}}'
   printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"tool_deferred","deferred_tool_use":{"id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}}'
   exit 0
 fi
-cat >/dev/null
+	IFS= read -r _ || true
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
 printf '%s\n' '{"type":"assistant","uuid":"assistant_done","message":{"type":"message","role":"assistant","id":"assistant_done_msg","content":[{"type":"text","text":"continuing after the answer"}],"stop_reason":"end_turn"}}'
 printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"end_turn"}'
@@ -7599,14 +7667,18 @@ printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason"
 }
 
 func writeFakeCodexAppServerCLI(t *testing.T, mode string) string {
+	return writeFakeCodexAppServerCLIVersion(t, mode, "0.146.0")
+}
+
+func writeFakeCodexAppServerCLIVersion(t *testing.T, mode string, version string) string {
 	t.Helper()
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fake-codex-app-server.js")
 	rolloutPath := filepath.Join(dir, "fake-codex-rollout.jsonl")
 	script := fmt.Sprintf(`#!/usr/bin/env node
-if (process.argv.includes('--version')) {
-  process.stdout.write('codex 0.146.0\n');
+	if (process.argv.includes('--version')) {
+	  process.stdout.write('codex ' + %q + '\n');
   process.exit(0);
 }
 const readline = require('readline');
@@ -8218,7 +8290,21 @@ rl.on('line', line => {
     return;
   }
 
-  if (message.method === 'thread/start' || message.method === 'thread/resume') {
+	if (message.method === 'thread/start' || message.method === 'thread/resume') {
+	  if (
+	    mode === 'verify_compatibility' &&
+	    (!message.params ||
+	      message.params.persistExtendedHistory !== true ||
+	      message.params.config !== undefined ||
+	      message.params.historyMode !== undefined ||
+	      message.params.experimentalRawEvents !== undefined)
+	  ) {
+	    send({
+	      id: message.id,
+	      error: { message: 'expected compatibility params without multi-agent V2 fields' },
+	    });
+	    return;
+	  }
     if (mode === 'resume_only' && message.method !== 'thread/resume') {
       send({
         id: message.id,
@@ -8407,7 +8493,13 @@ rl.on('line', line => {
       return;
     }
 
-    if (mode === 'basic' || mode === 'resume_only' || mode === 'plan' || mode === 'verify_yolo') {
+	if (
+	  mode === 'basic' ||
+	  mode === 'resume_only' ||
+	  mode === 'plan' ||
+	  mode === 'verify_yolo' ||
+	  mode === 'verify_compatibility'
+	) {
       finishTurn('done');
       return;
     }
@@ -8663,7 +8755,7 @@ process.on('exit', () => {
     fs.appendFileSync(stateFile + '.exits', '1\n');
   }
 });
-`, mode, filepath.ToSlash(rolloutPath))
+	`, version, mode, filepath.ToSlash(rolloutPath))
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex app-server cli failed: %v", err)
 	}

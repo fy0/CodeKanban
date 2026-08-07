@@ -201,7 +201,9 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
           hasClaudeCode: false,
           codexVersion: '0.146.0',
           supportsWebSession: true,
-          webSessionMinCodexVersion: '0.146.0',
+          webSessionMinCodexVersion: '',
+          supportsMultiAgentV2: true,
+          multiAgentV2MinCodexVersion: '0.146.0',
           supportsGoalMode: true,
           goalModeMinCodexVersion: '0.133.0',
         },
@@ -297,7 +299,9 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
   assert.equal(runtimeConfig.hasCodex, true);
   assert.equal(runtimeConfig.codexVersion, '0.146.0');
   assert.equal(runtimeConfig.supportsWebSession, true);
-  assert.equal(runtimeConfig.webSessionMinCodexVersion, '0.146.0');
+  assert.equal(runtimeConfig.webSessionMinCodexVersion, '');
+  assert.equal(runtimeConfig.supportsMultiAgentV2, true);
+  assert.equal(runtimeConfig.multiAgentV2MinCodexVersion, '0.146.0');
   assert.equal(runtimeConfig.supportsGoalMode, true);
 });
 

@@ -80,7 +80,7 @@ func (m *Manager) EditUserMessage(
 	case StatusRunning, StatusWaitingApproval, StatusAborting:
 		return SessionSnapshot{}, ErrMessageEditSessionActive
 	}
-	if err := m.ensureCodexWebSessionSupported(); err != nil {
+	if err := m.ensureCodexMultiAgentV2Supported(); err != nil {
 		return SessionSnapshot{}, err
 	}
 
@@ -428,7 +428,7 @@ func requestEditedCodexThread(
 	previousTurnID string,
 ) (codexThreadSummary, error) {
 	method := "thread/start"
-	params := codexThreadStartParams(source)
+	params := codexThreadStartParams(source, true)
 	if strings.TrimSpace(previousTurnID) != "" {
 		method = "thread/fork"
 		params = codexThreadForkParams(source, strings.TrimSpace(*source.NativeSessionID), previousTurnID)

@@ -278,7 +278,7 @@ func TestCodexThreadParamsUseUpstreamRawHistoryContract(t *testing.T) {
 		Model:           "gpt-test",
 		PermissionLevel: string(PermissionLevelElevated),
 	}
-	start := codexThreadStartParams(session)
+	start := codexThreadStartParams(session, true)
 	if start["experimentalRawEvents"] != true || start["historyMode"] != "paginated" {
 		t.Fatalf("unexpected thread/start params: %#v", start)
 	}
@@ -290,7 +290,7 @@ func TestCodexThreadParamsUseUpstreamRawHistoryContract(t *testing.T) {
 		t.Fatalf("thread/start must force the V2 collaboration protocol: %#v", start)
 	}
 
-	resume := codexThreadResumeParams(session, "thread-1")
+	resume := codexThreadResumeParams(session, "thread-1", true)
 	if _, ok := resume["experimentalRawEvents"]; ok {
 		t.Fatalf("thread/resume does not support experimentalRawEvents: %#v", resume)
 	}
@@ -303,6 +303,31 @@ func TestCodexThreadParamsUseUpstreamRawHistoryContract(t *testing.T) {
 	if config := decodeRawObject(resume["config"]); config["features.multi_agent_v2.enabled"] != true ||
 		config["features.multi_agent_v2.tool_namespace"] != "collaboration" {
 		t.Fatalf("thread/resume must force the V2 collaboration protocol: %#v", resume)
+	}
+}
+
+func TestCodexThreadParamsUseCompatibilityContractWithoutMultiAgentV2(t *testing.T) {
+	session := tables.WebSessionTable{
+		Cwd:             "C:/project",
+		Model:           "gpt-test",
+		PermissionLevel: string(PermissionLevelElevated),
+	}
+	start := codexThreadStartParams(session, false)
+	if start["persistExtendedHistory"] != true {
+		t.Fatalf("compatibility thread/start must preserve extended history: %#v", start)
+	}
+	for _, key := range []string{"config", "historyMode", "experimentalRawEvents"} {
+		if _, ok := start[key]; ok {
+			t.Fatalf("compatibility thread/start must omit %s: %#v", key, start)
+		}
+	}
+
+	resume := codexThreadResumeParams(session, "thread-1", false)
+	if resume["persistExtendedHistory"] != true {
+		t.Fatalf("compatibility thread/resume must preserve extended history: %#v", resume)
+	}
+	if _, ok := resume["config"]; ok {
+		t.Fatalf("compatibility thread/resume must omit V2 config: %#v", resume)
 	}
 }
 

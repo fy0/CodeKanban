@@ -960,16 +960,21 @@ export default {
       'Found {count} remote image(s). Should the server download them as attachments? Original URLs will be kept if downloading fails.',
     remoteImageDownloadFailed: 'Remote image download failed. The original URL was kept.',
     contextUsageTitle: 'Remaining Budget Estimate',
+    contextUsageTitleClaude: 'Remaining Context Window Estimate',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
     contextUsageDisclaimer:
       'Note: when available, the latest hidden Codex usage snapshot estimates current context occupancy; cumulative usage is still shown separately.',
+    contextUsageDisclaimerClaude:
+      'The window limit comes from Claude result.modelUsage. Current occupancy is estimated from session usage; Claude Code controls the actual automatic-compaction trigger.',
     contextUsageWindow: 'Window: {count} tokens',
     contextUsageCompactLimit: 'Compact at: {count} tokens',
     contextUsageRemainingEstimate: 'Remaining to compact limit: {count} tokens',
+    contextUsageRemainingWindowEstimate: 'Remaining to context-window limit: {count} tokens',
     contextUsageEstimatedUsed: 'Estimated current occupancy: {count} tokens',
     contextUsageSource: 'Source: {source}',
     contextUsageSourceSessionUsage: 'hidden Codex session usage',
+    contextUsageSourceClaudeResult: 'Claude result.modelUsage',
     contextUsageSourceConfig: 'local Codex config',
     contextUsageSourceDefault: 'model default',
     contextUsageMode: 'Mode: {mode}',
@@ -986,17 +991,26 @@ export default {
       'Note: this uses the latest Codex token_count request snapshot and is usually closer to current context occupancy than cumulative usage.',
     contextUsageNoteLatestTurnDelta:
       'Note: this is an approximation of current context size derived from the latest turn, not a real-time occupancy value returned by Codex.',
+    contextUsageNoteLatestTurnDeltaClaude:
+      'This approximates current context size from the latest turn; it is not a real-time occupancy value returned by Claude.',
     contextUsageNoteSinceCompaction:
       'Note: this is estimated from net token growth since the latest context compaction, not a real-time occupancy value returned by Codex.',
+    contextUsageNoteSinceCompactionClaude:
+      'This is estimated from net token growth since the latest context compaction, not a real-time occupancy value returned by Claude.',
     contextUsageNoteCumulativeTotal:
       'Note: this is estimated from cumulative session usage and does not represent the true current context occupancy.',
     contextUsageUnavailableTitle: 'Context estimate unavailable',
     contextUsageUnavailableDescription:
-      'This estimate is currently available only for Codex AI sessions. Claude sessions do not expose a comparable context-window value here yet.',
+      'The session has not reported a usable context window yet. Claude normally provides it after the first result.',
     composerHintIdle:
       'Press Enter to send. Use Shift + Enter for a new line. Paste or drag images.',
     composerHintCodexMissing:
       'Codex was not detected. Install Codex before sending web session messages.',
+    codexCompatibilityAgentLabel: 'Codex (compatibility mode)',
+    codexCompatibilityMode:
+      'Codex was detected, but its version could not be determined. Compatibility mode is active: basic sessions, approvals, and user input remain available; multi-agent V2 requires Codex >= {requiredVersion}.',
+    codexCompatibilityModeWithCurrent:
+      'Codex {currentVersion} is running in compatibility mode. Basic sessions, approvals, and user input remain available; multi-agent V2 requires Codex >= {requiredVersion}.',
     composerHintClaudeMissing:
       'Claude Code was not detected. Install Claude Code before sending web session messages.',
     composerHintUploading:
@@ -1010,10 +1024,6 @@ export default {
     composerHintRecovered:
       'The previous run was interrupted by an app restart. Send a new message to continue this session.',
     codexNotInstalled: 'Codex was not detected. Install Codex before continuing.',
-    codexWebSessionUnavailable:
-      'Codex web sessions require Codex >= {version}. The installed version could not be determined.',
-    codexWebSessionUnavailableWithCurrent:
-      'Codex web sessions require Codex >= {requiredVersion}. Current version: {currentVersion}.',
     claudeCodeNotInstalled: 'Claude Code was not detected. Install Claude Code before continuing.',
     goalModeUnavailable: 'Goal mode requires Codex >= {version}.',
     goalModeUnavailableWithCurrent:

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -58,6 +59,8 @@ func TestBuildExecCommandClaudeUsesStreamJSONInput(t *testing.T) {
 	for _, expected := range []string{
 		"--input-format stream-json",
 		"--output-format stream-json",
+		"--permission-prompt-tool stdio",
+		"--autocompact auto",
 		"--replay-user-messages",
 		"--permission-mode plan",
 		"--effort high",
@@ -75,6 +78,40 @@ func TestBuildExecCommandClaudeUsesStreamJSONInput(t *testing.T) {
 	}
 	if !strings.Contains(stdinText, "inspect this repository") {
 		t.Fatalf("expected prompt text in stdin payload, got %q", stdinText)
+	}
+	if !isClaudeControlCommand(cmd) {
+		t.Fatal("expected initial Claude command to keep the stdio control bridge enabled")
+	}
+}
+
+func TestBuildClaudeResumeCommandKeepsDeferredHookPath(t *testing.T) {
+	store, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("newStore returned error: %v", err)
+	}
+	manager := &Manager{
+		cfg:    Config{DataDir: t.TempDir(), ClaudePath: "claude"},
+		store:  store,
+		logger: zap.NewNop(),
+	}
+	nativeSessionID := "native-session"
+	session := tables.WebSessionTable{
+		Agent:           string(AgentClaude),
+		Model:           "haiku",
+		PermissionLevel: string(PermissionLevelElevated),
+		Cwd:             t.TempDir(),
+		NativeSessionID: &nativeSessionID,
+	}
+	cmd, err := manager.buildClaudeResumeCommand(context.Background(), session)
+	if err != nil {
+		t.Fatalf("buildClaudeResumeCommand returned error: %v", err)
+	}
+	joinedArgs := strings.Join(cmd.Args, " ")
+	if strings.Contains(joinedArgs, "--permission-prompt-tool") {
+		t.Fatalf("deferred resume must use the hook answer-file path, got %v", cmd.Args)
+	}
+	if !strings.Contains(joinedArgs, "--autocompact auto") {
+		t.Fatalf("expected deferred resume to retain automatic compaction, got %v", cmd.Args)
 	}
 }
 
@@ -310,7 +347,7 @@ func TestSyncClaudeSessionFromSourceRebuildsAskUserQuestionHistory(t *testing.T)
 	sessionFile := filepath.Join(projectDir, "claude-session-1.jsonl")
 	content := strings.Join([]string{
 		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-04-11T10:00:00.000Z","sessionId":"claude-session-1","content":"Start implementing the feature"}`,
-		`{"parentUuid":null,"isSidechain":false,"promptId":"prompt_1","type":"user","message":{"role":"user","content":"Start implementing the feature"},"uuid":"user_1","timestamp":"2026-04-11T10:00:01.000Z","permissionMode":"acceptEdits","userType":"external","entrypoint":"sdk-cli","cwd":"` + cwd + `","sessionId":"claude-session-1","version":"2.1.97"}`,
+		`{"parentUuid":null,"isSidechain":false,"promptId":"prompt_1","type":"user","message":{"role":"user","content":"Start implementing the feature"},"uuid":"user_1","timestamp":"2026-04-11T10:00:01.000Z","permissionMode":"acceptEdits","userType":"external","entrypoint":"sdk-cli","cwd":` + strconv.Quote(cwd) + `,"sessionId":"claude-session-1","version":"2.1.97"}`,
 		`{"parentUuid":"user_1","isSidechain":false,"type":"assistant","uuid":"assistant_tool","timestamp":"2026-04-11T10:00:02.000Z","message":{"id":"assistant_tool_msg","type":"message","role":"assistant","content":[{"type":"tool_use","id":"tool_bash_1","name":"Bash","input":{"command":"pwd","description":"Confirm working directory"}}],"stop_reason":"tool_use"}}`,
 		`{"parentUuid":"assistant_tool","isSidechain":false,"promptId":"prompt_1","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_bash_1","content":"/tmp/repo","is_error":false}]},"uuid":"tool_result_1","timestamp":"2026-04-11T10:00:03.000Z","toolUseResult":{"stdout":"/tmp/repo","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false},"sourceToolAssistantUUID":"assistant_tool"}`,
 		`{"parentUuid":"tool_result_1","isSidechain":false,"type":"assistant","uuid":"assistant_text","timestamp":"2026-04-11T10:00:04.000Z","message":{"id":"assistant_text_msg","type":"message","role":"assistant","content":[{"type":"text","text":"Before I continue, choose a direction."}],"stop_reason":"end_turn"}}`,
@@ -339,7 +376,7 @@ func TestSyncClaudeSessionFromSourceRebuildsAskUserQuestionHistory(t *testing.T)
 		t.Fatalf("expected synced thread path, got %#v", snapshot.Session.ThreadPath)
 	}
 	if snapshot.History.Total != 6 {
-		t.Fatalf("expected 6 history items, got %d", snapshot.History.Total)
+		t.Fatalf("expected 6 history items, got %d: %#v", snapshot.History.Total, snapshot.History.Items)
 	}
 
 	var sawCommand, sawAsk, sawAskResponse bool
@@ -402,6 +439,33 @@ func TestParseClaudeStreamHistoryPlanModeStripsPreambleAndBuildsPlanTool(t *test
 	}
 	if got := strings.TrimSpace(parsed.Items[1].Tool.Meta["path"].(string)); got != "/home/dev/.claude/plans/test.md" {
 		t.Fatalf("expected plan file path in tool meta, got %#v", parsed.Items[1].Tool.Meta)
+	}
+}
+
+func TestParseClaudeStreamHistoryCollapsesClaudeCompactionStatus(t *testing.T) {
+	store, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("newStore returned error: %v", err)
+	}
+	manager := &Manager{cfg: Config{DataDir: t.TempDir()}, store: store, logger: zap.NewNop()}
+	filePath := filepath.Join(t.TempDir(), "claude-compaction.jsonl")
+	content := strings.Join([]string{
+		`{"type":"system","subtype":"status","status":"compacting","timestamp":"2026-04-12T02:00:00.000Z"}`,
+		`{"type":"system","subtype":"status","compact_result":"success","message":"Context compacted","timestamp":"2026-04-12T02:00:01.000Z"}`,
+		`{"type":"assistant","isCompactSummary":true,"uuid":"summary-1","message":{"content":[{"type":"text","text":"internal summary"}]},"timestamp":"2026-04-12T02:00:02.000Z"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write compaction fixture: %v", err)
+	}
+	parsed, err := manager.parseClaudeStreamHistory(filePath, WorkflowModeDefault)
+	if err != nil {
+		t.Fatalf("parseClaudeStreamHistory returned error: %v", err)
+	}
+	if len(parsed.Items) != 1 || parsed.Items[0].ItemType != "context_compaction" {
+		t.Fatalf("expected one durable compaction item, got %#v", parsed.Items)
+	}
+	if parsed.Items[0].Tool == nil || parsed.Items[0].Tool.Status != "done" {
+		t.Fatalf("expected successful compaction item, got %#v", parsed.Items[0])
 	}
 }
 
@@ -521,7 +585,11 @@ func TestClaudeRunClosesInputAfterEndTurn(t *testing.T) {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
 	if record.Status != string(StatusDone) {
-		t.Fatalf("expected status %q, got %q", StatusDone, record.Status)
+		lastError := ""
+		if record.LastError != nil {
+			lastError = *record.LastError
+		}
+		t.Fatalf("expected status %q, got %q (last error: %q)", StatusDone, record.Status, lastError)
 	}
 	if record.AssistantState != "" {
 		t.Fatalf("expected cleared assistant state, got %q", record.AssistantState)

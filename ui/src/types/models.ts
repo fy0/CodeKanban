@@ -392,6 +392,8 @@ export interface WebSessionCodexRuntimeConfig {
   codexVersion?: string | null;
   supportsWebSession: boolean;
   webSessionMinCodexVersion: string;
+  supportsMultiAgentV2?: boolean;
+  multiAgentV2MinCodexVersion?: string;
   supportsGoalMode: boolean;
   goalModeMinCodexVersion: string;
 }

@@ -523,6 +523,9 @@ func (m *Manager) applyEventToHistoryCacheDB(
 		if action == "reject" {
 			text = "Approval rejected"
 			level = "warn"
+		} else if action == "cancel" {
+			text = "Approval canceled"
+			level = "warn"
 		}
 		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,

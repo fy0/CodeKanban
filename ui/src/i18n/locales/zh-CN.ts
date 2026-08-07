@@ -928,16 +928,21 @@ export default {
       '检测到 {count} 张远程图片。是否由服务器下载并转为附件？下载失败时将保留原链接。',
     remoteImageDownloadFailed: '远程图片下载失败，已保留原链接。',
     contextUsageTitle: '剩余预算估算',
+    contextUsageTitleClaude: '上下文窗口剩余估算',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
     contextUsageDisclaimer:
       '说明：可用时使用 Codex 隐藏 usage 的最新快照估算当前上下文占用；累计消耗仍单独展示。',
+    contextUsageDisclaimerClaude:
+      '说明：窗口上限来自 Claude result.modelUsage；当前占用按会话 usage 估算，自动压缩的实际触发时机由 Claude Code 决定。',
     contextUsageWindow: '上限：{count} tokens',
     contextUsageCompactLimit: '压缩线：{count} tokens',
     contextUsageRemainingEstimate: '距压缩线剩余：{count} tokens',
+    contextUsageRemainingWindowEstimate: '距上下文窗口上限剩余：{count} tokens',
     contextUsageEstimatedUsed: '估算当前占用：{count} tokens',
     contextUsageSource: '来源：{source}',
     contextUsageSourceSessionUsage: 'Codex 会话隐藏 usage',
+    contextUsageSourceClaudeResult: 'Claude result.modelUsage',
     contextUsageSourceConfig: 'Codex 本地配置',
     contextUsageSourceDefault: '模型默认值',
     contextUsageMode: '口径：{mode}',
@@ -953,15 +958,24 @@ export default {
       '注意：这是 Codex token_count 事件里的最新请求快照，通常比累计消耗更接近当前上下文占用。',
     contextUsageNoteLatestTurnDelta:
       '注意：这是最近一轮 turn 对当前上下文体积的近似估算，不是 Codex 直接返回的实时上下文占用。',
+    contextUsageNoteLatestTurnDeltaClaude:
+      '注意：这是最近一轮 turn 对当前上下文体积的近似估算，不是 Claude 直接返回的实时上下文占用。',
     contextUsageNoteSinceCompaction:
       '注意：这是按最近一次上下文压缩后的净新增 token 估算，不是 Codex 直接返回的实时上下文占用。',
+    contextUsageNoteSinceCompactionClaude:
+      '注意：这是按最近一次上下文压缩后的净新增 token 估算，不是 Claude 直接返回的实时上下文占用。',
     contextUsageNoteCumulativeTotal:
       '注意：这是按累计 session usage 估算，不代表当前真实上下文占用。',
     contextUsageUnavailableTitle: 'Context 估算暂不可用',
     contextUsageUnavailableDescription:
-      '当前只有 Codex 网页会话会显示这个估算值；Claude 会话暂未暴露可对齐的 context window 信息。',
+      '会话尚未上报可用的 context window；Claude 通常会在首轮 result 返回后提供。',
     composerHintIdle: 'Enter 发送，Shift + Enter 换行，支持 Ctrl/Cmd+V 粘贴或拖拽图片。',
     composerHintCodexMissing: '未检测到 Codex，请先安装后再发送会话消息。',
+    codexCompatibilityAgentLabel: 'Codex（兼容模式）',
+    codexCompatibilityMode:
+      '已检测到 Codex，但无法确定版本，当前使用兼容模式；基础会话、审批和用户输入可用，多代理 V2 需要 Codex >= {requiredVersion}。',
+    codexCompatibilityModeWithCurrent:
+      'Codex {currentVersion} 正在使用兼容模式；基础会话、审批和用户输入可用，多代理 V2 需要 Codex >= {requiredVersion}。',
     composerHintClaudeMissing: '未检测到 Claude Code，请先安装后再发送会话消息。',
     composerHintUploading: '图片上传中，完成后才可发送，支持继续添加图片。',
     composerHintRunning: 'Agent 正在工作。可直接转向下一步，或加入队列等待本轮结束。',
@@ -969,9 +983,6 @@ export default {
     composerHintUserInput: 'Agent 正在等待你补充信息，请先完成当前问题。',
     composerHintRecovered: '上次运行已因程序重启中断；可直接发送新消息继续这个会话。',
     codexNotInstalled: '未检测到 Codex，请先安装后再继续。',
-    codexWebSessionUnavailable: 'Codex 网页会话需要 Codex >= {version}，当前无法确定已安装版本。',
-    codexWebSessionUnavailableWithCurrent:
-      'Codex 网页会话需要 Codex >= {requiredVersion}，当前版本为 {currentVersion}。',
     claudeCodeNotInstalled: '未检测到 Claude Code，请先安装后再继续。',
     goalModeUnavailable: '当前 Codex 版本过低，Goal 模式需要 Codex >= {version}。',
     goalModeUnavailableWithCurrent:

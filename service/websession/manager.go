@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -44,21 +45,23 @@ const (
 )
 
 var (
-	ErrCodexWebSessionUnavailable = errors.New("Codex web session runtime is unavailable")
+	ErrCodexMultiAgentV2Unavailable = errors.New("Codex multi-agent V2 is unavailable")
+	// ErrCodexWebSessionUnavailable is kept as an API compatibility alias.
+	ErrCodexWebSessionUnavailable = ErrCodexMultiAgentV2Unavailable
 	webSessionHeartbeatInterval   = 15 * time.Second
 	webSessionHeartbeatTimeout    = 45 * time.Second
 )
 
-type codexWebSessionUnavailableError struct {
+type codexMultiAgentV2UnavailableError struct {
 	message string
 }
 
-func (e codexWebSessionUnavailableError) Error() string {
+func (e codexMultiAgentV2UnavailableError) Error() string {
 	return e.message
 }
 
-func (e codexWebSessionUnavailableError) Is(target error) bool {
-	return target == ErrCodexWebSessionUnavailable
+func (e codexMultiAgentV2UnavailableError) Is(target error) bool {
+	return target == ErrCodexMultiAgentV2Unavailable
 }
 
 type eventPersistedError struct {
@@ -186,53 +189,59 @@ type wsConn interface {
 }
 
 type activeRun struct {
-	sessionID              string
-	agent                  Agent
-	backend                SessionBackend
-	runID                  string
-	fromAutoRetry          bool
-	hiddenBootstrap        bool
-	bootstrapGoalObjective string
-	bootstrapGoalState     GoalStatus
-	bootstrapResult        chan error
-	bootstrapOnce          sync.Once
-	assistantMessageID     string
-	currentToolMessage     string
-	lastError              string
-	lastErrorCode          string
-	transportRetrySeen     bool
-	transportRemoteURL     string
-	cmd                    *exec.Cmd
-	cancel                 context.CancelFunc
-	done                   chan struct{}
-	mu                     sync.Mutex
-	stdin                  io.WriteCloser
-	recentRuntimeLines     []string
-	pendingApproval        string
-	pendingServerReq       *pendingServerRequest
-	app                    *codexAppServerClient
-	codexThreadID          string
-	codexTurnID            string
-	assistantDeltaSeen     map[string]bool
-	assistantMessagePhases map[string]string
-	assistantMessageText   map[string]bool
-	completedReply         bool
-	claudeResumeOnly       bool
-	deferredUserInput      bool
-	completedPlanTool      bool
-	commandGroupID         string
-	commandGroupKind       string
-	commandGroupFirst      int64
-	commandGroupCount      int
-	commandGroupTools      map[string]struct{}
-	abortPayload           map[string]any
-	activeCalls            map[string]trackedActiveCall
-	activeCallPausedAt     *time.Time
-	activeCallTimer        *time.Timer
-	activeCallInFlight     bool
-	codexCollaboration     codexCollaborationTracker
-	codexRolloutMonitor    *codexRolloutMonitor
-	syncSourceAfterRun     bool
+	sessionID               string
+	agent                   Agent
+	backend                 SessionBackend
+	runID                   string
+	fromAutoRetry           bool
+	hiddenBootstrap         bool
+	bootstrapGoalObjective  string
+	bootstrapGoalState      GoalStatus
+	bootstrapResult         chan error
+	bootstrapOnce           sync.Once
+	assistantMessageID      string
+	currentToolMessage      string
+	lastError               string
+	lastErrorCode           string
+	transportRetrySeen      bool
+	transportRemoteURL      string
+	cmd                     *exec.Cmd
+	cancel                  context.CancelFunc
+	done                    chan struct{}
+	mu                      sync.Mutex
+	stdin                   io.WriteCloser
+	recentRuntimeLines      []string
+	pendingApproval         string
+	pendingServerReq        *pendingServerRequest
+	app                     *codexAppServerClient
+	codexThreadID           string
+	codexTurnID             string
+	assistantDeltaSeen      map[string]bool
+	assistantMessagePhases  map[string]string
+	assistantMessageText    map[string]bool
+	completedReply          bool
+	claudeResumeOnly        bool
+	claudeStdioControl      bool
+	claudeNativeSessionID   string
+	claudeResolvedModel     string
+	claudeCwd               string
+	deferredUserInput       bool
+	completedPlanTool       bool
+	claudeCompactionToolID  string
+	claudeCompactionStarted time.Time
+	commandGroupID          string
+	commandGroupKind        string
+	commandGroupFirst       int64
+	commandGroupCount       int
+	commandGroupTools       map[string]struct{}
+	abortPayload            map[string]any
+	activeCalls             map[string]trackedActiveCall
+	activeCallPausedAt      *time.Time
+	activeCallTimer         *time.Timer
+	activeCallInFlight      bool
+	codexCollaboration      codexCollaborationTracker
+	codexRolloutMonitor     *codexRolloutMonitor
+	syncSourceAfterRun      bool
 }
 
 type attachmentMeta struct {
@@ -3253,13 +3262,18 @@ func (m *Manager) ensureCodexThread(ctx context.Context, session tables.WebSessi
 	if effectiveSessionBackend(session) != SessionBackendCodexAppServer {
 		return "", fmt.Errorf("thread bootstrap is only supported for codex app-server sessions")
 	}
-	if err := m.ensureCodexWebSessionSupported(); err != nil {
-		return "", err
+	config := m.GetCodexRuntimeConfig()
+	if !config.HasCodex {
+		return "", fmt.Errorf(errCodexNotInstalled)
 	}
 
 	threadID := ""
 	err := m.withCodexQueryClient(ctx, session.Cwd, func(client *codexAppServerClient) error {
-		response, err := client.request(ctx, "thread/start", codexThreadStartParams(session))
+		response, err := client.request(
+			ctx,
+			"thread/start",
+			codexThreadStartParams(session, config.SupportsMultiAgentV2),
+		)
 		if err != nil {
 			return err
 		}
@@ -3539,7 +3553,9 @@ func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable)
 	config := m.GetCodexRuntimeConfig()
 	switch normalizeAgent(Agent(record.Agent)) {
 	case AgentCodex:
-		return codexWebSessionSupportError(config)
+		if !config.HasCodex {
+			return fmt.Errorf(errCodexNotInstalled)
+		}
 	case AgentClaude:
 		if !config.HasClaudeCode {
 			return fmt.Errorf(errClaudeCodeNotInstalled)
@@ -3548,38 +3564,38 @@ func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable)
 	return nil
 }
 
-func (m *Manager) ensureCodexWebSessionSupported() error {
-	return codexWebSessionSupportError(m.GetCodexRuntimeConfig())
+func (m *Manager) ensureCodexMultiAgentV2Supported() error {
+	return codexMultiAgentV2SupportError(m.GetCodexRuntimeConfig())
 }
 
-func codexWebSessionSupportError(config CodexRuntimeConfig) error {
+func codexMultiAgentV2SupportError(config CodexRuntimeConfig) error {
 	if !config.HasCodex {
-		return codexWebSessionUnavailableError{message: errCodexNotInstalled}
+		return codexMultiAgentV2UnavailableError{message: errCodexNotInstalled}
 	}
-	if config.SupportsWebSession {
+	if config.SupportsMultiAgentV2 {
 		return nil
 	}
-	minimumVersion := strings.TrimSpace(config.WebSessionMinVersion)
+	minimumVersion := strings.TrimSpace(config.MultiAgentV2MinVersion)
 	if minimumVersion == "" {
-		minimumVersion = webSessionMinCodexVersion.String()
+		minimumVersion = multiAgentV2MinCodexVersion.String()
 	}
 	if config.CodexVersion != nil && strings.TrimSpace(*config.CodexVersion) != "" {
-		return codexWebSessionUnavailableError{message: fmt.Sprintf(
-			"Codex web sessions require Codex >= %s. Current version: %s.",
+		return codexMultiAgentV2UnavailableError{message: fmt.Sprintf(
+			"This Codex feature requires multi-agent V2 (Codex >= %s). Current version: %s.",
 			minimumVersion,
 			strings.TrimSpace(*config.CodexVersion),
 		)}
 	}
-	return codexWebSessionUnavailableError{message: fmt.Sprintf(
-		"Codex web sessions require Codex >= %s. The installed Codex version could not be determined.",
+	return codexMultiAgentV2UnavailableError{message: fmt.Sprintf(
+		"This Codex feature requires multi-agent V2 (Codex >= %s). The installed Codex version could not be determined.",
 		minimumVersion,
 	)}
 }
 
 func (m *Manager) ensureSessionGoalModeSupported(record tables.WebSessionTable) error {
 	config := m.GetCodexRuntimeConfig()
-	if err := codexWebSessionSupportError(config); err != nil {
-		return err
+	if !config.HasCodex {
+		return fmt.Errorf(errCodexNotInstalled)
 	}
 	if config.SupportsGoalMode {
 		return nil
@@ -3607,6 +3623,13 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 			m.maybeSyncSessionAfterRun(session)
 		}
 	}()
+	if normalizeAgent(Agent(session.Agent)) == AgentClaude {
+		nativeSessionID := ""
+		if session.NativeSessionID != nil {
+			nativeSessionID = strings.TrimSpace(*session.NativeSessionID)
+		}
+		run.setClaudeIdentity(nativeSessionID, session.Cwd)
+	}
 
 	if run.backend == SessionBackendCodexAppServer && normalizeAgent(Agent(session.Agent)) == AgentCodex {
 		m.runCodexAppServerSession(ctx, run, session, text, attachments)
@@ -3623,6 +3646,11 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		return
 	}
 	run.setCommand(cmd)
+	claudeStdioControl := normalizeAgent(Agent(session.Agent)) == AgentClaude && isClaudeControlCommand(cmd)
+	if claudeStdioControl {
+		run.setClaudeStdioControl(true)
+		defer run.setClaudeStdioControl(false)
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -3650,7 +3678,10 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		if len(stdinBytes) > 0 {
 			_, _ = stdin.Write(stdinBytes)
 		}
-		if closeStdinAfterWrite {
+		// Claude's stdio permission bridge needs the pipe to remain writable
+		// while a control_request is waiting for the browser. The stream is
+		// closed when Claude emits its result (or an end_turn assistant frame).
+		if closeStdinAfterWrite && !isClaudeControlCommand(cmd) {
 			_ = stdin.Close()
 			run.clearInput()
 		}
@@ -3719,6 +3750,9 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 			},
 		})
 	}
+	if normalizeAgent(Agent(session.Agent)) == AgentClaude {
+		_ = m.finalizeLatestTurnUsage(context.Background(), session.ID)
+	}
 	finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
 	now := time.Now()
 	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
@@ -3782,6 +3816,10 @@ func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, se
 		return
 	}
 	run.setInput(stdin)
+	// A deferred Claude resume is the compatibility path used by older
+	// versions that do not expose the stdio control protocol. It has no new
+	// prompt to write, so close stdin immediately and let the resumed process
+	// finish its one-shot turn.
 	_ = stdin.Close()
 	run.clearInput()
 
@@ -3844,6 +3882,9 @@ func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, se
 				"mid": run.assistantMessageID,
 			},
 		})
+	}
+	if normalizeAgent(Agent(session.Agent)) == AgentClaude {
+		_ = m.finalizeLatestTurnUsage(context.Background(), session.ID)
 	}
 	finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
 	now := time.Now()
@@ -4059,13 +4100,28 @@ func (m *Manager) handleRuntimePlainLine(session tables.WebSessionTable, run *ac
 func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeRun, raw map[string]any) {
 	eventType, _ := raw["type"].(string)
 	switch eventType {
+	case "control_request":
+		if request, ok := decodeClaudeControlRequest(raw); ok {
+			m.handleClaudeControlRequest(session, run, request)
+		}
+	case "control_cancel_request":
+		if requestID := claudeControlCancelID(raw); requestID != "" {
+			m.handleClaudeControlCancel(session, run, requestID)
+		}
 	case "system":
 		sessionID, _ := raw["session_id"].(string)
 		subtype := strings.TrimSpace(stringValue(raw["subtype"]))
+		if subtype == "init" {
+			run.setClaudeResolvedModel(stringValue(raw["model"]))
+		}
+		if normalizeAgent(Agent(session.Agent)) == AgentClaude {
+			m.handleClaudeCompactionStatus(session, run, raw)
+		}
 		updates := map[string]any{
 			"updated_at": time.Now(),
 		}
 		if sessionID != "" {
+			run.setClaudeNativeSessionID(sessionID)
 			updates["native_session_id"] = sessionID
 			updates["source_kind"] = sourceKindClaudeStreamJSON
 			if threadPath, err := claudeSessionFilePath(session.Cwd, sessionID); err == nil {
@@ -4099,6 +4155,14 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 	case "user":
 		m.handleClaudeUserEvent(session, run, raw)
 	case "assistant":
+		if raw["isCompactSummary"] == true {
+			// The system/status messages carry the authoritative compaction
+			// boundary. This synthetic continuation summary is internal context.
+			return
+		}
+		if raw["isMeta"] == true || raw["isSynthetic"] == true {
+			return
+		}
 		message, _ := raw["message"].(map[string]any)
 		content, _ := message["content"].([]any)
 		stopReason := strings.TrimSpace(stringValue(message["stop_reason"]))
@@ -4231,7 +4295,9 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 			run.closeInput()
 		}
 	case "result":
+		defer run.closeInput()
 		if sessionID, _ := raw["session_id"].(string); sessionID != "" {
+			run.setClaudeNativeSessionID(sessionID)
 			_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
 				"native_session_id": sessionID,
 				"updated_at":        time.Now(),
@@ -4307,28 +4373,42 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 				}
 			}
 		}
+		inputTokens, cachedInputTokens, outputTokens := claudeResultUsage(raw)
+		contextWindowTokens := claudeResultContextWindow(raw, session, run.claudeResolvedModelSnapshot())
 		totalCost, _ := raw["total_cost_usd"].(float64)
-		if totalCost > 0 {
+		if inputTokens > 0 || cachedInputTokens > 0 || outputTokens > 0 || totalCost > 0 || contextWindowTokens > 0 {
+			updates := contextEstimateIncrementUpdate(inputTokens, cachedInputTokens, outputTokens)
+			if contextWindowTokens > 0 {
+				updates["session_context_window_tokens"] = contextWindowTokens
+				updates["session_context_window_observed_at"] = time.Now()
+			}
+			_ = m.updateRuntimeState(context.Background(), session.ID, updates)
+			eventPayload := map[string]any{
+				"in":   inputTokens,
+				"cin":  cachedInputTokens,
+				"out":  outputTokens,
+				"cost": totalCost,
+			}
+			if contextWindowTokens > 0 {
+				eventPayload["cwt"] = contextWindowTokens
+			}
 			_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 				ID:        utils.NewID(),
 				Seq:       0,
 				Type:      "usage",
 				RunID:     run.runID,
 				Timestamp: time.Now(),
-				Payload: map[string]any{
-					"in":   session.TotalInputTokens,
-					"cin":  session.TotalCachedInputTokens,
-					"out":  session.TotalOutputTokens,
-					"cost": totalCost,
-				},
+				Payload:   eventPayload,
 			})
-			_ = model.GetDB().WithContext(context.Background()).
-				Model(&tables.WebSessionTable{}).
-				Where("id = ?", session.ID).
-				Updates(map[string]any{
-					"total_cost": gorm.Expr("total_cost + ?", totalCost),
-					"updated_at": time.Now(),
-				}).Error
+			if totalCost > 0 {
+				_ = model.GetDB().WithContext(context.Background()).
+					Model(&tables.WebSessionTable{}).
+					Where("id = ?", session.ID).
+					Updates(map[string]any{
+						"total_cost": gorm.Expr("total_cost + ?", totalCost),
+						"updated_at": time.Now(),
+					}).Error
+			}
 		}
 	case "error":
 		run.lastError = stringValue(raw["message"])
@@ -4336,6 +4416,12 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 }
 
 func (m *Manager) handleClaudeUserEvent(session tables.WebSessionTable, run *activeRun, raw map[string]any) {
+	if raw["isCompactSummary"] == true {
+		return
+	}
+	if raw["isMeta"] == true || raw["isSynthetic"] == true {
+		return
+	}
 	message := decodeRawObject(raw["message"])
 	if strings.TrimSpace(stringValue(message["role"])) != "user" {
 		return
@@ -5100,6 +5186,8 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 			"-p",
 			"--output-format", "stream-json",
 			"--input-format", "stream-json",
+			"--permission-prompt-tool", "stdio",
+			"--autocompact", "auto",
 			"--replay-user-messages",
 			"--verbose",
 		}
@@ -5207,6 +5295,20 @@ func (m *Manager) buildClaudeCommand(ctx context.Context, runtime ClaudeRuntime,
 	return exec.CommandContext(ctx, m.cfg.ClaudePath, args...)
 }
 
+func isClaudeControlCommand(cmd *exec.Cmd) bool {
+	if cmd == nil || len(cmd.Args) == 0 {
+		return false
+	}
+	hasPromptTool := false
+	for index, arg := range cmd.Args {
+		if arg == "--permission-prompt-tool" && index+1 < len(cmd.Args) && cmd.Args[index+1] == "stdio" {
+			hasPromptTool = true
+			break
+		}
+	}
+	return hasPromptTool
+}
+
 func (m *Manager) claudeCommandEnv(runtime ClaudeRuntime) []string {
 	env := os.Environ()
 	if normalizeClaudeRuntime(runtime) != ClaudeRuntimeCCR || strings.TrimSpace(m.ccrHookClaudePath) == "" {
@@ -5251,6 +5353,16 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 			if err != nil {
 				return err
 			}
+		}
+		if pending != nil && strings.TrimSpace(pending.ControlRequestID) != "" && run != nil {
+			behavior := "deny"
+			if action != "reject" {
+				behavior = "allow"
+			}
+			if err := m.respondClaudeControl(record, run, pending, behavior, pending.Input, "The user declined this tool use.", nil); err != nil {
+				return err
+			}
+			return nil
 		}
 		decision := "deny"
 		if action != "reject" {
@@ -5371,13 +5483,30 @@ func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[strin
 		return err
 	}
 	if normalizeAgent(Agent(record.Agent)) == AgentClaude {
+		if ok && run != nil {
+			if pending, hasPending := run.pendingUserInputRequest(); hasPending &&
+				strings.TrimSpace(pending.ItemID) == strings.TrimSpace(itemID) &&
+				strings.TrimSpace(pending.ControlRequestID) != "" {
+				input := m.claudeControlResponseInput(pending, answers)
+				if !hasClaudeAnswerValues(answers) {
+					return fmt.Errorf("no answers were provided")
+				}
+				if len(decodeRawObject(input["answers"])) == 0 {
+					return fmt.Errorf("answers do not match the active Claude questions")
+				}
+				return m.respondClaudeControl(record, run, pending, "allow", input, "", answers)
+			}
+		}
 		pending, err := m.findClaudePendingUserInputRequest(context.Background(), sessionID, itemID)
 		if err != nil {
 			return err
 		}
 		answerFile := claudeHookAnswerFile{Answers: map[string]string{}}
-		for _, question := range pending.Questions {
+		for index, question := range pending.Questions {
 			values := answers[strings.TrimSpace(question.ID)]
+			if len(values) == 0 {
+				values = answers[fmt.Sprintf("%d", index)]
+			}
 			if len(values) == 0 {
 				continue
 			}
@@ -5461,6 +5590,48 @@ func (m *Manager) hasActiveRun(sessionID string) bool {
 	defer m.mu.RUnlock()
 	_, ok := m.runs[sessionID]
 	return ok
+}
+
+// Claude invokes the PreToolUse hook before it emits a stdio control_request.
+// Once a live stdio run is active, returning a hook decision would short-circuit
+// that RPC and leave the process waiting forever. Prefer the native session ID;
+// cwd is a startup fallback until Claude's system/init frame arrives.
+func (m *Manager) shouldBypassClaudeHook(sessionID, cwd string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.RLock()
+	runs := make([]*activeRun, 0, len(m.runs))
+	for _, run := range m.runs {
+		if run != nil {
+			runs = append(runs, run)
+		}
+	}
+	m.mu.RUnlock()
+
+	exactMatches := 0
+	exactStdioMatches := 0
+	cwdMatches := 0
+	stdioCwdMatches := 0
+	for _, run := range runs {
+		idMatch, cwdMatch, stdio := run.claudeHookMatch(sessionID, cwd)
+		if idMatch {
+			exactMatches++
+			if stdio {
+				exactStdioMatches++
+			}
+		}
+		if cwdMatch {
+			cwdMatches++
+			if stdio {
+				stdioCwdMatches++
+			}
+		}
+	}
+	if exactMatches > 0 {
+		return exactMatches == 1 && exactStdioMatches == 1
+	}
+	return strings.TrimSpace(cwd) != "" && cwdMatches > 0 && cwdMatches == stdioCwdMatches
 }
 
 func (m *Manager) releaseActiveRun(sessionID string, run *activeRun) bool {
@@ -6392,6 +6563,93 @@ func (r *activeRun) setInput(stdin io.WriteCloser) {
 	r.stdin = stdin
 }
 
+func (r *activeRun) setClaudeStdioControl(active bool) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.claudeStdioControl = active
+	r.mu.Unlock()
+}
+
+func (r *activeRun) setClaudeIdentity(sessionID, cwd string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if normalized := strings.TrimSpace(sessionID); normalized != "" {
+		r.claudeNativeSessionID = normalized
+	}
+	r.claudeCwd = strings.TrimSpace(cwd)
+	r.mu.Unlock()
+}
+
+func (r *activeRun) setClaudeNativeSessionID(sessionID string) {
+	if r == nil {
+		return
+	}
+	normalized := strings.TrimSpace(sessionID)
+	if normalized == "" {
+		return
+	}
+	r.mu.Lock()
+	r.claudeNativeSessionID = normalized
+	r.mu.Unlock()
+}
+
+func (r *activeRun) setClaudeResolvedModel(model string) {
+	if r == nil {
+		return
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return
+	}
+	r.mu.Lock()
+	r.claudeResolvedModel = model
+	r.mu.Unlock()
+}
+
+func (r *activeRun) claudeResolvedModelSnapshot() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.claudeResolvedModel
+}
+
+func (r *activeRun) claudeHookMatch(sessionID, cwd string) (idMatch, cwdMatch, stdio bool) {
+	if r == nil {
+		return false, false, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if normalizeAgent(r.agent) != AgentClaude {
+		return false, false, false
+	}
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	idMatch = normalizedSessionID != "" &&
+		(normalizedSessionID == strings.TrimSpace(r.sessionID) || normalizedSessionID == strings.TrimSpace(r.claudeNativeSessionID))
+	cwdMatch = sameClaudeHookCwd(cwd, r.claudeCwd)
+	stdio = r.claudeStdioControl && !r.claudeResumeOnly
+	return idMatch, cwdMatch, stdio
+}
+
+func sameClaudeHookCwd(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
+
 func (r *activeRun) setCommand(cmd *exec.Cmd) {
 	if r == nil {
 		return
@@ -6486,6 +6744,25 @@ func (r *activeRun) writeInput(input string) error {
 	return err
 }
 
+// writeJSONInput serializes a stream-json control response while holding the
+// same mutex used by ordinary stdin writes. Claude can emit control requests
+// concurrently with transcript events, so responses must never interleave
+// with another line on the pipe.
+func (r *activeRun) writeJSONInput(value any) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stdin == nil {
+		return fmt.Errorf("session input is unavailable")
+	}
+	_, err = r.stdin.Write(encoded)
+	return err
+}
+
 func (r *activeRun) pushRuntimeLine(line string) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -6541,6 +6818,15 @@ func (r *activeRun) pendingApprovalRequest() (*pendingServerRequest, bool) {
 	return r.pendingServerReq.clone(), true
 }
 
+func (r *activeRun) pendingServerRequest() (*pendingServerRequest, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pendingServerReq == nil {
+		return nil, false
+	}
+	return r.pendingServerReq.clone(), true
+}
+
 func (r *activeRun) pendingUserInputRequest() (*pendingServerRequest, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -6556,16 +6842,73 @@ func (r *activeRun) clearPendingServerRequest() {
 	r.pendingServerReq = nil
 }
 
+func (r *activeRun) clearPendingControlRequest(requestID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pendingServerReq == nil || strings.TrimSpace(requestID) == "" {
+		return false
+	}
+	if strings.TrimSpace(r.pendingServerReq.ControlRequestID) != strings.TrimSpace(requestID) {
+		return false
+	}
+	r.pendingServerReq = nil
+	return true
+}
+
 func (r *activeRun) markCompletedPlanTool() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.completedPlanTool = true
 }
 
+func (r *activeRun) beginClaudeCompaction(toolID string, startedAt time.Time) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if strings.TrimSpace(r.claudeCompactionToolID) != "" {
+		return false
+	}
+	r.claudeCompactionToolID = strings.TrimSpace(toolID)
+	r.claudeCompactionStarted = startedAt
+	return r.claudeCompactionToolID != ""
+}
+
+func (r *activeRun) claudeCompactionState() (string, time.Time) {
+	if r == nil {
+		return "", time.Time{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.claudeCompactionToolID, r.claudeCompactionStarted
+}
+
+func (r *activeRun) clearClaudeCompaction() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	id := r.claudeCompactionToolID
+	r.claudeCompactionToolID = ""
+	r.claudeCompactionStarted = time.Time{}
+	return id
+}
+
 func (r *activeRun) completedPlanToolSeen() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.completedPlanTool
+}
+
+func (r *activeRun) clearCompletedPlanTool() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.completedPlanTool = false
+	r.mu.Unlock()
 }
 
 func (r *activeRun) hasPendingServerRequest() bool {
@@ -6603,6 +6946,15 @@ func (r *activeRun) assistantMessageIDSnapshot() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.assistantMessageID
+}
+
+func (r *activeRun) currentToolMessageSnapshot() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return strings.TrimSpace(r.currentToolMessage)
 }
 
 func (r *activeRun) setCodexRolloutMonitor(monitor *codexRolloutMonitor) {

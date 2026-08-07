@@ -23,6 +23,7 @@ type claudePreToolUseRequest struct {
 	ToolUseID string         `json:"tool_use_id"`
 	ToolName  string         `json:"tool_name"`
 	ToolInput map[string]any `json:"tool_input"`
+	Cwd       string         `json:"cwd"`
 }
 
 type claudePreToolUseResponse struct {
@@ -338,6 +339,13 @@ func (m *Manager) handleClaudePreToolUseHook(w http.ResponseWriter, r *http.Requ
 	}
 	toolName := strings.TrimSpace(request.ToolName)
 	if toolName != "AskUserQuestion" && toolName != "ExitPlanMode" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if m.shouldBypassClaudeHook(request.SessionID, request.Cwd) {
+		// The live --permission-prompt-tool stdio bridge owns this decision.
+		// An HTTP hook response here would turn the request into the legacy
+		// deferred/resume flow before Claude can emit control_request.
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

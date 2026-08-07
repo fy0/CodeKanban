@@ -397,7 +397,7 @@ func TestEditUserMessageRejectsOldCodexBeforeThreadOperations(t *testing.T) {
 	}
 
 	_, err = manager.EditUserMessage(context.Background(), created.ID, "missing", "edited")
-	expected := "Codex web sessions require Codex >= 0.146.0. Current version: 0.145.9."
+	expected := "This Codex feature requires multi-agent V2 (Codex >= 0.146.0). Current version: 0.145.9."
 	if err == nil || err.Error() != expected {
 		t.Fatalf("expected error %q, got %v", expected, err)
 	}

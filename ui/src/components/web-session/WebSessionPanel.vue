@@ -3919,11 +3919,23 @@ watch(
 const runtimeHasCodex = computed(() => codexRuntimeConfig.value?.hasCodex === true);
 const runtimeHasClaudeCode = computed(() => codexRuntimeConfig.value?.hasClaudeCode === true);
 const runtimeCodexVersion = computed(() => codexRuntimeConfig.value?.codexVersion?.trim() || '');
-const runtimeWebSessionMinVersion = computed(
-  () => codexRuntimeConfig.value?.webSessionMinCodexVersion?.trim() || '0.146.0'
+const runtimeMultiAgentV2MinVersion = computed(
+  () =>
+    codexRuntimeConfig.value?.multiAgentV2MinCodexVersion?.trim() ||
+    codexRuntimeConfig.value?.webSessionMinCodexVersion?.trim() ||
+    '0.146.0'
 );
-const runtimeSupportsWebSession = computed(
-  () => codexRuntimeConfig.value?.supportsWebSession === true
+const runtimeSupportsMultiAgentV2 = computed(() => {
+  const config = codexRuntimeConfig.value;
+  if (typeof config?.supportsMultiAgentV2 === 'boolean') {
+    return config.supportsMultiAgentV2;
+  }
+  // Older servers used supportsWebSession for the V2 capability.
+  return config?.supportsWebSession === true;
+});
+const isCodexCompatibilityMode = computed(
+  () =>
+    codexRuntimeConfig.value !== null && runtimeHasCodex.value && !runtimeSupportsMultiAgentV2.value
 );
 const runtimeGoalModeMinVersion = computed(
   () => codexRuntimeConfig.value?.goalModeMinCodexVersion?.trim() || '0.133.0'
@@ -3934,7 +3946,7 @@ const isMessageCapabilityBlocked = computed(() => {
     return false;
   }
   if (selectedAgent.value === 'codex') {
-    return !runtimeSupportsWebSession.value;
+    return !runtimeHasCodex.value;
   }
   if (selectedAgent.value === 'claude') {
     return !runtimeHasClaudeCode.value;
@@ -3949,7 +3961,7 @@ const isCurrentSessionGoalModeBlocked = computed(() => {
   if (!codexRuntimeConfig.value) {
     return false;
   }
-  return !runtimeSupportsWebSession.value || !runtimeSupportsGoalMode.value;
+  return !runtimeSupportsGoalMode.value;
 });
 const currentSessionGoal = computed(() => currentRealSession.value?.goal ?? null);
 const isCurrentDraftCodexSession = computed(() => {
@@ -5639,13 +5651,6 @@ const composerHint = computed(() => {
   if (codexRuntimeConfig.value && selectedAgent.value === 'codex' && !runtimeHasCodex.value) {
     return t('webSession.composerHintCodexMissing');
   }
-  if (
-    codexRuntimeConfig.value &&
-    selectedAgent.value === 'codex' &&
-    !runtimeSupportsWebSession.value
-  ) {
-    return codexWebSessionUnavailableMessage();
-  }
   if (codexRuntimeConfig.value && selectedAgent.value === 'claude' && !runtimeHasClaudeCode.value) {
     return t('webSession.composerHintClaudeMissing');
   }
@@ -5746,6 +5751,7 @@ const contextUsageIndicator = computed(() => {
       ? session.contextWindowTokens
       : null;
   const runtimeConfigMatchesModel =
+    session.agent === 'codex' &&
     typeof runtimeConfig?.model === 'string' &&
     runtimeConfig.model.trim() !== '' &&
     runtimeConfig.model.trim().toLowerCase() === session.model.trim().toLowerCase();
@@ -5779,7 +5785,14 @@ const contextUsageIndicator = computed(() => {
       ? contextWindowTokens
       : (runtimeCompactLimitTokens ?? contextWindowTokens);
 
-  if (session.agent !== 'codex' || !contextWindowTokens || !compactLimitTokens) {
+  // Claude exposes the context window on result.modelUsage after a turn. Use
+  // that authoritative window with Claude-specific wording; Claude Code keeps
+  // control of the actual automatic-compaction trigger.
+  if (
+    (session.agent !== 'codex' && session.agent !== 'claude') ||
+    !contextWindowTokens ||
+    !compactLimitTokens
+  ) {
     return {
       state: 'unavailable',
       label: t('webSession.contextUsageLabelUnavailable'),
@@ -5804,13 +5817,16 @@ const contextUsageIndicator = computed(() => {
     calculateCodexRemainingContext({
       compactLimitTokens,
       usedTokens,
+      baselineTokens: session.agent === 'claude' ? 0 : undefined,
     });
   const sourceLabel =
-    source === 'session_usage'
-      ? t('webSession.contextUsageSourceSessionUsage')
-      : source === 'config'
-        ? t('webSession.contextUsageSourceConfig')
-        : t('webSession.contextUsageSourceDefault');
+    session.agent === 'claude'
+      ? t('webSession.contextUsageSourceClaudeResult')
+      : source === 'session_usage'
+        ? t('webSession.contextUsageSourceSessionUsage')
+        : source === 'config'
+          ? t('webSession.contextUsageSourceConfig')
+          : t('webSession.contextUsageSourceDefault');
   const estimateMode =
     session.contextEstimateMode === 'latest_token_count'
       ? 'latest_token_count'
@@ -5831,31 +5847,57 @@ const contextUsageIndicator = computed(() => {
     estimateMode === 'latest_token_count'
       ? t('webSession.contextUsageNoteLatestTokenCount')
       : estimateMode === 'latest_turn_delta'
-        ? t('webSession.contextUsageNoteLatestTurnDelta')
+        ? t(
+            session.agent === 'claude'
+              ? 'webSession.contextUsageNoteLatestTurnDeltaClaude'
+              : 'webSession.contextUsageNoteLatestTurnDelta'
+          )
         : estimateMode === 'since_compaction'
-          ? t('webSession.contextUsageNoteSinceCompaction')
+          ? t(
+              session.agent === 'claude'
+                ? 'webSession.contextUsageNoteSinceCompactionClaude'
+                : 'webSession.contextUsageNoteSinceCompaction'
+            )
           : t('webSession.contextUsageNoteCumulativeTotal');
+  const remainingLine = t(
+    session.agent === 'claude'
+      ? 'webSession.contextUsageRemainingWindowEstimate'
+      : 'webSession.contextUsageRemainingEstimate',
+    { count: tokenNumberFormatter.format(remainingEstimateTokens) }
+  );
+  const limitLines =
+    session.agent === 'claude'
+      ? []
+      : [
+          t('webSession.contextUsageCompactLimit', {
+            count: tokenNumberFormatter.format(compactLimitTokens),
+          }),
+        ];
 
   return {
     state: remainingPercent <= 10 ? 'warning' : remainingPercent <= 25 ? 'active' : 'idle',
     label: t('webSession.contextUsageLabel', {
       percent: remainingPercent,
     }),
-    title: t('webSession.contextUsageTitle'),
+    title: t(
+      session.agent === 'claude'
+        ? 'webSession.contextUsageTitleClaude'
+        : 'webSession.contextUsageTitle'
+    ),
     lines: [
-      t('webSession.contextUsageDisclaimer'),
-      t('webSession.contextUsageRemainingEstimate', {
-        count: tokenNumberFormatter.format(remainingEstimateTokens),
-      }),
+      t(
+        session.agent === 'claude'
+          ? 'webSession.contextUsageDisclaimerClaude'
+          : 'webSession.contextUsageDisclaimer'
+      ),
+      remainingLine,
       t('webSession.contextUsageEstimatedUsed', {
         count: tokenNumberFormatter.format(usedTokens),
       }),
       t('webSession.contextUsageWindow', {
         count: tokenNumberFormatter.format(contextWindowTokens),
       }),
-      t('webSession.contextUsageCompactLimit', {
-        count: tokenNumberFormatter.format(compactLimitTokens),
-      }),
+      ...limitLines,
       t('webSession.contextUsageSource', {
         source: sourceLabel,
       }),
@@ -8547,13 +8589,14 @@ function renderAgentDropdownLabel(option: DropdownOption) {
 
 const agentDropdownOptions = computed<DropdownOption[]>(() =>
   agentOptions.map(option => ({
-    label: option.label,
+    label:
+      option.value === 'codex' && isCodexCompatibilityMode.value
+        ? t('webSession.codexCompatibilityAgentLabel')
+        : option.label,
     key: option.value,
     value: option.value,
     disabled:
-      option.value === 'codex' &&
-      codexRuntimeConfig.value !== null &&
-      !runtimeSupportsWebSession.value,
+      option.value === 'codex' && codexRuntimeConfig.value !== null && !runtimeHasCodex.value,
   }))
 );
 
@@ -10387,6 +10430,9 @@ async function handleCreateSession(
     if (!(await ensureMessageCapabilityAvailable(agent))) {
       return undefined;
     }
+    if (agent === 'codex') {
+      maybeNotifyCodexCompatibilityMode();
+    }
     const worktreeId = resolveCreateSessionWorktreeId(source);
     const session = await webSessionStore.createSession(projectId, {
       worktreeId,
@@ -12084,16 +12130,23 @@ function goalModeUnavailableMessage() {
   });
 }
 
-function codexWebSessionUnavailableMessage() {
+function codexCompatibilityModeMessage() {
   if (runtimeCodexVersion.value) {
-    return t('webSession.codexWebSessionUnavailableWithCurrent', {
-      requiredVersion: runtimeWebSessionMinVersion.value,
+    return t('webSession.codexCompatibilityModeWithCurrent', {
+      requiredVersion: runtimeMultiAgentV2MinVersion.value,
       currentVersion: runtimeCodexVersion.value,
     });
   }
-  return t('webSession.codexWebSessionUnavailable', {
-    version: runtimeWebSessionMinVersion.value,
+  return t('webSession.codexCompatibilityMode', {
+    requiredVersion: runtimeMultiAgentV2MinVersion.value,
   });
+}
+
+function maybeNotifyCodexCompatibilityMode() {
+  if (!isCodexCompatibilityMode.value) {
+    return;
+  }
+  message.warning(codexCompatibilityModeMessage());
 }
 
 async function ensureMessageCapabilityAvailable(agent: 'codex' | 'claude') {
@@ -12106,11 +12159,7 @@ async function ensureMessageCapabilityAvailable(agent: 'codex' | 'claude') {
       message.warning(t('webSession.codexNotInstalled'));
       return false;
     }
-    if (config.supportsWebSession === true) {
-      return true;
-    }
-    message.warning(codexWebSessionUnavailableMessage());
-    return false;
+    return true;
   }
   if (config.hasClaudeCode === true) {
     return true;
@@ -12126,10 +12175,6 @@ async function ensureGoalModeAvailable() {
   }
   if (config.hasCodex !== true) {
     message.warning(t('webSession.codexNotInstalled'));
-    return false;
-  }
-  if (config.supportsWebSession !== true) {
-    message.warning(codexWebSessionUnavailableMessage());
     return false;
   }
   if (config.supportsGoalMode === true) {

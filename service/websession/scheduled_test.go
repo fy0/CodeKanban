@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +14,11 @@ import (
 	"code-kanban/model"
 	"code-kanban/model/tables"
 	"code-kanban/utils"
+
+	goGit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"go.uber.org/zap"
 )
@@ -1378,24 +1382,37 @@ func insertScheduledPlanHistoryItem(
 
 func initScheduledTestGitRepository(t *testing.T, path string) {
 	t.Helper()
-	runScheduledTestGit(t, path, "init")
-	runScheduledTestGit(t, path, "config", "user.email", "scheduled-test@example.com")
-	runScheduledTestGit(t, path, "config", "user.name", "Scheduled Test")
+	repository, err := goGit.PlainInit(path, false, goGit.WithDefaultBranch(plumbing.NewBranchReferenceName("master")))
+	if err != nil {
+		t.Fatalf("init repository: %v", err)
+	}
+	cfg, err := repository.Config()
+	if err != nil {
+		t.Fatalf("read repository config: %v", err)
+	}
+	cfg.User.Email = "scheduled-test@example.com"
+	cfg.User.Name = "Scheduled Test"
+	cfg.Commit.GpgSign = config.OptBoolFalse
+	if err := repository.SetConfig(cfg); err != nil {
+		t.Fatalf("write repository config: %v", err)
+	}
 	trackedPath := filepath.Join(path, "tracked.txt")
 	if err := os.WriteFile(trackedPath, []byte("clean\n"), 0o644); err != nil {
 		t.Fatalf("write tracked file: %v", err)
 	}
-	runScheduledTestGit(t, path, "add", "tracked.txt")
-	runScheduledTestGit(t, path, "commit", "-m", "Initial commit")
-}
-
-func runScheduledTestGit(t *testing.T, path string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = path
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatalf("open worktree: %v", err)
 	}
+	if err := worktree.AddWithOptions(&goGit.AddOptions{All: true}); err != nil {
+		t.Fatalf("stage tracked file: %v", err)
+	}
+	if _, err := worktree.Commit("Initial commit", &goGit.CommitOptions{Author: &object.Signature{
+		Name: "Scheduled Test", Email: "scheduled-test@example.com", When: time.Now(),
+	}}); err != nil {
+		t.Fatalf("commit tracked file: %v", err)
+	}
+	_ = repository.Close()
 }
 
 func waitForScheduledIdleRecord(

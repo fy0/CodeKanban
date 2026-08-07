@@ -77,6 +77,7 @@ const (
 	pendingServerRequestFileChangeApproval  pendingServerRequestKind = "file_change_approval"
 	pendingServerRequestPermissionsApproval pendingServerRequestKind = "permissions_approval"
 	pendingServerRequestPlanApproval        pendingServerRequestKind = "plan_approval"
+	pendingServerRequestToolApproval        pendingServerRequestKind = "tool_approval"
 )
 
 type toolRequestOption struct {
@@ -95,16 +96,20 @@ type toolRequestQuestion struct {
 }
 
 type pendingServerRequest struct {
-	RawID       json.RawMessage
-	Kind        pendingServerRequestKind
-	ThreadID    string
-	TurnID      string
-	ItemID      string
-	Prompt      string
-	Command     string
-	RequestedAt *time.Time
-	Questions   []toolRequestQuestion
-	Permissions map[string]any
+	RawID json.RawMessage
+	// Claude's stream-json control protocol has its own request id in addition
+	// to the tool_use id stored in ItemID. Codex continues to use RawID.
+	ControlRequestID string
+	Kind             pendingServerRequestKind
+	ThreadID         string
+	TurnID           string
+	ItemID           string
+	Prompt           string
+	Command          string
+	Input            any
+	RequestedAt      *time.Time
+	Questions        []toolRequestQuestion
+	Permissions      map[string]any
 }
 
 func (r *pendingServerRequest) clone() *pendingServerRequest {
@@ -112,14 +117,16 @@ func (r *pendingServerRequest) clone() *pendingServerRequest {
 		return nil
 	}
 	clone := &pendingServerRequest{
-		RawID:       append(json.RawMessage(nil), r.RawID...),
-		Kind:        r.Kind,
-		ThreadID:    r.ThreadID,
-		TurnID:      r.TurnID,
-		ItemID:      r.ItemID,
-		Prompt:      r.Prompt,
-		Command:     r.Command,
-		Permissions: nil,
+		RawID:            append(json.RawMessage(nil), r.RawID...),
+		ControlRequestID: r.ControlRequestID,
+		Kind:             r.Kind,
+		ThreadID:         r.ThreadID,
+		TurnID:           r.TurnID,
+		ItemID:           r.ItemID,
+		Prompt:           r.Prompt,
+		Command:          r.Command,
+		Input:            r.Input,
+		Permissions:      nil,
 	}
 	if r.RequestedAt != nil {
 		requestedAt := *r.RequestedAt
@@ -149,7 +156,7 @@ func (r *pendingServerRequest) isApproval() bool {
 		return false
 	}
 	switch r.Kind {
-	case pendingServerRequestCommandApproval, pendingServerRequestFileChangeApproval, pendingServerRequestPermissionsApproval, pendingServerRequestPlanApproval:
+	case pendingServerRequestCommandApproval, pendingServerRequestFileChangeApproval, pendingServerRequestPermissionsApproval, pendingServerRequestPlanApproval, pendingServerRequestToolApproval:
 		return true
 	default:
 		return false
@@ -401,6 +408,7 @@ func (m *Manager) runCodexAppServerSession(
 	text string,
 	attachments []Attachment,
 ) {
+	supportsMultiAgentV2 := m.GetCodexRuntimeConfig().SupportsMultiAgentV2
 	client, stderr, err := startCodexAppServer(ctx, m.cfg.CodexPath, session.Cwd)
 	if err != nil {
 		run.resolveBootstrap(err)
@@ -436,7 +444,13 @@ func (m *Manager) runCodexAppServerSession(
 		return
 	}
 
-	threadID, modelProvider, threadPath, _, err := m.startOrResumeCodexThread(ctx, session, run, client)
+	threadID, modelProvider, threadPath, _, err := m.startOrResumeCodexThread(
+		ctx,
+		session,
+		run,
+		client,
+		supportsMultiAgentV2,
+	)
 	if err != nil {
 		run.resolveBootstrap(err)
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
@@ -448,25 +462,27 @@ func (m *Manager) runCodexAppServerSession(
 	}
 	run.transportRemoteURL = readCodexRemoteURL(ctx, client, session.Cwd, modelProvider)
 
-	rootTailer, tailerErr := m.prepareCodexRolloutTailer(ctx, session, threadID)
 	var rolloutTailers map[string]*codexRolloutTailer
-	if tailerErr == nil {
-		var tailerWarnings []error
-		rolloutTailers, tailerWarnings = prepareCodexRolloutMonitorTailers(ctx, client, threadID, rootTailer)
-		for _, warning := range tailerWarnings {
-			if m.logger != nil {
-				m.logger.Warn("Codex descendant rollout baseline unavailable",
-					zap.String("sessionId", session.ID),
-					zap.String("threadId", threadID),
-					zap.Error(warning),
-				)
+	if supportsMultiAgentV2 {
+		rootTailer, tailerErr := m.prepareCodexRolloutTailer(ctx, session, threadID)
+		if tailerErr == nil {
+			var tailerWarnings []error
+			rolloutTailers, tailerWarnings = prepareCodexRolloutMonitorTailers(ctx, client, threadID, rootTailer)
+			for _, warning := range tailerWarnings {
+				if m.logger != nil {
+					m.logger.Warn("Codex descendant rollout baseline unavailable",
+						zap.String("sessionId", session.ID),
+						zap.String("threadId", threadID),
+						zap.Error(warning),
+					)
+				}
 			}
 		}
-	}
-	if tailerErr != nil {
-		run.resolveBootstrap(tailerErr)
-		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, tailerErr)
-		return
+		if tailerErr != nil {
+			run.resolveBootstrap(tailerErr)
+			m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, tailerErr)
+			return
+		}
 	}
 
 	rolloutStartedAt := time.Now()
@@ -743,6 +759,7 @@ func (m *Manager) startOrResumeCodexThread(
 	session tables.WebSessionTable,
 	run *activeRun,
 	client *codexAppServerClient,
+	supportsMultiAgentV2 bool,
 ) (string, string, string, bool, error) {
 	existingThreadID := ""
 	if session.NativeSessionID != nil {
@@ -754,9 +771,17 @@ func (m *Manager) startOrResumeCodexThread(
 		err      error
 	)
 	if existingThreadID != "" {
-		response, err = client.request(ctx, "thread/resume", codexThreadResumeParams(session, existingThreadID))
+		response, err = client.request(
+			ctx,
+			"thread/resume",
+			codexThreadResumeParams(session, existingThreadID, supportsMultiAgentV2),
+		)
 	} else {
-		response, err = client.request(ctx, "thread/start", codexThreadStartParams(session))
+		response, err = client.request(
+			ctx,
+			"thread/start",
+			codexThreadStartParams(session, supportsMultiAgentV2),
+		)
 	}
 	if err != nil {
 		return "", "", "", existingThreadID != "", err
@@ -2253,27 +2278,41 @@ func userInputResponsePayload(answers map[string][]string) map[string]any {
 	return response
 }
 
-func codexThreadStartParams(session tables.WebSessionTable) map[string]any {
-	return map[string]any{
-		"cwd":                   session.Cwd,
-		"model":                 strings.TrimSpace(session.Model),
-		"sandbox":               codexSandboxMode(effectivePermissionLevel(session)),
-		"approvalPolicy":        codexApprovalPolicy(effectivePermissionLevel(session)),
-		"config":                codexMultiAgentV2Config(),
-		"historyMode":           "paginated",
-		"experimentalRawEvents": true,
+func codexThreadStartParams(session tables.WebSessionTable, supportsMultiAgentV2 bool) map[string]any {
+	params := map[string]any{
+		"cwd":            session.Cwd,
+		"model":          strings.TrimSpace(session.Model),
+		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
+		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
 	}
+	if supportsMultiAgentV2 {
+		params["config"] = codexMultiAgentV2Config()
+		params["historyMode"] = "paginated"
+		params["experimentalRawEvents"] = true
+	} else {
+		params["persistExtendedHistory"] = true
+	}
+	return params
 }
 
-func codexThreadResumeParams(session tables.WebSessionTable, threadID string) map[string]any {
-	return map[string]any{
+func codexThreadResumeParams(
+	session tables.WebSessionTable,
+	threadID string,
+	supportsMultiAgentV2 bool,
+) map[string]any {
+	params := map[string]any{
 		"threadId":       strings.TrimSpace(threadID),
 		"cwd":            session.Cwd,
 		"model":          strings.TrimSpace(session.Model),
 		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
 		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
-		"config":         codexMultiAgentV2Config(),
 	}
+	if supportsMultiAgentV2 {
+		params["config"] = codexMultiAgentV2Config()
+	} else {
+		params["persistExtendedHistory"] = true
+	}
+	return params
 }
 
 func codexMultiAgentV2Config() map[string]any {

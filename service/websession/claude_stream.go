@@ -73,6 +73,30 @@ func claudePlanHistoryItem(sourceItemID string, text string, planFilePath string
 	}
 }
 
+func claudeCompactionHistoryItem(sourceItemID, text string, ts *time.Time, payload map[string]any) HistoryItem {
+	compactionID := firstNonEmpty(strings.TrimSpace(sourceItemID), utils.NewID())
+	message := firstNonEmpty(strings.TrimSpace(text), "Context compacted")
+	return HistoryItem{
+		ID:           compactionID,
+		SourceItemID: nilIfEmptyHistory(compactionID),
+		Kind:         "tool",
+		ItemType:     "context_compaction",
+		Text:         message,
+		Timestamp:    ts,
+		ObservedAt:   ts,
+		Done:         true,
+		Payload:      payload,
+		Tool: &HistoryTool{
+			ID:     compactionID,
+			Name:   "ContextCompaction",
+			Kind:   "context_compaction",
+			Output: message,
+			Status: "done",
+			Meta:   claudeCompactionToolMeta(message),
+		},
+	}
+}
+
 func defaultSourceKind(agent Agent) string {
 	if normalizeAgent(agent) == AgentClaude {
 		return sourceKindClaudeStreamJSON
@@ -89,9 +113,16 @@ func claudeSessionFilePath(cwd, sessionID string) (string, error) {
 	if normalizedSessionID == "" {
 		return "", fmt.Errorf("session id is required")
 	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	// Respect an explicit HOME override first. Besides making isolated test
+	// sessions deterministic on Windows (where os.UserHomeDir prefers
+	// USERPROFILE), this mirrors Claude's own project path resolution.
+	homeDir := strings.TrimSpace(os.Getenv("HOME"))
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
 	}
 	return filepath.Join(
 		homeDir,
@@ -153,6 +184,7 @@ func (m *Manager) buildClaudeResumeCommand(ctx context.Context, session tables.W
 		"-p",
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
+		"--autocompact", "auto",
 		"--replay-user-messages",
 		"--verbose",
 	}
@@ -553,6 +585,28 @@ func (m *Manager) parseClaudeStreamHistory(filePath string, workflowMode Workflo
 		}
 
 		switch entryType {
+		case "system":
+			// Claude records automatic compaction as a status line in some
+			// versions and as a synthetic summary in others. Keep a single
+			// durable tool item so a later sync does not lose the boundary.
+			if strings.EqualFold(strings.TrimSpace(stringValue(entry["subtype"])), "status") {
+				started, completed, succeeded, message := claudeCompactionStatus(entry)
+				if started && !completed {
+					// The following status line carries the result; avoid creating
+					// a second history item for the transient start notification.
+					continue
+				}
+				if completed {
+					message = firstNonEmpty(message, "Context compacted")
+					item := claudeCompactionHistoryItem(firstNonEmpty(stringValue(entry["uuid"]), utils.NewID()), message, entryTimestamp, cloneMap(entry))
+					if !succeeded {
+						item.Tool.Status = "error"
+						item.Level = "warn"
+					}
+					appendItem(item)
+				}
+			}
+
 		case "last-prompt":
 			result.LastPrompt = firstNonEmpty(stringValue(entry["lastPrompt"]), result.LastPrompt)
 		case "queue-operation":
@@ -562,6 +616,15 @@ func (m *Manager) parseClaudeStreamHistory(filePath string, workflowMode Workflo
 		case "permission-mode":
 			result.PermissionMode = firstNonEmpty(stringValue(entry["permissionMode"]), result.PermissionMode)
 		case "assistant":
+			if entry["isCompactSummary"] == true {
+				// Claude emits the authoritative compaction status separately;
+				// the synthetic continuation summary is internal context and must
+				// not be rendered as an assistant message.
+				continue
+			}
+			if entry["isMeta"] == true || entry["isSynthetic"] == true {
+				continue
+			}
 			message := decodeRawObject(entry["message"])
 			assistantID := firstNonEmpty(stringValue(entry["uuid"]), stringValue(message["id"]), utils.NewID())
 			content := make([]any, 0)
@@ -643,7 +706,7 @@ func (m *Manager) parseClaudeStreamHistory(filePath string, workflowMode Workflo
 				pendingTools[toolUseID] = index
 			}
 		case "user":
-			if entry["isMeta"] == true {
+			if entry["isMeta"] == true || entry["isCompactSummary"] == true || entry["isSynthetic"] == true {
 				continue
 			}
 			message := decodeRawObject(entry["message"])

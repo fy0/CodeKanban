@@ -15,14 +15,45 @@ describe('webSession runtime capability guards', () => {
   it('shows dedicated missing-runtime composer hints', () => {
     expect(webSessionPanelSource).toContain("t('webSession.composerHintCodexMissing')");
     expect(webSessionPanelSource).toContain("t('webSession.composerHintClaudeMissing')");
-    expect(webSessionPanelSource).toContain('codexWebSessionUnavailableMessage()');
-    expect(webSessionPanelSource).toContain('runtimeSupportsWebSession');
+    expect(webSessionPanelSource).toContain('codexCompatibilityModeMessage()');
+    expect(webSessionPanelSource).toContain('isCodexCompatibilityMode');
   });
 
-  it('blocks unsupported Codex versions before creating a persisted session', () => {
-    expect(webSessionPanelSource).toContain('config.supportsWebSession === true');
-    expect(webSessionPanelSource).toContain('if (!(await ensureMessageCapabilityAvailable(agent)))');
-    expect(webSessionPanelSource).toContain("option.value === 'codex'");
+  it('keeps pre-V2 Codex versions usable in compatibility mode', () => {
+    expect(webSessionPanelSource).toContain('runtimeSupportsMultiAgentV2');
+    expect(webSessionPanelSource).toContain(
+      'if (!(await ensureMessageCapabilityAvailable(agent)))'
+    );
+    expect(webSessionPanelSource).toContain('return !runtimeHasCodex.value');
+    expect(webSessionPanelSource).toContain("t('webSession.codexCompatibilityAgentLabel')");
+    expect(webSessionPanelSource).toContain('function maybeNotifyCodexCompatibilityMode()');
+    expect(webSessionPanelSource).toContain('message.warning(codexCompatibilityModeMessage());');
+    expect(webSessionPanelSource).not.toContain('class="composer-compatibility-notice"');
+    expect(webSessionPanelSource).not.toContain('.composer-compatibility-notice');
+    expect(webSessionPanelSource).not.toContain(
+      'message.warning(codexWebSessionUnavailableMessage())'
+    );
+  });
+
+  it('only shows the compatibility notice while creating a new Codex session', () => {
+    const createSessionSource = webSessionPanelSource.slice(
+      webSessionPanelSource.indexOf('async function handleCreateSession('),
+      webSessionPanelSource.indexOf('async function handleStartDraftSession(')
+    );
+    const capabilityCheckSource = webSessionPanelSource.slice(
+      webSessionPanelSource.indexOf('async function ensureMessageCapabilityAvailable('),
+      webSessionPanelSource.indexOf('async function ensureGoalModeAvailable(')
+    );
+    const agentSelectSource = webSessionPanelSource.slice(
+      webSessionPanelSource.indexOf('function handleAgentDropdownSelect('),
+      webSessionPanelSource.indexOf('function getKnownModelLabel(')
+    );
+
+    expect(createSessionSource).toContain("if (agent === 'codex')");
+    expect(createSessionSource).toContain('maybeNotifyCodexCompatibilityMode();');
+    expect(capabilityCheckSource).not.toContain('maybeNotifyCodexCompatibilityMode();');
+    expect(agentSelectSource).not.toContain('maybeNotifyCodexCompatibilityMode();');
+    expect(webSessionPanelSource).not.toContain('notifiedCodexCompatibilityKey');
   });
 
   it('does not redirect a blocked draft submission into another active session', () => {
@@ -39,7 +70,7 @@ describe('webSession runtime capability guards', () => {
 
   it('hides the goal card for codex draft sessions and inserts /goal from the button instead', () => {
     expect(webSessionPanelSource).toContain('v-if="isGoalCardVisible"');
-    expect(webSessionPanelSource).toContain("showGoalCard.value = false;");
+    expect(webSessionPanelSource).toContain('showGoalCard.value = false;');
     expect(webSessionPanelSource).toContain('await handleGoalCompose();');
     expect(webSessionPanelSource).toContain("'Insert /goal'");
   });
