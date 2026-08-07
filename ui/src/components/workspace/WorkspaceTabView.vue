@@ -6,18 +6,6 @@
         <button
           type="button"
           class="tab-item"
-          :class="{ active: activeTab === 'terminal' }"
-          @click="activateTab('terminal')"
-        >
-          <n-icon size="16">
-            <TerminalOutline />
-          </n-icon>
-          <span class="tab-label">{{ t('nav.terminal') }}</span>
-          <span v-if="terminalCount > 0" class="tab-badge">{{ terminalCount }}</span>
-        </button>
-        <button
-          type="button"
-          class="tab-item"
           :class="{ active: activeTab === 'web' }"
           @click="activateTab('web')"
         >
@@ -28,6 +16,18 @@
           <span class="tab-badge session-summary-badge">
             {{ webSessionSummaryText }}
           </span>
+        </button>
+        <button
+          type="button"
+          class="tab-item"
+          :class="{ active: activeTab === 'terminal' }"
+          @click="activateTab('terminal')"
+        >
+          <n-icon size="16">
+            <TerminalOutline />
+          </n-icon>
+          <span class="tab-label">{{ t('nav.terminal') }}</span>
+          <span v-if="terminalCount > 0" class="tab-badge">{{ terminalCount }}</span>
         </button>
         <button
           type="button"
@@ -156,14 +156,6 @@
 
     <!-- Tab内容 -->
     <div class="tab-content">
-      <div v-show="activeTab === 'terminal'" class="tab-pane terminal-pane">
-        <div class="terminal-split">
-          <div class="terminal-main">
-            <TerminalPanel :project-id="projectId" />
-          </div>
-          <DockedNotificationSidebar v-if="isRightSidebarVisible" />
-        </div>
-      </div>
       <div v-show="activeTab === 'web'" class="tab-pane web-pane">
         <div class="terminal-split">
           <div class="terminal-main web-main">
@@ -173,6 +165,14 @@
               :is-active="activeTab === 'web'"
             />
           </div>
+        </div>
+      </div>
+      <div v-show="activeTab === 'terminal'" class="tab-pane terminal-pane">
+        <div class="terminal-split">
+          <div class="terminal-main">
+            <TerminalPanel :project-id="projectId" />
+          </div>
+          <DockedNotificationSidebar v-if="isRightSidebarVisible" />
         </div>
       </div>
       <div v-show="activeTab === 'changes'" class="tab-pane changes-pane">
@@ -233,6 +233,7 @@ import DockedNotificationSidebar from '@/components/workspace/DockedNotification
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
 import {
   buildWorkspaceRouteQuery,
+  DEFAULT_DESKTOP_WORKSPACE_ROUTE_TAB,
   isWorkspaceRouteTabQuerySynced,
   resolveDesktopWorkspaceRouteTab,
   type DesktopWorkspaceRouteTab,
@@ -277,7 +278,10 @@ function coerceWorkspaceTab(tab: WorkspaceTab): WorkspaceTab {
   return tab;
 }
 
-const storedActiveTab = useStorage<WorkspaceTab>(WORKSPACE_ACTIVE_TAB_STORAGE_KEY, 'terminal');
+const storedActiveTab = useStorage<WorkspaceTab>(
+  WORKSPACE_ACTIVE_TAB_STORAGE_KEY,
+  DEFAULT_DESKTOP_WORKSPACE_ROUTE_TAB
+);
 const activeTab = ref<WorkspaceTab>(
   coerceWorkspaceTab(normalizeWorkspaceTab(storedActiveTab.value))
 );

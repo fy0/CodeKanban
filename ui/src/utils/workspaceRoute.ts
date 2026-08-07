@@ -24,6 +24,9 @@ export type MobileWorkspaceRouteTab = Extract<
   'projects' | 'terminal' | 'web' | 'files' | 'changes' | 'notifications'
 >;
 
+/** The first desktop workspace surface shown when no tab has been selected yet. */
+export const DEFAULT_DESKTOP_WORKSPACE_ROUTE_TAB: DesktopWorkspaceRouteTab = 'web';
+
 const DESKTOP_WORKSPACE_ROUTE_TAB_SET = new Set<DesktopWorkspaceRouteTab>([
   'terminal',
   'web',
@@ -124,6 +127,9 @@ export function resolveDesktopWorkspaceRouteTab(
   const requestedTab = inferWorkspaceRouteTab(query);
   if (requestedTab) {
     return normalizeDesktopWorkspaceRouteTab(requestedTab);
+  }
+  if (fallback == null) {
+    return DEFAULT_DESKTOP_WORKSPACE_ROUTE_TAB;
   }
   return normalizeDesktopWorkspaceRouteTab(fallback);
 }

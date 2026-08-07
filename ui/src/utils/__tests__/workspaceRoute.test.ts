@@ -67,6 +67,7 @@ describe('workspaceRoute', () => {
     expect(resolveDesktopWorkspaceRouteTab({ tab: 'kanban' }, 'web')).toBe('terminal');
     expect(resolveDesktopWorkspaceRouteTab({ webSessionId: 'session-1' }, 'terminal')).toBe('web');
     expect(resolveDesktopWorkspaceRouteTab({}, 'web')).toBe('web');
+    expect(resolveDesktopWorkspaceRouteTab({}, undefined)).toBe('web');
   });
 
   it('resolves mobile tabs with a projects fallback for unsupported values', () => {

@@ -367,6 +367,7 @@ import {
 } from '@/utils/projectSessionBadge';
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import { formatVersionForDisplay } from '@/utils/versionDisplay';
+import { DEFAULT_DESKTOP_WORKSPACE_ROUTE_TAB } from '@/utils/workspaceRoute';
 import type { ProjectPriority } from '@/stores/project';
 import type { DropdownOption } from 'naive-ui';
 import Apis from '@/api';
@@ -448,7 +449,10 @@ const storedMobileViews = useStorage<Record<string, MobileView>>(
   MOBILE_ACTIVE_VIEW_STORAGE_KEY,
   {}
 );
-const storedWorkspaceTab = useStorage<WorkspaceTab>(WORKSPACE_ACTIVE_TAB_STORAGE_KEY, 'terminal');
+const storedWorkspaceTab = useStorage<WorkspaceTab>(
+  WORKSPACE_ACTIVE_TAB_STORAGE_KEY,
+  DEFAULT_DESKTOP_WORKSPACE_ROUTE_TAB
+);
 
 const preferredSessionKind = computed(() =>
   resolvePreferredProjectSessionKind({

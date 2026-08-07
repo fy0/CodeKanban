@@ -175,22 +175,6 @@
             <span>{{ t('nav.changes') }}</span>
           </button>
           <button
-            type="button"
-            class="nav-item"
-            :class="{ active: mobileActiveView === 'terminal' }"
-            @click="setMobileView('terminal')"
-          >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM7.293 15.707L5.586 14l1.707-1.707 1.414 1.414L7.293 15.707zm6.121-4.293l-1.414 1.414-1.414-1.414L11.879 10l1.535 1.414z"
-                />
-              </svg>
-            </n-icon>
-            <span>{{ t('nav.terminal') }}</span>
-          </button>
-          <button
             ref="webSessionNavButtonRef"
             type="button"
             class="nav-item"
@@ -214,6 +198,22 @@
               </svg>
             </n-icon>
             <span>{{ t('nav.webSession') }}</span>
+          </button>
+          <button
+            type="button"
+            class="nav-item"
+            :class="{ active: mobileActiveView === 'terminal' }"
+            @click="setMobileView('terminal')"
+          >
+            <n-icon size="20">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM7.293 15.707L5.586 14l1.707-1.707 1.414 1.414L7.293 15.707zm6.121-4.293l-1.414 1.414-1.414-1.414L11.879 10l1.535 1.414z"
+                />
+              </svg>
+            </n-icon>
+            <span>{{ t('nav.terminal') }}</span>
           </button>
         </div>
       </div>
