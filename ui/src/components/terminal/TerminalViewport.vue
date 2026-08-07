@@ -114,6 +114,7 @@ let dragOverHandler: ((event: DragEvent) => void) | null = null;
 let dropHandler: ((event: DragEvent) => void) | null = null;
 let terminalFocusHandler: (() => void) | null = null;
 let terminalBlurHandler: (() => void) | null = null;
+let containerResizeObserver: ResizeObserver | null = null;
 let transferOverlayTimer: number | null = null;
 let initialViewportRepairTimer: number | null = null;
 let initialViewportReady = false;
@@ -127,15 +128,13 @@ let pendingServerSnapshotUpdatedAt = 0;
 let debugRefreshHandler: (() => boolean) | null = null;
 let terminalTaskQueue: Promise<void> = Promise.resolve();
 let initialRestorePromise: Promise<void> | null = null;
-let deferredViewportRefresh:
-  | {
-      reason: string;
-      options: {
-        clearTextureAtlas?: boolean;
-        retry?: boolean;
-      };
-    }
-  | null = null;
+let deferredViewportRefresh: {
+  reason: string;
+  options: {
+    clearTextureAtlas?: boolean;
+    retry?: boolean;
+  };
+} | null = null;
 let replayBufferedMessagesResult: ReplayBufferedMessagesResult | null = null;
 let isDisposed = false;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
@@ -910,6 +909,11 @@ async function runInitialViewportRestore(reason: string) {
   updateLiveBufferedCount();
   logRestoreTrace('initial-restore-settled', { reason, restoredSource });
 
+  requestSnapshot('initial-restore-settled', {
+    allowLive: true,
+    continueAfterResize: true,
+  });
+
   scheduleInitialViewportRepair(
     restoredSource !== 'none' ? `${restoredSource}-snapshot-restored` : reason
   );
@@ -942,6 +946,17 @@ function finalizeInitialViewport(reason: string) {
 
 function handleMessage(payload: ServerMessage) {
   if (!terminal) {
+    return;
+  }
+
+  if (payload.type === 'ready') {
+    // The mount-time request can run before the websocket reaches OPEN. Retry
+    // once the server confirms the connection so Unix terminals receive the
+    // initial redraw/snapshot request reliably.
+    requestSnapshot('ready', {
+      allowLive: true,
+      continueAfterResize: true,
+    });
     return;
   }
 
@@ -982,7 +997,11 @@ function handleMessage(payload: ServerMessage) {
     return;
   }
 
-  if (initialViewportReady && (terminalCatchUpActive || !isDocumentVisible()) && isDeferredTerminalMessage(payload)) {
+  if (
+    initialViewportReady &&
+    (terminalCatchUpActive || !isDocumentVisible()) &&
+    isDeferredTerminalMessage(payload)
+  ) {
     bufferPendingTerminalMessage(payload);
     scheduleTerminalCatchUpSettle('deferred-terminal-message');
     return;
@@ -1277,6 +1296,28 @@ function refreshTerminalViewport(
   if (options.retry !== false && !initialRefreshFrozen) {
     window.setTimeout(runRefresh, 160);
   }
+}
+
+function handleTerminalContainerResize() {
+  if (!terminal || !isContainerVisible() || typeof window === 'undefined') {
+    return;
+  }
+
+  // Terminal viewports can be mounted while their parent is hidden by v-show.
+  // Fit and redraw as soon as the pane gets a real size instead of relying on
+  // a later keypress or window resize event to wake xterm up.
+  window.setTimeout(() => {
+    if (!terminal || !isContainerVisible()) {
+      return;
+    }
+    refreshTerminalViewport('container-visible', {
+      forceServerResize: true,
+    });
+    requestSnapshot('container-visible', {
+      allowLive: true,
+      continueAfterResize: true,
+    });
+  }, 0);
 }
 
 function syncTerminalSize(options: TerminalSizeSyncOptions = {}) {
@@ -1617,7 +1658,17 @@ onMounted(() => {
   replayBufferedMessagesResult = terminalStore.replayBufferedMessages(props.tab.id);
   updateReplayDebugState(replayBufferedMessagesResult);
   logRestoreTrace('mount-replayed-buffered-messages', replayBufferedMessagesResult ?? {});
-  requestSnapshot('mount');
+  requestSnapshot('mount', {
+    allowLive: true,
+    continueAfterResize: true,
+  });
+
+  if (container && typeof ResizeObserver !== 'undefined') {
+    containerResizeObserver = new ResizeObserver(() => {
+      handleTerminalContainerResize();
+    });
+    containerResizeObserver.observe(container);
+  }
 });
 
 function handleTerminalBlurEvent() {
@@ -1636,7 +1687,10 @@ function handleTerminalActivated() {
   }
 
   refreshTerminalViewport('terminal-activated');
-  requestSnapshot('activate');
+  requestSnapshot('activate', {
+    allowLive: true,
+    continueAfterResize: true,
+  });
 
   const isFirstVisit = !visitedTerminals.has(props.tab.id);
   if (isFirstVisit) {
@@ -1695,6 +1749,8 @@ onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handleTerminalDocumentVisibilityChange);
   }
+  containerResizeObserver?.disconnect();
+  containerResizeObserver = null;
   if (containerRef.value) {
     if (terminal?.textarea && terminalFocusHandler) {
       terminal.textarea.removeEventListener('focus', terminalFocusHandler);

@@ -770,6 +770,12 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 
 	go c.forwardPTY(ctx, cancel, session, stream, renderState, send)
 	go c.forwardSnapshots(ctx, cancel, session, renderState, sendSnapshot)
+	// A shell can emit its first prompt before the websocket replay finishes.
+	// Once the live stream is attached, force one same-size redraw so Unix
+	// shells repaint that prompt instead of waiting for the next user input.
+	if err := session.ForceRedraw(); err != nil {
+		c.logger.Debug("initial terminal redraw failed", zap.Error(err), zap.String("sessionId", session.ID()))
+	}
 	c.consumeClient(ctx, cancel, session, renderState, mirrorState, conn, send, sendSnapshot)
 }
 
@@ -971,6 +977,12 @@ func (c *terminalController) consumeClient(
 					continue
 				}
 			case "snapshot-request":
+				// A same-size resize is not guaranteed to generate SIGWINCH on
+				// Unix. Nudge the PTY before capturing the snapshot so a prompt or
+				// full-screen program is painted immediately after attachment.
+				if err := session.ForceRedraw(); err != nil {
+					c.logger.Debug("terminal redraw before snapshot failed", zap.Error(err), zap.String("sessionId", session.ID()))
+				}
 				if err := c.sendTerminalSnapshot(session, sendSnapshot, true); err != nil {
 					_ = send(wsMessage{Type: "error", Data: err.Error()})
 					continue

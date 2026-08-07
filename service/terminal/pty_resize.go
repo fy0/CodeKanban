@@ -11,10 +11,22 @@ func resizeSequence(goos string, currentCols, currentRows, targetCols, targetRow
 	if targetCols <= 0 || targetRows <= 0 {
 		return nil
 	}
-	if goos == "linux" && currentCols == targetCols && currentRows == targetRows {
+	// Some Unix shells only repaint after a real window-size change. A
+	// same-size TIOCSWINSZ can be ignored by the kernel, so briefly nudge the
+	// row count to force SIGWINCH and immediately restore the requested size.
+	if shouldNudgeSameSizeResize(goos) && currentCols == targetCols && currentRows == targetRows {
 		return []terminalSize{{cols: targetCols, rows: targetRows + 1}, {cols: targetCols, rows: targetRows}}
 	}
 	return []terminalSize{{cols: targetCols, rows: targetRows}}
+}
+
+func shouldNudgeSameSizeResize(goos string) bool {
+	switch goos {
+	case "linux", "darwin":
+		return true
+	default:
+		return false
+	}
 }
 
 func resizePTYForTarget(pty xpty.Pty, goos string, currentCols, currentRows, targetCols, targetRows int) error {
