@@ -83,13 +83,44 @@ describe('web session composer decorations and completions', () => {
     ]);
   });
 
+  it('highlights compact commands for both Codex and Claude', () => {
+    const text = '/compact\n/compact preserve key decisions\n/compactly\nbefore /compact';
+    const compactTokens = (goalEnabled: boolean) =>
+      buildWebSessionComposerHighlights(text, skills, goalEnabled)
+        .filter(range => range.kind === 'compact')
+        .map(range => text.slice(range.from, range.to));
+
+    expect(compactTokens(true)).toEqual(['/compact', '/compact']);
+    expect(compactTokens(false)).toEqual(['/compact', '/compact']);
+  });
+
   it('keeps goal completion at the document start', () => {
     expect(buildWebSessionComposerCompletions('/go', 3, skills)).toMatchObject({
       from: 0,
       to: 3,
       options: [{ label: '/goal', apply: '/goal ' }],
     });
+    expect(
+      buildWebSessionComposerCompletions('/', 1, skills).options.map(option => option.label)
+    ).toEqual(['/goal', '/compact']);
     expect(buildWebSessionComposerCompletions('before /go', 10, skills).options).toEqual([]);
+  });
+
+  it('offers compact completion for both Codex and Claude', () => {
+    for (const goalEnabled of [true, false]) {
+      expect(buildWebSessionComposerCompletions('/com', 4, skills, goalEnabled)).toMatchObject({
+        from: 0,
+        to: 4,
+        options: [
+          {
+            key: 'slash:compact',
+            label: '/compact',
+            detail: 'Summarize conversation',
+            apply: '/compact ',
+          },
+        ],
+      });
+    }
   });
 
   it('does not expose goal affordances when the selected agent is Claude', () => {

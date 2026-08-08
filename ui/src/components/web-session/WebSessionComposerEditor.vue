@@ -129,9 +129,11 @@ function buildHighlightDecorations(doc: ProseMirrorNode) {
       const className =
         range.kind === 'goal'
           ? 'composer-goal-command'
-          : range.kind === 'skill'
-            ? 'composer-skill-token'
-            : 'composer-skill-token composer-skill-token--unknown';
+          : range.kind === 'compact'
+            ? 'composer-compact-command'
+            : range.kind === 'skill'
+              ? 'composer-skill-token'
+              : 'composer-skill-token composer-skill-token--unknown';
       return Decoration.inline(
         composerOffsetToPosition(range.from, text.length),
         composerOffsetToPosition(range.to, text.length),
@@ -612,6 +614,15 @@ defineExpose<WebSessionComposerEditorExposed>({
     color-mix(in srgb, #f97316 22%, transparent) 100%
   );
   color: color-mix(in srgb, #9a3412 82%, #111827);
+  font-weight: 700;
+  padding: 0 2px;
+  box-decoration-break: clone;
+}
+
+.web-session-composer-editor :deep(.composer-compact-command) {
+  border-radius: 7px;
+  background: color-mix(in srgb, #0d9488 18%, transparent);
+  color: color-mix(in srgb, #0f766e 86%, #111827);
   font-weight: 700;
   padding: 0 2px;
   box-decoration-break: clone;

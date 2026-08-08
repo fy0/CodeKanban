@@ -27,7 +27,7 @@ export interface WebSessionComposerCompletionResult {
   options: WebSessionComposerCompletionOption[];
 }
 
-export type WebSessionComposerHighlightKind = 'skill' | 'unknown-skill' | 'goal';
+export type WebSessionComposerHighlightKind = 'skill' | 'unknown-skill' | 'goal' | 'compact';
 
 export interface WebSessionComposerHighlightRange {
   from: number;
@@ -142,6 +142,15 @@ export function buildWebSessionComposerHighlights(
     }
   }
 
+  for (const match of String(text ?? '').matchAll(/^\/compact(?:\s|$)/gm)) {
+    const from = match.index;
+    ranges.push({
+      from,
+      to: from + '/compact'.length,
+      kind: 'compact',
+    });
+  }
+
   return ranges.sort((left, right) => left.from - right.from || left.to - right.to);
 }
 
@@ -157,11 +166,18 @@ export function buildWebSessionComposerCompletions(
   const slashMatch = beforeCursor.match(/^\/[a-z-]*$/i);
   if (slashMatch) {
     const query = slashMatch[0].slice(1).toLowerCase();
-    const options: WebSessionComposerCompletionOption[] = (
-      goalEnabled
+    const slashOptions: WebSessionComposerCompletionOption[] = [
+      ...(goalEnabled
         ? [{ key: 'slash:goal', label: '/goal', detail: 'Persistent goal', apply: '/goal ' }]
-        : []
-    ).filter(option => option.label.slice(1).startsWith(query));
+        : []),
+      {
+        key: 'slash:compact',
+        label: '/compact',
+        detail: 'Summarize conversation',
+        apply: '/compact ',
+      },
+    ];
+    const options = slashOptions.filter(option => option.label.slice(1).startsWith(query));
     return {
       from: 0,
       to: safeCursor,
