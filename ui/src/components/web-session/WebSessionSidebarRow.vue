@@ -344,7 +344,7 @@ onBeforeUnmount(clearLongPressTimer);
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
   justify-content: flex-end;
 }
@@ -373,6 +373,7 @@ onBeforeUnmount(clearLongPressTimer);
   color: #ffffff;
   background: var(--badge-color, #3b82f6);
   background-image: none;
+  border-radius: 4px;
   border: 1px solid
     color-mix(in srgb, var(--badge-color, #3b82f6) 78%, var(--app-surface-color, #fff) 22%);
   margin-left: 0;
@@ -384,9 +385,9 @@ onBeforeUnmount(clearLongPressTimer);
 }
 
 .session-sidebar-trailing-slot {
-  width: 38px;
+  width: 34px;
   height: var(--session-sidebar-action-size, 22px);
-  flex: 0 0 38px;
+  flex: 0 0 34px;
   display: grid;
   align-items: center;
   justify-items: end;

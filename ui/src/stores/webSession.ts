@@ -31,6 +31,7 @@ import {
 } from '@/utils/webSessionRevision';
 import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
+import { selectMostRecentWebSession } from '@/utils/webSessionRecency';
 
 type WireFrameKind = 'ack' | 'snap' | 'evt' | 'err' | 'hb';
 type WireHeartbeatOp = 'ping' | 'pong' | 'focus';
@@ -4962,8 +4963,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
         ...loadedProjects.value,
         [projectId]: true,
       };
-      if (!hasStoredActiveSession(projectId) && sessions[0]?.id) {
-        rememberActiveSession(projectId, sessions[0].id);
+      if (!hasStoredActiveSession(projectId)) {
+        const mostRecentSession = selectMostRecentWebSession(sessions);
+        if (mostRecentSession) {
+          rememberActiveSession(projectId, mostRecentSession.id);
+        }
       }
       return sessions;
     });

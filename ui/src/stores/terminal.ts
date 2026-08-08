@@ -982,6 +982,17 @@ export const useTerminalStore = defineStore('terminal', () => {
     return tabStore.get(projectId) ?? [];
   }
 
+  /** 返回所有项目下已加载的终端会话（用于跨项目的「全部终端」视图）。 */
+  function getAllTabs(): Array<{ projectId: string; tab: TerminalTabState }> {
+    const items: Array<{ projectId: string; tab: TerminalTabState }> = [];
+    tabStore.forEach((bucket, projectId) => {
+      bucket.forEach(tab => {
+        items.push({ projectId, tab });
+      });
+    });
+    return items;
+  }
+
   function getActiveTabId(projectId?: string) {
     if (!projectId) {
       return '';
@@ -2106,6 +2117,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   return {
     emitter,
     getTabs,
+    getAllTabs,
     getActiveTabId,
     setActiveTab,
     prepareProject,

@@ -10,19 +10,45 @@
       :aria-label="t('terminal.title')"
     >
       <header class="terminal-sidebar-header">
-        <div class="terminal-sidebar-heading">
-          <n-icon size="15"><TerminalOutline /></n-icon>
-          <span>{{ t('terminal.title') }}</span>
-          <span class="terminal-sidebar-count">{{ rows.length }}</span>
+        <div class="terminal-sidebar-title-wrap">
+          <SplitDropdownControl
+            class="terminal-sidebar-scope-control"
+            :label="sidebarScopeLabel"
+            :options="sidebarScopeOptions"
+            :title="sidebarScopeTitle"
+            :menu-title="sidebarScopeAriaLabel"
+            :aria-label="sidebarScopeAriaLabel"
+            flat
+            @main-click="toggleSidebarScope"
+            @select="handleSidebarScopeSelect"
+          >
+            <template #prefix>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M4 7h16M4 12h10M4 17h8"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </template>
+          </SplitDropdownControl>
         </div>
-        <n-tooltip placement="bottom" :delay="250">
-          <template #trigger>
-            <button type="button" class="terminal-sidebar-reset" @click="resetWidth">
-              <n-icon size="14"><RefreshOutline /></n-icon>
-            </button>
-          </template>
-          {{ t('common.reset') }}
-        </n-tooltip>
+        <div class="terminal-sidebar-header-actions">
+          <span class="terminal-sidebar-count">{{ rows.length }}</span>
+          <span v-if="allProjectSessionsLoading" class="terminal-sidebar-loading-icon">
+            <n-icon size="12"><SyncOutline /></n-icon>
+          </span>
+          <n-tooltip placement="bottom" :delay="250">
+            <template #trigger>
+              <button type="button" class="terminal-sidebar-reset" @click="resetWidth">
+                <n-icon size="14"><RefreshOutline /></n-icon>
+              </button>
+            </template>
+            {{ t('common.reset') }}
+          </n-tooltip>
+        </div>
       </header>
 
       <div class="terminal-sidebar-list">
@@ -31,8 +57,8 @@
           :key="row.id"
           :row="row"
           :action-options="actionOptions"
-          @select="selectRow(row.id)"
-          @action="handleRowAction(row.id, $event)"
+          @select="selectRow(row)"
+          @action="handleRowAction(row, $event)"
         />
         <div v-if="!rows.length" class="terminal-sidebar-empty">
           {{ t('terminal.emptyGuideTitle') }}
@@ -44,6 +70,7 @@
 
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useStorage } from '@vueuse/core';
 import { NIcon, NInput, NTooltip, type DropdownOption } from 'naive-ui';
 import {
@@ -51,14 +78,17 @@ import {
   CreateOutline,
   CopyOutline,
   RefreshOutline,
-  TerminalOutline,
+  SyncOutline,
 } from '@vicons/ionicons5';
 import { useDialog, useMessage } from 'naive-ui';
 import { useLocale } from '@/composables/useLocale';
 import { useSettingsStore } from '@/stores/settings';
+import { useProjectStore } from '@/stores/project';
 import { useTerminalStore, type TerminalTabState } from '@/stores/terminal';
 import { storeToRefs } from 'pinia';
-import { getAssistantIconByType } from '@/utils/assistantIcon';
+import { getAssistantColorByType, getAssistantIconByType } from '@/utils/assistantIcon';
+import { buildProjectBadgeMap } from '@/utils/projectBadge';
+import { buildWorkspaceRouteQuery } from '@/utils/workspaceRoute';
 import {
   formatWebSessionDateTime,
   formatWebSessionSidebarTime,
@@ -66,6 +96,7 @@ import {
 import TerminalSidebarRow, {
   type TerminalSidebarRowView,
 } from '@/components/terminal/TerminalSidebarRow.vue';
+import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
 
 const props = defineProps<{ projectId: string }>();
 const { t, locale } = useLocale();
@@ -74,9 +105,93 @@ const dialog = useDialog();
 const settingsStore = useSettingsStore();
 const { confirmBeforeTerminalClose } = storeToRefs(settingsStore);
 const terminalStore = useTerminalStore();
+const projectStore = useProjectStore();
+const route = useRoute();
+const router = useRouter();
 const { setActiveTab, getActiveTabId, focusSession, renameSession, closeSession, createSession } =
   terminalStore;
 const tabs = computed(() => terminalStore.getTabs(props.projectId));
+
+const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-terminal-sidebar-scope';
+const persistedSidebarScope = useStorage<'current' | 'all'>(SIDEBAR_SCOPE_STORAGE_KEY, 'current');
+const sidebarScope = computed<'current' | 'all'>({
+  get: () => (persistedSidebarScope.value === 'all' ? 'all' : 'current'),
+  set: value => {
+    persistedSidebarScope.value = value;
+  },
+});
+const sidebarScopeOptions = computed<DropdownOption[]>(() => [
+  { key: 'all', label: t('terminal.sidebarScopeAll') },
+  { key: 'current', label: t('terminal.sidebarScopeCurrent') },
+]);
+const sidebarScopeLabel = computed(() =>
+  sidebarScope.value === 'current'
+    ? t('terminal.sidebarScopeCurrent')
+    : t('terminal.sidebarScopeAll')
+);
+const sidebarScopeAriaLabel = computed(() =>
+  t('terminal.sidebarScopeAria', { scope: sidebarScopeLabel.value })
+);
+const sidebarScopeTitle = computed(() =>
+  t('terminal.sidebarScopeToggle', {
+    current: sidebarScopeLabel.value,
+    next:
+      resolveTerminalSidebarToggleScope(sidebarScope.value) === 'all'
+        ? t('terminal.sidebarScopeAll')
+        : t('terminal.sidebarScopeCurrent'),
+  })
+);
+
+function resolveTerminalSidebarToggleScope(scope: 'current' | 'all'): 'current' | 'all' {
+  return scope === 'current' ? 'all' : 'current';
+}
+
+function toggleSidebarScope() {
+  sidebarScope.value = resolveTerminalSidebarToggleScope(sidebarScope.value);
+}
+
+function handleSidebarScopeSelect(key: string | number) {
+  sidebarScope.value = key === 'all' ? 'all' : 'current';
+}
+
+// 「全部终端」需要跨项目会话：进入 all 范围时从服务端拉取各项目终端会话，
+// 而不是只显示本会话里打开过的项目（与会话页跨项目列表语义一致）。
+const allProjectSessionsLoading = ref(false);
+let allProjectSessionsLoadToken = 0;
+
+async function ensureAllProjectSessionsLoaded() {
+  const token = ++allProjectSessionsLoadToken;
+  allProjectSessionsLoading.value = true;
+  try {
+    const counts = await terminalStore.loadTerminalCounts();
+    if (token !== allProjectSessionsLoadToken) {
+      return;
+    }
+    const projectIds = new Set<string>();
+    Object.keys(counts).forEach(projectId => {
+      if (Number(counts[projectId]) > 0) {
+        projectIds.add(projectId);
+      }
+    });
+    // 补上本会话已加载过、但服务端计数未知的项目
+    allProjectTabs.value.forEach(item => projectIds.add(item.projectId));
+    await Promise.allSettled(
+      [...projectIds].map(projectId => terminalStore.loadSessions(projectId))
+    );
+  } catch (error) {
+    console.error('Failed to load all terminal sessions', error);
+  } finally {
+    if (token === allProjectSessionsLoadToken) {
+      allProjectSessionsLoading.value = false;
+    }
+  }
+}
+
+watch(sidebarScope, scope => {
+  if (scope === 'all') {
+    void ensureAllProjectSessionsLoaded();
+  }
+});
 
 const MIN_SIDEBAR_WIDTH = 176;
 const MAX_SIDEBAR_WIDTH = 420;
@@ -136,19 +251,53 @@ function hIcon(icon: unknown) {
   return h(NIcon, null, { default: () => h(icon as any) });
 }
 
+type TerminalSidebarEntry = { projectId: string; tab: TerminalTabState };
+
+const allProjectTabs = computed(() => terminalStore.getAllTabs());
+
+const terminalEntries = computed<TerminalSidebarEntry[]>(() => {
+  if (sidebarScope.value === 'current') {
+    return tabs.value.map(tab => ({ projectId: props.projectId, tab }));
+  }
+  // 保持加载顺序，不要在切换项目时把当前项目顶到最上
+  return allProjectTabs.value.map(item => ({ projectId: item.projectId, tab: item.tab }));
+});
+
+const terminalProjectBadges = computed(() =>
+  buildProjectBadgeMap(
+    [...new Set(terminalEntries.value.map(entry => entry.projectId))],
+    projectId => getProjectDisplayName(projectId)
+  )
+);
+
+function getProjectDisplayName(projectId: string) {
+  return projectStore.projects.find(item => item.id === projectId)?.name || projectId;
+}
+
 const rows = computed<TerminalSidebarRowView[]>(() =>
-  tabs.value.map(tab => {
+  terminalEntries.value.map(entry => {
+    const { projectId, tab } = entry;
+    const isCurrentProject = projectId === props.projectId;
     const timestamp = parseTimestamp(tab.lastActive || tab.createdAt);
     const agentName = getAgentName(tab);
+    const badge = isCurrentProject ? null : (terminalProjectBadges.value.get(projectId) ?? null);
     return {
       id: tab.id,
+      projectId,
       title: tab.title || t('terminal.defaultTerminalTitle'),
       agentName,
       iconHtml: getAssistantIconByType(
         tab.aiAssistant?.detected ? tab.aiAssistant.type : undefined
       ),
-      active: tab.id === getActiveTabId(props.projectId),
-      tooltip: [tab.title, agentName, tab.workingDir].filter(Boolean).join(' · '),
+      iconColor: tab.aiAssistant?.detected
+        ? getAssistantColorByType(tab.aiAssistant.type)
+        : undefined,
+      projectBadge: badge,
+      projectName: badge ? getProjectDisplayName(projectId) : undefined,
+      active: isCurrentProject && tab.id === getActiveTabId(props.projectId),
+      tooltip: [badge ? getProjectDisplayName(projectId) : '', tab.title, agentName, tab.workingDir]
+        .filter(Boolean)
+        .join(' · '),
       activityTimeLabel: formatWebSessionSidebarTime(timestamp),
       activityTimeTitle: formatWebSessionDateTime(timestamp, locale.value),
     };
@@ -169,12 +318,23 @@ function getAgentName(tab: TerminalTabState) {
     : t('terminal.title');
 }
 
-function selectRow(sessionId: string) {
-  setActiveTab(props.projectId, sessionId);
-  focusSession(props.projectId, sessionId);
+function selectRow(row: TerminalSidebarRowView) {
+  if (row.projectId === props.projectId) {
+    setActiveTab(props.projectId, row.id);
+    focusSession(props.projectId, row.id);
+    return;
+  }
+  // 跨项目：激活对应项目的终端会话并跳转到该项目终端页
+  setActiveTab(row.projectId, row.id);
+  projectStore.addRecentProject(row.projectId);
+  void router.push({
+    name: 'project',
+    params: { id: row.projectId },
+    query: buildWorkspaceRouteQuery(route.query, 'terminal'),
+  });
 }
 
-function promptRename(tab: TerminalTabState) {
+function promptRename(projectId: string, tab: TerminalTabState) {
   const inputValue = ref(tab.title);
   dialog.create({
     title: t('terminal.renameTitle'),
@@ -201,7 +361,7 @@ function promptRename(tab: TerminalTabState) {
         return true;
       }
       try {
-        await renameSession(props.projectId, tab.id, title);
+        await renameSession(projectId, tab.id, title);
         message.success(t('terminal.renameSuccess'));
         return true;
       } catch (error: any) {
@@ -212,18 +372,19 @@ function promptRename(tab: TerminalTabState) {
   });
 }
 
-async function handleRowAction(sessionId: string, key: string | number) {
-  const tab = tabs.value.find(item => item.id === sessionId);
-  if (!tab) {
+async function handleRowAction(row: TerminalSidebarRowView, key: string | number) {
+  const entry = terminalEntries.value.find(item => item.tab.id === row.id);
+  if (!entry) {
     return;
   }
+  const { projectId, tab } = entry;
   if (key === 'rename') {
-    promptRename(tab);
+    promptRename(projectId, tab);
     return;
   }
   if (key === 'duplicate') {
     try {
-      await createSession(props.projectId, {
+      await createSession(projectId, {
         worktreeId: tab.worktreeId,
         workingDir: tab.workingDir,
         title: `${tab.title}${t('terminal.duplicateSuffix')}`,
@@ -238,7 +399,7 @@ async function handleRowAction(sessionId: string, key: string | number) {
     return;
   }
   if (key === 'close') {
-    const close = () => closeSession(props.projectId, tab.id);
+    const close = () => closeSession(projectId, tab.id);
     if (confirmBeforeTerminalClose.value) {
       dialog.warning({
         title: t('terminal.confirmCloseTitle'),
@@ -291,6 +452,9 @@ onMounted(() => {
     resizeObserver.observe(parent);
   }
   updateContainerWidth();
+  if (sidebarScope.value === 'all') {
+    void ensureAllProjectSessionsLoaded();
+  }
 });
 
 onBeforeUnmount(() => {
@@ -315,6 +479,13 @@ watch(
   display: flex;
   min-height: 0;
   flex: 0 0 auto;
+  /* 抵消 .terminal-split 的 12px 内边距，让侧边栏及其分隔线上下顶到头 */
+  margin-top: -12px;
+  margin-bottom: -12px;
+  /* 抵消 .terminal-split 的 12px 间隙，让右侧栏左边缘与终端主区对齐 */
+  margin-left: -12px;
+  /* 让侧栏内容贴近工作区右缘，避免保留多余的右侧空白 */
+  margin-right: -12px;
 }
 
 .terminal-sidebar-panel {
@@ -336,33 +507,81 @@ watch(
   border-bottom: 1px solid color-mix(in srgb, var(--n-border-color) 70%, transparent);
 }
 
-.terminal-sidebar-heading {
+.terminal-sidebar-title-wrap {
+  min-width: 0;
+}
+
+.terminal-sidebar-header-actions {
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--n-text-color-2);
-  font-size: 12px;
-  font-weight: 700;
+  gap: 7px;
+}
+
+.terminal-sidebar-scope-control {
+  flex-shrink: 0;
+}
+
+.terminal-sidebar-scope-control:deep(.split-dropdown-control) {
+  border-radius: 6px;
+}
+
+.terminal-sidebar-scope-control:deep(.split-dropdown-main),
+.terminal-sidebar-scope-control:deep(.split-dropdown-menu) {
+  height: 28px;
+  font-size: 11px;
+}
+
+.terminal-sidebar-scope-control:deep(.split-dropdown-main) {
+  padding: 0 7px;
+  gap: 5px;
+}
+
+.terminal-sidebar-scope-control:deep(.split-dropdown-menu) {
+  padding: 0 6px;
+}
+
+.terminal-sidebar-scope-control:deep(.split-dropdown-icon) {
+  width: 12px;
+  height: 12px;
+}
+
+.terminal-sidebar-scope-control:deep(.split-dropdown-icon svg) {
+  width: 12px;
+  height: 12px;
 }
 
 .terminal-sidebar-count {
-  min-width: 18px;
-  height: 18px;
+  min-width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 5px;
-  border-radius: 9px;
+  padding: 0 4px;
+  border-radius: 5px;
   background: color-mix(in srgb, var(--n-primary-color) 12%, transparent);
   color: var(--n-primary-color);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 
+.terminal-sidebar-loading-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--n-text-color-3);
+  animation: terminal-sidebar-spin 0.9s linear infinite;
+}
+
+@keyframes terminal-sidebar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .terminal-sidebar-reset {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

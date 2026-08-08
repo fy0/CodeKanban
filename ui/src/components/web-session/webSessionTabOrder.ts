@@ -1,3 +1,8 @@
+import {
+  selectMostRecentWebSession,
+  type WebSessionRecencySessionLike,
+} from '@/utils/webSessionRecency';
+
 export type OrderedTabSessionLike = {
   id: string;
 };
@@ -6,6 +11,8 @@ export type MobileCurrentSessionLike = OrderedTabSessionLike & {
   orderIndex: number;
   isDraft?: boolean;
 };
+
+export type CloseFallbackSessionLike = OrderedTabSessionLike & WebSessionRecencySessionLike;
 
 export function clampTabAnchorIndex(anchorIndex: number, baseLength: number) {
   if (!Number.isFinite(anchorIndex)) {
@@ -17,6 +24,21 @@ export function clampTabAnchorIndex(anchorIndex: number, baseLength: number) {
 
 function normalizeSessionId(sessionId = '') {
   return String(sessionId || '').trim();
+}
+
+function normalizeSessionIdList(sessionIds: string[] | undefined) {
+  if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+    return [];
+  }
+  const next: string[] = [];
+  sessionIds.forEach(sessionId => {
+    const normalized = normalizeSessionId(sessionId);
+    if (!normalized || next.includes(normalized)) {
+      return;
+    }
+    next.push(normalized);
+  });
+  return next;
 }
 
 export function resolveUnderlyingTabSessionId(options: {
@@ -90,6 +112,23 @@ export function buildOrderedTabSessions<T extends OrderedTabSessionLike>(
   const anchored = [...ordered];
   anchored.splice(clampTabAnchorIndex(fixedAnchorIndex, anchored.length), 0, fixedSession);
   return anchored;
+}
+
+export function resolveNextWebSessionTabAfterClose<T extends CloseFallbackSessionLike>(options: {
+  closingSessionId: string;
+  sessions: T[];
+  mruIds?: string[];
+}) {
+  const closingSessionId = normalizeSessionId(options.closingSessionId);
+  const remainingSessions = options.sessions.filter(session => session.id !== closingSessionId);
+  const remainingSessionById = new Map(remainingSessions.map(session => [session.id, session]));
+  const mruTargetId = normalizeSessionIdList(options.mruIds).find(sessionId =>
+    remainingSessionById.has(sessionId)
+  );
+  if (mruTargetId) {
+    return mruTargetId;
+  }
+  return selectMostRecentWebSession(remainingSessions)?.id ?? '';
 }
 
 function sortableNumber(value: number) {

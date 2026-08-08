@@ -6,6 +6,18 @@
         <button
           type="button"
           class="tab-item"
+          :class="{ active: activeTab === 'terminal' }"
+          @click="activateTab('terminal')"
+        >
+          <n-icon size="16">
+            <TerminalOutline />
+          </n-icon>
+          <span class="tab-label">{{ t('nav.terminal') }}</span>
+          <span v-if="terminalCount > 0" class="tab-badge">{{ terminalCount }}</span>
+        </button>
+        <button
+          type="button"
+          class="tab-item"
           :class="{ active: activeTab === 'web' }"
           @click="activateTab('web')"
         >
@@ -16,18 +28,6 @@
           <span class="tab-badge session-summary-badge">
             {{ webSessionSummaryText }}
           </span>
-        </button>
-        <button
-          type="button"
-          class="tab-item"
-          :class="{ active: activeTab === 'terminal' }"
-          @click="activateTab('terminal')"
-        >
-          <n-icon size="16">
-            <TerminalOutline />
-          </n-icon>
-          <span class="tab-label">{{ t('nav.terminal') }}</span>
-          <span v-if="terminalCount > 0" class="tab-badge">{{ terminalCount }}</span>
         </button>
         <button
           type="button"
@@ -76,6 +76,37 @@
         </button>
       </div>
       <div v-if="activeTab === 'terminal' || activeTab === 'web'" class="tab-actions">
+        <div
+          v-if="activeTab === 'terminal' || activeTab === 'web'"
+          class="terminal-project-switcher"
+        >
+          <n-tooltip placement="bottom" :delay="250">
+            <template #trigger>
+              <n-dropdown
+                trigger="click"
+                placement="bottom-end"
+                :options="projectSwitchOptions"
+                @select="handleProjectSwitchSelect"
+              >
+                <button
+                  type="button"
+                  class="header-action-btn terminal-project-switch"
+                  :aria-label="projectSwitchLabel"
+                >
+                  <span
+                    v-if="currentProjectBadge"
+                    class="terminal-project-badge"
+                    :style="{ background: currentProjectBadge.color }"
+                  >
+                    {{ currentProjectBadge.label }}
+                  </span>
+                  <n-icon size="14"><ChevronDownOutline /></n-icon>
+                </button>
+              </n-dropdown>
+            </template>
+            {{ projectSwitchLabel }}
+          </n-tooltip>
+        </div>
         <n-tooltip placement="bottom" :delay="250">
           <template #trigger>
             <button
@@ -190,13 +221,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
 import { useEventListener, useStorage } from '@vueuse/core';
-import { NIcon } from 'naive-ui';
+import { NIcon, type DropdownOption } from 'naive-ui';
 import {
   ChatbubblesOutline,
+  ChevronDownOutline,
   FolderOpenOutline,
   GitBranchOutline,
+  GridOutline,
   SyncOutline,
   TerminalOutline,
   WarningOutline,
@@ -240,6 +273,7 @@ import {
 } from '@/utils/workspaceRoute';
 import { resolveWorkspaceShortcutTarget } from '@/utils/workspaceTabShortcut';
 import { gitOperationAvailable } from '@/utils/projectGitCapability';
+import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
 import { fileManagerApi } from '@/api/fileManager';
 
 const props = defineProps<{
@@ -400,6 +434,93 @@ function togglePreviousWorkspaceTab() {
 const terminalCount = computed(() => {
   return terminalStore.getTabs(props.projectId).length;
 });
+
+// 当前项目切换（终端页 / 会话页）
+const projectSwitchLabel = computed(() =>
+  activeTab.value === 'web' ? t('webSession.switchProject') : t('terminal.switchProject')
+);
+const recentProjectIds = computed(() => projectStore.recentProjects.map(project => project.id));
+const projectSwitchBadges = computed(() => {
+  const ordered = recentProjectIds.value.slice();
+  if (!ordered.includes(props.projectId)) {
+    ordered.push(props.projectId);
+  }
+  return buildProjectBadgeMap(ordered, projectId => {
+    const project = projectStore.projects.find(item => item.id === projectId);
+    return project?.name?.trim() || projectId;
+  });
+});
+const currentProjectBadge = computed<ProjectBadge | null>(
+  () => projectSwitchBadges.value.get(props.projectId) ?? null
+);
+const projectSwitchOptions = computed<DropdownOption[]>(() => [
+  {
+    label: projectSwitchLabel.value,
+    key: '__header__',
+    disabled: true,
+  },
+  ...recentProjectIds.value.map(projectId => {
+    const badge = projectSwitchBadges.value.get(projectId);
+    return {
+      label:
+        projectStore.projects.find(project => project.id === projectId)?.name?.trim() || projectId,
+      key: projectId,
+      disabled: projectId === props.projectId,
+      icon: badge ? () => renderProjectBadge(badge) : undefined,
+    };
+  }),
+  {
+    type: 'divider',
+    key: '__divider__',
+  },
+  {
+    label: t('terminal.openProjectList'),
+    key: '__open_project_list__',
+    icon: () => h(NIcon, null, { default: () => h(GridOutline) }),
+  },
+]);
+
+function renderProjectBadge(badge: ProjectBadge) {
+  return h(
+    'span',
+    {
+      class: 'terminal-project-option-badge',
+      style: {
+        background: badge.color,
+        color: '#ffffff',
+        width: '20px',
+        height: '20px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: '6px',
+        fontSize: '10px',
+        fontWeight: '700',
+        lineHeight: '1',
+      } as any,
+    },
+    badge.label
+  );
+}
+
+function handleProjectSwitchSelect(key: string | number) {
+  if (typeof key !== 'string') {
+    return;
+  }
+  if (key === '__open_project_list__') {
+    void router.push({ name: 'projects' });
+    return;
+  }
+  if (key === props.projectId || key === '__header__') {
+    return;
+  }
+  projectStore.addRecentProject(key);
+  void router.push({
+    name: 'project',
+    params: { id: key },
+    query: buildWorkspaceRouteQuery(route.query, activeTab.value),
+  });
+}
 
 const webSessionSummary = computed(() =>
   summarizeWebSessions(webSessionStore.getSessions(props.projectId), sessionId =>
@@ -892,6 +1013,25 @@ if (typeof window !== 'undefined') {
 
 .header-action-btn[aria-pressed='true']:hover {
   color: var(--n-primary-color);
+}
+
+.terminal-project-switch {
+  width: auto;
+  gap: 6px;
+  padding: 0 7px 0 5px;
+}
+
+.terminal-project-badge {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .sidebar-toggle-icon {

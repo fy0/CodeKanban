@@ -7,13 +7,25 @@
     @contextmenu.prevent.stop="handleContextMenu"
   >
     <button type="button" class="terminal-sidebar-main">
-      <span class="terminal-sidebar-agent-icon" aria-hidden="true" v-html="row.iconHtml"></span>
+      <span
+        class="terminal-sidebar-agent-icon"
+        :style="row.iconColor ? { color: row.iconColor } : undefined"
+        aria-hidden="true"
+        v-html="row.iconHtml"
+      ></span>
       <span class="terminal-sidebar-title-line">
         <span class="terminal-sidebar-title">{{ row.title }}</span>
         <span class="terminal-sidebar-agent-name">{{ row.agentName }}</span>
       </span>
     </button>
 
+    <span
+      v-if="row.projectBadge"
+      class="terminal-sidebar-project-badge"
+      :style="{ background: row.projectBadge.color }"
+      :title="row.projectName"
+      >{{ row.projectBadge.label }}</span
+    >
     <span class="terminal-sidebar-trailing-slot">
       <span class="terminal-sidebar-activity-time" :title="row.activityTimeTitle">
         {{ row.activityTimeLabel }}
@@ -52,9 +64,17 @@ import { useLocale } from '@/composables/useLocale';
 
 export interface TerminalSidebarRowView {
   id: string;
+  /** 所属项目 id（跨项目「全部终端」视图：选中据此跳转/操作对应项目） */
+  projectId: string;
   title: string;
   agentName: string;
   iconHtml: string;
+  /** 图标品牌色；未识别/无品牌色时留空，使用默认中性色 */
+  iconColor?: string;
+  /** 跨项目视图下显示的项目徽章；当前项目行可不传 */
+  projectBadge?: { label: string; color: string } | null;
+  /** 项目名称（徽章 title） */
+  projectName?: string;
   active: boolean;
   tooltip: string;
   activityTimeLabel: string;
@@ -194,13 +214,29 @@ onBeforeUnmount(closeMenu);
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
-  color: var(--n-primary-color);
+  color: var(--n-text-color-3);
 }
 
 .terminal-sidebar-agent-icon :deep(svg) {
   display: block;
   width: 16px;
   height: 16px;
+}
+
+.terminal-sidebar-project-badge {
+  flex: 0 0 auto;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .terminal-sidebar-title-line {

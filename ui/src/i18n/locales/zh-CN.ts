@@ -518,6 +518,12 @@ export default {
   },
   terminal: {
     title: '终端',
+    switchProject: '切换项目',
+    openProjectList: '打开项目列表',
+    sidebarScopeAll: '全部终端',
+    sidebarScopeCurrent: '当前终端',
+    sidebarScopeAria: '终端范围：{scope}',
+    sidebarScopeToggle: '当前显示{current}，点击切换到{next}',
     newTerminal: '新建终端',
     closeTerminal: '关闭终端',
     clearTerminal: '清空终端',

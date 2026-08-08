@@ -533,6 +533,12 @@ export default {
   },
   terminal: {
     title: 'Terminal',
+    switchProject: 'Switch project',
+    openProjectList: 'Open project list',
+    sidebarScopeAll: 'All terminals',
+    sidebarScopeCurrent: 'Current terminal',
+    sidebarScopeAria: 'Terminal scope: {scope}',
+    sidebarScopeToggle: 'Currently showing {current}. Click to switch to {next}',
     newTerminal: 'New Terminal',
     closeTerminal: 'Close Terminal',
     clearTerminal: 'Clear Terminal',

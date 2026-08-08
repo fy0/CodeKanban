@@ -3223,6 +3223,7 @@ import {
 } from '@/components/web-session/webSessionContextUsage';
 import {
   buildOrderedTabSessions,
+  resolveNextWebSessionTabAfterClose,
   resolveActiveTabSessionId,
   resolveUnderlyingTabSessionId,
   sortMobileCurrentSessions,
@@ -3280,6 +3281,7 @@ import {
   resolveWebSessionDeepLinkTarget,
   shouldPreserveWebSessionRouteSessionId,
 } from '@/utils/webSessionRoute';
+import { selectMostRecentWebSession } from '@/utils/webSessionRecency';
 
 const MAX_TAB_TITLE_WIDTH = 160;
 const TAB_LABEL_EXTRA_SPACE = 40;
@@ -3299,7 +3301,7 @@ const WEB_SESSION_TIMELINE_RESTORE_HISTORY_LIMIT = 120;
 const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
 const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
 const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
-const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
+const TAB_VISIT_MRU_STORAGE_KEY = 'workspace-web-session-tab-visit-mru-v1';
 const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY = 'workspace-web-session-sidebar-search-archived';
 const SIDEBAR_SEARCH_BODY_STORAGE_KEY = 'workspace-web-session-sidebar-search-body';
@@ -3588,7 +3590,10 @@ const persistedActiveDraftSessionIdByProject = useStorage<Record<string, string>
   {}
 );
 const persistedTabOrderByProject = useStorage<Record<string, string[]>>(TAB_ORDER_STORAGE_KEY, {});
-const persistedTabMruByProject = useStorage<Record<string, string[]>>(TAB_MRU_STORAGE_KEY, {});
+const persistedTabVisitMruByProject = useStorage<Record<string, string[]>>(
+  TAB_VISIT_MRU_STORAGE_KEY,
+  {}
+);
 const dismissedCyberPolicyWarnings = useStorage<Record<string, boolean>>(
   CYBER_POLICY_DISMISSALS_STORAGE_KEY,
   {}
@@ -7317,7 +7322,7 @@ function loadPersistedTabOrderIds(projectId: string) {
 }
 
 function loadPersistedTabMruIds(projectId: string) {
-  return normalizeSessionIdList(persistedTabMruByProject.value[projectId]);
+  return normalizeSessionIdList(persistedTabVisitMruByProject.value[projectId]);
 }
 
 function getVisibleTabIds(): string[] {
@@ -7379,11 +7384,7 @@ function normalizeTabOrderIds(
   return next;
 }
 
-function normalizeTabMruIds(
-  mruIds: string[],
-  visibleIds: string[] = getVisibleTabIds(),
-  orderIds: string[] = normalizeTabOrderIds(tabOrderIds.value, visibleIds)
-): string[] {
+function normalizeTabMruIds(mruIds: string[], visibleIds: string[] = getVisibleTabIds()): string[] {
   const visibleSet = new Set(visibleIds);
   const next: string[] = [];
 
@@ -7392,12 +7393,6 @@ function normalizeTabMruIds(
       return;
     }
     next.push(sessionId);
-  });
-
-  orderIds.forEach(sessionId => {
-    if (visibleSet.has(sessionId) && !next.includes(sessionId)) {
-      next.push(sessionId);
-    }
   });
 
   return next;
@@ -7414,7 +7409,7 @@ function persistTabNavigationState(
   }
 
   const normalizedOrderIds = normalizeTabOrderIds(nextOrderIds, visibleIds);
-  const normalizedMruIds = normalizeTabMruIds(nextMruIds, visibleIds, normalizedOrderIds);
+  const normalizedMruIds = normalizeTabMruIds(nextMruIds, visibleIds);
   const hasPersistableDraft = normalizedOrderIds.some(sessionId => {
     const session = visibleSessionById.value.get(sessionId);
     return session && isDraftSession(session);
@@ -7439,13 +7434,13 @@ function persistTabNavigationState(
         Object.entries(persistedTabOrderByProject.value).filter(([key]) => key !== projectId)
       );
 
-  persistedTabMruByProject.value = persistableMruIds.length
+  persistedTabVisitMruByProject.value = persistableMruIds.length
     ? {
-        ...persistedTabMruByProject.value,
+        ...persistedTabVisitMruByProject.value,
         [projectId]: persistableMruIds,
       }
     : Object.fromEntries(
-        Object.entries(persistedTabMruByProject.value).filter(([key]) => key !== projectId)
+        Object.entries(persistedTabVisitMruByProject.value).filter(([key]) => key !== projectId)
       );
 }
 
@@ -7456,7 +7451,7 @@ function replaceTabNavigationState(
   visibleIds = getVisibleTabIds()
 ) {
   const normalizedOrderIds = normalizeTabOrderIds(nextOrderIds, visibleIds);
-  const normalizedMruIds = normalizeTabMruIds(nextMruIds, visibleIds, normalizedOrderIds);
+  const normalizedMruIds = normalizeTabMruIds(nextMruIds, visibleIds);
   tabOrderIds.value = normalizedOrderIds;
   tabMruIds.value = normalizedMruIds;
   persistTabNavigationState(projectId, normalizedOrderIds, normalizedMruIds, visibleIds);
@@ -7792,13 +7787,13 @@ function resolveNextTabAfterClose(sessionId: string) {
     tabOrderIds.value.filter(id => id !== sessionId),
     nextVisibleIds
   );
-  const nextMruIds = normalizeTabMruIds(
-    tabMruIds.value.filter(id => id !== sessionId),
-    nextVisibleIds,
-    nextOrderIds
-  );
-  if (nextMruIds[0]) {
-    return nextMruIds[0];
+  const fallbackId = resolveNextWebSessionTabAfterClose({
+    closingSessionId: sessionId,
+    sessions: nonArchivedVisibleSessions.value,
+    mruIds: tabMruIds.value,
+  });
+  if (fallbackId) {
+    return fallbackId;
   }
   const currentOrderIds = normalizeTabOrderIds(tabOrderIds.value, getVisibleTabIds());
   const closedIndex = currentOrderIds.indexOf(sessionId);
@@ -8131,7 +8126,8 @@ function withProjectBadges(
 
   return items.map(item => ({
     ...item,
-    projectBadge: projectBadge.get(item.projectId),
+    // 当前项目不需要徽章，只有跨项目行显示项目标记。
+    projectBadge: item.projectId === props.projectId ? undefined : projectBadge.get(item.projectId),
   }));
 }
 
@@ -10016,7 +10012,7 @@ async function initializeProjectSessions(projectId: string) {
     const rememberedSessionId = webSessionStore.getActiveSessionId(projectId);
     const targetSessionId =
       loadedSessions.find(session => session.id === rememberedSessionId)?.id ??
-      loadedSessions[0]?.id;
+      selectMostRecentWebSession(loadedSessions)?.id;
     if (targetSessionId) {
       try {
         await activateTabById(targetSessionId);

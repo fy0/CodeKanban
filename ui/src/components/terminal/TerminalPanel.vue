@@ -157,6 +157,32 @@
         @clickoutside="contextMenuTab = null"
       />
       <div class="header-actions">
+        <!-- 移动端：切换当前项目 -->
+        <n-dropdown
+          v-if="isMobile"
+          trigger="click"
+          placement="bottom-end"
+          :options="mobileProjectSwitchOptions"
+          @select="handleProjectSwitchSelect"
+        >
+          <n-button
+            text
+            size="small"
+            class="mobile-project-switch"
+            :aria-label="t('terminal.switchProject')"
+          >
+            <template #icon>
+              <span
+                v-if="currentProjectBadge"
+                class="mobile-project-switch-badge"
+                :style="{ background: currentProjectBadge.color }"
+              >
+                {{ currentProjectBadge.label }}
+              </span>
+            </template>
+            <n-icon size="14"><ChevronDownOutline /></n-icon>
+          </n-button>
+        </n-dropdown>
         <!-- 创建终端按钮 - 始终显示 -->
         <n-dropdown
           v-if="worktrees.length > 1"
@@ -423,7 +449,7 @@ import {
   watch,
 } from 'vue';
 import type { HTMLAttributes } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useDialog, useMessage, NIcon, NInput, NButton, NSpace, NTooltip } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
@@ -486,6 +512,8 @@ import type {
   TerminalQuickActionIcon,
 } from '@/stores/settings';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
+import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
+import { buildWorkspaceRouteQuery } from '@/utils/workspaceRoute';
 import {
   calculateCardTabIndicatorStyle,
   hiddenCardTabIndicatorStyle,
@@ -504,11 +532,96 @@ const isDocked = computed(() => true);
 const message = useMessage();
 const dialog = useDialog();
 const router = useRouter();
+const route = useRoute();
 const { t } = useLocale();
 const { copyText } = useAppClipboard();
 const panelRef = ref<HTMLElement | null>(null);
 const projectStore = useProjectStore();
 const { worktrees } = storeToRefs(projectStore);
+
+// 移动端：切换当前项目
+const recentProjectIds = computed(() => projectStore.recentProjects.map(project => project.id));
+const projectSwitchBadges = computed(() => {
+  const ordered = recentProjectIds.value.slice();
+  if (!ordered.includes(projectIdRef.value)) {
+    ordered.push(projectIdRef.value);
+  }
+  return buildProjectBadgeMap(ordered, projectId => {
+    const project = projectStore.projects.find(item => item.id === projectId);
+    return project?.name?.trim() || projectId;
+  });
+});
+const currentProjectBadge = computed<ProjectBadge | null>(
+  () => projectSwitchBadges.value.get(projectIdRef.value) ?? null
+);
+const mobileProjectSwitchOptions = computed<DropdownOption[]>(() => [
+  {
+    label: t('terminal.switchProject'),
+    key: '__header__',
+    disabled: true,
+  },
+  ...recentProjectIds.value.map(projectId => {
+    const badge = projectSwitchBadges.value.get(projectId);
+    return {
+      label:
+        projectStore.projects.find(project => project.id === projectId)?.name?.trim() || projectId,
+      key: projectId,
+      disabled: projectId === projectIdRef.value,
+      icon: badge ? () => renderProjectBadge(badge) : undefined,
+    };
+  }),
+  {
+    type: 'divider',
+    key: '__divider__',
+  },
+  {
+    label: t('terminal.openProjectList'),
+    key: '__open_project_list__',
+    icon: () => h(NIcon, null, { default: () => h(AlbumsOutline) }),
+  },
+]);
+
+function renderProjectBadge(badge: ProjectBadge) {
+  return h(
+    'span',
+    {
+      class: 'mobile-project-option-badge',
+      style: {
+        background: badge.color,
+        color: '#ffffff',
+        width: '20px',
+        height: '20px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: '6px',
+        fontSize: '10px',
+        fontWeight: '700',
+        lineHeight: '1',
+      } as any,
+    },
+    badge.label
+  );
+}
+
+function handleProjectSwitchSelect(key: string | number) {
+  if (typeof key !== 'string') {
+    return;
+  }
+  if (key === '__open_project_list__') {
+    void router.push({ name: 'projects' });
+    return;
+  }
+  if (key === projectIdRef.value || key === '__header__') {
+    return;
+  }
+  projectStore.addRecentProject(key);
+  void router.push({
+    name: 'project',
+    params: { id: key },
+    query: buildWorkspaceRouteQuery(route.query, 'terminal'),
+  });
+}
 const sessionSnapshotStore = useTerminalSessionSnapshotStore();
 const { sessionsById: terminalSessionsById } = storeToRefs(sessionSnapshotStore);
 const terminalSessionSnapshotScopeId = `terminal-panel-${Math.random().toString(36).slice(2, 8)}`;
@@ -3132,6 +3245,19 @@ defineExpose({
   flex-shrink: 0;
   padding-right: 4px;
   margin-left: auto;
+}
+
+.mobile-project-switch-badge {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .terminal-quick-action-button-svg,
