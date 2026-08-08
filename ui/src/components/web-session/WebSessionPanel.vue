@@ -3362,6 +3362,7 @@ import {
   resolveWebSessionMobileComposerBottomScrollAction,
   resolveWebSessionMobileComposerScrollState,
   resolveWebSessionTimelineFollowState,
+  shouldApplyWebSessionTimelineAutoScroll,
   type WebSessionMobileComposerScrollState,
   type WebSessionTimelineScrollMetrics,
 } from '@/components/web-session/webSessionTimelineScroll';
@@ -3858,6 +3859,7 @@ const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
 const devCyberPolicySessionId = ref('');
 const lastTimelineScrollTop = ref(0);
+let timelineScrollSyncVersion = 0;
 const pendingTimelinePositionRestore = ref<{
   projectId: string;
   sessionId: string;
@@ -5746,6 +5748,7 @@ function scrollToTimelineBlock(targetKey: string) {
   const containerRect = container.getBoundingClientRect();
   const elementRect = element.getBoundingClientRect();
   const targetTop = container.scrollTop + (elementRect.top - containerRect.top) - 12;
+  invalidateTimelineScrollSync();
   autoFollowBottom.value = false;
   showJumpToBottom.value = true;
   lastTimelineScrollTop.value = container.scrollTop;
@@ -5926,6 +5929,7 @@ function scrollToTimelineUserMessage(targetKey: string) {
   const containerRect = container.getBoundingClientRect();
   const elementRect = element.getBoundingClientRect();
   const targetTop = container.scrollTop + (elementRect.top - containerRect.top);
+  invalidateTimelineScrollSync();
   autoFollowBottom.value = false;
   showJumpToBottom.value = true;
   lastTimelineScrollTop.value = container.scrollTop;
@@ -13263,7 +13267,12 @@ function cancelTimelinePositionRestore() {
   pendingTimelinePositionRestore.value = null;
 }
 
+function invalidateTimelineScrollSync() {
+  timelineScrollSyncVersion += 1;
+}
+
 function cancelTimelinePositionRestoreForUserInteraction(container: HTMLDivElement) {
+  invalidateTimelineScrollSync();
   if (!pendingTimelinePositionRestore.value) {
     return;
   }
@@ -13435,6 +13444,7 @@ async function restorePendingTimelinePosition() {
 
 function beginTimelinePositionRestore(projectId: string, sessionId: string) {
   cancelTimelinePositionRestore();
+  invalidateTimelineScrollSync();
   if (!projectId || !sessionId) {
     return;
   }
@@ -13484,10 +13494,19 @@ function syncScrollToBottom() {
 }
 
 function scheduleScrollToBottom(force = false) {
+  const scheduledVersion = ++timelineScrollSyncVersion;
   nextTick(() => {
     const run = () => {
       const container = timelineScrollRef.value;
-      if (!container) {
+      if (
+        !container ||
+        !shouldApplyWebSessionTimelineAutoScroll(
+          scheduledVersion,
+          timelineScrollSyncVersion,
+          force,
+          autoFollowBottom.value
+        )
+      ) {
         return;
       }
       if (force || autoFollowBottom.value) {
@@ -13817,11 +13836,19 @@ function handleTimelineScroll(event: Event) {
   if (!container) {
     return;
   }
-  if (!props.isActive || pendingTimelinePositionRestore.value) {
+  if (!props.isActive) {
+    return;
+  }
+  if (pendingTimelinePositionRestore.value) {
+    cancelTimelinePositionRestoreForUserInteraction(container);
     return;
   }
   const nearTop = container.scrollTop < 120;
+  const wasAutoFollowingBottom = autoFollowBottom.value;
   updateBottomState(container);
+  if (wasAutoFollowingBottom && !autoFollowBottom.value) {
+    invalidateTimelineScrollSync();
+  }
   handleMobileTimelineScrollForComposer(container);
   void scheduleTimelinePositionCapture();
   if (
@@ -14989,7 +15016,7 @@ watch(timelineContentVersion, async () => {
     return;
   }
   if (autoFollowBottom.value) {
-    syncScrollToBottom();
+    scheduleScrollToBottom();
   } else {
     updateBottomState(container);
   }
@@ -15096,7 +15123,7 @@ useResizeObserver(timelineScrollRef, entries => {
     return;
   }
   if (autoFollowBottom.value) {
-    scheduleScrollToBottom(true);
+    scheduleScrollToBottom();
   } else {
     updateBottomState(container);
   }

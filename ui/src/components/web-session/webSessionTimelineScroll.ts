@@ -22,6 +22,15 @@ export const WEB_SESSION_TIMELINE_AT_BOTTOM_THRESHOLD_PX = 4;
 export const WEB_SESSION_MOBILE_COMPOSER_AUTO_COLLAPSE_DISTANCE_PX = 80;
 const WEB_SESSION_TIMELINE_SCROLL_UP_EPSILON_PX = 1;
 
+export function shouldApplyWebSessionTimelineAutoScroll(
+  scheduledVersion: number,
+  currentVersion: number,
+  force: boolean,
+  autoFollowBottom: boolean
+) {
+  return scheduledVersion === currentVersion && (force || autoFollowBottom);
+}
+
 function normalizeScrollTop(value: number) {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }

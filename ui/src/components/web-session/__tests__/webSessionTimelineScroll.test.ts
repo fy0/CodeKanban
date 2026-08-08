@@ -9,6 +9,7 @@ import {
   resolveWebSessionMobileComposerBottomScrollAction,
   resolveWebSessionMobileComposerScrollState,
   resolveWebSessionTimelineFollowState,
+  shouldApplyWebSessionTimelineAutoScroll,
 } from '@/components/web-session/webSessionTimelineScroll';
 
 const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
@@ -84,6 +85,12 @@ describe('webSessionTimelineScroll', () => {
       showJumpToBottom: false,
       lastScrollTop: 800,
     });
+  });
+
+  it('does not apply a stale bottom sync after user interaction', () => {
+    expect(shouldApplyWebSessionTimelineAutoScroll(1, 2, true, true)).toBe(false);
+    expect(shouldApplyWebSessionTimelineAutoScroll(2, 2, true, false)).toBe(true);
+    expect(shouldApplyWebSessionTimelineAutoScroll(2, 2, false, false)).toBe(false);
   });
 
   it('waits for enough upward scrolling before collapsing the mobile composer', () => {
