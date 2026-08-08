@@ -8,6 +8,7 @@ const ACTIVITY_DISPLAY_TOOL_KINDS = [
   'command_execution',
   'file_change',
   'mcp_tool_call',
+  'dynamic_tool_call',
   'sub_agent_tool_call',
   'web_search',
   'reasoning',

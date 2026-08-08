@@ -312,6 +312,147 @@ func TestHandleClaudeDeferredResultCreatesPendingInput(t *testing.T) {
 	}
 }
 
+func TestHandleClaudeAPIRetryEmitsTransportRetryPayload(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Claude Retry", 1000)
+	if err := model.GetDB().Model(session).Updates(map[string]any{
+		"agent":            string(AgentClaude),
+		"source_kind":      sourceKindClaudeStreamJSON,
+		"permission_level": string(PermissionLevelElevated),
+	}).Error; err != nil {
+		t.Fatalf("failed to update session agent: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	run := &activeRun{sessionID: session.ID, agent: AgentClaude, runID: "run_retry"}
+	manager.handleClaudeEvent(*session, run, map[string]any{
+		"type":           "system",
+		"subtype":        "api_retry",
+		"session_id":     "claude-session-retry",
+		"attempt":        2,
+		"max_retries":    10,
+		"retry_delay_ms": 1075,
+		"error_status":   "server_error",
+		"error":          "upstream overloaded",
+	})
+
+	events, err := manager.store.readEvents(session.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	var retry Event
+	for _, event := range events {
+		if event.Type == "note" && stringValue(event.Payload["code"]) == "transport_retrying" {
+			retry = event
+			break
+		}
+	}
+	if retry.Type != "note" {
+		t.Fatalf("expected Claude api_retry note, got %#v", events)
+	}
+	if got := int(numberValue(retry.Payload["attempt"])); got != 2 {
+		t.Fatalf("expected retry attempt 2, got %d", got)
+	}
+	if got := int(numberValue(retry.Payload["maxAttempts"])); got != 10 {
+		t.Fatalf("expected retry max attempts 10, got %d", got)
+	}
+	if got := int(numberValue(retry.Payload["retryDelayMs"])); got != 1075 {
+		t.Fatalf("expected retry delay 1075ms, got %d", got)
+	}
+	if got := stringValue(retry.Payload["errorStatus"]); got != "server_error" {
+		t.Fatalf("expected retry error status server_error, got %q", got)
+	}
+	if got := stringValue(retry.Payload["txt"]); !strings.Contains(got, "Claude API retry 2/10") {
+		t.Fatalf("expected human-readable retry text, got %q", got)
+	}
+}
+
+func TestHandleClaudeAssistantAskUserQuestionDoesNotCreateGenericToolEvent(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Claude Ask", 1000)
+	if err := model.GetDB().Model(session).Updates(map[string]any{
+		"agent":            string(AgentClaude),
+		"source_kind":      sourceKindClaudeStreamJSON,
+		"permission_level": string(PermissionLevelElevated),
+	}).Error; err != nil {
+		t.Fatalf("failed to update session agent: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	run := &activeRun{sessionID: session.ID, agent: AgentClaude, runID: "run_ask"}
+	manager.handleClaudeEvent(*session, run, map[string]any{
+		"type": "assistant",
+		"uuid": "assistant_ask",
+		"message": map[string]any{
+			"id":   "assistant_ask_message",
+			"role": "assistant",
+			"content": []any{
+				map[string]any{
+					"type": "tool_use",
+					"id":   "ask-1",
+					"name": "AskUserQuestion",
+					"input": map[string]any{
+						"questions": []any{},
+					},
+				},
+			},
+			"stop_reason": "tool_use",
+		},
+	})
+
+	rawEvents, err := manager.store.readEvents(session.ID)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	for _, event := range rawEvents {
+		if event.Type == "tool_st" {
+			t.Fatalf("expected AskUserQuestion to use the structured request only, got generic event %#v", event)
+		}
+	}
+	if run.currentToolMessageSnapshot() != "ask-1" {
+		t.Fatalf("expected AskUserQuestion tool id to remain available for deferred result, got %q", run.currentToolMessageSnapshot())
+	}
+}
+
+func TestParseClaudeStreamHistoryPreservesTextBeforeToolUse(t *testing.T) {
+	store, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("newStore returned error: %v", err)
+	}
+	manager := &Manager{cfg: Config{DataDir: t.TempDir()}, store: store, logger: zap.NewNop()}
+	filePath := filepath.Join(t.TempDir(), "claude-text-tool.jsonl")
+	content := `{"type":"assistant","uuid":"assistant_1","timestamp":"2026-04-12T03:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Now update DockedNotificationsSidebar.vue:"},{"type":"tool_use","id":"read-1","name":"Read","input":{"file_path":"ui/src/components/DockedNotificationsSidebar.vue"}}],"stop_reason":"tool_use"}}` + "\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write Claude fixture: %v", err)
+	}
+
+	parsed, err := manager.parseClaudeStreamHistory(filePath, WorkflowModeDefault)
+	if err != nil {
+		t.Fatalf("parseClaudeStreamHistory returned error: %v", err)
+	}
+	if len(parsed.Items) != 2 {
+		t.Fatalf("expected assistant text and Read items, got %#v", parsed.Items)
+	}
+	if parsed.Items[0].Text != "Now update DockedNotificationsSidebar.vue:" {
+		t.Fatalf("expected text before tool use to remain intact, got %q", parsed.Items[0].Text)
+	}
+	if parsed.Items[1].Tool == nil || parsed.Items[1].Tool.Name != "Read" {
+		t.Fatalf("expected Read tool item after assistant text, got %#v", parsed.Items[1])
+	}
+}
+
 func TestSyncClaudeSessionFromSourceRebuildsAskUserQuestionHistory(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

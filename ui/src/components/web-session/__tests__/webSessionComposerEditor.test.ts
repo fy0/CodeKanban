@@ -92,6 +92,12 @@ describe('web session composer decorations and completions', () => {
     expect(buildWebSessionComposerCompletions('before /go', 10, skills).options).toEqual([]);
   });
 
+  it('does not expose goal affordances when the selected agent is Claude', () => {
+    const text = '/goal ship it';
+    expect(buildWebSessionComposerHighlights(text, skills, false)).toEqual([]);
+    expect(buildWebSessionComposerCompletions('/go', 3, skills, false).options).toEqual([]);
+  });
+
   it('filters skill completions at the current cursor', () => {
     expect(buildWebSessionComposerCompletions('Use $open', 9, skills)).toMatchObject({
       from: 4,

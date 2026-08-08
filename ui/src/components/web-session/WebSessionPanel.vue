@@ -463,6 +463,7 @@
                 <div
                   v-if="
                     visibleBlocks.length === 0 &&
+                    filteredTimelineBlocks.length === 0 &&
                     !selectedSubAgentThreadId &&
                     !historyMeta.loading &&
                     currentRealSession?.syncState !== 'syncing'
@@ -478,7 +479,10 @@
 
                 <div
                   v-else-if="
-                    visibleBlocks.length === 0 && selectedSubAgentThreadId && !historyMeta.loading
+                    visibleBlocks.length === 0 &&
+                    filteredTimelineBlocks.length === 0 &&
+                    selectedSubAgentThreadId &&
+                    !historyMeta.loading
                   "
                   class="history-loading"
                 >
@@ -1594,6 +1598,7 @@
                   </div>
                   <div class="composer-settings">
                     <button
+                      v-if="selectedAgent === 'codex'"
                       type="button"
                       class="composer-settings-trigger"
                       :class="{
@@ -2123,6 +2128,7 @@
                   :max-rows="composerMaxRows"
                   :compact="isMobile"
                   :skills="codexSkills"
+                  :goal-enabled="selectedAgent === 'codex'"
                   @focus="handleComposerFocus"
                   @blur="handleComposerBlur"
                   @submit="handleComposerSubmitShortcut"
@@ -3143,7 +3149,7 @@ import {
   type TimelineRawSurface,
 } from '@/components/web-session/webSessionRawToggle';
 import { resolveWebSessionAttachmentPreviewMode } from '@/components/web-session/webSessionAttachmentPreview';
-import { projectWebSessionCompactTimelineBlocks } from '@/components/web-session/webSessionCompactTimeline';
+import { projectWebSessionVisibleTimelineBlocks } from '@/components/web-session/webSessionCompactTimeline';
 import { createWebSessionStreamingMarkdownController } from '@/components/web-session/webSessionStreamingMarkdown';
 import {
   createWebSessionMobileComposerScrollState,
@@ -4449,6 +4455,9 @@ function isActivityDisplayBlock(block: WebSessionBlock) {
   if (block.kind !== 'tool' || !block.tool) {
     return false;
   }
+  if (isInteractiveDynamicTool(block.tool)) {
+    return false;
+  }
   return isWebSessionActivityDisplayToolKind(
     block.tool.kind || String(block.tool.meta?.kind ?? '')
   );
@@ -4760,6 +4769,9 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) 
   if (block.kind !== 'tool' || !block.tool) {
     return true;
   }
+  if (isInteractiveDynamicTool(block.tool)) {
+    return false;
+  }
   if (isReasoningBlock(block)) {
     return hasReasoningContent(block) || shouldShowToolPendingPlaceholder(block.tool);
   }
@@ -4802,7 +4814,7 @@ const filteredTimelineBlocks = computed(() =>
   })
 );
 const visibleBlocks = computed(() =>
-  projectWebSessionCompactTimelineBlocks(filteredTimelineBlocks.value)
+  projectWebSessionVisibleTimelineBlocks(filteredTimelineBlocks.value)
 );
 const visibleRawTimelineBlockKeys = computed(() => {
   const keys: string[] = [];
@@ -9329,12 +9341,21 @@ function isContextCompactionToolKind(value: string | undefined) {
 }
 
 function isCompactToolKind(value: string | undefined) {
-  return ['command_execution', 'file_change', 'mcp_tool_call', 'web_search'].includes(
-    normalizeToolKindValue(value)
-  );
+  return [
+    'command_execution',
+    'file_change',
+    'mcp_tool_call',
+    'web_search',
+    'dynamic_tool_call',
+  ].includes(normalizeToolKindValue(value));
 }
 
-function compactToolLabel(tool?: { kind?: string; meta?: Record<string, unknown> }) {
+function compactToolLabel(tool?: {
+  kind?: string;
+  name?: string;
+  title?: string;
+  meta?: Record<string, unknown>;
+}) {
   const kind = normalizeToolKindValue(tool?.kind || String(tool?.meta?.kind ?? ''));
   if (kind === 'command_execution') {
     return t('webSession.toolCommandExecution');
@@ -9351,13 +9372,36 @@ function compactToolLabel(tool?: { kind?: string; meta?: Record<string, unknown>
   if (kind === 'web_search') {
     return t('webSession.toolWebSearch');
   }
+  if (kind === 'dynamic_tool_call') {
+    return (
+      String(tool?.name || tool?.title || tool?.meta?.title || '').trim() ||
+      t('webSession.toolKindDefault')
+    );
+  }
   return t('webSession.toolKindDefault');
 }
 
 function isCompactTool(
   tool: Pick<NonNullable<WebSessionBlock['tool']>, 'kind' | 'meta' | 'commandGroup'>
 ) {
-  return isCompactToolKind(tool.kind || String(tool.meta?.kind ?? ''));
+  const kind = normalizeToolKindValue(tool.kind || String(tool.meta?.kind ?? ''));
+  if (kind === 'dynamic_tool_call') {
+    return !isInteractiveDynamicTool(tool);
+  }
+  return isCompactToolKind(kind);
+}
+
+function isInteractiveDynamicTool(tool: {
+  kind?: string;
+  name?: string;
+  meta?: Record<string, unknown>;
+}) {
+  return (
+    normalizeToolKindValue(tool.kind || String(tool.meta?.kind ?? '')) === 'dynamic_tool_call' &&
+    String(tool.name || tool.meta?.title || '')
+      .trim()
+      .toLowerCase() === 'askuserquestion'
+  );
 }
 
 function getCompactToolKind(tool: Pick<NonNullable<WebSessionBlock['tool']>, 'kind' | 'meta'>) {
@@ -9428,7 +9472,46 @@ function getCompactToolSummary(tool: NonNullable<WebSessionBlock['tool']>) {
     return queries[0] ?? subtitle;
   }
 
+  if (kind === 'dynamic_tool_call') {
+    return getDynamicToolSummary(tool.input, tool.meta, tool.output);
+  }
+
   return subtitle;
+}
+
+function getDynamicToolSummary(
+  input: unknown,
+  meta: Record<string, unknown> | undefined,
+  output?: string
+) {
+  const record = asRecord(input);
+  const toolName = String(meta?.title ?? meta?.name ?? '')
+    .trim()
+    .toLowerCase();
+  const path =
+    [record?.file_path, record?.path, record?.notebook_path]
+      .map(value => String(value ?? '').trim())
+      .find(Boolean) ?? '';
+  const pattern = String(record?.pattern ?? '').trim();
+  const query =
+    [record?.query, record?.url].map(value => String(value ?? '').trim()).find(Boolean) ?? '';
+
+  if (toolName === 'read' || toolName === 'notebookread' || toolName === 'ls') {
+    if (path) {
+      return path;
+    }
+  } else if (toolName === 'grep' || toolName === 'glob') {
+    if (pattern && path) {
+      return `${pattern} · ${path}`;
+    }
+    if (pattern || path) {
+      return pattern || path;
+    }
+  } else if (path || query || pattern) {
+    return path || query || pattern;
+  }
+
+  return String(meta?.subtitle ?? output ?? '').trim();
 }
 
 function contextCompactionPreview(tool: { output?: string; meta?: Record<string, unknown> }) {

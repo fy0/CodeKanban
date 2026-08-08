@@ -1,4 +1,5 @@
 import type { WebSessionBlock } from '@/stores/webSession';
+import { normalizeWebSessionActivityToolKind } from '@/constants/webSessionActivityDisplayMode';
 
 interface CompactTimelineGroupItem {
   toolId: string;
@@ -20,11 +21,18 @@ const COMPACT_TOOL_KINDS = new Set([
   FILE_CHANGE_KIND,
   'mcp_tool_call',
   'web_search',
+  'dynamic_tool_call',
 ]);
 const SYNTHETIC_FILE_CHANGE_GROUP_PREFIX = 'timeline-file-change:';
 const SYNTHETIC_COMPACT_TOOL_GROUP_PREFIX = 'timeline-compact-tool:';
 const PROJECTED_FILE_CHANGE_KEY_PREFIX = 'compact-file-change:';
 const PROJECTED_COMPACT_TOOL_KEY_PREFIX = 'compact-tool:';
+
+export function isTransportRetryNoteBlock(block: WebSessionBlock): boolean {
+  return (
+    block.itemType === 'note' && String(block.payload?.code ?? '').trim() === 'transport_retrying'
+  );
+}
 
 export function projectWebSessionCompactTimelineBlocks(
   blocks: WebSessionBlock[]
@@ -42,7 +50,7 @@ export function projectWebSessionCompactTimelineBlocks(
       continue;
     }
 
-    const kind = getCompactToolKind(block);
+    const groupKey = getCompactToolGroupKey(block);
     const group = [block];
     let nextIndex = index + 1;
 
@@ -50,7 +58,7 @@ export function projectWebSessionCompactTimelineBlocks(
       const candidate = blocks[nextIndex];
       if (
         !isCompactToolBlock(candidate) ||
-        getCompactToolKind(candidate) !== kind ||
+        getCompactToolGroupKey(candidate) !== groupKey ||
         getSourceThreadId(candidate) !== getSourceThreadId(block)
       ) {
         break;
@@ -74,16 +82,48 @@ export function projectWebSessionCompactTimelineBlocks(
   return projected;
 }
 
+export function projectWebSessionVisibleTimelineBlocks(
+  blocks: WebSessionBlock[]
+): WebSessionBlock[] {
+  return projectWebSessionCompactTimelineBlocks(blocks).filter(
+    block => !isTransportRetryNoteBlock(block)
+  );
+}
+
 function getSourceThreadId(block: WebSessionBlock): string {
   return String(block.sourceThreadId ?? '').trim();
 }
 
 function isCompactToolBlock(block: WebSessionBlock): boolean {
-  return block.kind === 'tool' && COMPACT_TOOL_KINDS.has(getCompactToolKind(block));
+  return (
+    block.kind === 'tool' &&
+    COMPACT_TOOL_KINDS.has(getCompactToolKind(block)) &&
+    !isInteractiveDynamicToolBlock(block)
+  );
 }
 
 function getCompactToolKind(block: WebSessionBlock): string {
-  return String(block.tool?.kind || '').trim();
+  return normalizeWebSessionActivityToolKind(String(block.tool?.kind || '').trim());
+}
+
+function getCompactToolGroupKey(block: WebSessionBlock): string {
+  const kind = getCompactToolKind(block);
+  if (kind !== 'dynamic_tool_call') {
+    return kind;
+  }
+  const name = String(block.tool?.name || block.tool?.meta?.title || '')
+    .trim()
+    .toLowerCase();
+  return name ? `${kind}\u0000${name}` : kind;
+}
+
+function isInteractiveDynamicToolBlock(block: WebSessionBlock): boolean {
+  return (
+    getCompactToolKind(block) === 'dynamic_tool_call' &&
+    String(block.tool?.name || block.tool?.meta?.title || '')
+      .trim()
+      .toLowerCase() === 'askuserquestion'
+  );
 }
 
 function getCommandGroupId(block: WebSessionBlock): string {
@@ -318,7 +358,45 @@ function resolveCompactToolSummary(block: WebSessionBlock): string {
       stringValue(block.tool.output)
     );
   }
+  if (kind === 'dynamic_tool_call') {
+    return resolveDynamicToolSummary(block.tool.input, block.tool.meta, block.tool.output);
+  }
   return firstNonEmpty(stringValue(meta?.subtitle), stringValue(block.tool.output));
+}
+
+function resolveDynamicToolSummary(
+  input: unknown,
+  meta: Record<string, unknown> | undefined,
+  output: string | undefined
+): string {
+  const record = asRecord(input);
+  const toolName = String(meta?.title ?? meta?.name ?? '')
+    .trim()
+    .toLowerCase();
+  const path = firstNonEmpty(
+    stringValue(record?.file_path),
+    stringValue(record?.path),
+    stringValue(record?.notebook_path)
+  );
+  const pattern = stringValue(record?.pattern);
+  const query = firstNonEmpty(stringValue(record?.query), stringValue(record?.url));
+
+  if (toolName === 'read' || toolName === 'notebookread' || toolName === 'ls') {
+    if (path) {
+      return path;
+    }
+  } else if (toolName === 'grep' || toolName === 'glob') {
+    if (pattern && path) {
+      return `${pattern} · ${path}`;
+    }
+    if (pattern || path) {
+      return pattern || path;
+    }
+  } else if (path || query || pattern) {
+    return path || query || pattern;
+  }
+
+  return firstNonEmpty(stringValue(meta?.subtitle), stringValue(output));
 }
 
 function resolveFileChangeSummary(block: WebSessionBlock): string {

@@ -231,6 +231,7 @@ type activeRun struct {
 	claudeCompactionStarted time.Time
 	commandGroupID          string
 	commandGroupKind        string
+	commandGroupKey         string
 	commandGroupFirst       int64
 	commandGroupCount       int
 	commandGroupTools       map[string]struct{}
@@ -4132,13 +4133,18 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 			_ = m.updateRuntimeState(context.Background(), session.ID, updates)
 		}
 		if subtype == "api_retry" {
+			attempt := int(numberValue(raw["attempt"]))
+			maxRetries := int(numberValue(raw["max_retries"]))
+			retryDelayMs := int(numberValue(raw["retry_delay_ms"]))
+			errorStatus := strings.TrimSpace(stringValue(raw["error_status"]))
+			errorMessage := strings.TrimSpace(stringValue(raw["error"]))
 			message := fmt.Sprintf(
 				"Claude API retry %d/%d after %s (%s %s)",
-				int(numberValue(raw["attempt"])),
-				int(numberValue(raw["max_retries"])),
-				time.Duration(numberValue(raw["retry_delay_ms"]))*time.Millisecond,
-				strings.TrimSpace(stringValue(raw["error_status"])),
-				strings.TrimSpace(stringValue(raw["error"])),
+				attempt,
+				maxRetries,
+				time.Duration(retryDelayMs)*time.Millisecond,
+				errorStatus,
+				errorMessage,
 			)
 			_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 				ID:        utils.NewID(),
@@ -4147,8 +4153,14 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 				RunID:     run.runID,
 				Timestamp: time.Now(),
 				Payload: map[string]any{
-					"lvl": "warn",
-					"txt": strings.TrimSpace(message),
+					"code":         "transport_retrying",
+					"attempt":      attempt,
+					"maxAttempts":  maxRetries,
+					"retryDelayMs": retryDelayMs,
+					"errorStatus":  errorStatus,
+					"error":        errorMessage,
+					"lvl":          "warn",
+					"txt":          strings.TrimSpace(message),
 				},
 			})
 		}
@@ -4259,6 +4271,11 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 				}
 
 				run.currentToolMessage = toolID
+				if isInteractiveDynamicToolName(toolName) {
+					// AskUserQuestion is rendered through the structured user-input
+					// request below. Do not emit a duplicate generic tool card.
+					continue
+				}
 				kind := claudeToolKind(toolName)
 				input := claudeToolInput(toolName, block["input"])
 				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
@@ -4883,9 +4900,11 @@ func (m *Manager) decorateCompactToolGroupEvent(sessionID string, event *Event) 
 
 	if run != nil {
 		run.mu.Lock()
-		if run.commandGroupKind != "" && run.commandGroupKind != kind {
+		groupKey := compactToolGroupKey(*event, toolSnapshot{})
+		if run.commandGroupKey != "" && run.commandGroupKey != groupKey {
 			run.commandGroupID = ""
 			run.commandGroupKind = ""
+			run.commandGroupKey = ""
 			run.commandGroupFirst = 0
 			run.commandGroupCount = 0
 			run.commandGroupTools = nil
@@ -4898,6 +4917,9 @@ func (m *Manager) decorateCompactToolGroupEvent(sessionID string, event *Event) 
 		}
 		if run.commandGroupKind == "" {
 			run.commandGroupKind = kind
+		}
+		if run.commandGroupKey == "" {
+			run.commandGroupKey = groupKey
 		}
 		groupID = run.commandGroupID
 		if run.commandGroupFirst == 0 {
@@ -4945,6 +4967,7 @@ func (m *Manager) resetCommandExecutionGroup(sessionID string) {
 	run.mu.Lock()
 	run.commandGroupID = ""
 	run.commandGroupKind = ""
+	run.commandGroupKey = ""
 	run.commandGroupFirst = 0
 	run.commandGroupCount = 0
 	run.commandGroupTools = nil

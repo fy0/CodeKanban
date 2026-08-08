@@ -6918,6 +6918,106 @@ func TestHistorySeparatesDifferentCompactToolKinds(t *testing.T) {
 	}
 }
 
+func TestHistoryGroupsDynamicToolsByName(t *testing.T) {
+	toolEvent := func(seq int64, eventType, id, name string, input map[string]any) Event {
+		payload := map[string]any{
+			"tid":  id,
+			"name": name,
+			"kind": "dynamic_tool_call",
+			"meta": map[string]any{"kind": "dynamic_tool_call", "title": name},
+		}
+		if eventType == "tool_st" {
+			payload["in"] = input
+		} else {
+			payload["in"] = input
+			payload["out"] = name + " output"
+			payload["ok"] = true
+		}
+		return Event{ID: "event-" + id + "-" + eventType, Seq: seq, Type: eventType, Timestamp: time.UnixMilli(seq), Payload: payload}
+	}
+
+	projected := projectHistoryEvents([]Event{
+		toolEvent(1, "tool_st", "read-1", "Read", map[string]any{"file_path": "src/App.vue"}),
+		toolEvent(2, "tool_end", "read-1", "Read", map[string]any{"file_path": "src/App.vue"}),
+		toolEvent(3, "tool_st", "read-2", "Read", map[string]any{"file_path": "src/main.ts"}),
+		toolEvent(4, "tool_end", "read-2", "Read", map[string]any{"file_path": "src/main.ts"}),
+		toolEvent(5, "tool_st", "grep-1", "Grep", map[string]any{"pattern": "Goal", "path": "ui/src"}),
+		toolEvent(6, "tool_end", "grep-1", "Grep", map[string]any{"pattern": "Goal", "path": "ui/src"}),
+	}, AgentClaude)
+
+	if len(projected) != 2 {
+		t.Fatalf("expected Read and Grep projected groups, got %d: %#v", len(projected), projected)
+	}
+	if got := eventToolName(projected[0]); got != "Read" {
+		t.Fatalf("expected first dynamic group to remain Read, got %q", got)
+	}
+	if count := int(numberValue(decodeRawObject(eventToolMeta(projected[0])["commandGroup"])["count"])); count != 2 {
+		t.Fatalf("expected Read group count 2, got %d", count)
+	}
+	if got := eventToolName(projected[1]); got != "Grep" {
+		t.Fatalf("expected second dynamic group to be Grep, got %q", got)
+	}
+	if count := int(numberValue(decodeRawObject(eventToolMeta(projected[1])["commandGroup"])["count"])); count != 1 {
+		t.Fatalf("expected Grep group count 1, got %d", count)
+	}
+}
+
+func TestDecorateProjectedEventSeparatesDynamicToolNames(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Dynamic tools", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	run := &activeRun{sessionID: session.ID, agent: AgentClaude, runID: "run_dynamic"}
+	manager.mu.Lock()
+	manager.runs[session.ID] = run
+	manager.mu.Unlock()
+	defer func() {
+		manager.mu.Lock()
+		delete(manager.runs, session.ID)
+		manager.mu.Unlock()
+	}()
+
+	read := Event{
+		Seq:  1,
+		Type: "tool_st",
+		Payload: map[string]any{
+			"tid":  "read-1",
+			"name": "Read",
+			"kind": "dynamic_tool_call",
+			"in":   map[string]any{"file_path": "src/App.vue"},
+		},
+	}
+	grep := Event{
+		Seq:  2,
+		Type: "tool_st",
+		Payload: map[string]any{
+			"tid":  "grep-1",
+			"name": "Grep",
+			"kind": "dynamic_tool_call",
+			"in":   map[string]any{"pattern": "Goal"},
+		},
+	}
+	manager.decorateProjectedEvent(session.ID, &read)
+	manager.decorateProjectedEvent(session.ID, &grep)
+
+	readGroup := decodeRawObject(eventToolMeta(read)["commandGroup"])
+	grepGroup := decodeRawObject(eventToolMeta(grep)["commandGroup"])
+	if stringValue(readGroup["id"]) == "" || stringValue(grepGroup["id"]) == "" {
+		t.Fatalf("expected compact group metadata on dynamic tools: read=%#v grep=%#v", readGroup, grepGroup)
+	}
+	if stringValue(readGroup["id"]) == stringValue(grepGroup["id"]) {
+		t.Fatalf("expected Read and Grep to have separate live groups, got %q", stringValue(readGroup["id"]))
+	}
+	if int(numberValue(readGroup["count"])) != 1 || int(numberValue(grepGroup["count"])) != 1 {
+		t.Fatalf("expected each first dynamic tool group to have count 1, read=%#v grep=%#v", readGroup, grepGroup)
+	}
+}
+
 func TestCodexToolResultUsesCamelCaseAggregatedOutput(t *testing.T) {
 	got := codexToolResult(map[string]any{
 		"type":             "commandExecution",

@@ -115,7 +115,8 @@ export function composerPositionToOffset(position: number, textLength: number) {
 
 export function buildWebSessionComposerHighlights(
   text: string,
-  skills: readonly Pick<CodexSkillSummary, 'name'>[]
+  skills: readonly Pick<CodexSkillSummary, 'name'>[],
+  goalEnabled = true
 ) {
   const knownSkills = new Set(skills.map(skill => skill.name.trim().toLowerCase()).filter(Boolean));
   const ranges: WebSessionComposerHighlightRange[] = [];
@@ -130,13 +131,15 @@ export function buildWebSessionComposerHighlights(
     });
   }
 
-  for (const match of String(text ?? '').matchAll(/^\/goal\b/gm)) {
-    const from = match.index;
-    ranges.push({
-      from,
-      to: from + match[0].length,
-      kind: 'goal',
-    });
+  if (goalEnabled) {
+    for (const match of String(text ?? '').matchAll(/^\/goal\b/gm)) {
+      const from = match.index;
+      ranges.push({
+        from,
+        to: from + match[0].length,
+        kind: 'goal',
+      });
+    }
   }
 
   return ranges.sort((left, right) => left.from - right.from || left.to - right.to);
@@ -145,7 +148,8 @@ export function buildWebSessionComposerHighlights(
 export function buildWebSessionComposerCompletions(
   text: string,
   cursor: number,
-  skills: CodexSkillSummary[]
+  skills: CodexSkillSummary[],
+  goalEnabled = true
 ): WebSessionComposerCompletionResult {
   const normalizedText = String(text ?? '');
   const safeCursor = Math.max(0, Math.min(cursor, normalizedText.length));
@@ -153,9 +157,11 @@ export function buildWebSessionComposerCompletions(
   const slashMatch = beforeCursor.match(/^\/[a-z-]*$/i);
   if (slashMatch) {
     const query = slashMatch[0].slice(1).toLowerCase();
-    const options: WebSessionComposerCompletionOption[] = [
-      { key: 'slash:goal', label: '/goal', detail: 'Persistent goal', apply: '/goal ' },
-    ].filter(option => option.label.slice(1).startsWith(query));
+    const options: WebSessionComposerCompletionOption[] = (
+      goalEnabled
+        ? [{ key: 'slash:goal', label: '/goal', detail: 'Persistent goal', apply: '/goal ' }]
+        : []
+    ).filter(option => option.label.slice(1).startsWith(query));
     return {
       from: 0,
       to: safeCursor,

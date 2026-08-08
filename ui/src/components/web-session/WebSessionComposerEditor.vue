@@ -77,6 +77,7 @@ const props = withDefaults(
     maxRows?: number;
     compact?: boolean;
     skills?: CodexSkillSummary[];
+    goalEnabled?: boolean;
   }>(),
   {
     placeholder: '',
@@ -84,6 +85,7 @@ const props = withDefaults(
     maxRows: 10,
     compact: false,
     skills: () => [],
+    goalEnabled: true,
   }
 );
 
@@ -122,19 +124,21 @@ function getEditorText(editor: { getJSON: () => JSONContent } | null = editorRef
 
 function buildHighlightDecorations(doc: ProseMirrorNode) {
   const text = composerJSONToText(doc.toJSON() as JSONContent);
-  const decorations = buildWebSessionComposerHighlights(text, props.skills).map(range => {
-    const className =
-      range.kind === 'goal'
-        ? 'composer-goal-command'
-        : range.kind === 'skill'
-          ? 'composer-skill-token'
-          : 'composer-skill-token composer-skill-token--unknown';
-    return Decoration.inline(
-      composerOffsetToPosition(range.from, text.length),
-      composerOffsetToPosition(range.to, text.length),
-      { class: className }
-    );
-  });
+  const decorations = buildWebSessionComposerHighlights(text, props.skills, props.goalEnabled).map(
+    range => {
+      const className =
+        range.kind === 'goal'
+          ? 'composer-goal-command'
+          : range.kind === 'skill'
+            ? 'composer-skill-token'
+            : 'composer-skill-token composer-skill-token--unknown';
+      return Decoration.inline(
+        composerOffsetToPosition(range.from, text.length),
+        composerOffsetToPosition(range.to, text.length),
+        { class: className }
+      );
+    }
+  );
   return DecorationSet.create(doc, decorations);
 }
 
@@ -203,7 +207,12 @@ function refreshCompletion() {
   }
   dismissedCompletionSignature = '';
 
-  const result = buildWebSessionComposerCompletions(text, selection.start, props.skills);
+  const result = buildWebSessionComposerCompletions(
+    text,
+    selection.start,
+    props.skills,
+    props.goalEnabled
+  );
   if (result.options.length === 0) {
     closeCompletion();
     return;

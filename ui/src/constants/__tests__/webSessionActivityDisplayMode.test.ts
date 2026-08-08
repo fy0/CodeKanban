@@ -46,6 +46,7 @@ describe('webSessionActivityDisplayMode', () => {
     expect(isWebSessionActivityDisplayToolKind('file_change')).toBe(true);
     expect(isWebSessionActivityDisplayToolKind('mcp_tool_call')).toBe(true);
     expect(isWebSessionActivityDisplayToolKind('web_search')).toBe(true);
+    expect(isWebSessionActivityDisplayToolKind('dynamic_tool_call')).toBe(true);
     expect(isWebSessionActivityDisplayToolKind('reasoning')).toBe(true);
     expect(isWebSessionActivityDisplayToolKind('context_compaction')).toBe(false);
     expect(isWebSessionActivityDisplayToolKind('plan')).toBe(false);

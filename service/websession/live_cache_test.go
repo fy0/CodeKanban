@@ -108,6 +108,72 @@ func TestCompactSyncedHistoryItemsUseGroupSourceKey(t *testing.T) {
 	}
 }
 
+func TestCompactSyncedHistoryItemsGroupsDynamicToolsByName(t *testing.T) {
+	items := []HistoryItem{
+		{
+			ID:         "read-1",
+			OrderIndex: 1,
+			Kind:       "tool",
+			ItemType:   "dynamic_tool_call",
+			Tool: &HistoryTool{
+				ID:     "read-1",
+				Name:   "Read",
+				Kind:   "dynamic_tool_call",
+				Input:  map[string]any{"file_path": "src/App.vue"},
+				Status: "done",
+				Meta:   map[string]any{"title": "Read"},
+			},
+		},
+		{
+			ID:         "read-2",
+			OrderIndex: 2,
+			Kind:       "tool",
+			ItemType:   "dynamic_tool_call",
+			Payload:    map[string]any{},
+			Tool: &HistoryTool{
+				ID:     "read-2",
+				Name:   "Read",
+				Kind:   "dynamic_tool_call",
+				Input:  map[string]any{"file_path": "src/main.ts"},
+				Status: "done",
+				Meta:   map[string]any{"title": "Read"},
+			},
+		},
+		{
+			ID:         "grep-1",
+			OrderIndex: 3,
+			Kind:       "tool",
+			ItemType:   "dynamic_tool_call",
+			Tool: &HistoryTool{
+				ID:     "grep-1",
+				Name:   "Grep",
+				Kind:   "dynamic_tool_call",
+				Input:  map[string]any{"pattern": "Goal", "path": "ui/src"},
+				Status: "done",
+				Meta:   map[string]any{"title": "Grep"},
+			},
+		},
+	}
+
+	grouped := compactSyncedHistoryItems(items)
+	if len(grouped) != 2 {
+		t.Fatalf("expected Read group plus Grep item, got %d: %#v", len(grouped), grouped)
+	}
+	if grouped[0].Tool == nil || grouped[0].Tool.Name != "Read" {
+		t.Fatalf("expected grouped Read item, got %#v", grouped[0])
+	}
+	if grouped[0].Tool.CommandGroup == nil || grouped[0].Tool.CommandGroup.Count != 2 {
+		t.Fatalf("expected Read command group count 2, got %#v", grouped[0].Tool.CommandGroup)
+	}
+	details, ok := grouped[0].Payload["groupItems"].([]CommandExecutionGroupItem)
+	if !ok || len(details) != 2 {
+		t.Fatalf("expected two Read detail items, got %#v", grouped[0].Payload["groupItems"])
+	}
+	if grouped[1].Tool == nil || grouped[1].Tool.Name != "Grep" || grouped[1].Tool.CommandGroup != nil {
+		t.Fatalf("expected ungrouped Grep item, got %#v", grouped[1])
+	}
+}
+
 func TestApplyEventToHistoryCacheCanonicalizesCommandExecutionGroupRows(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { WebSessionBlock } from '@/stores/webSession';
-import { projectWebSessionCompactTimelineBlocks } from '@/components/web-session/webSessionCompactTimeline';
+import {
+  isTransportRetryNoteBlock,
+  projectWebSessionCompactTimelineBlocks,
+  projectWebSessionVisibleTimelineBlocks,
+} from '@/components/web-session/webSessionCompactTimeline';
 
 function buildFileChangeBlock(
   id: string,
@@ -109,6 +113,53 @@ function buildCommandBlock(
   };
 }
 
+function buildDynamicToolBlock(
+  id: string,
+  name: string,
+  input: Record<string, unknown>,
+  options: {
+    orderIndex?: number;
+    groupId?: string;
+    count?: number;
+    status?: 'running' | 'done' | 'error';
+    timestamp?: number;
+    sourceThreadId?: string;
+  } = {}
+): WebSessionBlock {
+  const timestamp = options.timestamp ?? Date.UTC(2026, 3, 20, 12, 0, 0);
+  return {
+    key: id,
+    id,
+    orderIndex: options.orderIndex ?? 1,
+    kind: 'tool',
+    itemType: 'dynamic_tool_call',
+    text: '',
+    timestamp,
+    sourceThreadId: options.sourceThreadId,
+    attachments: [],
+    tool: {
+      id,
+      name,
+      kind: 'dynamic_tool_call',
+      input,
+      output: `${name} output`,
+      status: options.status ?? 'done',
+      meta: {
+        kind: 'dynamic_tool_call',
+        title: name,
+      },
+      ...(options.groupId
+        ? {
+            commandGroup: {
+              id: options.groupId,
+              count: options.count ?? 1,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
 function buildMessageBlock(id: string, orderIndex: number): WebSessionBlock {
   return {
     key: id,
@@ -128,6 +179,47 @@ function readGroupItems(block: WebSessionBlock): Array<Record<string, unknown>> 
 }
 
 describe('webSessionCompactTimeline', () => {
+  it('identifies transport retry notes without treating ordinary notes as retries', () => {
+    const retryNote: WebSessionBlock = {
+      key: 'retry-note',
+      id: 'retry-note',
+      orderIndex: 1,
+      kind: 'system',
+      itemType: 'note',
+      text: 'Claude API retry 2/10 after 1s (server_error)',
+      timestamp: Date.UTC(2026, 3, 20, 12, 0, 0),
+      attachments: [],
+      payload: { code: 'transport_retrying' },
+    };
+    const ordinaryNote = { ...retryNote, key: 'note', id: 'note', payload: { lvl: 'warn' } };
+
+    expect(isTransportRetryNoteBlock(retryNote)).toBe(true);
+    expect(isTransportRetryNoteBlock(ordinaryNote)).toBe(false);
+  });
+
+  it('hides retry notes after preserving their boundaries between tool groups', () => {
+    const retryNote: WebSessionBlock = {
+      key: 'retry-note',
+      id: 'retry-note',
+      orderIndex: 2,
+      kind: 'system',
+      itemType: 'note',
+      text: 'Claude API retry 2/10 after 1s (server_error)',
+      timestamp: Date.UTC(2026, 3, 20, 12, 0, 1),
+      attachments: [],
+      payload: { code: 'transport_retrying' },
+    };
+    const visible = projectWebSessionVisibleTimelineBlocks([
+      buildCommandBlock('before-retry', { orderIndex: 1, command: 'git status' }),
+      retryNote,
+      buildCommandBlock('after-retry', { orderIndex: 3, command: 'git diff' }),
+    ]);
+
+    expect(visible).toHaveLength(2);
+    expect(visible.map(block => block.tool?.id)).toEqual(['before-retry', 'after-retry']);
+    expect(visible.every(block => !block.tool?.commandGroup)).toBe(true);
+  });
+
   it('folds consecutive file_change blocks that share a command group id', () => {
     const projected = projectWebSessionCompactTimelineBlocks([
       buildMessageBlock('intro', 1),
@@ -224,6 +316,49 @@ describe('webSessionCompactTimeline', () => {
     expect(readGroupItems(projected[0]).map(item => item.command)).toEqual([
       'git status',
       'git diff',
+    ]);
+  });
+
+  it('folds dynamic tools by name and keeps different built-ins separate', () => {
+    const projected = projectWebSessionCompactTimelineBlocks([
+      buildDynamicToolBlock('read-1', 'Read', { file_path: 'src/App.vue' }, { orderIndex: 1 }),
+      buildDynamicToolBlock('read-2', 'Read', { file_path: 'src/main.ts' }, { orderIndex: 2 }),
+      buildDynamicToolBlock(
+        'grep-1',
+        'Grep',
+        { pattern: 'WebSessionPanel', path: 'ui/src' },
+        { orderIndex: 3 }
+      ),
+    ]);
+
+    expect(projected).toHaveLength(2);
+    expect(projected[0].tool?.name).toBe('Read');
+    expect(projected[0].tool?.commandGroup?.count).toBe(2);
+    expect(readGroupItems(projected[0]).map(item => item.summary)).toEqual([
+      'src/App.vue',
+      'src/main.ts',
+    ]);
+    expect(projected[1].tool?.name).toBe('Grep');
+    expect(projected[1].tool?.commandGroup).toBeUndefined();
+    expect(projected[1].tool?.meta?.title).toBe('Grep');
+  });
+
+  it('uses dynamic tool targets as compact summaries', () => {
+    const projected = projectWebSessionCompactTimelineBlocks([
+      buildDynamicToolBlock('grep-1', 'Grep', {
+        pattern: 'dynamic_tool_call',
+        path: 'service/websession',
+      }),
+      buildDynamicToolBlock('grep-2', 'Grep', {
+        pattern: 'AskUserQuestion',
+        path: 'service/websession/manager.go',
+      }),
+    ]);
+
+    const groupItems = readGroupItems(projected[0]);
+    expect(groupItems.map(item => item.summary)).toEqual([
+      'dynamic_tool_call · service/websession',
+      'AskUserQuestion · service/websession/manager.go',
     ]);
   });
 

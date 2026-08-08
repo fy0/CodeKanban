@@ -360,6 +360,8 @@ func isCompactHistoryTool(item HistoryItem) bool {
 	switch strings.TrimSpace(item.Tool.Kind) {
 	case "command_execution", "file_change", "mcp_tool_call", "web_search":
 		return true
+	case "dynamic_tool_call":
+		return !isInteractiveDynamicToolName(item.Tool.Name)
 	default:
 		return false
 	}
@@ -401,7 +403,7 @@ func compactSyncedHistoryItems(items []HistoryItem) []HistoryItem {
 			continue
 		}
 
-		kind := current.Tool.Kind
+		groupKey := historyCompactToolGroupKey(current)
 		threadID := ""
 		if current.SourceThreadID != nil {
 			threadID = strings.TrimSpace(*current.SourceThreadID)
@@ -414,7 +416,7 @@ func compactSyncedHistoryItems(items []HistoryItem) []HistoryItem {
 			if next.SourceThreadID != nil {
 				nextThreadID = strings.TrimSpace(*next.SourceThreadID)
 			}
-			if !isCompactHistoryTool(next) || next.Tool.Kind != kind || nextThreadID != threadID {
+			if !isCompactHistoryTool(next) || historyCompactToolGroupKey(next) != groupKey || nextThreadID != threadID {
 				break
 			}
 			group = append(group, next)
@@ -440,6 +442,9 @@ func compactSyncedHistoryItems(items []HistoryItem) []HistoryItem {
 		}
 		latest.Tool.Meta["commandGroup"] = latest.Tool.CommandGroup
 		latest.Payload = cloneMap(latest.Payload)
+		if latest.Payload == nil {
+			latest.Payload = make(map[string]any)
+		}
 		latest.Payload["groupItems"] = func() []CommandExecutionGroupItem {
 			details := make([]CommandExecutionGroupItem, 0, len(group))
 			for _, item := range group {

@@ -29,6 +29,7 @@ type toolSnapshot struct {
 type commandExecutionProjectionGroup struct {
 	groupID         string
 	kind            string
+	groupKey        string
 	threadID        string
 	turnID          string
 	firstSeq        int64
@@ -50,6 +51,7 @@ type commandExecutionProjectionGroup struct {
 type commandExecutionDetailAccumulator struct {
 	groupID    string
 	kind       string
+	groupKey   string
 	threadID   string
 	title      string
 	summary    string
@@ -190,29 +192,31 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 
 		if isCompactToolEvent(event) {
 			kind := compactToolKind(event)
+			groupKey := compactToolGroupKey(event, activeTools[toolScopeKey])
 			groupID := eventExplicitCommandGroupID(event)
 			toolAlreadyInGroup := false
 			if currentGroup != nil {
 				_, toolAlreadyInGroup = currentGroup.toolIDs[toolID]
 			}
-			if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind && toolAlreadyInGroup {
+			if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.groupKey == groupKey && toolAlreadyInGroup {
 				groupID = currentGroup.groupID
-			} else if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind && transparentSinceCompact {
+			} else if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.groupKey == groupKey && transparentSinceCompact {
 				groupID = currentGroup.groupID
 			} else if groupID == "" {
-				if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind {
+				if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.groupKey == groupKey {
 					groupID = currentGroup.groupID
 				} else {
 					groupID = commandExecutionGroupID(toolID)
 				}
 			}
-			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind || currentGroup.threadID != event.ThreadID) {
+			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.groupKey != groupKey || currentGroup.threadID != event.ThreadID) {
 				flushGroup()
 			}
 			if currentGroup == nil {
 				currentGroup = &commandExecutionProjectionGroup{
 					groupID:  groupID,
 					kind:     kind,
+					groupKey: groupKey,
 					threadID: event.ThreadID,
 					turnID:   event.TurnID,
 					toolIDs:  make(map[string]struct{}),
@@ -273,23 +277,24 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 
 		if isCompactToolEvent(event) {
 			kind := compactToolKind(event)
+			groupKey := compactToolGroupKey(event, activeTools[toolScopeKey])
 			groupID := eventExplicitCommandGroupID(event)
 			toolAlreadyInGroup := false
 			if currentGroup != nil {
 				_, toolAlreadyInGroup = currentGroup.itemIndex[toolID]
 			}
-			if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind && toolAlreadyInGroup {
+			if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.groupKey == groupKey && toolAlreadyInGroup {
 				groupID = currentGroup.groupID
-			} else if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind && transparentSinceCompact {
+			} else if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.groupKey == groupKey && transparentSinceCompact {
 				groupID = currentGroup.groupID
 			} else if groupID == "" {
-				if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.kind == kind {
+				if currentGroup != nil && currentGroup.threadID == event.ThreadID && currentGroup.groupKey == groupKey {
 					groupID = currentGroup.groupID
 				} else {
 					groupID = commandExecutionGroupID(toolID)
 				}
 			}
-			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind || currentGroup.threadID != event.ThreadID) {
+			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.groupKey != groupKey || currentGroup.threadID != event.ThreadID) {
 				currentGroup = nil
 				transparentSinceCompact = false
 			}
@@ -297,6 +302,7 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 				currentGroup = &commandExecutionDetailAccumulator{
 					groupID:   groupID,
 					kind:      kind,
+					groupKey:  groupKey,
 					threadID:  event.ThreadID,
 					itemIndex: make(map[string]int),
 				}
@@ -464,7 +470,7 @@ func (g *commandExecutionDetailAccumulator) applyEvent(event Event, snapshot too
 		g.items = append(g.items, CommandExecutionGroupItem{
 			ToolID: toolID,
 			Kind:   g.kind,
-			Title:  compactToolTitle(g.kind),
+			Title:  firstNonEmpty(eventToolName(event), snapshot.name, compactToolTitle(g.kind)),
 			Status: "running",
 		})
 	}
@@ -480,7 +486,7 @@ func (g *commandExecutionDetailAccumulator) applyEvent(event Event, snapshot too
 	item := g.items[index]
 	meta := firstMap(eventToolMeta(event), snapshot.meta)
 	item.Input = firstNonNil(item.Input, eventToolInput(event), snapshot.input)
-	item.Title = compactToolTitle(g.kind)
+	item.Title = firstNonEmpty(eventToolName(event), snapshot.name, item.Title, compactToolTitle(g.kind))
 	item.Kind = g.kind
 	item.Summary = compactToolSummary(g.kind, item.Input, meta, eventToolOutput(event))
 	item.Command = compactToolSummary(g.kind, item.Input, meta, eventToolOutput(event))
@@ -539,12 +545,15 @@ func isCompactToolEvent(event Event) bool {
 	if event.Type != "tool_st" && event.Type != "tool_end" {
 		return false
 	}
-	return isCompactToolKind(eventToolKind(event))
+	if !isCompactToolKind(eventToolKind(event)) {
+		return false
+	}
+	return !isInteractiveDynamicToolName(eventToolName(event))
 }
 
 func isCompactToolKind(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "command_execution", "file_change", "mcp_tool_call", "web_search":
+	case "command_execution", "file_change", "mcp_tool_call", "web_search", "dynamic_tool_call":
 		return true
 	default:
 		return false
@@ -553,6 +562,41 @@ func isCompactToolKind(kind string) bool {
 
 func compactToolKind(event Event) string {
 	return eventToolKind(event)
+}
+
+func compactToolGroupKey(event Event, snapshot toolSnapshot) string {
+	kind := compactToolKind(event)
+	if kind != "dynamic_tool_call" {
+		return kind
+	}
+	name := strings.ToLower(strings.TrimSpace(firstNonEmpty(eventToolName(event), snapshot.name)))
+	if name == "" {
+		return kind
+	}
+	return kind + "\x00" + name
+}
+
+func historyCompactToolGroupKey(item HistoryItem) string {
+	if item.Tool == nil || item.Tool.Kind != "dynamic_tool_call" {
+		if item.Tool == nil {
+			return ""
+		}
+		return strings.TrimSpace(item.Tool.Kind)
+	}
+	name := strings.ToLower(strings.TrimSpace(item.Tool.Name))
+	if name == "" {
+		return item.Tool.Kind
+	}
+	return item.Tool.Kind + "\x00" + name
+}
+
+func isInteractiveDynamicToolName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "askuserquestion":
+		return true
+	default:
+		return false
+	}
 }
 
 func isReasoningToolEvent(event Event) bool {
@@ -703,9 +747,65 @@ func compactToolSummary(kind string, input any, meta map[string]any, output stri
 			return summary
 		}
 		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
+	case "dynamic_tool_call":
+		return dynamicToolSummary(input, meta, output)
 	default:
 		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
 	}
+}
+
+func dynamicToolSummary(input any, meta map[string]any, output string) string {
+	record := decodeRawObject(input)
+	toolName := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		stringValue(meta["title"]),
+		stringValue(meta["name"]),
+	)))
+	path := strings.TrimSpace(firstNonEmpty(
+		stringValue(record["file_path"]),
+		stringValue(record["path"]),
+		stringValue(record["notebook_path"]),
+	))
+	pattern := strings.TrimSpace(stringValue(record["pattern"]))
+	query := strings.TrimSpace(firstNonEmpty(stringValue(record["query"]), stringValue(record["url"])))
+
+	switch toolName {
+	case "read", "notebookread", "ls":
+		if path != "" {
+			return path
+		}
+	case "grep":
+		if pattern != "" && path != "" {
+			return pattern + " · " + path
+		}
+		if pattern != "" {
+			return pattern
+		}
+		if path != "" {
+			return path
+		}
+	case "glob":
+		if pattern != "" && path != "" {
+			return pattern + " · " + path
+		}
+		if pattern != "" {
+			return pattern
+		}
+		if path != "" {
+			return path
+		}
+	default:
+		if path != "" {
+			return path
+		}
+		if query != "" {
+			return query
+		}
+		if pattern != "" {
+			return pattern
+		}
+	}
+
+	return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
 }
 
 func webSearchSummary(input any) string {
