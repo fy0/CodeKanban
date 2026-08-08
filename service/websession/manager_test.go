@@ -5174,6 +5174,104 @@ func TestRespondToUserInputCodexAppServer(t *testing.T) {
 	}
 }
 
+func TestPendingCodexRedirectWaitsForUserInput(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "user_input_linger")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	manager.pendingSteerDelay = 50 * time.Millisecond
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if manager.hasActiveRun(created.ID) {
+			_ = manager.AbortSession(created.ID)
+		}
+	})
+
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestUserInput)
+	if request == nil {
+		t.Fatal("expected pending user input request")
+	}
+
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"next",
+		nil,
+		PendingInputModeRedirect,
+		"pending-next",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode returned error: %v", err)
+	}
+
+	steerStatePath := codexPath + ".state.steer.json"
+	time.Sleep(150 * time.Millisecond)
+	if _, err := os.Stat(steerStatePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected pending user input to block steer, stat error=%v", err)
+	}
+	pending := manager.pendingInputsSnapshot(created.ID)
+	if len(pending) != 1 || pending[0].ID != "pending-next" || pending[0].Text != "next" {
+		t.Fatalf("expected redirect to remain pending while awaiting input, got %#v", pending)
+	}
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first" {
+		t.Fatalf("expected no next-step user message before the answer, got %#v", got)
+	}
+
+	if err := manager.respondToUserInput(created.ID, request.ItemID, map[string][]string{
+		"scope": {"full migration"},
+	}); err != nil {
+		t.Fatalf("respondToUserInput returned error: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(steerStatePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected answered turn to finish before steer, stat error=%v", err)
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 1 || pending[0].ID != "pending-next" {
+		t.Fatalf("expected redirect to remain pending until the answered turn finishes, got %#v", pending)
+	}
+
+	waitForUserMessageCount(t, manager, created.ID, 2)
+	rawEvents, err = manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error after answering: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|next" {
+		t.Fatalf("expected queued next step after the answered turn, got %#v", got)
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected pending redirect to flush after the answer, got %#v", pending)
+	}
+	if !historyHasEvent(rawEvents, "user_input_res") {
+		t.Fatalf("expected user_input_res event after answering, got %#v", rawEvents)
+	}
+
+	if err := manager.AbortSession(created.ID); err != nil {
+		t.Fatalf("AbortSession returned error while cleaning up: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
 func TestUserInputRequestProjectionPersistsSourceItemID(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -8742,7 +8840,7 @@ rl.on('line', line => {
       return;
     }
 
-    if (mode === 'user_input') {
+    if (mode === 'user_input' || mode === 'user_input_linger') {
       awaiting = 'req_user_1';
       send({
         id: awaiting,
@@ -8842,6 +8940,11 @@ rl.on('line', line => {
   if (awaiting && message.id === awaiting) {
     if (mode === 'active_call_timeout_approval_then_success' || mode === 'active_call_timeout_user_input_then_success') {
       awaiting = null;
+      return;
+    }
+    if (mode === 'user_input_linger') {
+      awaiting = null;
+      setTimeout(() => finishTurn('answered'), 250);
       return;
     }
     finishTurn(mode === 'user_input' ? 'answered' : 'approved');

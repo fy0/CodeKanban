@@ -213,6 +213,7 @@ type activeRun struct {
 	recentRuntimeLines      []string
 	pendingApproval         string
 	pendingServerReq        *pendingServerRequest
+	inputResponsePending    bool
 	app                     *codexAppServerClient
 	codexThreadID           string
 	codexTurnID             string
@@ -5579,6 +5580,7 @@ func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[strin
 	if err := app.respond(pending.RawID, userInputResponsePayload(answers)); err != nil {
 		return err
 	}
+	run.markUserInputResponsePending()
 	run.clearPendingServerRequest()
 	m.resumeActiveCallTimeout(run)
 
@@ -6857,6 +6859,25 @@ func (r *activeRun) pendingUserInputRequest() (*pendingServerRequest, bool) {
 		return nil, false
 	}
 	return r.pendingServerReq.clone(), true
+}
+
+func (r *activeRun) markUserInputResponsePending() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.inputResponsePending = true
+	r.mu.Unlock()
+}
+
+func (r *activeRun) blocksCodexSteerForUserInput() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inputResponsePending ||
+		(r.pendingServerReq != nil && r.pendingServerReq.Kind == pendingServerRequestUserInput)
 }
 
 func (r *activeRun) clearPendingServerRequest() {

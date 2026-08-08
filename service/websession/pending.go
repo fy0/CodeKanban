@@ -737,6 +737,12 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 				!isCodexSteerSession(record) {
 				return
 			}
+			m.mu.RLock()
+			run := m.runs[sessionID]
+			m.mu.RUnlock()
+			if run != nil && run.blocksCodexSteerForUserInput() {
+				return
+			}
 			if next.ReadyAt == nil {
 				readyAt, found, changed := m.ensurePendingSteerReadyAt(sessionID, next.ID)
 				if !found {

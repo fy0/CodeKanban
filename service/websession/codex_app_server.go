@@ -1047,6 +1047,9 @@ func (m *Manager) steerActiveCodexTurn(
 	if run == nil || normalizeAgent(run.agent) != AgentCodex || run.backend != SessionBackendCodexAppServer {
 		return false, nil
 	}
+	if run.blocksCodexSteerForUserInput() {
+		return false, nil
+	}
 
 	attachments := make([]Attachment, 0, len(attachmentIDs))
 	for _, attachmentID := range attachmentIDs {
@@ -1070,6 +1073,9 @@ func (m *Manager) steerActiveCodexTurn(
 	var threadID string
 	var turnID string
 	for client == nil || threadID == "" || turnID == "" {
+		if run.blocksCodexSteerForUserInput() {
+			return false, nil
+		}
 		client, threadID, turnID = run.codexSteerTarget()
 		if client != nil && threadID != "" && turnID != "" {
 			break
@@ -1083,6 +1089,9 @@ func (m *Manager) steerActiveCodexTurn(
 			return true, fmt.Errorf("active Codex turn is not ready to steer")
 		case <-ticker.C:
 		}
+	}
+	if run.blocksCodexSteerForUserInput() {
+		return false, nil
 	}
 
 	messageID := utils.NewID()
