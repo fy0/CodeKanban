@@ -14686,7 +14686,7 @@ watch(
 );
 
 watch(
-  () => [props.projectId, currentSession.value?.id ?? ''] as const,
+  [() => props.projectId, () => currentSession.value?.id ?? ''],
   ([projectId, sessionId], previous) => {
     const [previousProjectId, previousSessionId] = previous ?? ['', ''];
     if (

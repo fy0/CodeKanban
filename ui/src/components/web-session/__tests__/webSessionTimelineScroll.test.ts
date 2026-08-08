@@ -217,4 +217,13 @@ describe('webSessionTimelineScroll', () => {
 
     expect(source).toMatch(/\.runtime-strip\s*\{[^}]*overflow-anchor:\s*none;/s);
   });
+
+  it('only restores timeline position when project or session identity changes', () => {
+    const source = readFileSync(webSessionPanelPath, 'utf8');
+
+    expect(source).toContain("[() => props.projectId, () => currentSession.value?.id ?? '']");
+    expect(source).not.toContain(
+      "() => [props.projectId, currentSession.value?.id ?? ''] as const"
+    );
+  });
 });
