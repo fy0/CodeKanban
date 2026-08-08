@@ -670,6 +670,10 @@ type SyncSessionOptions = {
   rememberActive?: boolean;
 };
 
+type CreateSessionOptions = {
+  rememberActive?: boolean;
+};
+
 type LoadSessionSnapshotOptions = {
   rememberActive?: boolean;
   signal?: AbortSignal;
@@ -6387,11 +6391,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
       autoRetryMaxAttempts?: number;
       autoRetryDispatchPendingOnFailure?: boolean;
       title?: string;
-    }
+    },
+    options?: CreateSessionOptions
   ) {
     const session = await webSessionApi.create(projectId, payload);
     upsertSession(session);
-    rememberActiveSession(projectId, session.id);
+    if (options?.rememberActive !== false) {
+      rememberActiveSession(projectId, session.id);
+    }
     emitter.emit('web-session:created', {
       projectId,
       sessionId: session.id,

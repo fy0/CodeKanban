@@ -74,4 +74,34 @@ describe('web session composer submission', () => {
       'clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);'
     );
   });
+
+  it('does not reactivate a session after creation or catch-up becomes stale', () => {
+    const createSource = sourceBetween(
+      'async function handleCreateSession(',
+      'async function handleStartDraftSession('
+    );
+    const catchUpSource = sourceBetween(
+      'async function refreshWebSessionCatchUp(',
+      'function scheduleWebSessionCatchUp('
+    );
+
+    expect(createSource).toContain('rememberActive: false');
+    expect(createSource).toContain('const shouldActivateCreatedSession');
+    expect(createSource).toContain('if (shouldActivateCreatedSession)');
+    expect(catchUpSource).toContain('const isCurrentCatchUp');
+    expect(catchUpSource).toContain('rememberActive: false');
+  });
+
+  it('guards delayed send completion side effects by the target session', () => {
+    const handlerSource = sourceBetween(
+      'async function handleSubmit()',
+      'async function handleConfirmScheduledSend()'
+    );
+
+    expect(handlerSource).toContain('const isCurrentSubmissionSession');
+    expect(handlerSource).toContain(
+      'if (prepared.navigateProjectId && isCurrentSubmissionSession)'
+    );
+    expect(handlerSource).toContain('if (isCurrentSubmissionSession)');
+  });
 });

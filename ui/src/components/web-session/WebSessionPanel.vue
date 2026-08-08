@@ -4085,6 +4085,11 @@ const currentSession = computed<SessionTab | null>(() => {
   const activeRealId = webSessionStore.getActiveSessionId(props.projectId);
   return realSessions.value.find(session => session.id === activeRealId) ?? null;
 });
+
+function isCurrentVisibleSession(sessionId: string) {
+  return Boolean(sessionId && currentSession.value?.id === sessionId);
+}
+
 const devCyberPolicyWarning = computed({
   get: () =>
     Boolean(currentSession.value?.id && devCyberPolicySessionId.value === currentSession.value.id),
@@ -4575,23 +4580,35 @@ async function refreshWebSessionCatchUp(reason: string) {
 
   beginWebSessionCatchUp(reason);
   const token = ++webSessionCatchUpToken;
+  const sessionIsArchivedPreview = isArchivedPreviewSession(currentSession.value);
+  const isCurrentCatchUp = () =>
+    token === webSessionCatchUpToken && isCurrentVisibleSession(sessionId);
 
   try {
     let serverRevision = session.revision;
     if (session?.projectId && !session.archivedAt) {
       const loadedSessions = await webSessionStore.loadSessions(session.projectId, true);
+      if (!isCurrentCatchUp()) {
+        return;
+      }
       serverRevision =
         loadedSessions.find(item => item.id === sessionId)?.revision ?? serverRevision;
     }
     let snapshot = null;
     if (!webSessionStore.isSessionSnapshotCurrent(sessionId, serverRevision)) {
+      if (!isCurrentCatchUp()) {
+        return;
+      }
       snapshot = await webSessionStore.loadSessionSnapshot(session.projectId, sessionId, {
-        rememberActive: !isArchivedPreviewSession(currentSession.value),
-        preserveArchivedPosition: isArchivedPreviewSession(currentSession.value),
+        rememberActive: false,
+        preserveArchivedPosition: sessionIsArchivedPreview,
         conditional: true,
       });
     }
-    if (isArchivedPreviewSession(currentSession.value) && snapshot?.session) {
+    if (!isCurrentCatchUp()) {
+      return;
+    }
+    if (sessionIsArchivedPreview && snapshot?.session) {
       archivedPreviewSession.value = {
         ...snapshot.session,
         isArchivedPreview: true,
@@ -11235,6 +11252,7 @@ async function handleCreateSession(
   try {
     const projectId = props.projectId;
     const source = currentSession.value;
+    const sourceSessionId = source?.id ?? '';
     const agent = forceAgent ?? source?.agent ?? selectedAgent.value;
     if (!(await ensureMessageCapabilityAvailable(agent))) {
       return undefined;
@@ -11243,43 +11261,54 @@ async function handleCreateSession(
       maybeNotifyCodexCompatibilityMode();
     }
     const worktreeId = resolveCreateSessionWorktreeId(source);
-    const session = await webSessionStore.createSession(projectId, {
-      worktreeId,
-      agent,
-      claudeRuntime:
-        agent === 'claude'
-          ? source?.claudeRuntime === 'ccr'
-            ? 'ccr'
-            : draftClaudeRuntime.value
-          : 'claude',
-      model: source?.model || draftModel.value || defaultModelForAgent(agent),
-      reasoningEffort:
-        source?.reasoningEffort ||
-        (agent === 'codex' ? selectedReasoningEffort.value : defaultReasoningEffortForAgent(agent)),
-      workflowMode: source?.workflowMode || draftWorkflowMode.value,
-      permissionLevel:
-        (source?.permissionLevel === 'default' && agent === 'claude'
-          ? 'elevated'
-          : source?.permissionLevel) || draftPermissionLevel.value,
-      activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, agent),
-      autoRetryEnabled: source?.autoRetryEnabled === true,
-      autoRetryScope:
-        source?.autoRetryEnabled === true
-          ? source.autoRetryScope
-          : webSessionAutoContinueScope.value,
-      autoRetryPreset:
-        source?.autoRetryEnabled === true
-          ? source.autoRetryPreset
-          : webSessionAutoContinuePreset.value,
-      autoRetryMaxAttempts:
-        source?.autoRetryEnabled === true && typeof source.autoRetryMaxAttempts === 'number'
-          ? source.autoRetryMaxAttempts
-          : webSessionAutoContinueMaxAttempts.value,
-      autoRetryDispatchPendingOnFailure:
-        typeof source?.autoRetryDispatchPendingOnFailure === 'boolean'
-          ? source.autoRetryDispatchPendingOnFailure
-          : webSessionAutoRetryDispatchPendingOnFailure.value,
-    });
+    const session = await webSessionStore.createSession(
+      projectId,
+      {
+        worktreeId,
+        agent,
+        claudeRuntime:
+          agent === 'claude'
+            ? source?.claudeRuntime === 'ccr'
+              ? 'ccr'
+              : draftClaudeRuntime.value
+            : 'claude',
+        model: source?.model || draftModel.value || defaultModelForAgent(agent),
+        reasoningEffort:
+          source?.reasoningEffort ||
+          (agent === 'codex'
+            ? selectedReasoningEffort.value
+            : defaultReasoningEffortForAgent(agent)),
+        workflowMode: source?.workflowMode || draftWorkflowMode.value,
+        permissionLevel:
+          (source?.permissionLevel === 'default' && agent === 'claude'
+            ? 'elevated'
+            : source?.permissionLevel) || draftPermissionLevel.value,
+        activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, agent),
+        autoRetryEnabled: source?.autoRetryEnabled === true,
+        autoRetryScope:
+          source?.autoRetryEnabled === true
+            ? source.autoRetryScope
+            : webSessionAutoContinueScope.value,
+        autoRetryPreset:
+          source?.autoRetryEnabled === true
+            ? source.autoRetryPreset
+            : webSessionAutoContinuePreset.value,
+        autoRetryMaxAttempts:
+          source?.autoRetryEnabled === true && typeof source.autoRetryMaxAttempts === 'number'
+            ? source.autoRetryMaxAttempts
+            : webSessionAutoContinueMaxAttempts.value,
+        autoRetryDispatchPendingOnFailure:
+          typeof source?.autoRetryDispatchPendingOnFailure === 'boolean'
+            ? source.autoRetryDispatchPendingOnFailure
+            : webSessionAutoRetryDispatchPendingOnFailure.value,
+      },
+      {
+        rememberActive: false,
+      }
+    );
+    const shouldActivateCreatedSession = sourceSessionId
+      ? isCurrentVisibleSession(sourceSessionId)
+      : !currentSession.value;
     if (isDraftSession(source)) {
       webSessionStore.moveDraft(projectId, source.id, session.id);
       replaceTabIdInNavigationState(source.id, session.id);
@@ -11288,15 +11317,17 @@ async function handleCreateSession(
       });
     }
     options.onCreated?.(session);
-    draftAgent.value = session.agent;
-    draftClaudeRuntime.value = session.claudeRuntime === 'ccr' ? 'ccr' : 'claude';
-    draftModel.value = session.model;
-    draftReasoningEffort.value =
-      session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
-    draftWorkflowMode.value = session.workflowMode;
-    draftPermissionLevel.value = session.permissionLevel;
-    await activateTabById(session.id, { connectReal: false });
-    scrollToBottom(true);
+    if (shouldActivateCreatedSession) {
+      draftAgent.value = session.agent;
+      draftClaudeRuntime.value = session.claudeRuntime === 'ccr' ? 'ccr' : 'claude';
+      draftModel.value = session.model;
+      draftReasoningEffort.value =
+        session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
+      draftWorkflowMode.value = session.workflowMode;
+      draftPermissionLevel.value = session.permissionLevel;
+      await activateTabById(session.id, { connectReal: false });
+      scrollToBottom(true);
+    }
     return session;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -12027,7 +12058,10 @@ function handleSkillTemplateInsert(skill: CodexSkillSummary) {
   showSkillBrowser.value = false;
 }
 
-async function prepareSessionForSend(session: WebSessionSummary) {
+async function prepareSessionForSend(
+  session: WebSessionSummary,
+  options: { shouldActivate?: () => boolean } = {}
+) {
   if (!session.archivedAt) {
     return {
       session,
@@ -12037,11 +12071,16 @@ async function prepareSessionForSend(session: WebSessionSummary) {
 
   const restored = await webSessionStore.unarchiveSession(session.projectId, session.id);
   await refreshArchivedSidebar();
-  clearArchivedPreviewSession();
-  if (restored.projectId === props.projectId) {
-    await activateTabById(restored.id);
-  } else {
-    webSessionStore.setActiveSession(restored.projectId, restored.id);
+  if (archivedPreviewSession.value?.id === session.id) {
+    clearArchivedPreviewSession();
+  }
+  const shouldActivate = options.shouldActivate?.() ?? true;
+  if (shouldActivate) {
+    if (restored.projectId === props.projectId) {
+      await activateTabById(restored.id);
+    } else {
+      webSessionStore.setActiveSession(restored.projectId, restored.id);
+    }
   }
 
   return {
@@ -12051,17 +12090,22 @@ async function prepareSessionForSend(session: WebSessionSummary) {
 }
 
 async function continueErroredSession(session: WebSessionSummary) {
-  const prepared = await prepareSessionForSend(session);
+  const sourceSessionId = session.id;
+  const prepared = await prepareSessionForSend(session, {
+    shouldActivate: () => isCurrentVisibleSession(sourceSessionId),
+  });
   if (!(await ensureMessageCapabilityAvailable(prepared.session.agent))) {
     return;
   }
   await webSessionStore.sendMessage(prepared.session.id, 'continue', []);
-  if (prepared.navigateProjectId) {
+  if (prepared.navigateProjectId && isCurrentVisibleSession(prepared.session.id)) {
     projectStore.addRecentProject(prepared.navigateProjectId);
     await router.push(buildProjectRouteLocation(prepared.navigateProjectId, prepared.session.id));
   }
-  autoFollowBottom.value = true;
-  scrollToBottom(true);
+  if (isCurrentVisibleSession(prepared.session.id)) {
+    autoFollowBottom.value = true;
+    scrollToBottom(true);
+  }
 }
 
 async function handleSubmit() {
@@ -12116,7 +12160,10 @@ async function handleSubmit() {
     if (!session) {
       return;
     }
-    const prepared = await prepareSessionForSend(session);
+    const sessionBeforePreparation = session;
+    const prepared = await prepareSessionForSend(session, {
+      shouldActivate: () => isCurrentVisibleSession(sessionBeforePreparation.id),
+    });
     session = prepared.session;
     if (session.id !== submitOwnerId) {
       transferSessionSubmit(submitOwnerId, session.id);
@@ -12159,13 +12206,16 @@ async function handleSubmit() {
     submissionSucceeded = true;
     settingsStore.recordWebSessionRecentInput(draftText);
     void settingsStore.syncWebSessionQuickInputToServer();
-    if (prepared.navigateProjectId) {
+    const isCurrentSubmissionSession = isCurrentVisibleSession(session.id);
+    if (prepared.navigateProjectId && isCurrentSubmissionSession) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, session.id));
     }
-    autoFollowBottom.value = true;
-    isMobileComposerSettingsExpanded.value = false;
-    scrollToBottom(true);
+    if (isCurrentSubmissionSession) {
+      autoFollowBottom.value = true;
+      isMobileComposerSettingsExpanded.value = false;
+      scrollToBottom(true);
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
@@ -12185,35 +12235,46 @@ async function handleConfirmScheduledSend() {
     await handleConfirmScheduledPlanExecution();
     return;
   }
+  const submitProjectId = props.projectId;
   const initialSubmitOwnerId = currentDraftSessionId.value;
+  const initialSession = currentSession.value;
+  const draft = webSessionStore.getDraft(submitProjectId, initialSubmitOwnerId);
+  const draftText = draft.text;
+  const attachments = [...draft.attachments];
   const executeAt = Number(scheduledSendAt.value);
   const requiresScheduledTime = scheduledScheduleKind.value === 'at_time';
+  const scheduleKind = scheduledScheduleKind.value;
+  const sendMode = scheduledSendMode.value;
   if (
     !initialSubmitOwnerId ||
     scheduledSendSubmitting.value ||
     isDraftAttachmentUploading.value ||
-    !hasDraftContent.value ||
+    (draftText.trim().length === 0 && attachments.length === 0) ||
     (requiresScheduledTime && (!Number.isFinite(executeAt) || executeAt <= Date.now()))
   ) {
     return;
   }
   scheduledSendSubmitting.value = true;
   try {
-    let session = currentRealSession.value;
-    if (!session || isDraftSession(currentSession.value)) {
+    let session = initialSession && !isDraftSession(initialSession) ? initialSession : null;
+    let draftSessionId = initialSubmitOwnerId;
+    if (!session || isDraftSession(initialSession)) {
       const created = await handleCreateSession();
       if (!created) {
         return;
       }
       session = created;
+      if (isDraftSession(initialSession)) {
+        draftSessionId = session.id;
+      }
     }
     if (!session) {
       return;
     }
-    const draftSessionId = currentDraftSessionId.value;
-    const draftText = composerText.value;
-    const attachments = [...draftAttachments.value];
-    const prepared = await prepareSessionForSend(session);
+    const sessionBeforePreparation = session;
+    const prepared = await prepareSessionForSend(session, {
+      shouldActivate: () => isCurrentVisibleSession(sessionBeforePreparation.id),
+    });
     session = prepared.session;
     if (!(await ensureMessageCapabilityAvailable(session.agent))) {
       return;
@@ -12222,19 +12283,22 @@ async function handleConfirmScheduledSend() {
       session.id,
       draftText,
       attachments.map(item => item.id),
-      scheduledScheduleKind.value === 'when_idle'
+      scheduleKind === 'when_idle'
         ? { scheduleKind: 'when_idle' }
         : { scheduleKind: 'at_time', scheduledFor: executeAt },
-      scheduledSendMode.value
+      sendMode
     );
     settingsStore.recordWebSessionRecentInput(draftText);
     void settingsStore.syncWebSessionQuickInputToServer();
-    clearComposerDraftAfterSubmit(draftSessionId);
-    if (prepared.navigateProjectId) {
+    clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
+    const isCurrentSubmissionSession = isCurrentVisibleSession(session.id);
+    if (prepared.navigateProjectId && isCurrentSubmissionSession) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, session.id));
     }
-    isMobileComposerSettingsExpanded.value = false;
+    if (isCurrentSubmissionSession) {
+      isMobileComposerSettingsExpanded.value = false;
+    }
     handleScheduledSendDialogVisibilityChange(false);
     message.success(t('webSession.scheduleSendCreated'));
   } catch (error) {
@@ -12265,7 +12329,9 @@ async function handleConfirmScheduledPlanExecution() {
     if (!current || !(await ensureMessageCapabilityAvailable(current.agent))) {
       return;
     }
-    const prepared = await prepareSessionForSend(current);
+    const prepared = await prepareSessionForSend(current, {
+      shouldActivate: () => isCurrentVisibleSession(current.id),
+    });
     if (prepared.session.id !== target.sessionId) {
       return;
     }
@@ -12281,7 +12347,7 @@ async function handleConfirmScheduledPlanExecution() {
         executeOptionLabel: target.executeOptionLabel,
       }
     );
-    if (prepared.navigateProjectId) {
+    if (prepared.navigateProjectId && isCurrentVisibleSession(prepared.session.id)) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, prepared.session.id));
     }
@@ -12374,7 +12440,9 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
     submissionSucceeded = true;
     settingsStore.recordWebSessionRecentInput(draftText);
     void settingsStore.syncWebSessionQuickInputToServer();
-    isMobileComposerSettingsExpanded.value = false;
+    if (isCurrentVisibleSession(session.id)) {
+      isMobileComposerSettingsExpanded.value = false;
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
@@ -13039,7 +13107,13 @@ async function handlePlanCardImplement() {
   let submitOwnerId = currentRealSession.value.id;
   beginSessionSubmit(submitOwnerId, 'execute_plan');
   try {
-    const prepared = await prepareSessionForSend(currentRealSession.value);
+    const sourceSession = currentRealSession.value;
+    if (!sourceSession) {
+      return;
+    }
+    const prepared = await prepareSessionForSend(sourceSession, {
+      shouldActivate: () => isCurrentVisibleSession(sourceSession.id),
+    });
     const targetSession = prepared.session;
     if (targetSession.id !== submitOwnerId) {
       transferSessionSubmit(submitOwnerId, targetSession.id);
@@ -13058,12 +13132,14 @@ async function handlePlanCardImplement() {
       await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
     }
 
-    if (prepared.navigateProjectId) {
+    if (prepared.navigateProjectId && isCurrentVisibleSession(targetSession.id)) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, targetSession.id));
     }
-    autoFollowBottom.value = true;
-    scrollToBottom(true);
+    if (isCurrentVisibleSession(targetSession.id)) {
+      autoFollowBottom.value = true;
+      scrollToBottom(true);
+    }
   } catch (error) {
     message.error(formatSessionInteractionError(error));
   } finally {

@@ -162,4 +162,27 @@ describe('webSession counts', () => {
     await store.deleteSession('project-1', 'session-1');
     expect(store.sessionCounts.get('project-1')).toBe(2);
   });
+
+  it('keeps the selected session when background creation opts out of activation', async () => {
+    const store = useWebSessionStore();
+    const activeSession = makeSession({ id: 'session-active' });
+    const createdSession = makeSession({ id: 'session-created', orderIndex: 2000 });
+
+    listMock.mockResolvedValue([activeSession]);
+    createMock.mockResolvedValue(createdSession);
+
+    await store.loadSessions(activeSession.projectId);
+    store.setActiveSession(activeSession.projectId, activeSession.id);
+
+    await store.createSession(
+      activeSession.projectId,
+      { agent: 'codex' },
+      { rememberActive: false }
+    );
+
+    expect(store.getActiveSessionId(activeSession.projectId)).toBe(activeSession.id);
+    expect(store.getSessions(activeSession.projectId).map(session => session.id)).toContain(
+      createdSession.id
+    );
+  });
 });
