@@ -3475,7 +3475,6 @@ import {
   type WebSessionSidebarVirtualItem,
 } from '@/components/web-session/webSessionSidebarVirtualList';
 import {
-  buildWebSessionSidebarSearchKey,
   mergeWebSessionSearchMatchSources,
   mergeWebSessionSidebarSearchPage,
   normalizeWebSessionSidebarSearchQuery,
@@ -3520,7 +3519,6 @@ const SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY = 'workspace-web-session-sidebar-searc
 const SIDEBAR_SEARCH_BODY_STORAGE_KEY = 'workspace-web-session-sidebar-search-body';
 const CYBER_POLICY_DISMISSALS_STORAGE_KEY = 'workspace-web-session-cyber-policy-dismissals';
 const SIDEBAR_SEARCH_SCAN_LIMIT = 50;
-const SIDEBAR_SEARCH_CACHE_LIMIT = 8;
 const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS = 120;
@@ -3577,17 +3575,6 @@ type SidebarSearchState = {
   loading: boolean;
   done: boolean;
   error: boolean;
-};
-
-type SidebarSearchParams = {
-  query: string;
-  projectIds: string[];
-  includeArchived: boolean;
-  includeBody: boolean;
-};
-
-type SidebarSearchCacheEntry = SidebarSearchParams & {
-  state: SidebarSearchState;
 };
 
 function createSidebarSearchState(): SidebarSearchState {
@@ -4008,8 +3995,8 @@ const sidebarSearchQuery = ref('');
 const sidebarSearchArchived = useStorage<boolean>(SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY, false);
 const sidebarSearchBody = useStorage<boolean>(SIDEBAR_SEARCH_BODY_STORAGE_KEY, true);
 const sidebarSearchState = ref<SidebarSearchState>(createSidebarSearchState());
-const sidebarSearchCache = new Map<string, SidebarSearchCacheEntry>();
-const sidebarSearchRequests = new Map<string, AbortController>();
+let sidebarSearchRequestVersion = 0;
+let sidebarSearchAbortController: AbortController | null = null;
 let sidebarResizeObserver: ResizeObserver | null = null;
 const composerTransferErrorMessage = ref('');
 const composerTransferErrorDetail = ref('');
@@ -8964,208 +8951,92 @@ const archivedSidebarMeta = computed(() => {
   };
 });
 
-function getSidebarSearchParams(): SidebarSearchParams {
-  return {
-    query: normalizedSidebarSearchQuery.value,
-    projectIds: [...sidebarVisibleProjectIds.value],
-    includeArchived: sidebarSearchArchived.value,
-    includeBody: sidebarSearchBody.value,
-  };
+function cancelSidebarSearchRequest() {
+  sidebarSearchRequestVersion += 1;
+  sidebarSearchAbortController?.abort();
+  sidebarSearchAbortController = null;
 }
 
-function cloneSidebarSearchState(state: SidebarSearchState): SidebarSearchState {
-  return {
-    ...state,
-    items: [...state.items],
-  };
-}
-
-function rememberSidebarSearchState(
-  key: string,
-  params: SidebarSearchParams,
-  state: SidebarSearchState
-) {
-  sidebarSearchCache.delete(key);
-  sidebarSearchCache.set(key, {
-    ...params,
-    projectIds: [...params.projectIds],
-    state: cloneSidebarSearchState(state),
-  });
-  while (sidebarSearchCache.size > SIDEBAR_SEARCH_CACHE_LIMIT) {
-    const oldestKey = Array.from(sidebarSearchCache.keys()).find(
-      cacheKey => !sidebarSearchRequests.has(cacheKey)
-    );
-    if (oldestKey === undefined) {
-      break;
-    }
-    sidebarSearchCache.delete(oldestKey);
-  }
-}
-
-function isReusableSidebarSearchEntry(
-  entry: SidebarSearchCacheEntry | undefined,
-  params: SidebarSearchParams
-): entry is SidebarSearchCacheEntry {
-  return Boolean(
-    entry &&
-      entry.query === params.query &&
-      entry.includeArchived === params.includeArchived &&
-      entry.includeBody === params.includeBody &&
-      entry.state.done &&
-      !entry.state.error
-  );
-}
-
-function canReuseSidebarSearchEntry(entry: SidebarSearchCacheEntry, params: SidebarSearchParams) {
-  const sourceProjectIds = new Set(entry.projectIds);
-  return params.projectIds.every(projectId => sourceProjectIds.has(projectId));
-}
-
-function restoreSidebarSearchState(params: SidebarSearchParams) {
-  const key = buildWebSessionSidebarSearchKey(params);
-  const directEntry = sidebarSearchCache.get(key);
-  if (isReusableSidebarSearchEntry(directEntry, params)) {
-    sidebarSearchState.value = cloneSidebarSearchState(directEntry.state);
-    rememberSidebarSearchState(key, params, directEntry.state);
-    return true;
-  }
-
-  let reusableSuperset: SidebarSearchCacheEntry | undefined;
-  for (const entry of sidebarSearchCache.values()) {
-    if (
-      !isReusableSidebarSearchEntry(entry, params) ||
-      !canReuseSidebarSearchEntry(entry, params) ||
-      entry.projectIds.length < params.projectIds.length
-    ) {
-      continue;
-    }
-    if (!reusableSuperset || entry.projectIds.length < reusableSuperset.projectIds.length) {
-      reusableSuperset = entry;
-    }
-  }
-  if (!reusableSuperset) {
-    return false;
-  }
-
-  const projectIds = new Set(params.projectIds);
-  const state = {
-    ...reusableSuperset.state,
-    items: reusableSuperset.state.items.filter(session => projectIds.has(session.projectId)),
-  };
-  rememberSidebarSearchState(key, params, state);
-  sidebarSearchState.value = cloneSidebarSearchState(state);
-  return true;
-}
-
-function clearSidebarSearchCache() {
-  sidebarSearchCache.clear();
-}
-
-function cancelSidebarSearchRequests() {
-  sidebarSearchRequests.forEach(abortController => abortController.abort());
-  sidebarSearchRequests.clear();
-}
-
-function clearSidebarSearchState(loading = false, cancelRequests = true) {
-  if (cancelRequests) {
-    cancelSidebarSearchRequests();
-  }
+function clearSidebarSearchState(loading = false) {
+  cancelSidebarSearchRequest();
   sidebarSearchState.value = {
     ...createSidebarSearchState(),
     loading,
   };
 }
 
-function isActiveSidebarSearchKey(searchKey: string) {
-  return searchKey === buildWebSessionSidebarSearchKey(getSidebarSearchParams());
-}
-
 async function loadSidebarSearch() {
-  const params = getSidebarSearchParams();
-  if (!params.query || params.projectIds.length === 0) {
+  const query = normalizedSidebarSearchQuery.value;
+  const projectIds = [...sidebarVisibleProjectIds.value];
+  if (!query || projectIds.length === 0) {
     clearSidebarSearchState();
     return;
   }
 
-  const searchKey = buildWebSessionSidebarSearchKey(params);
-  if (restoreSidebarSearchState(params)) {
-    return;
-  }
-
-  const existingAbortController = sidebarSearchRequests.get(searchKey);
-  if (existingAbortController) {
-    const existingEntry = sidebarSearchCache.get(searchKey);
-    if (existingEntry && isActiveSidebarSearchKey(searchKey)) {
-      sidebarSearchState.value = cloneSidebarSearchState(existingEntry.state);
-    }
-    return;
-  }
-
+  cancelSidebarSearchRequest();
+  const scopeKey = projectIds.join('|');
+  const includeArchived = sidebarSearchArchived.value;
+  const includeBody = sidebarSearchBody.value;
+  const requestVersion = ++sidebarSearchRequestVersion;
   const abortController = new AbortController();
-  sidebarSearchRequests.set(searchKey, abortController);
-  const initialState = {
+  sidebarSearchAbortController = abortController;
+  sidebarSearchState.value = {
     ...createSidebarSearchState(),
     loading: true,
   };
-  sidebarSearchState.value = initialState;
-  rememberSidebarSearchState(searchKey, params, initialState);
 
   try {
     let cursor = '';
     while (true) {
       const result: SessionSearchChunkResult = await webSessionApi.search(
         {
-          projectIds: params.projectIds,
-          query: params.query,
-          includeArchived: params.includeArchived,
-          includeBody: params.includeBody,
+          projectIds,
+          query,
+          includeArchived,
+          includeBody,
           cursor,
           scanLimit: SIDEBAR_SEARCH_SCAN_LIMIT,
         },
         { signal: abortController.signal }
       );
-      if (sidebarSearchRequests.get(searchKey) !== abortController) {
+      if (
+        requestVersion !== sidebarSearchRequestVersion ||
+        query !== normalizedSidebarSearchQuery.value ||
+        scopeKey !== sidebarVisibleProjectIds.value.join('|') ||
+        includeArchived !== sidebarSearchArchived.value ||
+        includeBody !== sidebarSearchBody.value
+      ) {
         return;
       }
 
-      const previousState = sidebarSearchCache.get(searchKey)?.state ?? createSidebarSearchState();
       const done = result.done || !result.nextCursor;
-      const nextState = {
-        items: mergeWebSessionSidebarSearchPage(previousState.items, result.items),
-        scanned: previousState.scanned + result.scanned,
+      sidebarSearchState.value = {
+        items: mergeWebSessionSidebarSearchPage(sidebarSearchState.value.items, result.items),
+        scanned: sidebarSearchState.value.scanned + result.scanned,
         total: result.total,
         loading: !done,
         done,
         error: false,
       };
-      rememberSidebarSearchState(searchKey, params, nextState);
-      if (isActiveSidebarSearchKey(searchKey)) {
-        sidebarSearchState.value = nextState;
-      }
       if (done) {
         return;
       }
       cursor = result.nextCursor ?? '';
     }
   } catch (error) {
-    if (sidebarSearchRequests.get(searchKey) !== abortController || isAbortLikeError(error)) {
+    if (requestVersion !== sidebarSearchRequestVersion || isAbortLikeError(error)) {
       return;
     }
-    const previousState = sidebarSearchCache.get(searchKey)?.state ?? createSidebarSearchState();
-    const errorState = {
-      ...previousState,
+    sidebarSearchState.value = {
+      ...sidebarSearchState.value,
       loading: false,
       done: true,
       error: true,
     };
-    rememberSidebarSearchState(searchKey, params, errorState);
-    if (isActiveSidebarSearchKey(searchKey)) {
-      sidebarSearchState.value = errorState;
-    }
     console.error('[Web Session] Failed to search sidebar sessions', error);
   } finally {
-    if (sidebarSearchRequests.get(searchKey) === abortController) {
-      sidebarSearchRequests.delete(searchKey);
+    if (sidebarSearchAbortController === abortController) {
+      sidebarSearchAbortController = null;
     }
   }
 }
@@ -11438,8 +11309,6 @@ function openSessionRenameDialog(session: WebSessionSummary | SessionTab) {
 }
 
 async function refreshArchivedSidebar() {
-  clearSidebarSearchCache();
-  cancelSidebarSearchRequests();
   await webSessionStore.loadArchivedSessions(sidebarVisibleProjectIds.value, {
     reset: true,
     limit: 20,
@@ -14765,31 +14634,14 @@ watch(
     normalizedSidebarSearchQuery,
     sidebarSearchArchived,
     sidebarSearchBody,
-    () => buildWebSessionSidebarSearchKey(getSidebarSearchParams()),
+    () => sidebarVisibleProjectIds.value.join('|'),
   ],
-  (_newValues, oldValues) => {
-    const searchCriteriaChanged =
-      !oldValues ||
-      oldValues[0] !== normalizedSidebarSearchQuery.value ||
-      oldValues[1] !== sidebarSearchArchived.value ||
-      oldValues[2] !== sidebarSearchBody.value;
-    if (searchCriteriaChanged) {
-      cancelSidebarSearchRequests();
-    }
-
+  () => {
     const searchActive = normalizedSidebarSearchQuery.value.length > 0;
-    if (!searchActive) {
-      clearSidebarSearchState(false, false);
-      return;
+    clearSidebarSearchState(searchActive);
+    if (searchActive) {
+      scheduleSidebarSearch();
     }
-
-    const params = getSidebarSearchParams();
-    if (restoreSidebarSearchState(params)) {
-      return;
-    }
-
-    clearSidebarSearchState(true, false);
-    scheduleSidebarSearch();
   }
 );
 
@@ -15268,7 +15120,7 @@ onBeforeUnmount(() => {
   }
   persistTimelinePositionStateNow();
   cancelTimelinePositionRestore();
-  cancelSidebarSearchRequests();
+  cancelSidebarSearchRequest();
   clearTimelineSearchTimer();
   invalidateTimelineSearchRequest();
   persistActiveUserInputDraft();
