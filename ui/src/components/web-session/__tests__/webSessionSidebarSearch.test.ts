@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildWebSessionSidebarSearchKey,
   matchesWebSessionSidebarSearch,
   mergeWebSessionSearchMatchSources,
   mergeWebSessionSidebarSearchPage,
   normalizeWebSessionSidebarSearchQuery,
+  normalizeWebSessionSidebarSearchProjectIds,
   resolveWebSessionSidebarSearchMatchSources,
 } from '@/components/web-session/webSessionSidebarSearch';
 import type { WebSessionSummary } from '@/types/models';
@@ -13,6 +15,23 @@ describe('webSession sidebar search', () => {
   it('normalizes surrounding whitespace and letter case', () => {
     expect(normalizeWebSessionSidebarSearchQuery('  Release NOTES  ')).toBe('release notes');
     expect(normalizeWebSessionSidebarSearchQuery(null)).toBe('');
+  });
+
+  it('normalizes search project scopes as unordered sets', () => {
+    expect(
+      normalizeWebSessionSidebarSearchProjectIds(['project-2', 'project-1', 'project-2'])
+    ).toEqual(['project-1', 'project-2']);
+    expect(
+      buildWebSessionSidebarSearchKey({
+        query: 'needle',
+        projectIds: ['project-2', 'project-1'],
+      })
+    ).toBe(
+      buildWebSessionSidebarSearchKey({
+        query: ' NEEDLE ',
+        projectIds: ['project-1', 'project-2'],
+      })
+    );
   });
 
   it('matches session titles and thread previews', () => {

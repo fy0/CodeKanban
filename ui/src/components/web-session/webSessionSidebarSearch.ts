@@ -3,10 +3,32 @@ import type { WebSessionSummary } from '@/types/models';
 type SearchableWebSession = Pick<WebSessionSummary, 'title' | 'threadPreview'>;
 export type WebSessionSearchMatchSource = 'title' | 'body';
 
+export type WebSessionSidebarSearchKeyInput = {
+  query: unknown;
+  projectIds: readonly unknown[];
+  includeArchived?: boolean;
+  includeBody?: boolean;
+};
+
 export function normalizeWebSessionSidebarSearchQuery(value: unknown) {
   return String(value ?? '')
     .trim()
     .toLocaleLowerCase();
+}
+
+export function normalizeWebSessionSidebarSearchProjectIds(projectIds: readonly unknown[]) {
+  return Array.from(
+    new Set(projectIds.map(projectId => String(projectId ?? '').trim()).filter(Boolean))
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+export function buildWebSessionSidebarSearchKey(input: WebSessionSidebarSearchKeyInput) {
+  return JSON.stringify({
+    query: normalizeWebSessionSidebarSearchQuery(input.query),
+    projectIds: normalizeWebSessionSidebarSearchProjectIds(input.projectIds),
+    includeArchived: input.includeArchived === true,
+    includeBody: input.includeBody !== false,
+  });
 }
 
 export function matchesWebSessionSidebarSearch(
