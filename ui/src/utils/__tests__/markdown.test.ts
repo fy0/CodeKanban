@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { renderHighlightedCodeBlock, renderMarkdown } from '@/utils/markdown';
+import {
+  renderHighlightedCodeBlock,
+  renderHighlightedPlainText,
+  renderMarkdown,
+} from '@/utils/markdown';
 
 describe('renderMarkdown', () => {
   it('highlights fenced code blocks by default', () => {
@@ -83,6 +87,25 @@ describe('renderMarkdown', () => {
     const html = renderMarkdown('[http](http://10.128.128.111:6032/)');
 
     expect(html).not.toContain('data-message-link-copy="true"');
+  });
+
+  it('highlights search text without modifying markdown tags or attributes', () => {
+    const html = renderMarkdown('**切换** and [切换](https://example.com)', {
+      textHighlightQuery: '切换',
+    });
+
+    expect(html).toContain('<strong><mark class="markdown-search-highlight">切换</mark></strong>');
+    expect(html).toContain(
+      '<a href="https://example.com" target="_blank" rel="noopener noreferrer" data-message-link="true"><mark class="markdown-search-highlight">切换</mark></a>'
+    );
+    expect(html).not.toContain('href="<mark');
+  });
+
+  it('highlights escaped plain text safely', () => {
+    const html = renderHighlightedPlainText('<切换> & ready', '<切换>');
+
+    expect(html).toContain('<mark class="markdown-search-highlight">&lt;切换&gt;</mark>');
+    expect(html).toContain('&amp; ready');
   });
 
   it('preserves ordered, unordered, and nested list structure', () => {

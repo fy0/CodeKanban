@@ -146,6 +146,90 @@ describe('webSessionApi.search', () => {
   });
 });
 
+describe('webSessionApi.searchConversation', () => {
+  beforeEach(() => {
+    postMethodMock.mockClear();
+    postSendMock.mockReset();
+    postAbortMock.mockReset();
+    postSendMock.mockResolvedValue({
+      item: {
+        items: [
+          {
+            id: 'item-1',
+            orderIndex: 3,
+            kind: 'tool',
+            toolId: 'tool-1',
+          },
+        ],
+        done: true,
+        total: 1,
+      },
+    });
+  });
+
+  it('sends the current-session category filters and decodes matches', async () => {
+    const result = await webSessionApi.searchConversation('project/1', 'session 2', {
+      query: '  needle  ',
+      includeUser: true,
+      includeAssistant: true,
+      includeTools: false,
+      includeSystem: false,
+      sourceThreadId: 'thread-1',
+      cursor: 'cursor-1',
+      limit: 100,
+    });
+
+    expect(postMethodMock).toHaveBeenCalledWith(
+      '/projects/project%2F1/web-sessions/session%202/search',
+      {
+        query: 'needle',
+        includeUser: true,
+        includeAssistant: true,
+        includeTools: false,
+        includeSystem: false,
+        sourceThreadId: 'thread-1',
+        cursor: 'cursor-1',
+        limit: 100,
+      }
+    );
+    expect(result.items[0]).toMatchObject({ id: 'item-1', kind: 'tool' });
+  });
+
+  it('aborts an in-flight current-session search with the caller signal', async () => {
+    let rejectRequest: ((reason?: unknown) => void) | null = null;
+    const abortMock = vi.fn(() => {
+      rejectRequest?.(new DOMException('conversation search aborted', 'AbortError'));
+    });
+    postMethodMock.mockImplementationOnce(() => ({
+      send: vi.fn(
+        () =>
+          new Promise((_, reject) => {
+            rejectRequest = reject;
+          })
+      ),
+      abort: abortMock,
+    }));
+    const controller = new AbortController();
+
+    const request = webSessionApi.searchConversation(
+      'project-1',
+      'session-1',
+      {
+        query: 'needle',
+        includeUser: true,
+        includeAssistant: true,
+        includeTools: false,
+        includeSystem: false,
+      },
+      { signal: controller.signal }
+    );
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+    expect(abortMock).toHaveBeenCalledOnce();
+  });
+});
+
 describe('webSessionApi local files', () => {
   beforeEach(() => {
     postMethodMock.mockClear();

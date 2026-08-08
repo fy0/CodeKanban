@@ -2642,6 +2642,147 @@ func TestManagerSearchSessionsChunkFindsSyncedBodyProgressively(t *testing.T) {
 	}
 }
 
+func TestManagerSearchSessionConversationFiltersAndPaginates(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Conversation search", 1000)
+	threadA := "thread-a"
+	threadB := "thread-b"
+
+	toolJSON, err := json.Marshal(HistoryTool{
+		ID:     "tool-needle",
+		Name:   "CommandExecution",
+		Kind:   "command_execution",
+		Input:  map[string]any{"command": "git status"},
+		Output: "needle command output",
+		CommandGroup: &HistoryToolCommandGroup{
+			ID: "group-needle",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal tool json: %v", err)
+	}
+	detailJSON, err := json.Marshal(HistoryDetail{
+		Type:   "approval_request",
+		Prompt: "needle approval prompt",
+	})
+	if err != nil {
+		t.Fatalf("marshal detail json: %v", err)
+	}
+	rows := []tables.WebSessionItemTable{
+		{WebSessionID: session.ID, SourceThreadID: &threadA, OrderIndex: 1, ItemKind: "user", Text: "needle user message"},
+		{WebSessionID: session.ID, SourceThreadID: &threadA, OrderIndex: 2, ItemKind: "assistant", Text: "needle assistant message"},
+		{WebSessionID: session.ID, SourceThreadID: &threadA, OrderIndex: 3, ItemKind: "tool", ToolJSON: string(toolJSON)},
+		{WebSessionID: session.ID, SourceThreadID: &threadA, OrderIndex: 4, ItemKind: "system", DetailJSON: string(detailJSON)},
+		{WebSessionID: session.ID, SourceThreadID: &threadB, OrderIndex: 5, ItemKind: "assistant", Text: "needle sub-agent message"},
+	}
+	for index := range rows {
+		rows[index].Init()
+		if err := model.GetDB().Create(&rows[index]).Error; err != nil {
+			t.Fatalf("seed conversation search row %d: %v", index, err)
+		}
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	pageOne, err := manager.SearchSessionConversation(
+		context.Background(),
+		session.ID,
+		"NEEDLE",
+		true,
+		true,
+		true,
+		true,
+		"",
+		"",
+		2,
+	)
+	if err != nil {
+		t.Fatalf("SearchSessionConversation page one returned error: %v", err)
+	}
+	if pageOne.Total != 5 || pageOne.Done || pageOne.NextCursor == "" || len(pageOne.Items) != 2 {
+		t.Fatalf("unexpected first conversation search page: %+v", pageOne)
+	}
+
+	pageTwo, err := manager.SearchSessionConversation(
+		context.Background(),
+		session.ID,
+		"needle",
+		true,
+		true,
+		true,
+		true,
+		"",
+		pageOne.NextCursor,
+		2,
+	)
+	if err != nil {
+		t.Fatalf("SearchSessionConversation page two returned error: %v", err)
+	}
+	if pageTwo.Total != 5 || pageTwo.Done || pageTwo.NextCursor == "" || len(pageTwo.Items) != 2 {
+		t.Fatalf("unexpected second conversation search page: %+v", pageTwo)
+	}
+
+	pageThree, err := manager.SearchSessionConversation(
+		context.Background(),
+		session.ID,
+		"needle",
+		true,
+		true,
+		true,
+		true,
+		"",
+		pageTwo.NextCursor,
+		2,
+	)
+	if err != nil {
+		t.Fatalf("SearchSessionConversation page three returned error: %v", err)
+	}
+	if pageThree.Total != 5 || !pageThree.Done || pageThree.NextCursor != "" || len(pageThree.Items) != 1 {
+		t.Fatalf("unexpected third conversation search page: %+v", pageThree)
+	}
+
+	toolOnly, err := manager.SearchSessionConversation(
+		context.Background(),
+		session.ID,
+		"git status",
+		false,
+		false,
+		true,
+		false,
+		"",
+		"",
+		20,
+	)
+	if err != nil || len(toolOnly.Items) != 1 || toolOnly.Items[0].Kind != "tool" {
+		t.Fatalf("expected tool-only search result, got %+v, %v", toolOnly, err)
+	}
+	if toolOnly.Items[0].ToolID != "tool-needle" || toolOnly.Items[0].CommandGroupID != "group-needle" {
+		t.Fatalf("expected tool identifiers, got %+v", toolOnly.Items[0])
+	}
+
+	threadOnly, err := manager.SearchSessionConversation(
+		context.Background(),
+		session.ID,
+		"needle",
+		false,
+		true,
+		false,
+		false,
+		threadB,
+		"",
+		20,
+	)
+	if err != nil || len(threadOnly.Items) != 1 || threadOnly.Items[0].SourceThreadID == nil || *threadOnly.Items[0].SourceThreadID != threadB {
+		t.Fatalf("expected thread-filtered result, got %+v, %v", threadOnly, err)
+	}
+}
+
 func TestDetectApprovalPrompt(t *testing.T) {
 	t.Run("codex confirm prompt", func(t *testing.T) {
 		prompt, ok := detectApprovalPrompt([]string{

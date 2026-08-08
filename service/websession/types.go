@@ -286,6 +286,24 @@ type SessionSearchChunkResult struct {
 	Total      int              `json:"total"`
 }
 
+type SessionConversationSearchMatch struct {
+	ID             string  `json:"id"`
+	SourceThreadID *string `json:"sourceThreadId,omitempty"`
+	SourceTurnID   *string `json:"sourceTurnId,omitempty"`
+	SourceItemID   *string `json:"sourceItemId,omitempty"`
+	OrderIndex     int64   `json:"orderIndex"`
+	Kind           string  `json:"kind"`
+	ToolID         string  `json:"toolId,omitempty"`
+	CommandGroupID string  `json:"commandGroupId,omitempty"`
+}
+
+type SessionConversationSearchResult struct {
+	Items      []SessionConversationSearchMatch `json:"items"`
+	NextCursor string                           `json:"nextCursor,omitempty"`
+	Done       bool                             `json:"done"`
+	Total      int                              `json:"total"`
+}
+
 type Attachment struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`

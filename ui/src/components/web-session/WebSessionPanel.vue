@@ -425,15 +425,129 @@
               @touchcancel.passive="handleTimelineTouchEnd"
             >
               <div ref="timelineListRef" class="timeline-list">
-                <div v-if="hasKnownSubAgents" class="timeline-agent-toolbar">
+                <div
+                  class="timeline-agent-toolbar"
+                  :class="{
+                    'is-search-open': timelineSearchOpen,
+                    'has-sub-agent-filter': hasKnownSubAgents,
+                  }"
+                >
+                  <template v-if="timelineSearchOpen">
+                    <n-input
+                      ref="timelineSearchInputRef"
+                      v-model:value="timelineSearchQuery"
+                      class="timeline-search-input"
+                      size="small"
+                      clearable
+                      :placeholder="t('webSession.conversationSearchPlaceholder')"
+                      :aria-label="t('webSession.conversationSearchPlaceholder')"
+                      @keydown.esc="closeTimelineSearch"
+                    >
+                      <template #prefix>
+                        <n-icon size="15" aria-hidden="true"><SearchOutline /></n-icon>
+                      </template>
+                    </n-input>
+                    <n-popover trigger="click" placement="bottom-end">
+                      <template #trigger>
+                        <n-button
+                          quaternary
+                          circle
+                          size="small"
+                          :type="timelineSearchHasNonDefaultFilters ? 'primary' : 'default'"
+                          :title="t('webSession.conversationSearchFilters')"
+                          :aria-label="t('webSession.conversationSearchFilters')"
+                        >
+                          <template #icon>
+                            <n-icon><FunnelOutline /></n-icon>
+                          </template>
+                        </n-button>
+                      </template>
+                      <div class="timeline-search-filter-popover">
+                        <n-checkbox v-model:checked="timelineSearchFilters.user">
+                          {{ t('webSession.conversationSearchUser') }}
+                        </n-checkbox>
+                        <n-checkbox v-model:checked="timelineSearchFilters.assistant">
+                          {{ t('webSession.conversationSearchAssistant') }}
+                        </n-checkbox>
+                        <n-checkbox v-model:checked="timelineSearchFilters.tools">
+                          {{ t('webSession.conversationSearchTools') }}
+                        </n-checkbox>
+                        <n-checkbox v-model:checked="timelineSearchFilters.system">
+                          {{ t('webSession.conversationSearchSystem') }}
+                        </n-checkbox>
+                      </div>
+                    </n-popover>
+                    <span
+                      v-if="timelineSearchQuery.trim()"
+                      class="timeline-search-count"
+                      aria-live="polite"
+                    >
+                      {{ timelineSearchResultLabel }}
+                    </span>
+                    <n-tooltip trigger="hover" placement="bottom" :delay="100">
+                      <template #trigger>
+                        <n-button
+                          quaternary
+                          circle
+                          size="small"
+                          :disabled="!timelineSearchHasPrevious"
+                          :title="t('webSession.conversationSearchPrevious')"
+                          :aria-label="t('webSession.conversationSearchPrevious')"
+                          @click="void navigateTimelineSearch('previous')"
+                        >
+                          <template #icon>
+                            <n-icon><ChevronUpOutline /></n-icon>
+                          </template>
+                        </n-button>
+                      </template>
+                      {{ t('webSession.conversationSearchPrevious') }}
+                    </n-tooltip>
+                    <n-tooltip trigger="hover" placement="bottom" :delay="100">
+                      <template #trigger>
+                        <n-button
+                          quaternary
+                          circle
+                          size="small"
+                          :disabled="!timelineSearchHasNext"
+                          :title="t('webSession.conversationSearchNext')"
+                          :aria-label="t('webSession.conversationSearchNext')"
+                          @click="void navigateTimelineSearch('next')"
+                        >
+                          <template #icon>
+                            <n-icon><ChevronDownOutline /></n-icon>
+                          </template>
+                        </n-button>
+                      </template>
+                      {{ t('webSession.conversationSearchNext') }}
+                    </n-tooltip>
+                    <n-button
+                      quaternary
+                      circle
+                      size="small"
+                      :title="t('webSession.conversationSearchClose')"
+                      :aria-label="t('webSession.conversationSearchClose')"
+                      @click="closeTimelineSearch"
+                    >
+                      <template #icon>
+                        <n-icon><CloseOutline /></n-icon>
+                      </template>
+                    </n-button>
+                  </template>
+
                   <n-select
+                    v-if="hasKnownSubAgents"
                     v-model:value="selectedSubAgentThreadId"
                     class="timeline-agent-filter"
                     size="small"
                     :options="subAgentFilterOptions"
                     :placeholder="t('webSession.subAgentFilterAll')"
                   />
-                  <n-tooltip trigger="hover" placement="bottom" :delay="100">
+                  <n-tooltip
+                    v-if="hasKnownSubAgents"
+                    trigger="hover"
+                    placement="bottom"
+                    :delay="100"
+                  >
                     <template #trigger>
                       <n-button
                         quaternary
@@ -450,6 +564,29 @@
                       </n-button>
                     </template>
                     {{ t('webSession.subAgentLocate') }}
+                  </n-tooltip>
+                  <n-tooltip
+                    v-if="!timelineSearchOpen"
+                    trigger="hover"
+                    placement="bottom"
+                    :delay="100"
+                  >
+                    <template #trigger>
+                      <n-button
+                        quaternary
+                        circle
+                        size="small"
+                        :disabled="!currentSession"
+                        :title="t('webSession.conversationSearchOpen')"
+                        :aria-label="t('webSession.conversationSearchOpen')"
+                        @click="openTimelineSearch"
+                      >
+                        <template #icon>
+                          <n-icon><SearchOutline /></n-icon>
+                        </template>
+                      </n-button>
+                    </template>
+                    {{ t('webSession.conversationSearchOpen') }}
                   </n-tooltip>
                 </div>
                 <div v-if="historyMeta.loading" class="history-loading">
@@ -565,7 +702,15 @@
                         {{ t('terminal.nextUserMessage') }}
                       </n-tooltip>
                     </span>
-                    <span class="item-role">{{ timelineRoleLabel(item) }}</span>
+                    <span
+                      class="item-role"
+                      :class="{
+                        'timeline-search-role-highlight': isTimelineSearchBlockMatch(item),
+                        'timeline-search-role-highlight-active': isTimelineSearchBlockActive(item),
+                      }"
+                    >
+                      {{ timelineRoleLabel(item) }}
+                    </span>
                     <span class="item-time" :title="formatDateTime(item.timestamp)">{{
                       formatTime(item.timestamp)
                     }}</span>
@@ -613,7 +758,16 @@
                       </button>
                       <div class="tool-body plan-tool-body">
                         <div class="plan-tool-header">
-                          <span class="plan-tool-badge">{{ t('webSession.planCardBadge') }}</span>
+                          <span
+                            class="plan-tool-badge"
+                            :class="{
+                              'timeline-search-role-highlight': isTimelineSearchBlockMatch(item),
+                              'timeline-search-role-highlight-active':
+                                isTimelineSearchBlockActive(item),
+                            }"
+                          >
+                            {{ t('webSession.planCardBadge') }}
+                          </span>
                           <span class="plan-tool-caption">{{
                             t('webSession.planCardCaption')
                           }}</span>
@@ -622,7 +776,11 @@
                           <pre
                             v-if="isBlockRawMode(item, 'plan')"
                             class="timeline-raw-text plan-tool-content--raw"
-                          ><code>{{ item.tool.output }}</code></pre>
+                          ><code
+                            v-html="
+                              renderHighlightedPlainText(item.tool.output, timelineSearchQuery)
+                            "
+                          ></code></pre>
                           <div
                             v-else
                             v-memo="getPlanToolMarkdownMemoDeps(item)"
@@ -701,7 +859,16 @@
                       @click="handleActivityDisplayClick(item)"
                     >
                       <span class="activity-display-main">
-                        <span class="activity-display-label">{{ activityDisplayLabel(item) }}</span>
+                        <span
+                          class="activity-display-label"
+                          :class="{
+                            'timeline-search-role-highlight': isTimelineSearchBlockMatch(item),
+                            'timeline-search-role-highlight-active':
+                              isTimelineSearchBlockActive(item),
+                          }"
+                        >
+                          {{ activityDisplayLabel(item) }}
+                        </span>
                         <span class="activity-display-time" :title="formatDateTime(item.timestamp)">
                           {{ formatTime(item.timestamp) }}
                         </span>
@@ -759,9 +926,16 @@
                       >
                         <span class="command-tool-copy">
                           <span class="command-tool-topline">
-                            <span class="command-tool-label">{{
-                              compactToolLabel(item.tool)
-                            }}</span>
+                            <span
+                              class="command-tool-label"
+                              :class="{
+                                'timeline-search-role-highlight': isTimelineSearchBlockMatch(item),
+                                'timeline-search-role-highlight-active':
+                                  isTimelineSearchBlockActive(item),
+                              }"
+                            >
+                              {{ compactToolLabel(item.tool) }}
+                            </span>
                             <span
                               v-if="getCompactToolCount(item.tool) > 1"
                               class="command-tool-count"
@@ -798,7 +972,16 @@
                       >
                         <span class="tool-header-main">
                           <span class="tool-header-leading">
-                            <span class="tool-kind">{{ toolKindLabel(item.tool) }}</span>
+                            <span
+                              class="tool-kind"
+                              :class="{
+                                'timeline-search-role-highlight': isTimelineSearchBlockMatch(item),
+                                'timeline-search-role-highlight-active':
+                                  isTimelineSearchBlockActive(item),
+                              }"
+                            >
+                              {{ toolKindLabel(item.tool) }}
+                            </span>
                             <span class="tool-name">{{ item.tool.name }}</span>
                           </span>
                           <span class="tool-state-badge" :class="`state-${item.tool.status}`">
@@ -889,7 +1072,17 @@
                       :class="historyInteractionCardClass(item)"
                     >
                       <div class="approval-card-header">
-                        <span class="approval-badge" :class="historyInteractionBadgeClass(item)">
+                        <span
+                          class="approval-badge"
+                          :class="[
+                            historyInteractionBadgeClass(item),
+                            {
+                              'timeline-search-role-highlight': isTimelineSearchBlockMatch(item),
+                              'timeline-search-role-highlight-active':
+                                isTimelineSearchBlockActive(item),
+                            },
+                          ]"
+                        >
                           {{ historyInteractionTitle(item) }}
                         </span>
                         <span class="approval-time" :title="formatDateTime(item.timestamp)">
@@ -1022,7 +1215,7 @@
                     <pre
                       v-if="shouldShowMessageRawToggle(item) && isBlockRawMode(item, 'message')"
                       class="item-text item-text--raw timeline-raw-text"
-                    ><code>{{ item.text }}</code></pre>
+                    ><code v-html="renderHighlightedPlainText(item.text, timelineSearchQuery)"></code></pre>
                     <div
                       v-else-if="getDisplayBlockText(item)"
                       v-memo="getMessageMarkdownMemoDeps(item)"
@@ -3013,6 +3206,7 @@ import {
   ChevronDownOutline,
   ChevronForwardOutline,
   ChevronUpOutline,
+  CloseOutline,
   CreateOutline,
   DownloadOutline,
   FlashOutline,
@@ -3075,7 +3269,7 @@ import {
 } from '@/constants/webSessionActivityDisplayMode';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import { hexToRgba, isDarkHex } from '@/utils/color';
-import { renderMarkdown } from '@/utils/markdown';
+import { renderHighlightedPlainText, renderMarkdown } from '@/utils/markdown';
 import {
   getClickedMarkdownCodeCopyText,
   getClickedMarkdownLink,
@@ -3097,7 +3291,11 @@ import {
 } from '@/utils/webSessionImages';
 import { ApiError, urlBase } from '@/api';
 import { http } from '@/api/http';
-import { webSessionApi, type SessionSearchChunkResult } from '@/api/webSession';
+import {
+  webSessionApi,
+  type SessionConversationSearchMatch,
+  type SessionSearchChunkResult,
+} from '@/api/webSession';
 import { createLongPressTracker } from '@/utils/longPress';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
@@ -3150,6 +3348,13 @@ import {
 } from '@/components/web-session/webSessionRawToggle';
 import { resolveWebSessionAttachmentPreviewMode } from '@/components/web-session/webSessionAttachmentPreview';
 import { projectWebSessionVisibleTimelineBlocks } from '@/components/web-session/webSessionCompactTimeline';
+import {
+  findWebSessionConversationSearchMatches,
+  matchesWebSessionConversationSearchTarget,
+  mergeWebSessionConversationSearchMatches,
+  type WebSessionConversationSearchFilters,
+  type WebSessionConversationSearchMatch,
+} from '@/components/web-session/webSessionConversationSearch';
 import { createWebSessionStreamingMarkdownController } from '@/components/web-session/webSessionStreamingMarkdown';
 import {
   createWebSessionMobileComposerScrollState,
@@ -3611,9 +3816,22 @@ const webSessionDevMode = computed(() => isWebSessionDevMode(route.query));
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const timelineListRef = ref<HTMLDivElement | null>(null);
+const timelineSearchInputRef = ref<InstanceType<typeof NInput> | null>(null);
 const timelineUserMessageElements = new Map<string, HTMLElement>();
 const timelineBlockElements = new Map<string, HTMLElement>();
 const selectedSubAgentThreadId = ref('');
+const timelineSearchOpen = ref(false);
+const timelineSearchQuery = ref('');
+const timelineSearchFilters = ref<WebSessionConversationSearchFilters>({
+  user: true,
+  assistant: true,
+  tools: false,
+  system: false,
+});
+const timelineSearchRemoteMatches = ref<SessionConversationSearchMatch[]>([]);
+const timelineSearchCurrentIndex = ref(0);
+const timelineSearchRemoteLoading = ref(false);
+const timelineSearchRemoteError = ref(false);
 const userMessageNavigationPending = ref<{
   key: string;
   direction: WebSessionUserMessageNavigationDirection;
@@ -3745,6 +3963,9 @@ let timelinePositionState = loadWebSessionTimelinePositionState(timelinePosition
 let timelinePositionRestoreGeneration = 0;
 let timelinePositionRestoreRunningGeneration = 0;
 let composerDragDepth = 0;
+let timelineSearchRequestVersion = 0;
+let timelineSearchAbortController: AbortController | null = null;
+let timelineSearchTimer: number | null = null;
 let webSessionCatchUpTimer: number | null = null;
 let webSessionCatchUpToken = 0;
 const webSessionCatchUpScheduler = createWebSessionCatchUpScheduler(reason => {
@@ -4565,20 +4786,23 @@ function getMessageMarkdownText(block: WebSessionBlock) {
 }
 
 function getMessageMarkdownRenderOptions(block: WebSessionBlock) {
-  return isStreamingMessageMarkdownBlock(block)
+  const options = isStreamingMessageMarkdownBlock(block)
     ? streamingTimelineMarkdownRenderOptions.value
     : timelineMarkdownRenderOptions.value;
+  const query = timelineSearchQuery.value.trim();
+  return query ? { ...options, textHighlightQuery: query } : options;
 }
 
 function getMessageMarkdownMemoDeps(block: WebSessionBlock) {
   const rawMode = isBlockRawMode(block, 'message');
   return rawMode
-    ? ['message-raw', block.text, locale.value]
+    ? ['message-raw', block.text, locale.value, timelineSearchQuery.value.trim()]
     : [
         'message-markdown',
         getMessageMarkdownText(block),
         locale.value,
         isStreamingMessageMarkdownBlock(block) ? 1 : 0,
+        timelineSearchQuery.value.trim(),
       ];
 }
 
@@ -4590,20 +4814,23 @@ function getPlanToolMarkdownText(block: WebSessionBlock) {
 }
 
 function getPlanToolMarkdownRenderOptions(block: WebSessionBlock) {
-  return isStreamingPlanMarkdownBlock(block)
+  const options = isStreamingPlanMarkdownBlock(block)
     ? streamingTimelineMarkdownRenderOptions.value
     : timelineMarkdownRenderOptions.value;
+  const query = timelineSearchQuery.value.trim();
+  return query ? { ...options, textHighlightQuery: query } : options;
 }
 
 function getPlanToolMarkdownMemoDeps(block: WebSessionBlock) {
   const rawMode = isBlockRawMode(block, 'plan');
   return rawMode
-    ? ['plan-raw', block.tool?.output ?? '', locale.value]
+    ? ['plan-raw', block.tool?.output ?? '', locale.value, timelineSearchQuery.value.trim()]
     : [
         'plan-markdown',
         getPlanToolMarkdownText(block),
         locale.value,
         isStreamingPlanMarkdownBlock(block) ? 1 : 0,
+        timelineSearchQuery.value.trim(),
       ];
 }
 
@@ -4816,6 +5043,91 @@ const filteredTimelineBlocks = computed(() =>
 const visibleBlocks = computed(() =>
   projectWebSessionVisibleTimelineBlocks(filteredTimelineBlocks.value)
 );
+function createTimelineSearchMatchFromBlock(
+  block: WebSessionBlock
+): WebSessionConversationSearchMatch {
+  return {
+    key: block.key,
+    id: block.id,
+    sourceThreadId: block.sourceThreadId ?? undefined,
+    sourceTurnId: block.sourceTurnId ?? undefined,
+    sourceItemId: block.sourceItemId ?? undefined,
+    orderIndex: block.orderIndex,
+    kind: block.kind,
+    toolId: block.tool?.id,
+    commandGroupId: block.tool?.commandGroup?.id,
+  };
+}
+const timelineSearchVisibleRemoteMatches = computed(() =>
+  timelineSearchRemoteMatches.value.map(match => {
+    const visibleBlock = visibleBlocks.value.find(block =>
+      matchesWebSessionConversationSearchTarget(block, match)
+    );
+    return visibleBlock ? createTimelineSearchMatchFromBlock(visibleBlock) : match;
+  })
+);
+const normalizedTimelineSearchQuery = computed(() =>
+  String(timelineSearchQuery.value ?? '').trim()
+);
+const timelineSearchLocalMatches = computed(() =>
+  findWebSessionConversationSearchMatches(
+    visibleBlocks.value,
+    normalizedTimelineSearchQuery.value,
+    timelineSearchFilters.value
+  )
+);
+const timelineSearchMatches = computed(() =>
+  mergeWebSessionConversationSearchMatches(
+    timelineSearchLocalMatches.value,
+    timelineSearchVisibleRemoteMatches.value
+  )
+);
+const timelineSearchCurrentMatch = computed(
+  () => timelineSearchMatches.value[timelineSearchCurrentIndex.value] ?? null
+);
+const timelineSearchHasPrevious = computed(() => timelineSearchCurrentIndex.value > 0);
+const timelineSearchHasNext = computed(
+  () => timelineSearchCurrentIndex.value < timelineSearchMatches.value.length - 1
+);
+const timelineSearchHasNonDefaultFilters = computed(() => {
+  const filters = timelineSearchFilters.value;
+  return !filters.user || !filters.assistant || filters.tools || filters.system;
+});
+const timelineSearchResultLabel = computed(() => {
+  const total = timelineSearchMatches.value.length;
+  if (total === 0) {
+    if (timelineSearchRemoteError.value) {
+      return t('webSession.conversationSearchFailed');
+    }
+    return timelineSearchRemoteLoading.value
+      ? t('webSession.conversationSearchSearching')
+      : t('webSession.conversationSearchNoResults');
+  }
+  const current = timelineSearchCurrentIndex.value + 1;
+  const suffix = timelineSearchRemoteLoading.value
+    ? ` (${t('webSession.conversationSearchSearching')})`
+    : timelineSearchRemoteError.value
+      ? ` (${t('webSession.conversationSearchFailed')})`
+      : '';
+  return `${current} / ${total}${suffix}`;
+});
+const timelineSearchVisibleState = computed(() => {
+  const activeMatch = timelineSearchCurrentMatch.value;
+  const state = new Map<string, { match: boolean; active: boolean }>();
+  for (const block of visibleBlocks.value) {
+    const matching = timelineSearchMatches.value.filter(match =>
+      matchesWebSessionConversationSearchTarget(block, match)
+    );
+    if (matching.length === 0) {
+      continue;
+    }
+    state.set(block.key, {
+      match: true,
+      active: Boolean(activeMatch && matchesWebSessionConversationSearchTarget(block, activeMatch)),
+    });
+  }
+  return state;
+});
 const visibleRawTimelineBlockKeys = computed(() => {
   const keys: string[] = [];
   visibleBlocks.value.forEach(block => {
@@ -5106,6 +5418,299 @@ const historyMeta = computed(() =>
     ? webSessionStore.getHistoryMeta(currentRealSession.value.id)
     : { hasMore: false, beforeCursor: '', total: 0, loading: false }
 );
+
+function clearTimelineSearchTimer() {
+  if (timelineSearchTimer != null) {
+    window.clearTimeout(timelineSearchTimer);
+    timelineSearchTimer = null;
+  }
+}
+
+function invalidateTimelineSearchRequest() {
+  timelineSearchRequestVersion += 1;
+  timelineSearchAbortController?.abort();
+  timelineSearchAbortController = null;
+}
+
+function clearTimelineSearchRemoteState() {
+  invalidateTimelineSearchRequest();
+  timelineSearchRemoteMatches.value = [];
+  timelineSearchRemoteLoading.value = false;
+  timelineSearchRemoteError.value = false;
+}
+
+function openTimelineSearch() {
+  timelineSearchOpen.value = true;
+  void nextTick().then(() => timelineSearchInputRef.value?.focus?.());
+}
+
+function handleTimelineSearchShortcut(event: KeyboardEvent) {
+  if (
+    event.defaultPrevented ||
+    event.isComposing ||
+    !props.isActive ||
+    !currentSession.value ||
+    event.altKey ||
+    !(event.ctrlKey || event.metaKey) ||
+    event.key.toLowerCase() !== 'f'
+  ) {
+    return;
+  }
+  event.preventDefault();
+  openTimelineSearch();
+}
+
+function resetTimelineSearchForSessionChange() {
+  timelineSearchCurrentIndex.value = 0;
+  clearTimelineSearchTimer();
+  clearTimelineSearchRemoteState();
+}
+
+function closeTimelineSearch() {
+  timelineSearchOpen.value = false;
+  timelineSearchQuery.value = '';
+  timelineSearchFilters.value = {
+    user: true,
+    assistant: true,
+    tools: false,
+    system: false,
+  };
+  timelineSearchCurrentIndex.value = 0;
+  clearTimelineSearchTimer();
+  clearTimelineSearchRemoteState();
+}
+
+function timelineSearchFiltersEqual(
+  left: WebSessionConversationSearchFilters,
+  right: WebSessionConversationSearchFilters
+) {
+  return (
+    left.user === right.user &&
+    left.assistant === right.assistant &&
+    left.tools === right.tools &&
+    left.system === right.system
+  );
+}
+
+function scheduleTimelineSearchRequest() {
+  clearTimelineSearchTimer();
+  if (
+    !timelineSearchOpen.value ||
+    !normalizedTimelineSearchQuery.value ||
+    !currentRealSession.value ||
+    !Object.values(timelineSearchFilters.value).some(Boolean)
+  ) {
+    return;
+  }
+  timelineSearchTimer = window.setTimeout(() => {
+    timelineSearchTimer = null;
+    void loadTimelineSearch();
+  }, 3000);
+}
+
+function isTimelineSearchRequestCurrent(
+  requestVersion: number,
+  sessionId: string,
+  query: string,
+  filters: WebSessionConversationSearchFilters,
+  sourceThreadId: string
+) {
+  return (
+    requestVersion === timelineSearchRequestVersion &&
+    timelineSearchOpen.value &&
+    currentRealSession.value?.id === sessionId &&
+    normalizedTimelineSearchQuery.value === query &&
+    timelineSearchFiltersEqual(timelineSearchFilters.value, filters) &&
+    selectedSubAgentThreadId.value === sourceThreadId
+  );
+}
+
+async function loadTimelineSearch() {
+  const session = currentRealSession.value;
+  const query = normalizedTimelineSearchQuery.value;
+  const filters = { ...timelineSearchFilters.value };
+  const sourceThreadId = selectedSubAgentThreadId.value;
+  if (!timelineSearchOpen.value || !session || !query || !Object.values(filters).some(Boolean)) {
+    return;
+  }
+
+  invalidateTimelineSearchRequest();
+  const requestVersion = timelineSearchRequestVersion;
+  const abortController = new AbortController();
+  timelineSearchAbortController = abortController;
+  timelineSearchRemoteMatches.value = [];
+  timelineSearchRemoteLoading.value = true;
+  timelineSearchRemoteError.value = false;
+
+  try {
+    let cursor = '';
+    while (true) {
+      const result = await webSessionApi.searchConversation(
+        session.projectId,
+        session.id,
+        {
+          query,
+          includeUser: filters.user,
+          includeAssistant: filters.assistant,
+          includeTools: filters.tools,
+          includeSystem: filters.system,
+          sourceThreadId: sourceThreadId || undefined,
+          cursor: cursor || undefined,
+          limit: 100,
+        },
+        { signal: abortController.signal }
+      );
+      if (
+        !isTimelineSearchRequestCurrent(requestVersion, session.id, query, filters, sourceThreadId)
+      ) {
+        return;
+      }
+
+      const previousCount = timelineSearchRemoteMatches.value.length;
+      timelineSearchRemoteMatches.value = mergeWebSessionConversationSearchMatches(
+        [],
+        [...timelineSearchRemoteMatches.value, ...result.items]
+      );
+      if (previousCount === 0 && timelineSearchRemoteMatches.value.length > 0) {
+        await nextTick();
+        const firstMatch = timelineSearchMatches.value[0];
+        if (firstMatch) {
+          await locateTimelineSearchMatch(firstMatch);
+        }
+      }
+      if (result.done || !result.nextCursor) {
+        break;
+      }
+      cursor = result.nextCursor;
+    }
+  } catch (error) {
+    if (
+      !isTimelineSearchRequestCurrent(requestVersion, session.id, query, filters, sourceThreadId) ||
+      isAbortLikeError(error)
+    ) {
+      return;
+    }
+    timelineSearchRemoteError.value = true;
+    console.error('[Web Session] Failed to search session conversation', error);
+  } finally {
+    if (timelineSearchAbortController === abortController) {
+      timelineSearchAbortController = null;
+      timelineSearchRemoteLoading.value = false;
+    }
+  }
+}
+
+function isTimelineSearchBlockMatch(block: WebSessionBlock) {
+  return timelineSearchVisibleState.value.get(block.key)?.match === true;
+}
+
+function isTimelineSearchBlockActive(block: WebSessionBlock) {
+  return timelineSearchVisibleState.value.get(block.key)?.active === true;
+}
+
+function findTimelineSearchBlock(match: WebSessionConversationSearchMatch) {
+  const exact = visibleBlocks.value.find(block =>
+    matchesWebSessionConversationSearchTarget(block, match)
+  );
+  if (exact) {
+    return exact;
+  }
+  if (!blocks.value.some(block => matchesWebSessionConversationSearchTarget(block, match))) {
+    return null;
+  }
+  return visibleBlocks.value.reduce<WebSessionBlock | null>((closest, block) => {
+    if (!closest) {
+      return block;
+    }
+    return Math.abs(block.orderIndex - match.orderIndex) <
+      Math.abs(closest.orderIndex - match.orderIndex)
+      ? block
+      : closest;
+  }, null);
+}
+
+async function ensureTimelineSearchMatchLoaded(match: WebSessionConversationSearchMatch) {
+  const session = currentRealSession.value;
+  if (!session) {
+    return;
+  }
+
+  while (!blocks.value.some(block => matchesWebSessionConversationSearchTarget(block, match))) {
+    const meta = webSessionStore.getHistoryMeta(session.id);
+    if (meta.loading || !meta.hasMore || !meta.beforeCursor) {
+      return;
+    }
+    const container = timelineScrollRef.value;
+    if (container) {
+      pendingHistoryAnchor.value = {
+        sessionId: session.id,
+        previousHeight: container.scrollHeight,
+        previousTop: container.scrollTop,
+      };
+    }
+    const previousCursor = meta.beforeCursor;
+    await webSessionStore.loadMoreHistory(session.id, 100);
+    await nextTick();
+    restoreHistoryAnchor();
+    const nextMeta = webSessionStore.getHistoryMeta(session.id);
+    if (nextMeta.beforeCursor === previousCursor && nextMeta.hasMore === meta.hasMore) {
+      return;
+    }
+  }
+}
+
+async function locateTimelineSearchMatch(match: WebSessionConversationSearchMatch) {
+  await ensureTimelineSearchMatchLoaded(match);
+  await nextTick();
+  const block = findTimelineSearchBlock(match);
+  if (block) {
+    scrollToTimelineBlock(block.key);
+  }
+}
+
+async function navigateTimelineSearch(direction: 'previous' | 'next') {
+  const matches = timelineSearchMatches.value;
+  if (matches.length === 0) {
+    return;
+  }
+  const offset = direction === 'previous' ? -1 : 1;
+  const nextIndex = timelineSearchCurrentIndex.value + offset;
+  if (nextIndex < 0 || nextIndex >= matches.length) {
+    return;
+  }
+  timelineSearchCurrentIndex.value = nextIndex;
+  const match = matches[nextIndex];
+  if (match) {
+    await locateTimelineSearchMatch(match);
+  }
+}
+
+watch(
+  [timelineSearchQuery, timelineSearchFilters, selectedSubAgentThreadId],
+  () => {
+    timelineSearchCurrentIndex.value = 0;
+    clearTimelineSearchTimer();
+    clearTimelineSearchRemoteState();
+    if (timelineSearchOpen.value && normalizedTimelineSearchQuery.value) {
+      void nextTick().then(() => {
+        const firstMatch = timelineSearchMatches.value[0];
+        if (firstMatch) {
+          void locateTimelineSearchMatch(firstMatch);
+        }
+      });
+      scheduleTimelineSearchRequest();
+    }
+  },
+  { deep: true }
+);
+
+watch(timelineSearchMatches, matches => {
+  if (matches.length === 0) {
+    timelineSearchCurrentIndex.value = 0;
+    return;
+  }
+  timelineSearchCurrentIndex.value = Math.min(timelineSearchCurrentIndex.value, matches.length - 1);
+});
 
 function setTimelineBlockRef(element: unknown, block: WebSessionBlock) {
   if (element instanceof HTMLElement) {
@@ -13995,6 +14600,7 @@ watch(
     userMessageNavigationPending.value = null;
     timelineUserMessageElements.clear();
     timelineBlockElements.clear();
+    resetTimelineSearchForSessionChange();
     selectedSubAgentThreadId.value = '';
     handleCommandExecutionDetailVisibilityChange(false);
     rawTimelineBlocks.value = {};
@@ -14015,6 +14621,9 @@ watch(
       session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
     draftWorkflowMode.value = session.workflowMode;
     draftPermissionLevel.value = session.permissionLevel;
+    if (timelineSearchOpen.value && normalizedTimelineSearchQuery.value) {
+      scheduleTimelineSearchRequest();
+    }
     expandedTools.value = {};
     beginTimelinePositionRestore(projectId, sessionId);
     updateActiveTabIndicator();
@@ -14384,6 +14993,7 @@ onMounted(() => {
     });
   }
   window.addEventListener('focus', handleWebSessionWindowFocus);
+  window.addEventListener('keydown', handleTimelineSearchShortcut);
   window.addEventListener('pageshow', handleWebSessionWindowPageShow);
   window.addEventListener('pagehide', handleTimelinePositionPageHide);
   if (typeof document !== 'undefined') {
@@ -14408,6 +15018,8 @@ onBeforeUnmount(() => {
   persistTimelinePositionStateNow();
   cancelTimelinePositionRestore();
   cancelSidebarSearchRequest();
+  clearTimelineSearchTimer();
+  invalidateTimelineSearchRequest();
   persistActiveUserInputDraft();
   realSessionSnapshotLoadController.cancel();
   streamingMarkdownController.clear();
@@ -14435,6 +15047,7 @@ onBeforeUnmount(() => {
   sidebarResizeObserver?.disconnect();
   sidebarResizeObserver = null;
   window.removeEventListener('focus', handleWebSessionWindowFocus);
+  window.removeEventListener('keydown', handleTimelineSearchShortcut);
   window.removeEventListener('pageshow', handleWebSessionWindowPageShow);
   window.removeEventListener('pagehide', handleTimelinePositionPageHide);
   if (typeof document !== 'undefined') {
@@ -15786,6 +16399,7 @@ defineExpose({
   z-index: 3;
   display: flex;
   align-items: center;
+  box-sizing: border-box;
   justify-content: flex-end;
   gap: 4px;
   margin: 0 0 14px auto;
@@ -15795,6 +16409,63 @@ defineExpose({
   border-radius: 4px;
   background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, transparent);
   backdrop-filter: blur(8px);
+}
+
+.timeline-agent-toolbar.is-search-open {
+  width: min(520px, 100%);
+}
+
+.timeline-agent-toolbar:not(.is-search-open):not(.has-sub-agent-filter) {
+  width: 32px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.timeline-search-input {
+  min-width: 120px;
+  flex: 1 1 220px;
+}
+
+.timeline-search-input:deep(.n-input) {
+  border-radius: 6px;
+}
+
+.timeline-search-count {
+  flex: 0 0 auto;
+  min-width: 52px;
+  color: var(--n-text-color-3);
+  font-size: 12px;
+  line-height: 28px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.timeline-search-filter-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 148px;
+}
+
+.timeline-search-role-highlight {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--n-warning-color, #f0a020) 28%, transparent) !important;
+  color: color-mix(in srgb, var(--n-warning-color, #f0a020) 78%, var(--n-text-color-1)) !important;
+  font-weight: 700;
+}
+
+.timeline-search-role-highlight-active {
+  background: color-mix(in srgb, var(--n-primary-color) 22%, transparent) !important;
+  color: var(--n-primary-color) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 38%, transparent);
+}
+
+.item-role.timeline-search-role-highlight {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
 }
 
 .timeline-agent-filter {
@@ -19250,6 +19921,19 @@ defineExpose({
 
   .timeline-list {
     padding: 14px 12px 20px;
+  }
+
+  .timeline-agent-toolbar.is-search-open {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .timeline-agent-toolbar.is-search-open .timeline-search-input {
+    flex-basis: 100%;
+  }
+
+  .timeline-agent-toolbar.is-search-open .timeline-agent-filter {
+    flex-basis: 100%;
   }
 
   .composer {

@@ -42,6 +42,24 @@ export type SessionSearchChunkResult = {
   total: number;
 };
 
+export type SessionConversationSearchMatch = {
+  id: string;
+  sourceThreadId?: string;
+  sourceTurnId?: string;
+  sourceItemId?: string;
+  orderIndex: number;
+  kind: 'user' | 'assistant' | 'tool' | 'system' | string;
+  toolId?: string;
+  commandGroupId?: string;
+};
+
+export type SessionConversationSearchResult = {
+  items: SessionConversationSearchMatch[];
+  nextCursor?: string;
+  done: boolean;
+  total: number;
+};
+
 export type WebSessionHistoryCleanupParams = {
   scope: 'all' | 'projects';
   projectIds: string[];
@@ -504,6 +522,54 @@ export const webSessionApi = {
     }
     if (!body.item) {
       throw new Error('failed to search AI sessions');
+    }
+    return body.item;
+  },
+
+  async searchConversation(
+    projectId: string,
+    sessionId: string,
+    data: {
+      query: string;
+      includeUser: boolean;
+      includeAssistant: boolean;
+      includeTools: boolean;
+      includeSystem: boolean;
+      sourceThreadId?: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: { signal?: AbortSignal }
+  ): Promise<SessionConversationSearchResult> {
+    const method = http.Post<ItemResponse<SessionConversationSearchResult>>(
+      `/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/search`,
+      {
+        query: data.query.trim(),
+        includeUser: data.includeUser === true,
+        includeAssistant: data.includeAssistant === true,
+        includeTools: data.includeTools === true,
+        includeSystem: data.includeSystem === true,
+        sourceThreadId: data.sourceThreadId || undefined,
+        cursor: data.cursor || undefined,
+        limit: data.limit ?? 100,
+      }
+    );
+    const abortHandler = () => {
+      method.abort();
+    };
+
+    if (options?.signal?.aborted) {
+      throw createAbortError();
+    }
+    options?.signal?.addEventListener('abort', abortHandler, { once: true });
+    let body: ItemResponse<SessionConversationSearchResult> = {};
+    try {
+      body = (await method.send()) ?? {};
+    } finally {
+      options?.signal?.removeEventListener('abort', abortHandler);
+    }
+    if (!body.item) {
+      throw new Error('failed to search AI session conversation');
     }
     return body.item;
   },

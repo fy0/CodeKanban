@@ -30,6 +30,7 @@ export interface RenderMarkdownOptions {
   codeBlockCopyLabel?: string;
   enableLinkCopy?: boolean;
   linkCopyLabel?: string;
+  textHighlightQuery?: string;
 }
 
 const registeredLanguages = new Set<string>();
@@ -102,6 +103,49 @@ function escapeHtml(value: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlightRenderedText(value: string, query: string) {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    return value;
+  }
+
+  const queryVariants = [...new Set([normalizedQuery, escapeHtml(normalizedQuery)])]
+    .sort((left, right) => right.length - left.length)
+    .map(escapeRegExp)
+    .join('|');
+  if (!queryVariants) {
+    return value;
+  }
+
+  const matcher = new RegExp(queryVariants, 'gi');
+  const tagPattern = /<!--[\s\S]*?-->|<[^>]*>/g;
+  let result = '';
+  let cursor = 0;
+  let tagMatch: RegExpExecArray | null;
+
+  while ((tagMatch = tagPattern.exec(value))) {
+    result += highlightRenderedTextSegment(value.slice(cursor, tagMatch.index), matcher);
+    result += tagMatch[0];
+    cursor = tagPattern.lastIndex;
+  }
+
+  result += highlightRenderedTextSegment(value.slice(cursor), matcher);
+  return result;
+}
+
+function highlightRenderedTextSegment(value: string, matcher: RegExp) {
+  matcher.lastIndex = 0;
+  return value.replace(matcher, match => `<mark class="markdown-search-highlight">${match}</mark>`);
+}
+
+export function renderHighlightedPlainText(value: string, query?: string) {
+  return highlightRenderedText(escapeHtml(value), query ?? '');
 }
 
 function pickLanguageName(value?: string) {
@@ -239,8 +283,10 @@ export function renderMarkdown(value: string, options: RenderMarkdownOptions = {
   }
 
   try {
-    return getMarkdownRenderer(options).parse(value) as string;
+    const rendered = getMarkdownRenderer(options).parse(value) as string;
+    return highlightRenderedText(rendered, options.textHighlightQuery ?? '');
   } catch {
-    return escapeHtml(value).replace(/\n/g, '<br>');
+    const rendered = escapeHtml(value).replace(/\n/g, '<br>');
+    return highlightRenderedText(rendered, options.textHighlightQuery ?? '');
   }
 }

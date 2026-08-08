@@ -5,6 +5,13 @@
   word-break: break-word;
 }
 
+.chat-markdown .markdown-search-highlight {
+  padding: 0 0.12em;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--n-warning-color, #f0a020) 48%, transparent);
+  color: inherit;
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }

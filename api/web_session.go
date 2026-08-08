@@ -163,6 +163,54 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/search", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+			Body      struct {
+				Query            string `json:"query"`
+				IncludeUser      bool   `json:"includeUser"`
+				IncludeAssistant bool   `json:"includeAssistant"`
+				IncludeTools     bool   `json:"includeTools"`
+				IncludeSystem    bool   `json:"includeSystem"`
+				SourceThreadID   string `json:"sourceThreadId,omitempty"`
+				Cursor           string `json:"cursor,omitempty"`
+				Limit            int    `json:"limit,omitempty"`
+			}
+		},
+	) (*h.ItemResponse[websession.SessionConversationSearchResult], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		item, err := c.manager.SearchSessionConversation(
+			ctx,
+			input.SessionID,
+			input.Body.Query,
+			input.Body.IncludeUser,
+			input.Body.IncludeAssistant,
+			input.Body.IncludeTools,
+			input.Body.IncludeSystem,
+			input.Body.SourceThreadID,
+			input.Body.Cursor,
+			input.Body.Limit,
+		)
+		if err != nil {
+			if errors.Is(err, websession.ErrInvalidSessionConversationSearchCursor) {
+				return nil, huma.Error400BadRequest(err.Error())
+			}
+			return nil, huma.Error500InternalServerError("failed to search session conversation", err)
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-conversation-search"
+		op.Summary = "搜索当前会话的用户、助手、工具和系统内容"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Get(group, "/projects/{projectId}/web-sessions/import-sources", func(
 		ctx context.Context,
 		input *struct {
