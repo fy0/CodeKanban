@@ -444,7 +444,7 @@ func (m *Manager) runCodexAppServerSession(
 		return
 	}
 
-	threadID, modelProvider, threadPath, _, err := m.startOrResumeCodexThread(
+	threadID, modelProvider, threadPath, resumedThread, activeMultiAgentV2, err := m.startOrResumeCodexThread(
 		ctx,
 		session,
 		run,
@@ -456,6 +456,7 @@ func (m *Manager) runCodexAppServerSession(
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
 	}
+	supportsMultiAgentV2 = activeMultiAgentV2
 	session.NativeSessionID = ptr(threadID)
 	if strings.TrimSpace(threadPath) != "" {
 		session.ThreadPath = ptr(strings.TrimSpace(threadPath))
@@ -463,7 +464,7 @@ func (m *Manager) runCodexAppServerSession(
 	run.transportRemoteURL = readCodexRemoteURL(ctx, client, session.Cwd, modelProvider)
 
 	var rolloutTailers map[string]*codexRolloutTailer
-	if supportsMultiAgentV2 {
+	if supportsMultiAgentV2 && resumedThread {
 		rootTailer, tailerErr := m.prepareCodexRolloutTailer(ctx, session, threadID)
 		if tailerErr == nil {
 			var tailerWarnings []error
@@ -479,9 +480,8 @@ func (m *Manager) runCodexAppServerSession(
 			}
 		}
 		if tailerErr != nil {
-			run.resolveBootstrap(tailerErr)
-			m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, tailerErr)
-			return
+			m.warnCodexCompatibilityFallback(session, run, "resume_rollout", tailerErr)
+			rolloutTailers = nil
 		}
 	}
 
@@ -491,6 +491,19 @@ func (m *Manager) runCodexAppServerSession(
 		run.resolveBootstrap(err)
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
+	}
+	if supportsMultiAgentV2 && !resumedThread {
+		rootTailer, tailerErr := m.waitForCodexRolloutTailer(
+			ctx,
+			session,
+			threadID,
+			threadPath,
+		)
+		if tailerErr != nil {
+			m.warnCodexCompatibilityFallback(session, run, "fresh_rollout", tailerErr)
+		} else {
+			rolloutTailers = map[string]*codexRolloutTailer{threadID: rootTailer}
+		}
 	}
 	turnID := parseCodexTurnID(turnResponse.Result)
 	if turnID != "" {
@@ -533,11 +546,10 @@ func (m *Manager) runCodexAppServerSession(
 			},
 		)
 		if monitorErr != nil {
-			run.resolveBootstrap(monitorErr)
-			m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, monitorErr)
-			return
+			m.warnCodexCompatibilityFallback(session, run, "rollout_monitor", monitorErr)
+		} else {
+			run.setCodexRolloutMonitor(monitor)
 		}
-		run.setCodexRolloutMonitor(monitor)
 	}
 	if strings.TrimSpace(run.bootstrapGoalObjective) != "" {
 		if _, err := client.request(ctx, "thread/goal/set", map[string]any{
@@ -760,31 +772,46 @@ func (m *Manager) startOrResumeCodexThread(
 	run *activeRun,
 	client *codexAppServerClient,
 	supportsMultiAgentV2 bool,
-) (string, string, string, bool, error) {
+) (string, string, string, bool, bool, error) {
 	existingThreadID := ""
 	if session.NativeSessionID != nil {
 		existingThreadID = strings.TrimSpace(*session.NativeSessionID)
 	}
 
-	var (
-		response codexAppServerIncoming
-		err      error
-	)
-	if existingThreadID != "" {
-		response, err = client.request(
-			ctx,
-			"thread/resume",
-			codexThreadResumeParams(session, existingThreadID, supportsMultiAgentV2),
-		)
-	} else {
-		response, err = client.request(
-			ctx,
-			"thread/start",
-			codexThreadStartParams(session, supportsMultiAgentV2),
-		)
+	resumedThread := existingThreadID != ""
+	method := "thread/start"
+	if resumedThread {
+		method = "thread/resume"
+	}
+	request := func(useMultiAgentV2 bool) (codexAppServerIncoming, error) {
+		if resumedThread {
+			return client.request(
+				ctx,
+				method,
+				codexThreadResumeParams(session, existingThreadID, useMultiAgentV2),
+			)
+		}
+		return client.request(ctx, method, codexThreadStartParams(session, useMultiAgentV2))
+	}
+
+	activeMultiAgentV2 := supportsMultiAgentV2
+	response, err := request(activeMultiAgentV2)
+	if err != nil && activeMultiAgentV2 {
+		multiAgentV2Err := err
+		response, err = request(false)
+		if err != nil {
+			return "", "", "", resumedThread, false, fmt.Errorf(
+				"%s failed with multi-agent V2: %v; compatibility fallback failed: %w",
+				method,
+				multiAgentV2Err,
+				err,
+			)
+		}
+		activeMultiAgentV2 = false
+		m.warnCodexCompatibilityFallback(session, run, "thread_bootstrap", multiAgentV2Err)
 	}
 	if err != nil {
-		return "", "", "", existingThreadID != "", err
+		return "", "", "", resumedThread, activeMultiAgentV2, err
 	}
 
 	responsePayload := decodeRawObject(response.Result)
@@ -793,7 +820,7 @@ func (m *Manager) startOrResumeCodexThread(
 		threadID = existingThreadID
 	}
 	if threadID == "" {
-		return "", "", "", existingThreadID != "", fmt.Errorf("codex app-server did not return a thread id")
+		return "", "", "", resumedThread, activeMultiAgentV2, fmt.Errorf("codex app-server did not return a thread id")
 	}
 	threadPath := strings.TrimSpace(stringValue(decodeRawObject(responsePayload["thread"])["path"]))
 	updates := map[string]any{
@@ -804,10 +831,10 @@ func (m *Manager) startOrResumeCodexThread(
 		updates["thread_path"] = threadPath
 	}
 	if err := m.updateRuntimeState(context.Background(), session.ID, updates); err != nil {
-		return "", "", "", existingThreadID != "", err
+		return "", "", "", resumedThread, activeMultiAgentV2, err
 	}
 	run.currentToolMessage = threadID
-	return threadID, strings.TrimSpace(stringValue(responsePayload["modelProvider"])), threadPath, existingThreadID != "", nil
+	return threadID, strings.TrimSpace(stringValue(responsePayload["modelProvider"])), threadPath, resumedThread, activeMultiAgentV2, nil
 }
 
 func readCodexRemoteURL(
@@ -1592,6 +1619,37 @@ func (m *Manager) warnCodexRolloutAttachFailure(
 			"code":     "codex_descendant_rollout_unavailable",
 			"threadId": threadID,
 			"error":    err.Error(),
+		},
+	)
+}
+
+func (m *Manager) warnCodexCompatibilityFallback(
+	session tables.WebSessionTable,
+	run *activeRun,
+	phase string,
+	err error,
+) {
+	if err == nil {
+		return
+	}
+	phase = strings.TrimSpace(phase)
+	if m.logger != nil {
+		m.logger.Warn("Codex multi-agent V2 unavailable; using compatibility mode",
+			zap.String("sessionId", session.ID),
+			zap.String("phase", phase),
+			zap.Error(err),
+		)
+	}
+	m.appendRunNote(
+		session.ID,
+		session,
+		run,
+		"warn",
+		"Codex multi-agent V2 startup failed; continuing in compatibility mode.",
+		map[string]any{
+			"code":  "codex_multi_agent_v2_fallback",
+			"phase": phase,
+			"error": err.Error(),
 		},
 	)
 }

@@ -71,6 +71,15 @@ func (m *Manager) prepareCodexRolloutTailer(
 	session tables.WebSessionTable,
 	threadID string,
 ) (*codexRolloutTailer, error) {
+	return m.prepareCodexRolloutTailerAtOffset(ctx, session, threadID, false)
+}
+
+func (m *Manager) prepareCodexRolloutTailerAtOffset(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	threadID string,
+	fromBeginning bool,
+) (*codexRolloutTailer, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return nil, fmt.Errorf("codex thread id is empty")
@@ -82,7 +91,7 @@ func (m *Manager) prepareCodexRolloutTailer(
 		if path == "" {
 			return nil, false
 		}
-		tailer, err := newCodexRolloutTailer(path, threadID)
+		tailer, err := newCodexRolloutTailerAtOffset(path, threadID, fromBeginning)
 		if err != nil {
 			lastErr = err
 			return nil, false
@@ -114,6 +123,84 @@ func (m *Manager) prepareCodexRolloutTailer(
 		return nil, fmt.Errorf("cannot attach Codex rollout for thread %s: %w", threadID, lastErr)
 	}
 	return nil, fmt.Errorf("cannot find Codex rollout for thread %s", threadID)
+}
+
+func (m *Manager) waitForCodexRolloutTailer(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	threadID string,
+	path string,
+) (*codexRolloutTailer, error) {
+	threadID = strings.TrimSpace(threadID)
+	path = strings.TrimSpace(path)
+	if path == "" && session.ThreadPath != nil {
+		path = strings.TrimSpace(*session.ThreadPath)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	timer := time.NewTimer(codexRolloutAttachTimeout)
+	ticker := time.NewTicker(log_watcher.DefaultPollInterval)
+	defer timer.Stop()
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		if path == "" {
+			tailer, err := m.prepareCodexRolloutTailerAtOffset(ctx, session, threadID, true)
+			if err == nil {
+				return tailer, nil
+			}
+			lastErr = err
+		} else {
+			tailer, err := newCodexRolloutTailerAtOffset(path, threadID, true)
+			if err == nil {
+				_ = m.updateRuntimeState(ctx, session.ID, map[string]any{
+					"thread_path": path,
+					"updated_at":  time.Now(),
+				})
+				return tailer, nil
+			}
+			lastErr = err
+			if !isRetryableCodexRolloutAttachError(err) {
+				return nil, fmt.Errorf(
+					"cannot attach Codex rollout for thread %s after turn/start: %w",
+					threadID,
+					err,
+				)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			tailer, err := m.prepareCodexRolloutTailerAtOffset(ctx, session, threadID, true)
+			if err == nil {
+				return tailer, nil
+			}
+			if lastErr != nil {
+				return nil, fmt.Errorf(
+					"cannot attach Codex rollout for thread %s after turn/start: %w",
+					threadID,
+					lastErr,
+				)
+			}
+			return nil, err
+		case <-ticker.C:
+		}
+	}
+}
+
+func isRetryableCodexRolloutAttachError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "session metadata was not found")
 }
 
 func prepareCodexRolloutMonitorTailers(

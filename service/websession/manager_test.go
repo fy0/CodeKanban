@@ -3201,6 +3201,128 @@ func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	}
 }
 
+func TestSendMessageCodexAppServerWaitsForFreshThreadRollout(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "rollout_after_turn_start"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "fresh thread", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected delayed rollout run to finish, got status=%q error=%v", record.Status, record.LastError)
+	}
+	if record.ThreadPath == nil {
+		t.Fatal("expected delayed rollout path to be stored")
+	}
+	if _, err := os.Stat(strings.TrimSpace(*record.ThreadPath)); err != nil {
+		t.Fatalf("expected delayed rollout path to exist, got %q: %v", *record.ThreadPath, err)
+	}
+}
+
+func TestSendMessageCodexAppServerFallsBackWhenV2ThreadStartFails(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "v2_thread_start_fallback")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "fallback thread start", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected compatibility fallback to finish, got status=%q error=%v", record.Status, record.LastError)
+	}
+	if _, err := os.Stat(codexPath + ".state.compatibility"); err != nil {
+		t.Fatalf("expected compatibility thread request marker: %v", err)
+	}
+	requireCodexCompatibilityFallback(t, manager, created.ID, "thread_bootstrap")
+}
+
+func TestSendMessageCodexAppServerFallsBackWithoutRepeatingStartedTurn(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "rollout_attach_failure")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "fallback rollout", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected rollout fallback to finish, got status=%q error=%v", record.Status, record.LastError)
+	}
+	startedTurns, err := os.ReadFile(codexPath + ".state.turn-start-count")
+	if err != nil {
+		t.Fatalf("read turn start count: %v", err)
+	}
+	if strings.TrimSpace(string(startedTurns)) != "1" {
+		t.Fatalf("expected fallback not to repeat turn/start, got %q", startedTurns)
+	}
+	requireCodexCompatibilityFallback(t, manager, created.ID, "fresh_rollout")
+}
+
 func TestSendMessageCodexPreV2VersionUsesCompatibilityAppServerParams(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -8059,8 +8181,7 @@ function send(message) {
   process.stdout.write(JSON.stringify(message) + '\n');
 }
 
-function respondThread(id, explicitThreadId) {
-	const responseThreadId = explicitThreadId || threadId;
+function writeRollout(responseThreadId) {
 	fs.writeFileSync(
 		rolloutPath,
 		JSON.stringify({
@@ -8069,6 +8190,13 @@ function respondThread(id, explicitThreadId) {
 			payload: { id: responseThreadId },
 		}) + '\n',
 	);
+}
+
+function respondThread(id, explicitThreadId) {
+	const responseThreadId = explicitThreadId || threadId;
+	if (mode !== 'rollout_after_turn_start' && mode !== 'rollout_attach_failure') {
+		writeRollout(responseThreadId);
+	}
   send({
     id,
     result: {
@@ -8644,6 +8772,23 @@ rl.on('line', line => {
 	    });
 	    return;
 	  }
+	  if (mode === 'v2_thread_start_fallback') {
+	    if (message.params && message.params.config !== undefined) {
+	      send({
+	        id: message.id,
+	        error: { message: 'multi-agent V2 thread bootstrap failed' },
+	      });
+	      return;
+	    }
+	    if (!message.params || message.params.persistExtendedHistory !== true) {
+	      send({
+	        id: message.id,
+	        error: { message: 'expected compatibility thread params' },
+	      });
+	      return;
+	    }
+	    fs.writeFileSync(stateFile + '.compatibility', '1');
+	  }
     if (mode === 'resume_only' && message.method !== 'thread/resume') {
       send({
         id: message.id,
@@ -8764,6 +8909,15 @@ rl.on('line', line => {
 
   if (message.method === 'turn/start') {
     startedTurns += 1;
+	if (mode === 'v2_thread_start_fallback' || mode === 'rollout_attach_failure') {
+	  fs.writeFileSync(stateFile + '.turn-start-count', String(startedTurns));
+	}
+	if (mode === 'rollout_after_turn_start') {
+	  setTimeout(() => writeRollout(activeThreadId), 100);
+	}
+	if (mode === 'rollout_attach_failure') {
+	  writeRollout('wrong_thread');
+	}
     send({
       id: message.id,
       result: {
@@ -8837,7 +8991,10 @@ rl.on('line', line => {
 	  mode === 'resume_only' ||
 	  mode === 'plan' ||
 	  mode === 'verify_yolo' ||
-	  mode === 'verify_compatibility'
+	  mode === 'verify_compatibility' ||
+	  mode === 'rollout_after_turn_start' ||
+	  mode === 'v2_thread_start_fallback' ||
+	  mode === 'rollout_attach_failure'
 	) {
       finishTurn('done');
       return;
@@ -9412,6 +9569,22 @@ func historyHasEvent(events []Event, eventType string) bool {
 		}
 	}
 	return false
+}
+
+func requireCodexCompatibilityFallback(t *testing.T, manager *Manager, sessionID string, phase string) {
+	t.Helper()
+	events, err := manager.store.readEvents(sessionID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	for _, event := range events {
+		if event.Type == "note" &&
+			stringValue(event.Payload["code"]) == "codex_multi_agent_v2_fallback" &&
+			stringValue(event.Payload["phase"]) == phase {
+			return
+		}
+	}
+	t.Fatalf("expected compatibility fallback note for phase %q, got %#v", phase, events)
 }
 
 func historyHasToolKind(events []Event, kind string) bool {
