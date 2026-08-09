@@ -567,19 +567,59 @@ func (m *Manager) findHistoryItemByToolKey(
 	sessionID string,
 	toolID string,
 ) (HistoryItem, error) {
-	window, err := m.loadHistoryWindow(ctx, sessionID, 1000, nil)
-	if err != nil {
+	db := model.GetDB()
+	if db == nil {
+		return HistoryItem{}, model.ErrDBNotInitialized
+	}
+	normalizedToolID := strings.TrimSpace(toolID)
+	if normalizedToolID == "" {
+		return HistoryItem{}, gorm.ErrRecordNotFound
+	}
+
+	indexedKeys := []string{historyToolSourceKey(normalizedToolID), normalizedToolID}
+	var indexedRows []tables.WebSessionItemTable
+	if err := db.WithContext(ctx).
+		Where(
+			"web_session_id = ? AND (source_item_id IN ? OR id = ?)",
+			sessionID,
+			indexedKeys,
+			normalizedToolID,
+		).
+		Order("order_index DESC").
+		Find(&indexedRows).Error; err != nil {
 		return HistoryItem{}, err
 	}
-	for _, item := range window.Items {
-		if item.Tool == nil {
-			continue
+	for _, row := range indexedRows {
+		item := mapHistoryItemRowWithSession(row, sessionID)
+		if historyItemMatchesToolKey(item, normalizedToolID) {
+			return item, nil
 		}
-		if item.Tool.ID == toolID || item.Tool.CommandGroup != nil && item.Tool.CommandGroup.ID == toolID {
+	}
+
+	// Legacy rows may not have a group source key. This fallback is intentionally
+	// unbounded so an older group remains addressable regardless of its position.
+	var toolRows []tables.WebSessionItemTable
+	if err := db.WithContext(ctx).
+		Where("web_session_id = ? AND item_kind = ?", sessionID, "tool").
+		Order("order_index DESC").
+		Find(&toolRows).Error; err != nil {
+		return HistoryItem{}, err
+	}
+	for _, row := range toolRows {
+		item := mapHistoryItemRowWithSession(row, sessionID)
+		if historyItemMatchesToolKey(item, normalizedToolID) {
 			return item, nil
 		}
 	}
 	return HistoryItem{}, gorm.ErrRecordNotFound
+}
+
+func historyItemMatchesToolKey(item HistoryItem, toolID string) bool {
+	if item.Tool == nil {
+		return false
+	}
+	return item.Tool.ID == toolID ||
+		(item.Tool.CommandGroup != nil && item.Tool.CommandGroup.ID == toolID)
 }
 
 func (m *Manager) registerExternalAttachment(path string) (HistoryAttachment, error) {

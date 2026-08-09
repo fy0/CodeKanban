@@ -54,9 +54,10 @@ func registerWebSessionRoutes(app *fiber.App, group *huma.Group, manager *webses
 		manager: manager,
 		logger:  logger.Named("web-session-controller"),
 		upgrader: websocket.Upgrader{
-			ReadBufferSize:  32 * 1024,
-			WriteBufferSize: 32 * 1024,
-			CheckOrigin:     func(r *http.Request) bool { return true },
+			ReadBufferSize:    32 * 1024,
+			WriteBufferSize:   32 * 1024,
+			EnableCompression: true,
+			CheckOrigin:       func(r *http.Request) bool { return true },
 		},
 	}
 
@@ -205,6 +206,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			}
 			return nil, huma.Error400BadRequest(err.Error())
 		}
+		item = websession.SessionSnapshotResponseForTransport(item)
 		resp := h.NewItemResponse(item)
 		resp.Status = http.StatusOK
 		return resp, nil
@@ -337,6 +339,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		if err != nil {
 			return nil, huma.Error400BadRequest(err.Error())
 		}
+		item = websession.HistoryWindowForTransport(item)
 		resp := h.NewItemResponse(item)
 		resp.Status = http.StatusOK
 		return resp, nil
@@ -543,6 +546,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				return nil, huma.Error500InternalServerError("failed to edit user message", err)
 			}
 		}
+		item = websession.SessionSnapshotForTransport(item)
 		resp := h.NewItemResponse(item)
 		resp.Status = http.StatusCreated
 		return resp, nil
@@ -602,6 +606,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				return nil, huma.Error400BadRequest(err.Error())
 			}
 		}
+		item = websession.ImportResultForTransport(item)
 		resp := h.NewItemResponse(item)
 		resp.Status = http.StatusOK
 		return resp, nil
@@ -733,6 +738,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		if err != nil {
 			return nil, huma.Error400BadRequest(err.Error())
 		}
+		item = websession.SessionSnapshotForTransport(item)
 		resp := h.NewItemResponse(item)
 		resp.Status = http.StatusOK
 		return resp, nil

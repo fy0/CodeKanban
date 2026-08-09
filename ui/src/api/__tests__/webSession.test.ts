@@ -315,6 +315,36 @@ describe('webSessionApi Pi tree', () => {
       '/projects/project-1/web-sessions/session-1/tree/clone',
       { revision: 'rev-1' }
     );
+
+describe('webSessionApi.commandGroupDetail', () => {
+  beforeEach(() => {
+    getMethodMock.mockReset();
+  });
+
+  it('loads a typed command group detail from the session endpoint', async () => {
+    const sendMock = vi.fn().mockResolvedValue({
+      item: {
+        groupId: 'group/1',
+        kind: 'command_execution',
+        title: 'CommandExecution',
+        summary: 'git status',
+        count: 2,
+        firstSeq: 10,
+        lastSeq: 20,
+        status: 'done',
+        items: [],
+      },
+    });
+    getMethodMock.mockReturnValue({ send: sendMock });
+
+    const result = await webSessionApi.commandGroupDetail('project-1', 'session-1', 'group/1');
+
+    expect(getMethodMock).toHaveBeenCalledWith(
+      '/projects/project-1/web-sessions/session-1/command-groups/group%2F1',
+      { cacheFor: 0 }
+    );
+    expect(sendMock).toHaveBeenCalledWith(true);
+    expect(result).toMatchObject({ groupId: 'group/1', count: 2 });
   });
 });
 

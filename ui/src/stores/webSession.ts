@@ -4,6 +4,7 @@ import { computed, reactive, ref } from 'vue';
 import {
   webSessionApi,
   type WebSessionAttachmentUploadProgress,
+  type WebSessionCommandExecutionGroupDetail,
   type WebSessionImportResult,
   type WebSessionSnapshot,
   type WebSessionPendingApprovalRecord,
@@ -1828,6 +1829,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
       consumers: Set<symbol>;
     }
   >();
+  const commandGroupDetailsByKey = new Map<
+    string,
+    WebSessionCommandExecutionGroupDetail
+  >();
+  const inFlightCommandGroupDetailsByKey = new Map<
+    string,
+    Promise<WebSessionCommandExecutionGroupDetail>
+  >();
   const completedTransitionVersionBySession = new Map<string, number>();
   const currentSessionProjectById = new Map<string, string>();
   const runtimeProjectionCacheBySession = new Map<string, RuntimeProjectionCacheEntry>();
@@ -2063,6 +2072,53 @@ export const useWebSessionStore = defineStore('web-session', () => {
         loading: false,
       }
     );
+  }
+
+  function commandGroupDetailCacheKey(sessionId: string, groupId: string) {
+    return `${sessionId}\u0000${groupId}`;
+  }
+
+  async function loadCommandGroupDetail(
+    sessionId: string,
+    groupId: string
+  ): Promise<WebSessionCommandExecutionGroupDetail> {
+    const normalizedSessionId = String(sessionId ?? '').trim();
+    const normalizedGroupId = String(groupId ?? '').trim();
+    if (!normalizedSessionId || !normalizedGroupId) {
+      throw new Error('session and tool group are required');
+    }
+
+    const key = commandGroupDetailCacheKey(normalizedSessionId, normalizedGroupId);
+    const cached = commandGroupDetailsByKey.get(key);
+    if (cached) {
+      return cached;
+    }
+
+    const inFlight = inFlightCommandGroupDetailsByKey.get(key);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const session = findSessionById(normalizedSessionId);
+    if (!session) {
+      throw new Error('session not found');
+    }
+
+    const request = webSessionApi
+      .commandGroupDetail(session.projectId, normalizedSessionId, normalizedGroupId)
+      .then(detail => {
+        if (detail.status !== 'running') {
+          commandGroupDetailsByKey.set(key, detail);
+        }
+        return detail;
+      });
+    const trackedRequest = request.finally(() => {
+      if (inFlightCommandGroupDetailsByKey.get(key) === trackedRequest) {
+        inFlightCommandGroupDetailsByKey.delete(key);
+      }
+    });
+    inFlightCommandGroupDetailsByKey.set(key, trackedRequest);
+    return trackedRequest;
   }
 
   function setHistoryLoading(sessionId: string, loading: boolean) {
@@ -6451,6 +6507,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getPendingInputs,
     getScheduledInputs,
     getHistoryMeta,
+    loadCommandGroupDetail,
     getSubAgents,
     getAppliedRevision,
     isSessionSnapshotCurrent,

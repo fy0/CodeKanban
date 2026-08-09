@@ -4,7 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebSessionSummary } from '@/types/models';
 import { useWebSessionStore, webSessionRuntimePerformance } from '@/stores/webSession';
 
-const { listMock, queryArchivedMock, snapshotMock, historyMock, syncMock, deleteMock } = vi.hoisted(
+const {
+  listMock,
+  queryArchivedMock,
+  snapshotMock,
+  historyMock,
+  syncMock,
+  deleteMock,
+  commandGroupDetailMock,
+} = vi.hoisted(
   () => ({
     listMock: vi.fn(),
     queryArchivedMock: vi.fn(),
@@ -12,6 +20,7 @@ const { listMock, queryArchivedMock, snapshotMock, historyMock, syncMock, delete
     historyMock: vi.fn(),
     syncMock: vi.fn(),
     deleteMock: vi.fn(),
+    commandGroupDetailMock: vi.fn(),
   })
 );
 
@@ -23,6 +32,7 @@ vi.mock('@/api/webSession', () => ({
     history: historyMock,
     sync: syncMock,
     delete: deleteMock,
+    commandGroupDetail: commandGroupDetailMock,
   },
 }));
 
@@ -258,6 +268,7 @@ describe('webSession loading behavior', () => {
     historyMock.mockReset();
     syncMock.mockReset();
     deleteMock.mockReset();
+    commandGroupDetailMock.mockReset();
     webSessionRuntimePerformance.reset();
   });
 
@@ -3979,6 +3990,50 @@ describe('webSession loading behavior', () => {
       }),
     });
     expect(handleApproval).toHaveBeenCalledTimes(2);
+  });
+
+  it('singleflights and caches stable command group details per session', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-command-group' });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    let resolveDetail!: (detail: {
+      groupId: string;
+      kind: string;
+      title: string;
+      summary: string;
+      count: number;
+      firstSeq: number;
+      lastSeq: number;
+      status: 'done';
+      items: [];
+    }) => void;
+    const detailPromise = new Promise<Parameters<typeof resolveDetail>[0]>(resolve => {
+      resolveDetail = resolve;
+    });
+    commandGroupDetailMock.mockReturnValueOnce(detailPromise);
+
+    const first = store.loadCommandGroupDetail(session.id, 'group-1');
+    const second = store.loadCommandGroupDetail(session.id, 'group-1');
+    expect(commandGroupDetailMock).toHaveBeenCalledTimes(1);
+
+    resolveDetail({
+      groupId: 'group-1',
+      kind: 'command_execution',
+      title: 'CommandExecution',
+      summary: 'git status',
+      count: 2,
+      firstSeq: 1,
+      lastSeq: 2,
+      status: 'done',
+      items: [],
+    });
+    const [firstDetail, secondDetail] = await Promise.all([first, second]);
+    expect(firstDetail).toBe(secondDetail);
+
+    await store.loadCommandGroupDetail(session.id, 'group-1');
+    expect(commandGroupDetailMock).toHaveBeenCalledTimes(1);
   });
 
   it('updates a 500-block assistant tail 1000 times without full rescans or event sorts', async () => {

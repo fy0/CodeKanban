@@ -149,6 +149,33 @@ export type WebSessionPiTreeMutationResult = {
   editorText?: string;
 };
 
+export type WebSessionCommandExecutionGroupItem = {
+  toolId: string;
+  kind: string;
+  title: string;
+  summary: string;
+  command: string;
+  input?: unknown;
+  output?: string;
+  status: 'running' | 'done' | 'error';
+  timestamp: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type WebSessionCommandExecutionGroupDetail = {
+  groupId: string;
+  kind: string;
+  title: string;
+  summary: string;
+  count: number;
+  firstSeq: number;
+  lastSeq: number;
+  status: 'running' | 'done' | 'error';
+  latestToolId?: string;
+  items: WebSessionCommandExecutionGroupItem[];
+};
+
 export type WebSessionPendingInputRecord = {
   id?: string;
   mode?: 'redirect' | 'queue' | string;
@@ -504,6 +531,26 @@ export const webSessionApi = {
         .send(true)) ?? {};
     if (!body.item) {
       throw new Error('failed to load AI session history');
+    }
+    return body.item;
+  },
+
+  async commandGroupDetail(
+    projectId: string,
+    sessionId: string,
+    groupId: string
+  ): Promise<WebSessionCommandExecutionGroupDetail> {
+    const body =
+      (await http
+        .Get<
+          ItemResponse<WebSessionCommandExecutionGroupDetail>
+        >(
+          `/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/command-groups/${encodeURIComponent(groupId)}`,
+          { cacheFor: 0 }
+        )
+        .send(true)) ?? {};
+    if (!body.item) {
+      throw new Error('failed to load tool group detail');
     }
     return body.item;
   },

@@ -3336,9 +3336,10 @@ import {
   resolveImageViewDisplayName,
 } from '@/utils/webSessionImages';
 import { ApiError, urlBase } from '@/api';
-import { http } from '@/api/http';
 import {
   webSessionApi,
+  type WebSessionCommandExecutionGroupDetail,
+  type WebSessionCommandExecutionGroupItem,
   type SessionConversationSearchMatch,
   type SessionSearchChunkResult,
   type WebSessionPiTreeMutationResult,
@@ -3668,32 +3669,8 @@ type InlinePlanChoice = {
   options: InlinePlanChoiceOption[];
 };
 
-type CommandExecutionDetailItem = {
-  toolId: string;
-  kind: string;
-  title: string;
-  summary: string;
-  command: string;
-  input?: unknown;
-  output?: string;
-  status: 'running' | 'done' | 'error';
-  timestamp: string;
-  startedAt?: string;
-  completedAt?: string;
-};
-
-type CommandExecutionDetail = {
-  groupId: string;
-  kind: string;
-  title: string;
-  summary: string;
-  count: number;
-  firstSeq: number;
-  lastSeq: number;
-  status: 'running' | 'done' | 'error';
-  latestToolId?: string;
-  items: CommandExecutionDetailItem[];
-};
+type CommandExecutionDetailItem = WebSessionCommandExecutionGroupItem;
+type CommandExecutionDetail = WebSessionCommandExecutionGroupDetail;
 
 type ImageViewPreviewState = 'loading' | 'ready' | 'error';
 
@@ -10683,6 +10660,11 @@ function buildLocalCommandExecutionDetail(block: WebSessionBlock): CommandExecut
   };
 }
 
+function isExpandableCommandGroup(block: WebSessionBlock) {
+  const group = block.tool?.commandGroup;
+  return Boolean(group && (group.compacted || group.count > 1));
+}
+
 async function openCommandExecutionDetail(block: WebSessionBlock) {
   if (!currentRealSession.value) {
     return;
@@ -10699,30 +10681,31 @@ async function openCommandExecutionDetail(block: WebSessionBlock) {
   activeCommandExecutionGroupId.value = groupId;
   showCommandExecutionDetail.value = true;
   loadingCommandExecutionDetail.value = true;
+  const requestSessionId = currentRealSession.value.id;
   const requestGroupId = groupId;
 
-  const localDetail = buildLocalCommandExecutionDetail(block);
-  if (localDetail) {
-    activeCommandExecutionDetail.value = localDetail;
-    loadingCommandExecutionDetail.value = false;
-    return;
+  if (!isExpandableCommandGroup(block)) {
+    const localDetail = buildLocalCommandExecutionDetail(block);
+    if (localDetail) {
+      activeCommandExecutionDetail.value = localDetail;
+      loadingCommandExecutionDetail.value = false;
+      return;
+    }
   }
 
   try {
-    const response =
-      (await http
-        .Get<{
-          item?: CommandExecutionDetail;
-        }>(
-          `/projects/${encodeURIComponent(currentRealSession.value.projectId)}/web-sessions/${encodeURIComponent(currentRealSession.value.id)}/command-groups/${encodeURIComponent(groupId)}`,
-          { cacheFor: 0 }
-        )
-        .send()) ?? {};
-    if (activeCommandExecutionGroupId.value === requestGroupId) {
-      activeCommandExecutionDetail.value = response.item ?? null;
+    const detail = await webSessionStore.loadCommandGroupDetail(requestSessionId, groupId);
+    if (
+      currentRealSession.value?.id === requestSessionId &&
+      activeCommandExecutionGroupId.value === requestGroupId
+    ) {
+      activeCommandExecutionDetail.value = detail;
     }
   } catch (error) {
-    if (activeCommandExecutionGroupId.value === requestGroupId) {
+    if (
+      currentRealSession.value?.id === requestSessionId &&
+      activeCommandExecutionGroupId.value === requestGroupId
+    ) {
       activeCommandExecutionDetail.value = null;
     }
     message.error(
@@ -10731,7 +10714,10 @@ async function openCommandExecutionDetail(block: WebSessionBlock) {
         : t('webSession.compactToolLoadFailed')
     );
   } finally {
-    if (activeCommandExecutionGroupId.value === requestGroupId) {
+    if (
+      currentRealSession.value?.id === requestSessionId &&
+      activeCommandExecutionGroupId.value === requestGroupId
+    ) {
       loadingCommandExecutionDetail.value = false;
     }
   }

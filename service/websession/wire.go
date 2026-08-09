@@ -640,6 +640,7 @@ func mapWirePendingUserInput(input *PendingUserInput) *wirePendingUserInput {
 }
 
 func mapWireHistoryItem(item HistoryItem) wireHistItem {
+	item = historyItemForTransport(item)
 	var timestamp *int64
 	if item.Timestamp != nil {
 		value := item.Timestamp.UnixMilli()
