@@ -40,6 +40,7 @@ export interface SettingsBackupShellConfig {
 export interface SettingsBackupQuickInputSection {
   pinned?: string[];
   recent?: string[];
+  recentByProject?: Record<string, string[]>;
 }
 
 export interface SettingsBackupServerPayload {
@@ -300,6 +301,7 @@ export function buildImportableSettingsBackup(
       }
       if (!selectedKeys.has('server.webSessionQuickInput.recent')) {
         delete server.webSessionQuickInput.recent;
+        delete server.webSessionQuickInput.recentByProject;
       }
       if (!hasQuickInputSectionContent(server.webSessionQuickInput)) {
         delete server.webSessionQuickInput;
@@ -331,6 +333,7 @@ export function buildImportableSettingsBackup(
       }
       if (!selectedKeys.has('server.webSessionQuickInput.recent')) {
         delete client.settings.webSessionQuickInput.recent;
+        delete client.settings.webSessionQuickInput.recentByProject;
       }
       if (!hasQuickInputSectionContent(client.settings.webSessionQuickInput)) {
         delete client.settings.webSessionQuickInput;
@@ -362,6 +365,7 @@ function filterServerPayloadForExport(
   }
   if (cloned.webSessionQuickInput && !options.includeQuickInputRecent) {
     delete cloned.webSessionQuickInput.recent;
+    delete cloned.webSessionQuickInput.recentByProject;
     if (!hasQuickInputSectionContent(cloned.webSessionQuickInput)) {
       delete cloned.webSessionQuickInput;
     }
@@ -385,6 +389,7 @@ function filterClientPayloadForExport(
 
   if (cloned.settings?.webSessionQuickInput && !options.includeQuickInputRecent) {
     delete cloned.settings.webSessionQuickInput.recent;
+    delete cloned.settings.webSessionQuickInput.recentByProject;
     if (!hasQuickInputSectionContent(cloned.settings.webSessionQuickInput)) {
       delete cloned.settings.webSessionQuickInput;
     }
@@ -425,7 +430,7 @@ function hasQuickInputSectionContent(
   if (!value) {
     return false;
   }
-  return 'pinned' in value || 'recent' in value;
+  return 'pinned' in value || 'recent' in value || 'recentByProject' in value;
 }
 
 function sanitizeFileSegment(value: string) {

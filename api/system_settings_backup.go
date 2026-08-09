@@ -212,9 +212,9 @@ func addPayloadSections(result *utils.SettingsBackupPreviewResult, backup utils.
 					Key: "server.webSessionQuickInput.pinned", Label: "Web session quick input pinned", Action: "replace", Target: "server", ChangedKeys: []string{"pinned"},
 				})
 			}
-			if server.WebSessionQuickInput.Recent != nil {
+			if server.WebSessionQuickInput.Recent != nil || server.WebSessionQuickInput.RecentByProject != nil {
 				result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
-					Key: "server.webSessionQuickInput.recent", Label: "Web session quick input recent", Action: "replace", Target: "server", ChangedKeys: []string{"recent"},
+					Key: "server.webSessionQuickInput.recent", Label: "Web session quick input recent", Action: "replace", Target: "server", ChangedKeys: []string{"recent", "recentByProject"},
 				})
 			}
 		}
@@ -389,6 +389,9 @@ func applySettingsBackup(
 			}
 			if server.WebSessionQuickInput.Recent != nil {
 				next.Recent = append([]string(nil), (*server.WebSessionQuickInput.Recent)...)
+			}
+			if server.WebSessionQuickInput.RecentByProject != nil {
+				next.RecentByProject = *server.WebSessionQuickInput.RecentByProject
 			}
 			c.UI.WebSessionQuickInput = utils.NormalizeWebSessionQuickInputConfig(next)
 		}

@@ -55,6 +55,7 @@ describe('settings backup helpers in store', () => {
     expect(payload.settings.showWebSessionReasoning).toBe(true);
     expect(payload.settings.webSessionAutoRetryDispatchPendingOnFailure).toBe(true);
     expect(payload.settings.webSessionQuickInput?.recent).toBeUndefined();
+    expect(payload.settings.webSessionQuickInput?.recentByProject).toBeUndefined();
   });
 
   it('imports client backup and updates locale plus persisted storage', () => {
@@ -65,6 +66,7 @@ describe('settings backup helpers in store', () => {
       webSessionAutoRetryDispatchPendingOnFailure,
     } = storeToRefs(store);
     store.recordWebSessionRecentInput('Keep this');
+    store.recordWebSessionRecentInput('Keep project this', 'project-1');
 
     store.importClientBackup({
       locale: 'en-US',
@@ -128,6 +130,9 @@ describe('settings backup helpers in store', () => {
     expect(webSessionAutoRetryDispatchPendingOnFailure.value).toBe(true);
     expect(store.webSessionQuickInput.recent).toEqual(['Keep this']);
     expect(store.webSessionQuickInput.pinned).toEqual(['Plan']);
+    expect(store.webSessionQuickInput.recentByProject).toEqual({
+      'project-1': ['Keep project this'],
+    });
     expect(localStorage.getItem('app-locale')).toBe('en-US');
     expect(i18n.global.locale).toBe('en-US');
   });

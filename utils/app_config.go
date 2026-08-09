@@ -106,8 +106,9 @@ type WebSessionActiveCallTimeoutConfig struct {
 }
 
 type WebSessionQuickInputConfig struct {
-	Pinned []string `json:"pinned" yaml:"pinned"`
-	Recent []string `json:"recent" yaml:"recent"`
+	Pinned          []string            `json:"pinned" yaml:"pinned"`
+	Recent          []string            `json:"recent" yaml:"recent"`
+	RecentByProject map[string][]string `json:"recentByProject,omitempty" yaml:"recentByProject,omitempty"`
 }
 
 type UIConfig struct {
@@ -119,7 +120,7 @@ type UIConfig struct {
 const (
 	DefaultPageTitle                      = "Code Kanban"
 	MaxPageTitleRunes                     = 64
-	WebSessionQuickInputRecentLimit       = 6
+	WebSessionQuickInputRecentLimit       = 30
 	DefaultWebSessionCodexModel           = "gpt-5.6-sol"
 	DefaultWebSessionCodexReasoningEffort = "xhigh"
 	DefaultWebSessionCodexPermissionLevel = "elevated"
@@ -130,8 +131,9 @@ const (
 )
 
 var defaultWebSessionQuickInputConfig = WebSessionQuickInputConfig{
-	Pinned: []string{"continue"},
-	Recent: []string{},
+	Pinned:          []string{"continue"},
+	Recent:          []string{},
+	RecentByProject: map[string][]string{},
 }
 
 const (
@@ -415,9 +417,23 @@ func NormalizePageTitle(value string) (string, error) {
 }
 
 func NormalizeWebSessionQuickInputConfig(config WebSessionQuickInputConfig) WebSessionQuickInputConfig {
+	recentByProject := make(map[string][]string, len(config.RecentByProject))
+	for projectID, recent := range config.RecentByProject {
+		normalizedProjectID := strings.TrimSpace(projectID)
+		if normalizedProjectID == "" {
+			continue
+		}
+		normalizedRecent := normalizeWebSessionQuickInputItems(recent, WebSessionQuickInputRecentLimit)
+		if len(normalizedRecent) == 0 {
+			continue
+		}
+		recentByProject[normalizedProjectID] = normalizedRecent
+	}
+
 	return WebSessionQuickInputConfig{
-		Pinned: normalizeWebSessionQuickInputItems(config.Pinned, 0),
-		Recent: normalizeWebSessionQuickInputItems(config.Recent, WebSessionQuickInputRecentLimit),
+		Pinned:          normalizeWebSessionQuickInputItems(config.Pinned, 0),
+		Recent:          normalizeWebSessionQuickInputItems(config.Recent, WebSessionQuickInputRecentLimit),
+		RecentByProject: recentByProject,
 	}
 }
 

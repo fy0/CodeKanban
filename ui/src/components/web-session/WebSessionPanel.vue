@@ -2379,6 +2379,7 @@
                     placement="top-start"
                     content-style="padding: 4px 0;"
                     @clickoutside="handleMobileQuickInputClickOutside"
+                    @update:show="handleQuickInputPopoverVisibilityChange"
                   >
                     <template #trigger>
                       <button
@@ -2396,23 +2397,55 @@
                     </template>
                     <div class="quick-input-popover-card">
                       <div class="quick-input-popover-header">
-                        <n-checkbox
-                          v-model:checked="quickInputDirectSendEnabled"
-                          size="small"
-                          @mousedown.stop
-                          @touchstart.stop
-                          @click.stop
-                        >
-                          {{ t('webSession.quickInputDirectSend') }}
-                        </n-checkbox>
+                        <div class="quick-input-search-row">
+                          <n-input
+                            v-model:value="quickInputSearch"
+                            size="small"
+                            clearable
+                            :placeholder="t('webSession.quickInputSearchPlaceholder')"
+                            @mousedown.stop
+                            @touchstart.stop
+                            @click.stop
+                          >
+                            <template #prefix>
+                              <n-icon size="14"><SearchOutline /></n-icon>
+                            </template>
+                          </n-input>
+                          <n-radio-group
+                            v-model:value="quickInputScope"
+                            size="small"
+                            class="quick-input-scope"
+                            @mousedown.stop
+                            @touchstart.stop
+                            @click.stop
+                          >
+                            <n-radio-button value="global">
+                              {{ t('webSession.quickInputScopeGlobal') }}
+                            </n-radio-button>
+                            <n-radio-button value="project" :disabled="!props.projectId">
+                              {{ t('webSession.quickInputScopeProject') }}
+                            </n-radio-button>
+                          </n-radio-group>
+                        </div>
+                        <div class="quick-input-options-row">
+                          <n-checkbox
+                            v-model:checked="quickInputDirectSendEnabled"
+                            size="small"
+                            @mousedown.stop
+                            @touchstart.stop
+                            @click.stop
+                          >
+                            {{ t('webSession.quickInputDirectSend') }}
+                          </n-checkbox>
+                        </div>
                       </div>
                       <div v-if="quickInputItems.length === 0" class="quick-input-empty">
-                        {{ t('webSession.quickInputEmpty') }}
+                        {{ quickInputEmptyLabel }}
                       </div>
                       <div v-else class="quick-input-scroll">
                         <div class="quick-input-item-list">
                           <button
-                            v-for="text in quickInputItems"
+                            v-for="text in quickInputVisibleItems"
                             :key="text"
                             type="button"
                             class="quick-input-item"
@@ -2423,6 +2456,15 @@
                           </button>
                         </div>
                       </div>
+                      <n-pagination
+                        v-if="quickInputPageCount > 1"
+                        v-model:page="quickInputPage"
+                        class="quick-input-pagination"
+                        :page-count="quickInputPageCount"
+                        :page-size="WEB_SESSION_QUICK_INPUT_PAGE_SIZE"
+                        :simple="true"
+                        size="small"
+                      />
                     </div>
                   </n-popover>
                   <button
@@ -2456,6 +2498,7 @@
                     trigger="click"
                     placement="top-start"
                     content-style="padding: 4px 0;"
+                    @update:show="handleQuickInputPopoverVisibilityChange"
                   >
                     <template #trigger>
                       <button
@@ -2469,23 +2512,55 @@
                     </template>
                     <div class="quick-input-popover-card">
                       <div class="quick-input-popover-header">
-                        <n-checkbox
-                          v-model:checked="quickInputDirectSendEnabled"
-                          size="small"
-                          @mousedown.stop
-                          @touchstart.stop
-                          @click.stop
-                        >
-                          {{ t('webSession.quickInputDirectSend') }}
-                        </n-checkbox>
+                        <div class="quick-input-search-row">
+                          <n-input
+                            v-model:value="quickInputSearch"
+                            size="small"
+                            clearable
+                            :placeholder="t('webSession.quickInputSearchPlaceholder')"
+                            @mousedown.stop
+                            @touchstart.stop
+                            @click.stop
+                          >
+                            <template #prefix>
+                              <n-icon size="14"><SearchOutline /></n-icon>
+                            </template>
+                          </n-input>
+                          <n-radio-group
+                            v-model:value="quickInputScope"
+                            size="small"
+                            class="quick-input-scope"
+                            @mousedown.stop
+                            @touchstart.stop
+                            @click.stop
+                          >
+                            <n-radio-button value="global">
+                              {{ t('webSession.quickInputScopeGlobal') }}
+                            </n-radio-button>
+                            <n-radio-button value="project" :disabled="!props.projectId">
+                              {{ t('webSession.quickInputScopeProject') }}
+                            </n-radio-button>
+                          </n-radio-group>
+                        </div>
+                        <div class="quick-input-options-row">
+                          <n-checkbox
+                            v-model:checked="quickInputDirectSendEnabled"
+                            size="small"
+                            @mousedown.stop
+                            @touchstart.stop
+                            @click.stop
+                          >
+                            {{ t('webSession.quickInputDirectSend') }}
+                          </n-checkbox>
+                        </div>
                       </div>
                       <div v-if="quickInputItems.length === 0" class="quick-input-empty">
-                        {{ t('webSession.quickInputEmpty') }}
+                        {{ quickInputEmptyLabel }}
                       </div>
                       <div v-else class="quick-input-scroll">
                         <div class="quick-input-item-list">
                           <button
-                            v-for="text in quickInputItems"
+                            v-for="text in quickInputVisibleItems"
                             :key="text"
                             type="button"
                             class="quick-input-item"
@@ -2496,6 +2571,15 @@
                           </button>
                         </div>
                       </div>
+                      <n-pagination
+                        v-if="quickInputPageCount > 1"
+                        v-model:page="quickInputPage"
+                        class="quick-input-pagination"
+                        :page-count="quickInputPageCount"
+                        :page-size="WEB_SESSION_QUICK_INPUT_PAGE_SIZE"
+                        :simple="true"
+                        size="small"
+                      />
                     </div>
                   </n-popover>
                   <n-popover
@@ -3413,6 +3497,12 @@ import {
 } from '@/components/web-session/webSessionConversationSearch';
 import { createWebSessionStreamingMarkdownController } from '@/components/web-session/webSessionStreamingMarkdown';
 import {
+  filterWebSessionQuickInputItems,
+  paginateWebSessionQuickInputItems,
+  WEB_SESSION_QUICK_INPUT_PAGE_SIZE,
+  type WebSessionQuickInputScope,
+} from '@/components/web-session/webSessionQuickInput';
+import {
   createWebSessionMobileComposerScrollState,
   createWebSessionTimelineFollowState,
   resolveWebSessionMobileComposerBottomScrollAction,
@@ -3892,6 +3982,9 @@ const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>
 const showMobileTabSelector = ref(false);
 const mobileTabSelectorSource = ref<MobileTabSelectorSource>('header');
 const showQuickInputPopover = ref(false);
+const quickInputScope = ref<WebSessionQuickInputScope>(props.projectId ? 'project' : 'global');
+const quickInputSearch = ref('');
+const quickInputPage = ref(1);
 const showSkillBrowser = ref(false);
 const showImportDialog = ref(false);
 const showPiTrustDialog = ref(false);
@@ -6408,7 +6501,11 @@ const composerHint = computed(() => {
 const quickInputPinnedItems = computed(() => webSessionQuickInput.value.pinned);
 const quickInputRecentItems = computed(() => {
   const pinned = new Set(quickInputPinnedItems.value);
-  return webSessionQuickInput.value.recent.filter(text => !pinned.has(text));
+  const recent =
+    quickInputScope.value === 'project' && props.projectId
+      ? (webSessionQuickInput.value.recentByProject[props.projectId] ?? [])
+      : webSessionQuickInput.value.recent;
+  return recent.filter(text => !pinned.has(text));
 });
 const hasQuickInputOptions = computed(
   () => quickInputPinnedItems.value.length > 0 || quickInputRecentItems.value.length > 0
@@ -6422,10 +6519,34 @@ const quickInputDirectSendEnabled = computed({
     settingsStore.updateWebSessionQuickInputDirectSend(value === true);
   },
 });
-const quickInputItems = computed(() => [
+const quickInputAllItems = computed(() => [
   ...quickInputPinnedItems.value,
   ...quickInputRecentItems.value,
 ]);
+const quickInputItems = computed(() => {
+  return filterWebSessionQuickInputItems(quickInputAllItems.value, quickInputSearch.value);
+});
+const quickInputPageCount = computed(() =>
+  Math.max(1, Math.ceil(quickInputItems.value.length / WEB_SESSION_QUICK_INPUT_PAGE_SIZE))
+);
+const quickInputVisibleItems = computed(() => {
+  return paginateWebSessionQuickInputItems(
+    quickInputItems.value,
+    quickInputPage.value,
+    WEB_SESSION_QUICK_INPUT_PAGE_SIZE
+  );
+});
+const quickInputEmptyLabel = computed(() =>
+  quickInputSearch.value.trim()
+    ? t('webSession.quickInputSearchEmpty')
+    : t('webSession.quickInputEmpty')
+);
+watch([quickInputScope, quickInputSearch, () => props.projectId], () => {
+  quickInputPage.value = 1;
+});
+watch(quickInputPageCount, pageCount => {
+  quickInputPage.value = Math.min(quickInputPage.value, pageCount);
+});
 const normalizedComposerText = computed(() => composerText.value.trim());
 const selectedAgentLabel = computed(
   () =>
@@ -6719,6 +6840,19 @@ function toggleMobileComposerSettingsExpanded() {
   isMobileComposerSettingsExpanded.value = !isMobileComposerSettingsExpanded.value;
 }
 
+function prepareQuickInputPopover() {
+  quickInputScope.value = props.projectId ? 'project' : 'global';
+  quickInputSearch.value = '';
+  quickInputPage.value = 1;
+}
+
+function handleQuickInputPopoverVisibilityChange(show: boolean) {
+  if (show) {
+    prepareQuickInputPopover();
+  }
+  showQuickInputPopover.value = show;
+}
+
 function handleMobileQuickInputClickOutside() {
   if (Date.now() - mobileQuickInputOpenedAt < MOBILE_COMPOSER_OVERLAY_OPEN_GUARD_MS) {
     return;
@@ -6731,6 +6865,9 @@ function handleMobileQuickInputTrigger() {
     return;
   }
   const nextShow = !showQuickInputPopover.value;
+  if (nextShow) {
+    prepareQuickInputPopover();
+  }
   showQuickInputPopover.value = nextShow;
   if (nextShow) {
     mobileQuickInputOpenedAt = Date.now();
@@ -7140,6 +7277,11 @@ async function handleQuickInputApply(text: string) {
     return;
   }
   await triggerPrimaryComposerAction();
+}
+
+function recordSubmittedPrompt(text: string, projectId?: string) {
+  settingsStore.recordWebSessionRecentInput(text, projectId);
+  void settingsStore.syncWebSessionQuickInputToServer();
 }
 
 function isQuickInputSelected(text: string) {
@@ -12401,8 +12543,7 @@ async function handleSubmit() {
         await webSessionStore.bootstrapGoal(session.id, goalCommand.objective, 'active');
       }
       submissionSucceeded = true;
-      settingsStore.recordWebSessionRecentInput(draftText);
-      void settingsStore.syncWebSessionQuickInputToServer();
+      recordSubmittedPrompt(draftText, session.projectId || submitProjectId);
       message.success('Goal updated');
       return;
     }
@@ -12415,8 +12556,7 @@ async function handleSubmit() {
       attachments.map(item => item.id)
     );
     submissionSucceeded = true;
-    settingsStore.recordWebSessionRecentInput(draftText);
-    void settingsStore.syncWebSessionQuickInputToServer();
+    recordSubmittedPrompt(draftText, session.projectId || submitProjectId);
     const isCurrentSubmissionSession = isCurrentVisibleSession(session.id);
     if (prepared.navigateProjectId && isCurrentSubmissionSession) {
       projectStore.addRecentProject(prepared.navigateProjectId);
@@ -12504,8 +12644,7 @@ async function handleConfirmScheduledSend() {
         : { scheduleKind: 'at_time', scheduledFor: executeAt },
       sendMode
     );
-    settingsStore.recordWebSessionRecentInput(draftText);
-    void settingsStore.syncWebSessionQuickInputToServer();
+    recordSubmittedPrompt(draftText, session.projectId || submitProjectId);
     clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
     const isCurrentSubmissionSession = isCurrentVisibleSession(session.id);
     if (prepared.navigateProjectId && isCurrentSubmissionSession) {
@@ -12654,8 +12793,7 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
       mode
     );
     submissionSucceeded = true;
-    settingsStore.recordWebSessionRecentInput(draftText);
-    void settingsStore.syncWebSessionQuickInputToServer();
+    recordSubmittedPrompt(draftText, session.projectId || submitProjectId);
     if (isCurrentVisibleSession(session.id)) {
       isMobileComposerSettingsExpanded.value = false;
     }
@@ -19896,19 +20034,44 @@ defineExpose({
 }
 
 .quick-input-popover-card {
-  width: min(320px, 74vw);
+  width: min(360px, 82vw);
   box-sizing: border-box;
   padding: 0;
 }
 
 .quick-input-popover-header {
-  display: flex;
-  align-items: center;
+  display: grid;
+  gap: 6px;
   padding: 8px 10px 6px;
   border-bottom: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
 }
 
-.quick-input-popover-header :deep(.n-checkbox__label) {
+.quick-input-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.quick-input-search-row :deep(.n-input) {
+  min-width: 0;
+  flex: 1;
+}
+
+.quick-input-scope {
+  flex-shrink: 0;
+}
+
+.quick-input-scope :deep(.n-radio-button) {
+  min-width: 52px;
+}
+
+.quick-input-options-row {
+  display: flex;
+  align-items: center;
+}
+
+.quick-input-options-row :deep(.n-checkbox__label) {
   font-size: 12px;
 }
 
@@ -19927,6 +20090,11 @@ defineExpose({
   font-size: 11px;
   line-height: 1.45;
   text-align: center;
+}
+
+.quick-input-pagination {
+  justify-content: center;
+  padding: 4px 8px 6px;
 }
 
 .quick-input-item-list {
@@ -19978,6 +20146,21 @@ defineExpose({
 .quick-input-item.is-selected .quick-input-item-text {
   color: inherit;
   font-weight: 600;
+}
+
+@media (max-width: 420px) {
+  .quick-input-search-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .quick-input-scope {
+    width: 100%;
+  }
+
+  .quick-input-scope :deep(.n-radio-button) {
+    width: 50%;
+  }
 }
 
 .pending-input-badge {

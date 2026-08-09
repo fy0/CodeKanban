@@ -167,6 +167,7 @@ export interface EditorSettings {
 export interface WebSessionQuickInputSettings {
   pinned: string[];
   recent: string[];
+  recentByProject: Record<string, string[]>;
 }
 
 export interface DailyTipSettings {
@@ -270,7 +271,7 @@ const DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET: WebSessionAutoContinuePreset = '
 export const DEFAULT_WEB_SESSION_AUTO_CONTINUE_MAX_ATTEMPTS = 0;
 const MAX_WEB_SESSION_AUTO_CONTINUE_ATTEMPTS = 100;
 export const DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS = 100;
-export const WEB_SESSION_QUICK_INPUT_RECENT_LIMIT = 6;
+export const WEB_SESSION_QUICK_INPUT_RECENT_LIMIT = 30;
 const FOLLOW_SYSTEM_THEME_DEFAULT: FollowSystemThemeSetting = -1;
 const FOLLOW_SYSTEM_THEME_DISABLED: FollowSystemThemeSetting = 0;
 const FOLLOW_SYSTEM_THEME_ENABLED: FollowSystemThemeSetting = 1;
@@ -302,6 +303,7 @@ export const DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED = ['continue'] as const;
 const DEFAULT_WEB_SESSION_QUICK_INPUT: WebSessionQuickInputSettings = {
   pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED],
   recent: [],
+  recentByProject: {},
 };
 const DEFAULT_WEB_SESSION_QUICK_INPUT_DIRECT_SEND = false;
 const DEFAULT_DAILY_TIP_SETTINGS: DailyTipSettings = {
@@ -346,6 +348,7 @@ const defaultSettings: GeneralSettings = {
   webSessionQuickInput: {
     pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT.pinned],
     recent: [...DEFAULT_WEB_SESSION_QUICK_INPUT.recent],
+    recentByProject: {},
   },
   webSessionQuickInputDirectSend: DEFAULT_WEB_SESSION_QUICK_INPUT_DIRECT_SEND,
   terminalQuickActions: DEFAULT_TERMINAL_QUICK_ACTIONS.map(action => ({ ...action })),
@@ -687,15 +690,32 @@ export const useSettingsStore = defineStore('settings', () => {
     webSessionQuickInputLoaded.value = true;
   }
 
-  function recordWebSessionRecentInput(text: string) {
+  function recordWebSessionRecentInput(text: string, projectId?: string) {
     const [normalized] = sanitizeWebSessionQuickInputItems([text], 1);
     if (!normalized) {
       return;
     }
+
+    const normalizedProjectId = String(projectId || '').trim();
+    const current = settings.value.webSessionQuickInput;
+    if (normalizedProjectId) {
+      const recentByProject = { ...current.recentByProject };
+      recentByProject[normalizedProjectId] = sanitizeWebSessionQuickInputItems(
+        [normalized, ...(current.recentByProject[normalizedProjectId] ?? [])],
+        WEB_SESSION_QUICK_INPUT_RECENT_LIMIT
+      );
+      settings.value.webSessionQuickInput = {
+        ...current,
+        recentByProject,
+      };
+      webSessionQuickInputLoaded.value = true;
+      return;
+    }
+
     settings.value.webSessionQuickInput = {
-      ...settings.value.webSessionQuickInput,
+      ...current,
       recent: sanitizeWebSessionQuickInputItems(
-        [normalized, ...settings.value.webSessionQuickInput.recent],
+        [normalized, ...current.recent],
         WEB_SESSION_QUICK_INPUT_RECENT_LIMIT
       ),
     };
@@ -926,7 +946,8 @@ export const useSettingsStore = defineStore('settings', () => {
   ): SettingsBackupClientPayload {
     const serialized = serializeSettingsForBackup(settings.value);
     if (options?.includeQuickInputRecent === false && serialized.webSessionQuickInput) {
-      const { recent: _recent, ...restQuickInput } = serialized.webSessionQuickInput;
+      const { recent: _recent, recentByProject: _recentByProject, ...restQuickInput } =
+        serialized.webSessionQuickInput;
       serialized.webSessionQuickInput = restQuickInput;
       if (!('pinned' in serialized.webSessionQuickInput)) {
         delete serialized.webSessionQuickInput;
@@ -1122,6 +1143,14 @@ function preserveImportedQuickInputFields(
   if (!('recent' in next)) {
     next.recent = [...current.recent];
   }
+  if (!('recentByProject' in next)) {
+    next.recentByProject = Object.fromEntries(
+      Object.entries(current.recentByProject).map(([projectId, recent]) => [
+        projectId,
+        [...recent],
+      ])
+    );
+  }
   return next;
 }
 
@@ -1141,6 +1170,11 @@ function cloneDefaultSettings(): GeneralSettings {
     webSessionQuickInput: {
       pinned: [...defaultSettings.webSessionQuickInput.pinned],
       recent: [...defaultSettings.webSessionQuickInput.recent],
+      recentByProject: Object.fromEntries(
+        Object.entries(defaultSettings.webSessionQuickInput.recentByProject).map(
+          ([projectId, recent]) => [projectId, [...recent]]
+        )
+      ),
     },
     webSessionQuickInputDirectSend: defaultSettings.webSessionQuickInputDirectSend,
     terminalQuickActions: defaultSettings.terminalQuickActions.map(action => ({ ...action })),
@@ -1450,12 +1484,36 @@ function sanitizeWebSessionQuickInput(
     return {
       pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT.pinned],
       recent: [...DEFAULT_WEB_SESSION_QUICK_INPUT.recent],
+      recentByProject: {},
     };
   }
   return {
     pinned: sanitizeWebSessionQuickInputItems(value?.pinned),
     recent: sanitizeWebSessionQuickInputItems(value?.recent, WEB_SESSION_QUICK_INPUT_RECENT_LIMIT),
+    recentByProject: sanitizeWebSessionQuickInputRecentByProject(value?.recentByProject),
   };
+}
+
+function sanitizeWebSessionQuickInputRecentByProject(value: unknown) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  const sanitized: Record<string, string[]> = {};
+  for (const [rawProjectId, rawRecent] of Object.entries(value)) {
+    const projectId = rawProjectId.trim();
+    if (!projectId) {
+      continue;
+    }
+    const recent = sanitizeWebSessionQuickInputItems(
+      rawRecent,
+      WEB_SESSION_QUICK_INPUT_RECENT_LIMIT
+    );
+    if (recent.length > 0) {
+      sanitized[projectId] = recent;
+    }
+  }
+  return sanitized;
 }
 
 function sanitizeWebSessionQuickInputDirectSend(value: unknown) {

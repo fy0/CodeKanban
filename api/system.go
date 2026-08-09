@@ -366,14 +366,20 @@ func registerSystemRoutes(
 	}, func(op *huma.Operation) {
 		op.OperationID = "system-web-session-quick-input-get"
 		op.Summary = "获取会话快捷输入配置"
-		op.Description = "返回 Web 会话输入框的常驻快捷项和最近输入记录"
+		op.Description = "返回 Web 会话输入框的全局常驻项、全局最近输入记录和按项目保存的最近输入记录"
 		op.Tags = []string{systemTag}
 	})
 
 	huma.Post(group, "/system/web-session-quick-input/update", func(ctx context.Context, input *struct {
 		Body utils.WebSessionQuickInputConfig `json:"body"`
 	}) (*h.ItemResponse[utils.WebSessionQuickInputConfig], error) {
-		normalized := utils.NormalizeWebSessionQuickInputConfig(input.Body)
+		next := input.Body
+		// Preserve project history for older clients that still submit only
+		// the original pinned/recent fields.
+		if next.RecentByProject == nil {
+			next.RecentByProject = cfg.UI.WebSessionQuickInput.RecentByProject
+		}
+		normalized := utils.NormalizeWebSessionQuickInputConfig(next)
 		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
 			c.UI.WebSessionQuickInput = normalized
 		}); err != nil {
@@ -386,7 +392,7 @@ func registerSystemRoutes(
 	}, func(op *huma.Operation) {
 		op.OperationID = "system-web-session-quick-input-update"
 		op.Summary = "更新会话快捷输入配置"
-		op.Description = "更新 Web 会话输入框的常驻快捷项和最近输入记录，并持久化到配置文件"
+		op.Description = "更新 Web 会话输入框的全局常驻项、全局最近输入记录和按项目保存的最近输入记录，并持久化到配置文件"
 		op.Tags = []string{systemTag}
 	})
 

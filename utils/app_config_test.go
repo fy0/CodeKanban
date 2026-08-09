@@ -56,12 +56,19 @@ func TestNormalizeWebSessionQuickInputConfig(t *testing.T) {
 	input := WebSessionQuickInputConfig{
 		Pinned: []string{"  Alpha  ", "", "Beta", "Alpha"},
 		Recent: []string{" One ", "Two", "One", "", "Three", "Four", "Five", "Six", "Seven"},
+		RecentByProject: map[string][]string{
+			" project-1 ": {" One ", "Two", "One"},
+			" ":           {"ignored"},
+		},
 	}
 
 	got := NormalizeWebSessionQuickInputConfig(input)
 	want := WebSessionQuickInputConfig{
 		Pinned: []string{"Alpha", "Beta"},
-		Recent: []string{"One", "Two", "Three", "Four", "Five", "Six"},
+		Recent: []string{"One", "Two", "Three", "Four", "Five", "Six", "Seven"},
+		RecentByProject: map[string][]string{
+			"project-1": {"One", "Two"},
+		},
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -72,8 +79,9 @@ func TestNormalizeWebSessionQuickInputConfig(t *testing.T) {
 func TestNormalizeWebSessionQuickInputConfigEmpty(t *testing.T) {
 	got := NormalizeWebSessionQuickInputConfig(WebSessionQuickInputConfig{})
 	want := WebSessionQuickInputConfig{
-		Pinned: []string{},
-		Recent: []string{},
+		Pinned:          []string{},
+		Recent:          []string{},
+		RecentByProject: map[string][]string{},
 	}
 
 	if !reflect.DeepEqual(got, want) {

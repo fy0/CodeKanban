@@ -66,6 +66,7 @@ describe('settings web session quick input', () => {
     expect(webSessionQuickInput.value).toEqual({
       pinned: ['continue'],
       recent: [],
+      recentByProject: {},
     });
     expect(webSessionQuickInputDirectSend.value).toBe(false);
   });
@@ -77,6 +78,10 @@ describe('settings web session quick input', () => {
         webSessionQuickInput: {
           pinned: ['  Alpha  ', '', 'Beta', 'Alpha'],
           recent: ['  One ', 'Two', 'One', '', 'Three', 'Four', 'Five', 'Six', 'Seven'],
+          recentByProject: {
+            ' project-1 ': ['  Project one  ', 'Project two', 'Project one'],
+            '': ['ignored'],
+          },
         },
         webSessionQuickInputDirectSend: true,
       })
@@ -87,7 +92,10 @@ describe('settings web session quick input', () => {
 
     expect(webSessionQuickInput.value).toEqual({
       pinned: ['Alpha', 'Beta'],
-      recent: ['One', 'Two', 'Three', 'Four', 'Five', 'Six'],
+      recent: ['One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven'],
+      recentByProject: {
+        'project-1': ['Project one', 'Project two'],
+      },
     });
     expect(webSessionQuickInputDirectSend.value).toBe(true);
   });
@@ -101,23 +109,23 @@ describe('settings web session quick input', () => {
     expect(webSessionQuickInput.value.pinned).toEqual(['Build plan', 'Ship it']);
   });
 
-  it('deduplicates recent items and keeps only the latest six entries', () => {
+  it('keeps separate global and project histories with a maximum of thirty entries', () => {
     const store = useSettingsStore();
     const { webSessionQuickInput } = storeToRefs(store);
 
-    for (let index = 1; index <= 8; index += 1) {
+    for (let index = 1; index <= 32; index += 1) {
       store.recordWebSessionRecentInput(`item ${index}`);
     }
-    store.recordWebSessionRecentInput('   ');
-    store.recordWebSessionRecentInput(' item 6 ');
+    store.recordWebSessionRecentInput('project item 1', 'project-1');
+    store.recordWebSessionRecentInput('project item 2', 'project-1');
+    store.recordWebSessionRecentInput('project item 1', 'project-1');
 
-    expect(webSessionQuickInput.value.recent).toEqual([
-      'item 6',
-      'item 8',
-      'item 7',
-      'item 5',
-      'item 4',
-      'item 3',
+    expect(webSessionQuickInput.value.recent).toHaveLength(30);
+    expect(webSessionQuickInput.value.recent.slice(0, 2)).toEqual(['item 32', 'item 31']);
+    expect(webSessionQuickInput.value.recent.at(-1)).toBe('item 3');
+    expect(webSessionQuickInput.value.recentByProject['project-1']).toEqual([
+      'project item 1',
+      'project item 2',
     ]);
   });
 
@@ -155,14 +163,17 @@ describe('settings web session quick input', () => {
     expect(postMethodMock).toHaveBeenCalledWith('/system/web-session-quick-input/update', {
       pinned: ['Build plan', 'Ship it'],
       recent: ['item 2', 'item 1'],
+      recentByProject: {},
     });
     expect(saved).toEqual({
       pinned: ['Build plan', 'Ship it'],
       recent: ['item 2', 'item 1'],
+      recentByProject: {},
     });
     expect(webSessionQuickInput.value).toEqual({
       pinned: ['Build plan', 'Ship it'],
       recent: ['item 2', 'item 1'],
+      recentByProject: {},
     });
   });
 
@@ -179,6 +190,7 @@ describe('settings web session quick input', () => {
     expect(webSessionQuickInput.value).toEqual({
       pinned: ['continue'],
       recent: [],
+      recentByProject: {},
     });
   });
 });

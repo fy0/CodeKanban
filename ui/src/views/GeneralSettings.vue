@@ -3161,7 +3161,11 @@ async function refreshSettingsAfterBackupImport(importedBackup: SettingsBackupFi
   if (typeof server?.pageTitle === 'string') {
     tasks.push(settingsStore.loadPageTitleSettings(true));
   }
-  if (server?.webSessionQuickInput?.pinned || server?.webSessionQuickInput?.recent) {
+  if (
+    server?.webSessionQuickInput?.pinned ||
+    server?.webSessionQuickInput?.recent ||
+    server?.webSessionQuickInput?.recentByProject
+  ) {
     tasks.push(settingsStore.loadWebSessionQuickInput(true));
   }
 

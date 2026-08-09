@@ -61,7 +61,11 @@ describe('settingsBackup helpers', () => {
             },
             pageTitle: 'Staging Board',
             dailyTip: { enabled: true },
-            webSessionQuickInput: { pinned: ['continue'], recent: [] },
+            webSessionQuickInput: {
+              pinned: ['continue'],
+              recent: [],
+              recentByProject: { 'project-1': ['Project prompt'] },
+            },
             worktree: { globalBaseDir: '', globalDirNamePattern: '{projectName}-{branch}' },
             terminalShell: { platform: 'linux', shell: '/bin/bash' },
             authAccess: {
@@ -144,6 +148,7 @@ describe('settingsBackup helpers', () => {
     expect(backup.payload.server?.pageTitle).toBe('Staging Board');
     expect(backup.payload.server?.authAccess).toBeUndefined();
     expect(backup.payload.server?.webSessionQuickInput?.recent).toBeUndefined();
+    expect(backup.payload.server?.webSessionQuickInput?.recentByProject).toBeUndefined();
     expect(backup.payload.client?.locale).toBe('zh-CN');
     expect(backup.createdAt).toBe('2026-06-10T08:00:00.000Z');
     expect(backup.meta?.description).toContain('quickInputRecent=no');
@@ -182,6 +187,7 @@ describe('settingsBackup helpers', () => {
             webSessionQuickInput: {
               pinned: ['continue'],
               recent: ['draft'],
+              recentByProject: { 'project-1': ['project draft'] },
             },
           },
           client: {
@@ -208,6 +214,7 @@ describe('settingsBackup helpers', () => {
               webSessionQuickInput: {
                 pinned: ['continue'],
                 recent: ['draft'],
+                recentByProject: { 'project-1': ['project draft'] },
               },
               webSessionQuickInputDirectSend: false,
               terminalQuickActions: [],
@@ -252,8 +259,10 @@ describe('settingsBackup helpers', () => {
     expect(filtered.payload.server?.dailyTip?.enabled).toBe(false);
     expect(filtered.payload.server?.webSessionQuickInput?.pinned).toEqual(['continue']);
     expect(filtered.payload.server?.webSessionQuickInput?.recent).toBeUndefined();
+    expect(filtered.payload.server?.webSessionQuickInput?.recentByProject).toBeUndefined();
     expect(filtered.payload.client?.locale).toBeUndefined();
     expect(filtered.payload.client?.settings?.webSessionQuickInput?.recent).toBeUndefined();
+    expect(filtered.payload.client?.settings?.webSessionQuickInput?.recentByProject).toBeUndefined();
   });
 
   it('formats backup file names using selected rule', () => {

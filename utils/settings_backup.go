@@ -21,12 +21,13 @@ type SettingsBackupSourceApp struct {
 }
 
 type SettingsBackupQuickInputSection struct {
-	Pinned *[]string `json:"pinned,omitempty"`
-	Recent *[]string `json:"recent,omitempty"`
+	Pinned          *[]string            `json:"pinned,omitempty"`
+	Recent          *[]string            `json:"recent,omitempty"`
+	RecentByProject *map[string][]string `json:"recentByProject,omitempty"`
 }
 
 func (s *SettingsBackupQuickInputSection) HasContent() bool {
-	return s != nil && (s.Pinned != nil || s.Recent != nil)
+	return s != nil && (s.Pinned != nil || s.Recent != nil || s.RecentByProject != nil)
 }
 
 type SettingsBackupServerPayload struct {
@@ -142,8 +143,9 @@ func BuildSettingsBackupServerPayload(cfg *AppConfig) SettingsBackupServerPayloa
 		PageTitle: ptrValue(cfg.UI.PageTitle),
 		DailyTip:  ptrValue(dailyTip),
 		WebSessionQuickInput: &SettingsBackupQuickInputSection{
-			Pinned: ptrStringSlice(quickInput.Pinned),
-			Recent: ptrStringSlice(quickInput.Recent),
+			Pinned:          ptrStringSlice(quickInput.Pinned),
+			Recent:          ptrStringSlice(quickInput.Recent),
+			RecentByProject: ptrStringSliceMap(quickInput.RecentByProject),
 		},
 		Worktree:      ptrValue(worktree),
 		Git:           ptrValue(gitConfig),
@@ -227,6 +229,12 @@ func NormalizeSettingsBackupQuickInputSection(
 		}).Recent
 		normalized.Recent = ptrStringSlice(recent)
 	}
+	if section.RecentByProject != nil {
+		recentByProject := NormalizeWebSessionQuickInputConfig(WebSessionQuickInputConfig{
+			RecentByProject: cloneStringSliceMap(*section.RecentByProject),
+		}).RecentByProject
+		normalized.RecentByProject = ptrStringSliceMap(recentByProject)
+	}
 	if !normalized.HasContent() {
 		return nil
 	}
@@ -240,4 +248,17 @@ func ptrValue[T any](value T) *T {
 func ptrStringSlice(values []string) *[]string {
 	items := append([]string(nil), values...)
 	return &items
+}
+
+func ptrStringSliceMap(values map[string][]string) *map[string][]string {
+	items := cloneStringSliceMap(values)
+	return &items
+}
+
+func cloneStringSliceMap(values map[string][]string) map[string][]string {
+	items := make(map[string][]string, len(values))
+	for key, values := range values {
+		items[key] = append([]string(nil), values...)
+	}
+	return items
 }
