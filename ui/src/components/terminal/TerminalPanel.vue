@@ -2972,10 +2972,11 @@ defineExpose({
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background-color: var(--n-card-color, #fff);
-  border: 1px solid var(--n-border-color);
+  background-color: var(--app-surface, var(--n-card-color, #fff));
+  color: var(--app-text-primary, var(--app-text-color, #1f1f1f));
+  border: 1px solid var(--app-border, var(--n-border-color));
   border-radius: 8px;
-  box-shadow: 0 -4px 16px var(--n-box-shadow-color, rgba(0, 0, 0, 0.15));
+  box-shadow: 0 -4px 16px var(--app-shadow, var(--n-box-shadow-color, rgba(0, 0, 0, 0.15)));
 
   transition:
     height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
@@ -3029,7 +3030,7 @@ defineExpose({
 }
 
 .resize-handle-top:hover .resize-indicator {
-  background-color: var(--n-color-primary);
+  background-color: var(--app-accent, var(--n-color-primary));
   opacity: 1;
 }
 
@@ -3044,7 +3045,7 @@ defineExpose({
 }
 
 .resize-handle-left:hover {
-  background: var(--n-color-primary);
+  background: var(--app-accent, var(--n-color-primary));
 }
 
 .resize-handle-right {
@@ -3058,7 +3059,7 @@ defineExpose({
 }
 
 .resize-handle-right:hover {
-  background: var(--n-color-primary);
+  background: var(--app-accent, var(--n-color-primary));
 }
 
 .resize-handle-bottom {
@@ -3073,7 +3074,7 @@ defineExpose({
 }
 
 .resize-handle-bottom:hover .resize-indicator {
-  background-color: var(--n-color-primary);
+  background-color: var(--app-accent, var(--n-color-primary));
   opacity: 1;
 }
 
@@ -3081,7 +3082,7 @@ defineExpose({
   width: 40px;
   height: 3px;
   border-radius: 2px;
-  background-color: var(--n-border-color);
+  background-color: var(--app-border-strong, var(--n-border-color));
   opacity: 0.5;
   transition: all 0.2s ease;
 }
@@ -3108,9 +3109,12 @@ defineExpose({
   gap: 12px;
   padding: 6px 12px 0;
   flex-shrink: 0;
-  background-color: var(--app-surface-color, var(--n-card-color, #fff));
-  color: var(--app-text-color, var(--n-text-color-1, #1f1f1f));
-  border-bottom: var(--kanban-terminal-header-border, 1px solid var(--n-border-color));
+  background-color: var(--app-surface, var(--app-surface-color, var(--n-card-color, #fff)));
+  color: var(--app-text-primary, var(--app-text-color, var(--n-text-color-1, #1f1f1f)));
+  border-bottom: var(
+    --kanban-terminal-header-border,
+    1px solid var(--app-border, var(--n-border-color))
+  );
   z-index: 1;
   position: relative;
 }
@@ -3121,23 +3125,26 @@ defineExpose({
   right: 12px;
   min-height: 24px;
   border-radius: 4px;
-  background-color: var(--kanban-terminal-filter-bg, var(--n-card-color, #fff));
-  border: 1px solid var(--n-border-color);
-  box-shadow: 0 6px 16px rgba(15, 17, 26, 0.16);
+  background-color: var(
+    --kanban-terminal-filter-bg,
+    var(--app-surface-raised, var(--n-card-color, #fff))
+  );
+  border: 1px solid var(--app-border, var(--n-border-color));
+  box-shadow: 0 6px 16px var(--app-shadow, rgba(15, 17, 26, 0.16));
   display: inline-flex;
   justify-content: center;
   align-items: center;
   padding: 0 8px;
   gap: 0px;
   font-size: 12px;
-  color: var(--app-text-color, var(--n-text-color-2, #666));
+  color: var(--app-text-secondary, var(--app-text-color, var(--n-text-color-2, #666)));
   z-index: 11;
 }
 
 .branch-filter-item {
   background: transparent;
   border: none;
-  color: var(--n-text-color-4, rgba(0, 0, 0, 0.4));
+  color: var(--app-text-muted, var(--n-text-color-4, rgba(0, 0, 0, 0.4)));
   padding: 0;
   margin: 0;
   font: inherit;
@@ -3151,23 +3158,23 @@ defineExpose({
 
 .branch-filter-item:focus-visible {
   outline: none;
-  color: var(--n-color-primary);
+  color: var(--app-focus-ring, var(--n-color-primary));
   text-decoration: underline;
 }
 
 .branch-filter-item:hover {
-  color: var(--n-text-color-2, #4c4f55);
+  color: var(--app-text-secondary, var(--n-text-color-2, #4c4f55));
 }
 
 .branch-filter-item.active {
-  color: var(--n-color-primary, #3b82f6);
+  color: var(--app-accent, var(--n-color-primary, #3b82f6));
   font-weight: 600;
 }
 
 .branch-filter-item::after {
   content: '|';
   margin: 0 8px;
-  color: var(--n-text-color-4, rgba(0, 0, 0, 0.35));
+  color: var(--app-text-muted, var(--n-text-color-4, rgba(0, 0, 0, 0.35)));
 }
 
 .branch-filter-item:last-of-type::after {
@@ -3193,7 +3200,7 @@ defineExpose({
   bottom: 8px;
   left: 0;
   height: 2px;
-  background-color: var(--n-primary-color);
+  background-color: var(--app-accent, var(--n-primary-color));
   border-radius: 1px;
   transition:
     transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
@@ -3212,10 +3219,16 @@ defineExpose({
 }
 
 .panel-header :deep(.n-tabs) {
-  --n-tab-border-color: var(--n-border-color, rgba(0, 0, 0, 0.1));
-  --n-tab-text-color: var(--app-text-color, var(--n-text-color-2, #666));
-  --n-tab-text-color-hover: var(--app-text-color, var(--n-text-color-1, #333));
-  --n-tab-text-color-active: var(--app-text-color, var(--n-text-color-1, #333));
+  --n-tab-border-color: var(--app-border, var(--n-border-color, rgba(0, 0, 0, 0.1)));
+  --n-tab-text-color: var(--app-text-secondary, var(--app-text-color, var(--n-text-color-2, #666)));
+  --n-tab-text-color-hover: var(
+    --app-text-primary,
+    var(--app-text-color, var(--n-text-color-1, #333))
+  );
+  --n-tab-text-color-active: var(
+    --app-text-primary,
+    var(--app-text-color, var(--n-text-color-1, #333))
+  );
 }
 
 .panel-header :deep(.n-tabs .n-tabs-card-tabs) {
@@ -3224,7 +3237,7 @@ defineExpose({
 
 /* 非选中标签 */
 .panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab) {
-  background-color: var(--kanban-terminal-tab-bg, #ffffff) !important;
+  background-color: var(--kanban-terminal-tab-bg, var(--app-surface, #ffffff)) !important;
   color: var(--n-tab-text-color);
   border-color: var(--n-tab-border-color);
   transition:
@@ -3234,7 +3247,10 @@ defineExpose({
 
 /* 选中标签 - 覆盖 Naive UI 硬编码的 #0000 */
 .panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.n-tabs-tab--active) {
-  background-color: var(--kanban-terminal-tab-active-bg, #e8e8e8) !important;
+  background-color: var(
+    --kanban-terminal-tab-active-bg,
+    var(--app-surface-active, #e8e8e8)
+  ) !important;
   color: var(--n-tab-text-color-active);
 }
 
@@ -3300,8 +3316,8 @@ defineExpose({
   align-items: center;
   padding: 0 5px;
   border-radius: 999px;
-  background: rgba(59, 130, 246, 0.14);
-  color: rgba(29, 78, 216, 0.92);
+  background: var(--app-accent-soft, rgba(59, 130, 246, 0.14));
+  color: var(--app-accent, rgba(29, 78, 216, 0.92));
   font-size: 10px;
   line-height: 16px;
   font-weight: 600;
@@ -3330,7 +3346,7 @@ defineExpose({
 }
 
 .standalone-task-icon:focus-visible {
-  outline: 2px solid var(--n-color-primary);
+  outline: 2px solid var(--app-focus-ring, var(--n-color-primary));
   border-radius: 4px;
 }
 
@@ -3355,22 +3371,31 @@ defineExpose({
   border-radius: 50%;
   display: inline-block;
   flex-shrink: 0;
-  background-color: var(--n-text-color-disabled, #c0c4d8);
-  box-shadow: 0 0 0 1px var(--n-box-shadow-color, rgba(15, 17, 26, 0.08));
+  background-color: var(--app-text-muted, var(--n-text-color-disabled, #c0c4d8));
+  box-shadow: 0 0 0 1px var(--app-border, var(--n-box-shadow-color, rgba(15, 17, 26, 0.08)));
 }
 
 .status-dot.ready {
-  background-color: var(--kanban-terminal-status-ready, var(--n-color-success, #12b76a));
+  background-color: var(
+    --kanban-terminal-status-ready,
+    var(--app-success, var(--n-color-success, #12b76a))
+  );
   box-shadow: 0 0 0 1px rgba(18, 183, 106, 0.25);
 }
 
 .status-dot.connecting {
-  background-color: var(--kanban-terminal-status-connecting, var(--n-color-warning, #f79009));
+  background-color: var(
+    --kanban-terminal-status-connecting,
+    var(--app-warning, var(--n-color-warning, #f79009))
+  );
   box-shadow: 0 0 0 1px rgba(247, 144, 9, 0.25);
 }
 
 .status-dot.error {
-  background-color: var(--kanban-terminal-status-error, var(--n-color-error, #f04438));
+  background-color: var(
+    --kanban-terminal-status-error,
+    var(--app-error, var(--n-color-error, #f04438))
+  );
   box-shadow: 0 0 0 1px rgba(240, 68, 56, 0.25);
 }
 
@@ -3379,7 +3404,7 @@ defineExpose({
 }
 
 :global(.terminal-tab-chosen .n-tabs-tab) {
-  box-shadow: 0 0 0 1px var(--n-color-primary);
+  box-shadow: 0 0 0 1px var(--app-focus-ring, var(--n-color-primary));
 }
 
 :global(.terminal-tab-dragging .n-tabs-tab) {
@@ -3470,7 +3495,7 @@ defineExpose({
 
 .empty-tabs-text {
   font-size: 14px;
-  color: var(--app-text-color, var(--n-text-color-2, #666));
+  color: var(--app-text-secondary, var(--app-text-color, var(--n-text-color-2, #666)));
   opacity: 0.8;
 }
 
@@ -3545,14 +3570,14 @@ defineExpose({
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--n-text-color, #333);
+  color: var(--app-text-primary, var(--n-text-color, #333));
   border-radius: 6px;
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .mobile-nav-btn:active:not(:disabled) {
-  background: var(--n-color-hover, rgba(0, 0, 0, 0.05));
+  background: var(--app-surface-active, var(--n-color-hover, rgba(0, 0, 0, 0.05)));
 }
 
 .mobile-nav-btn:disabled {
@@ -3565,11 +3590,11 @@ defineExpose({
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--n-color-hover, rgba(0, 0, 0, 0.05));
-  border: 1px solid var(--n-border-color, #e0e0e0);
+  background: var(--app-surface-hover, var(--n-color-hover, rgba(0, 0, 0, 0.05)));
+  border: 1px solid var(--app-border, var(--n-border-color, #e0e0e0));
   border-radius: 6px;
   font-size: 14px;
-  color: var(--n-text-color, #333);
+  color: var(--app-text-primary, var(--n-text-color, #333));
   cursor: pointer;
   max-width: 100%;
   min-width: 0;

@@ -185,6 +185,8 @@ const headerMeta = computed(() =>
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  background: var(--app-surface);
+  color: var(--app-text-primary);
 }
 
 .file-preview-header {
@@ -193,8 +195,8 @@ const headerMeta = computed(() =>
   justify-content: space-between;
   gap: 12px;
   padding: 16px;
-  border-bottom: 1px solid rgba(24, 35, 51, 0.08);
-  background: rgba(255, 255, 255, 0.86);
+  border-bottom: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-surface) 86%, var(--app-canvas) 14%);
 }
 
 .file-preview-shell.is-mobile .file-preview-header {
@@ -228,7 +230,7 @@ const headerMeta = computed(() =>
   align-items: center;
   padding: 3px;
   border-radius: 999px;
-  background: rgba(37, 90, 143, 0.08);
+  background: var(--app-accent-soft);
   gap: 4px;
 }
 
@@ -236,7 +238,7 @@ const headerMeta = computed(() =>
   border: none;
   border-radius: 999px;
   background: transparent;
-  color: rgba(34, 46, 67, 0.7);
+  color: var(--app-text-secondary);
   font-size: 12px;
   font-weight: 600;
   padding: 6px 10px;
@@ -247,9 +249,14 @@ const headerMeta = computed(() =>
 }
 
 .file-preview-mode-button.is-active {
-  background: #ffffff;
-  color: #1f4c7f;
-  box-shadow: 0 6px 16px rgba(31, 76, 127, 0.16);
+  background: var(--app-surface-raised);
+  color: var(--app-info);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--app-shadow) 65%, transparent);
+}
+
+.file-preview-mode-button:focus-visible {
+  outline: 2px solid var(--app-focus-ring);
+  outline-offset: 1px;
 }
 
 .file-preview-back {
@@ -266,7 +273,7 @@ const headerMeta = computed(() =>
 
 .file-preview-meta {
   margin-top: 4px;
-  color: rgba(34, 46, 67, 0.62);
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 
@@ -278,7 +285,7 @@ const headerMeta = computed(() =>
   -webkit-overflow-scrolling: touch;
   padding: 16px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(37, 90, 143, 0.38) transparent;
+  scrollbar-color: color-mix(in srgb, var(--app-accent) 42%, transparent) transparent;
 }
 
 .file-preview-content::-webkit-scrollbar {
@@ -292,11 +299,11 @@ const headerMeta = computed(() =>
 
 .file-preview-content::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(37, 90, 143, 0.28);
+  background: color-mix(in srgb, var(--app-accent) 32%, transparent);
 }
 
 .file-preview-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(37, 90, 143, 0.42);
+  background: color-mix(in srgb, var(--app-accent) 48%, transparent);
 }
 
 .file-preview-image,
@@ -304,7 +311,7 @@ const headerMeta = computed(() =>
 .file-preview-media {
   width: 100%;
   border-radius: 14px;
-  background: #f4f7fb;
+  background: var(--app-surface-sunken);
 }
 
 .file-preview-image {
@@ -357,7 +364,7 @@ const headerMeta = computed(() =>
 
 .file-preview-binary,
 .file-preview-truncated {
-  color: rgba(34, 46, 67, 0.7);
+  color: var(--app-text-secondary);
   font-size: 13px;
 }
 
@@ -372,6 +379,7 @@ const headerMeta = computed(() =>
   height: 100%;
   min-height: 220px;
   padding: 16px;
+  color: var(--app-text-secondary);
   text-align: center;
 }
 

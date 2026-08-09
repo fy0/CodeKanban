@@ -75,8 +75,9 @@ function handleSelect(key: string | number) {
   border-radius: 6px;
   gap: 0;
   padding: 0;
-  border: 1px solid var(--kanban-notification-button-border, rgba(0, 0, 0, 0.2));
-  background: var(--app-surface-color, var(--body-color, #ffffff));
+  border: 1px solid var(--kanban-notification-button-border, var(--app-border, rgba(0, 0, 0, 0.2)));
+  background: var(--app-surface, var(--app-surface-color, var(--body-color, #ffffff)));
+  color: var(--app-text-primary, inherit);
   box-shadow: none;
 }
 
@@ -103,12 +104,12 @@ function handleSelect(key: string | number) {
 
 .split-dropdown-menu {
   padding: 0 8px;
-  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  border-left: 1px solid var(--app-border, rgba(0, 0, 0, 0.08));
   justify-content: center;
 }
 
 .split-dropdown-control:hover {
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+  box-shadow: 0 4px 12px var(--app-shadow, rgba(15, 23, 42, 0.15));
 }
 
 .split-dropdown-control.is-flat:hover {
@@ -120,13 +121,14 @@ function handleSelect(key: string | number) {
 }
 
 .split-dropdown-control.is-active:hover {
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+  box-shadow: 0 4px 12px var(--app-shadow, rgba(15, 23, 42, 0.15));
 }
 
 .split-dropdown-main:focus-visible,
 .split-dropdown-menu:focus-visible {
-  outline: none;
-  background: color-mix(in srgb, var(--n-primary-color) 4%, transparent);
+  outline: 2px solid var(--app-focus-ring, var(--n-primary-color));
+  outline-offset: -2px;
+  background: var(--app-accent-soft, color-mix(in srgb, var(--n-primary-color) 4%, transparent));
 }
 
 .split-dropdown-icon {

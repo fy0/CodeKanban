@@ -191,7 +191,7 @@
                   <n-icon
                     v-if="isCurrentProject(project.id)"
                     size="18"
-                    color="#18a058"
+                    color="var(--app-success, #18a058)"
                     class="current-project-icon"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
@@ -254,7 +254,10 @@
                   v-if="project.priority"
                   size="small"
                   :bordered="false"
-                  :color="{ color: getPriorityTagColor(project.priority), textColor: '#fff' }"
+                  :color="{
+                    color: getPriorityTagColor(project.priority),
+                    textColor: getReadableTextColor(getPriorityTagColor(project.priority)),
+                  }"
                 >
                   <template #icon>
                     <n-icon size="16">
@@ -358,6 +361,7 @@ import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
 import { useWebSessionStore } from '@/stores/webSession';
 import type { Project } from '@/types/models';
+import { getReadableTextColor } from '@/utils/color';
 
 type ProjectOption = DropdownOption & { project?: Project };
 type SortType = 'name' | 'created' | 'updated' | 'accessed';
@@ -729,6 +733,7 @@ watch(showEditDialog, value => {
   --project-browser-switch-ease: cubic-bezier(0.22, 1, 0.36, 1);
   max-width: 1400px;
   margin: 0 auto;
+  color: var(--app-text-primary, var(--app-text-color, #333333));
 }
 
 .project-browser--page {
@@ -784,8 +789,8 @@ watch(showEditDialog, value => {
 }
 
 :deep(.search-highlight) {
-  background-color: color-mix(in srgb, var(--n-primary-color, #3b69a9) 20%, transparent);
-  color: var(--kanban-terminal-fg, var(--n-text-color-1, #1f1f1f));
+  background-color: var(--app-accent-soft, rgba(59, 105, 169, 0.2));
+  color: var(--app-text-primary, #1f1f1f);
   padding: 2px 4px;
   border-radius: 3px;
   font-weight: 500;
@@ -860,15 +865,15 @@ watch(showEditDialog, value => {
 }
 
 .project-card.is-current {
-  border-color: color-mix(in srgb, var(--n-primary-color, #18a058) 45%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--n-primary-color, #18a058) 20%, transparent);
+  border-color: color-mix(in srgb, var(--app-accent, #18a058) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-accent, #18a058) 20%, transparent);
   background:
     linear-gradient(
       135deg,
-      color-mix(in srgb, var(--n-primary-color, #18a058) 9%, transparent) 0%,
+      color-mix(in srgb, var(--app-accent, #18a058) 9%, transparent) 0%,
       transparent 100%
     ),
-    var(--n-card-color, #fff);
+    var(--app-surface, #fff);
 }
 
 .project-card-header {

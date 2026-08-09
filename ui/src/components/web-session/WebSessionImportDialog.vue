@@ -519,13 +519,13 @@ async function loadSources(isRefresh = false) {
 
 .web-session-import__summary {
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
 }
 
 .web-session-import__scanning {
-  border: 1px solid rgba(14, 116, 144, 0.16);
-  background: rgba(6, 182, 212, 0.08);
-  color: #0f766e;
+  border: 1px solid color-mix(in srgb, var(--app-info, #0e7490) 28%, transparent);
+  background: var(--app-info-soft, rgba(6, 182, 212, 0.08));
+  color: var(--app-info, #0f766e);
   border-radius: 12px;
   padding: 10px 12px;
   font-size: 13px;
@@ -545,8 +545,8 @@ async function loadSources(isRefresh = false) {
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 88%, transparent);
-  background: color-mix(in srgb, var(--n-card-color) 88%, #f8fafc 12%);
+  border: 1px solid color-mix(in srgb, var(--app-border, var(--n-border-color)) 88%, transparent);
+  background: var(--app-surface-raised, var(--n-card-color));
   border-radius: 16px;
   padding: 14px 16px;
 }
@@ -573,7 +573,7 @@ async function loadSources(isRefresh = false) {
   font-size: 15px;
   font-weight: 600;
   line-height: 1.4;
-  color: var(--n-text-color-1);
+  color: var(--app-text-primary, var(--n-text-color-1));
 }
 
 .web-session-import__badges {
@@ -595,19 +595,19 @@ async function loadSources(isRefresh = false) {
   flex-wrap: wrap;
   gap: 10px;
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
 }
 
 .web-session-import__path {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--n-text-color-2);
+  color: var(--app-text-secondary, var(--n-text-color-2));
   word-break: break-all;
 }
 
 .web-session-import__duplicate {
   font-size: 12px;
-  color: #b45309;
+  color: var(--app-warning, #b45309);
 }
 
 .web-session-import__actions {
@@ -623,7 +623,7 @@ async function loadSources(isRefresh = false) {
   min-width: 56px;
   text-align: center;
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
 }
 
 :deep(.n-card-header) {
@@ -645,9 +645,9 @@ async function loadSources(isRefresh = false) {
 
 .web-session-import__preview-note {
   margin-bottom: 12px;
-  border: 1px solid rgba(245, 158, 11, 0.24);
-  background: rgba(245, 158, 11, 0.08);
-  color: #92400e;
+  border: 1px solid color-mix(in srgb, var(--app-warning, #f59e0b) 34%, transparent);
+  background: var(--app-warning-soft, rgba(245, 158, 11, 0.08));
+  color: var(--app-warning, #92400e);
   border-radius: 12px;
   padding: 10px 12px;
   font-size: 13px;

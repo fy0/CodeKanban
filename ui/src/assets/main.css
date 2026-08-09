@@ -5,6 +5,8 @@
   min-height: 100vh;
   margin: 0;
   padding: 0;
+  background-color: var(--app-canvas, var(--app-body-color, #f7f8fa));
+  color: var(--app-text-primary, var(--app-text-color, #333333));
 }
 
 main {
@@ -125,18 +127,19 @@ main {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--app-surface-color, #ffffff);
+  background-color: var(--app-surface-raised, var(--app-surface-color, #ffffff));
+  color: var(--app-text-primary, var(--app-text-color, #333333));
   z-index: 100;
   border-top-left-radius: 16px;
   border-top-right-radius: 16px;
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 -4px 20px var(--app-shadow, rgba(0, 0, 0, 0.15));
 }
 
 /* 拖动条 (用于移动端面板) */
 .drag-handle {
   width: 40px;
   height: 4px;
-  background-color: var(--n-border-color, #e0e0e0);
+  background-color: var(--app-border-strong, var(--n-border-color, #e0e0e0));
   border-radius: 2px;
   margin: 8px auto;
 }

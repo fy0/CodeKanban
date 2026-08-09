@@ -1637,9 +1637,9 @@ export default {
       'Default behaves the same as No and only indicates no explicit choice yet; choosing Yes will switch themes based on system dark/light mode',
     maintenanceWarningTitle: 'Theme Warning',
     maintenanceWarningPreset:
-      'Except for the default Light theme, all other themes are lightly maintained and may produce unstable visuals. Continue switching?',
+      'Themes other than Light and Dark are previews and may produce unstable visuals. Continue switching?',
     maintenanceWarningFollowSystem:
-      'Enabling Follow System Theme may switch the app to a non-default theme. Except for the default Light theme, all other themes are lightly maintained and may produce unstable visuals. Continue?',
+      'Follow System Theme automatically switches between the supported Light and Dark themes. Continue?',
     customTheme: 'Custom Theme',
     customThemeHint: 'Customizing colors will override preset theme settings',
     terminalColors: 'Terminal Colors',

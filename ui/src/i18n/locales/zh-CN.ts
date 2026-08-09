@@ -1558,9 +1558,9 @@ export default {
       '默认等同关闭，仅表示未显式设置；选择“是”后将根据系统深色/浅色模式自动切换主题',
     maintenanceWarningTitle: '主题警告',
     maintenanceWarningPreset:
-      '除默认亮色主题外，其余主题均缺乏维护，视觉效果不稳定。是否继续切换？',
+      '除亮色和暗色主题外，其余主题均为预览主题，视觉效果可能不稳定。是否继续切换？',
     maintenanceWarningFollowSystem:
-      '开启跟随系统主题后，应用可能切换到非默认主题。除默认亮色主题外，其余主题均缺乏维护，视觉效果不稳定。是否继续开启？',
+      '开启跟随系统主题后，应用将在受支持的亮色与暗色主题之间自动切换。是否继续开启？',
     customTheme: '自定义主题',
     customThemeHint: '自定义颜色后将覆盖预设主题配置',
     terminalColors: '终端颜色',

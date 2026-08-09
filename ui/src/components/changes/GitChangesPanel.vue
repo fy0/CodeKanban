@@ -861,9 +861,8 @@ onBeforeUnmount(() => {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(246, 248, 252, 0.98), rgba(238, 242, 247, 0.96)),
-    radial-gradient(circle at top right, rgba(53, 119, 186, 0.12), transparent 32%);
+  background: var(--app-canvas);
+  color: var(--app-text-primary);
 }
 
 .git-changes-toolbar {
@@ -872,7 +871,8 @@ onBeforeUnmount(() => {
   gap: 12px;
   flex-wrap: wrap;
   padding: 12px 16px;
-  border-bottom: 1px solid rgba(24, 35, 51, 0.08);
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-surface);
 }
 
 .git-changes-scope {
@@ -925,8 +925,8 @@ onBeforeUnmount(() => {
   flex: 0 0 360px;
   min-width: 280px;
   max-width: 440px;
-  border-right: 1px solid rgba(24, 35, 51, 0.08);
-  background: rgba(255, 255, 255, 0.72);
+  border-right: 1px solid var(--app-border);
+  background: var(--app-surface-sunken);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -959,7 +959,7 @@ onBeforeUnmount(() => {
   overflow: auto;
   padding: 12px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(37, 90, 143, 0.38) transparent;
+  scrollbar-color: var(--app-border-strong) transparent;
 }
 
 .git-changes-list::-webkit-scrollbar {
@@ -969,7 +969,7 @@ onBeforeUnmount(() => {
 
 .git-changes-list::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(37, 90, 143, 0.28);
+  background: var(--app-border-strong);
 }
 
 .git-changes-empty,
@@ -988,9 +988,10 @@ onBeforeUnmount(() => {
   display: flex;
   width: 100%;
   padding: 12px 14px;
-  border: 1px solid rgba(24, 35, 51, 0.08);
+  border: 1px solid var(--app-border);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--app-surface-raised);
+  color: var(--app-text-primary);
   text-align: left;
   cursor: pointer;
   transition:
@@ -1001,9 +1002,13 @@ onBeforeUnmount(() => {
 
 .git-change-row:hover,
 .git-change-row.is-active {
-  border-color: rgba(53, 119, 186, 0.32);
-  background: rgba(240, 247, 255, 0.9);
-  box-shadow: 0 10px 24px rgba(40, 73, 118, 0.08);
+  border-color: var(--app-accent);
+  background: var(--app-surface-hover);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--app-accent) 8%, transparent);
+}
+
+.git-change-row.is-active {
+  background: var(--app-surface-active);
 }
 
 .git-change-main {
@@ -1022,7 +1027,7 @@ onBeforeUnmount(() => {
 }
 
 .git-change-icon {
-  color: #255a8f;
+  color: var(--app-info);
   flex: 0 0 auto;
 }
 
@@ -1042,12 +1047,12 @@ onBeforeUnmount(() => {
 }
 
 .git-change-stat-tag {
-  color: rgba(34, 46, 67, 0.78);
+  color: var(--app-text-secondary);
 }
 
 .git-change-path,
 .git-change-previous {
-  color: rgba(34, 46, 67, 0.7);
+  color: var(--app-text-muted);
   font-size: 12px;
   line-height: 1.45;
   word-break: break-all;
@@ -1055,7 +1060,7 @@ onBeforeUnmount(() => {
 
 .git-changes-preview {
   flex: 1;
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--app-surface);
 }
 
 .git-changes-mobile-preview-modal {
@@ -1067,7 +1072,7 @@ onBeforeUnmount(() => {
 .git-changes-mobile-preview-surface {
   width: 100vw;
   min-height: min(100vh, 100dvh);
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--app-surface);
   border-radius: 0;
   overflow: hidden;
 }
@@ -1082,7 +1087,7 @@ onBeforeUnmount(() => {
     width: 100%;
     max-width: none;
     border-right: none;
-    border-bottom: 1px solid rgba(24, 35, 51, 0.08);
+    border-bottom: 1px solid var(--app-border);
   }
 
   .git-changes-panel:not(.is-mobile-preview) .git-changes-list {

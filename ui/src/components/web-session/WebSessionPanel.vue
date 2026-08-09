@@ -15170,6 +15170,8 @@ defineExpose({
   --web-session-approval-border: rgba(247, 144, 9, 0.5);
   --web-session-plan-approval-bg: rgba(6, 182, 212, 0.14);
   --web-session-plan-approval-border: rgba(6, 182, 212, 0.3);
+  color: var(--app-text-primary, var(--app-text-color, #1f1f1f));
+  background: var(--app-surface, var(--app-surface-color, #fff));
   box-sizing: border-box;
   height: 100%;
   padding-bottom: var(
@@ -15191,11 +15193,11 @@ defineExpose({
   gap: 10px;
   max-width: calc(100vw - 24px);
   padding: 6px 8px;
-  border: 1px solid var(--n-border-color, #d9d9d9);
+  border: 1px solid var(--app-border, var(--n-border-color, #d9d9d9));
   border-radius: 6px;
-  background: var(--app-surface-color, var(--n-card-color, #fff));
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
-  color: var(--app-text-color, var(--n-text-color-1, #1f1f1f));
+  background: var(--app-surface-raised, var(--n-card-color, #fff));
+  box-shadow: 0 4px 14px var(--app-shadow, rgba(0, 0, 0, 0.14));
+  color: var(--app-text-primary, var(--app-text-color, #1f1f1f));
   font-size: 11px;
 }
 
@@ -15203,8 +15205,8 @@ defineExpose({
   flex-shrink: 0;
   padding: 2px 5px;
   border-radius: 3px;
-  background: var(--n-warning-color, #f0a020);
-  color: #1f2328;
+  background: var(--app-warning, var(--n-warning-color, #f0a020));
+  color: var(--app-text-inverse, #1f2328);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 10px;
   font-weight: 700;
@@ -15237,7 +15239,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background-color: var(--app-surface-color, var(--n-card-color, #fff));
+  background-color: var(--app-surface, var(--app-surface-color, #fff));
 }
 
 .panel-body {
@@ -15264,8 +15266,8 @@ defineExpose({
   gap: 12px;
   padding: 6px 12px 0;
   flex-shrink: 0;
-  background-color: var(--app-surface-color, var(--n-card-color, #fff));
-  color: var(--app-text-color, var(--n-text-color-1, #1f1f1f));
+  background-color: var(--app-surface, var(--app-surface-color, #fff));
+  color: var(--app-text-primary, var(--app-text-color, #1f1f1f));
   border-bottom: var(--kanban-terminal-header-border, 1px solid var(--n-border-color));
   position: relative;
   z-index: 1;
@@ -15348,7 +15350,7 @@ defineExpose({
   top: 1px;
   left: 0;
   z-index: 2;
-  color: #6366f1;
+  color: var(--app-link, #6366f1);
   pointer-events: none;
 }
 
@@ -15437,8 +15439,8 @@ defineExpose({
   border-radius: 999px;
   font-size: 10px;
   line-height: 16px;
-  background-color: #eef2ff;
-  color: #6366f1;
+  background-color: var(--app-accent-soft, #eef2ff);
+  color: var(--app-link, #6366f1);
   transition: all 0.2s ease;
 }
 
@@ -15466,36 +15468,36 @@ defineExpose({
 }
 
 .ai-status-pill.state-working {
-  background-color: #eadffc;
-  color: #7c3aed;
+  background-color: var(--app-accent-soft, #eadffc);
+  color: var(--app-link, #7c3aed);
 }
 
 .ai-status-pill.state-approval,
 .ai-status-pill.state-waiting_approval {
-  background-color: #fed7aa;
-  color: #f79009;
+  background-color: var(--app-warning-soft, #fed7aa);
+  color: var(--app-warning, #f79009);
 }
 
 .ai-status-pill.state-waiting_plan_approval {
-  background-color: rgba(34, 211, 238, 0.14);
-  color: #0891b2;
+  background-color: var(--app-info-soft, rgba(34, 211, 238, 0.14));
+  color: var(--app-info, #0891b2);
 }
 
 .ai-status-pill.state-completion {
-  background-color: rgba(255, 255, 255, 0.84);
-  color: #475467;
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  background-color: var(--app-success-soft, rgba(16, 185, 129, 0.12));
+  color: var(--app-success, #475467);
+  border: 1px solid color-mix(in srgb, var(--app-success, #10b981) 34%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--app-border-strong, #fff) 26%, transparent);
 }
 
 .ai-status-pill.state-waiting_input {
-  background-color: #eceef2;
-  color: #475467;
+  background-color: var(--app-surface-hover, #eceef2);
+  color: var(--app-text-secondary, #475467);
 }
 
 .ai-status-pill.state-unknown {
-  background-color: #f1f5f9;
-  color: #94a3b8;
+  background-color: var(--app-surface-sunken, #f1f5f9);
+  color: var(--app-text-muted, #94a3b8);
   padding: 0 4px;
 }
 
@@ -15678,7 +15680,7 @@ defineExpose({
 
 .mobile-tab-trigger-plan-badge {
   flex-shrink: 0;
-  color: #6366f1;
+  color: var(--app-link, #6366f1);
 }
 
 .mobile-tab-trigger-plan-badge.is-scheduled {
@@ -15874,43 +15876,43 @@ defineExpose({
 }
 
 .mobile-session-drawer-agent-badge.state-working {
-  background: #eadffc;
-  color: #7c3aed;
+  background: var(--app-accent-soft, #eadffc);
+  color: var(--app-link, #7c3aed);
 }
 
 .mobile-session-drawer-agent-badge.state-approval,
 .mobile-session-drawer-agent-badge.state-waiting_approval {
-  background: #fed7aa;
-  color: #f79009;
+  background: var(--app-warning-soft, #fed7aa);
+  color: var(--app-warning, #f79009);
 }
 
 .mobile-session-drawer-agent-badge.state-waiting_plan_approval {
-  border-color: rgba(6, 182, 212, 0.18);
-  background: rgba(34, 211, 238, 0.14);
-  color: #0891b2;
+  border-color: color-mix(in srgb, var(--app-info, #06b6d4) 32%, transparent);
+  background: var(--app-info-soft, rgba(34, 211, 238, 0.14));
+  color: var(--app-info, #0891b2);
 }
 
 .mobile-session-drawer-agent-badge.state-completion {
-  border-color: rgba(16, 185, 129, 0.18);
-  background: rgba(16, 185, 129, 0.12);
-  color: #059669;
+  border-color: color-mix(in srgb, var(--app-success, #10b981) 30%, transparent);
+  background: var(--app-success-soft, rgba(16, 185, 129, 0.12));
+  color: var(--app-success, #059669);
 }
 
 .mobile-session-drawer-agent-badge.state-waiting_input {
-  border-color: rgba(71, 84, 103, 0.08);
-  background: #eceef2;
-  color: #667085;
+  border-color: color-mix(in srgb, var(--app-border, #475467) 48%, transparent);
+  background: var(--app-surface-hover, #eceef2);
+  color: var(--app-text-secondary, #667085);
 }
 
 .mobile-session-drawer-agent-badge.state-unknown {
-  background: #f1f5f9;
-  color: #94a3b8;
+  background: var(--app-surface-sunken, #f1f5f9);
+  color: var(--app-text-muted, #94a3b8);
 }
 
 .mobile-session-drawer-agent-badge.state-error {
-  border-color: rgba(240, 68, 56, 0.18);
-  background: rgba(240, 68, 56, 0.14);
-  color: #f04438;
+  border-color: color-mix(in srgb, var(--app-error, #f04438) 32%, transparent);
+  background: var(--app-error-soft, rgba(240, 68, 56, 0.14));
+  color: var(--app-error, #f04438);
 }
 
 .mobile-session-drawer-agent-icon,
@@ -15933,7 +15935,7 @@ defineExpose({
   left: -4px;
   bottom: -3px;
   z-index: 2;
-  color: #6366f1;
+  color: var(--app-link, #6366f1);
   pointer-events: none;
 }
 
@@ -16486,8 +16488,8 @@ defineExpose({
     ),
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--n-primary-color) 2%, var(--app-body-color, #f7f8fa)),
-      var(--app-surface-color, #fff)
+      color-mix(in srgb, var(--app-accent, var(--n-primary-color)) 2%, var(--app-canvas, #f7f8fa)),
+      var(--app-surface, var(--app-surface-color, #fff))
     );
 }
 
@@ -16510,7 +16512,7 @@ defineExpose({
   padding: 4px;
   border: 1px solid var(--n-border-color);
   border-radius: 4px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, transparent);
+  background: color-mix(in srgb, var(--app-surface-raised, #fff) 94%, transparent);
   backdrop-filter: blur(8px);
 }
 
@@ -16774,9 +16776,14 @@ defineExpose({
 
 .item-bubble {
   max-width: min(860px, 84%);
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 10%, var(--n-border-color));
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--app-accent, var(--n-primary-color)) 10%,
+      var(--app-border, var(--n-border-color))
+    );
   border-radius: 12px;
-  background: var(--app-surface-color, #fff);
+  background: var(--app-surface-raised, var(--app-surface-color, #fff));
   padding: 15px 16px;
   position: relative;
   transition:
@@ -16796,14 +16803,26 @@ defineExpose({
 }
 
 .timeline-item.kind-user .item-bubble {
-  background: color-mix(in srgb, var(--n-primary-color) 10%, rgba(255, 255, 255, 0.92));
-  border-color: color-mix(in srgb, var(--n-primary-color) 22%, var(--n-border-color));
+  background: color-mix(
+    in srgb,
+    var(--app-accent, var(--n-primary-color)) 10%,
+    var(--app-surface-raised, #fff)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--app-accent, var(--n-primary-color)) 22%,
+    var(--app-border, var(--n-border-color))
+  );
   border-top-right-radius: 8px;
 }
 
 .timeline-item.kind-system .item-bubble {
   max-width: min(780px, 100%);
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%);
+  background: color-mix(
+    in srgb,
+    var(--app-surface-raised, #fff) 92%,
+    var(--app-accent, var(--n-primary-color)) 8%
+  );
   border-style: dashed;
 }
 
@@ -16812,23 +16831,55 @@ defineExpose({
 }
 
 .item-bubble.level-error {
-  border-color: color-mix(in srgb, var(--n-error-color) 35%, var(--n-border-color));
-  background: color-mix(in srgb, var(--n-error-color) 7%, rgba(255, 255, 255, 0.9));
+  border-color: color-mix(
+    in srgb,
+    var(--app-error, var(--n-error-color)) 35%,
+    var(--app-border, var(--n-border-color))
+  );
+  background: color-mix(
+    in srgb,
+    var(--app-error, var(--n-error-color)) 7%,
+    var(--app-surface-raised, #fff)
+  );
 }
 
 .item-bubble.type-run_fail {
-  border-color: color-mix(in srgb, var(--n-error-color) 52%, var(--n-border-color));
-  background: color-mix(in srgb, var(--n-error-color) 11%, rgba(255, 255, 255, 0.9));
+  border-color: color-mix(
+    in srgb,
+    var(--app-error, var(--n-error-color)) 52%,
+    var(--app-border, var(--n-border-color))
+  );
+  background: color-mix(
+    in srgb,
+    var(--app-error, var(--n-error-color)) 11%,
+    var(--app-surface-raised, #fff)
+  );
 }
 
 .item-bubble.type-note.level-error {
-  border-color: color-mix(in srgb, var(--n-warning-color) 48%, var(--n-border-color));
-  background: color-mix(in srgb, var(--n-warning-color) 14%, rgba(255, 255, 255, 0.92));
+  border-color: color-mix(
+    in srgb,
+    var(--app-warning, var(--n-warning-color)) 48%,
+    var(--app-border, var(--n-border-color))
+  );
+  background: color-mix(
+    in srgb,
+    var(--app-warning, var(--n-warning-color)) 14%,
+    var(--app-surface-raised, #fff)
+  );
 }
 
 .item-bubble.level-warn {
-  border-color: color-mix(in srgb, var(--n-warning-color) 35%, var(--n-border-color));
-  background: color-mix(in srgb, var(--n-warning-color) 10%, rgba(255, 255, 255, 0.92));
+  border-color: color-mix(
+    in srgb,
+    var(--app-warning, var(--n-warning-color)) 35%,
+    var(--app-border, var(--n-border-color))
+  );
+  background: color-mix(
+    in srgb,
+    var(--app-warning, var(--n-warning-color)) 10%,
+    var(--app-surface-raised, #fff)
+  );
 }
 
 .item-bubble.is-raw-active,
@@ -16888,7 +16939,7 @@ defineExpose({
   font-family: 'SFMono-Regular', 'JetBrains Mono', 'Consolas', monospace;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  color: var(--app-text-primary, var(--app-text-color, #111827));
 }
 
 .timeline-raw-text code {
@@ -17093,10 +17144,11 @@ defineExpose({
 .timeline-activity-display-row.mode-card {
   min-height: 52px;
   padding: 11px 14px;
-  border: 1px solid rgba(20, 184, 166, 0.28);
+  border: 1px solid color-mix(in srgb, var(--app-info, #14b8a6) 34%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, rgba(20, 184, 166, 0.08));
-  box-shadow: 0 8px 20px rgba(15, 118, 110, 0.04);
+  background: color-mix(in srgb, var(--app-surface-raised, #fff) 88%, var(--app-info, #14b8a6) 12%);
+  box-shadow: 0 8px 20px
+    color-mix(in srgb, var(--app-shadow, rgba(15, 118, 110, 0.04)) 46%, transparent);
 }
 
 .timeline-activity-display-row.mode-card.state-running {
@@ -17104,7 +17156,7 @@ defineExpose({
 }
 
 .timeline-activity-display-row.mode-card.state-error {
-  border-color: rgba(220, 38, 38, 0.28);
+  border-color: color-mix(in srgb, var(--app-error, #dc2626) 36%, transparent);
 }
 
 .timeline-activity-display-row:hover {
@@ -17143,8 +17195,8 @@ defineExpose({
   align-items: center;
   padding: 1px 7px;
   border-radius: 999px;
-  background: rgba(14, 165, 233, 0.12);
-  color: #0369a1;
+  background: var(--app-info-soft, rgba(14, 165, 233, 0.12));
+  color: var(--app-info, #0369a1);
   font-size: 11px;
   font-weight: 700;
 }
@@ -17181,7 +17233,11 @@ defineExpose({
 .tool-card {
   border: 1px solid color-mix(in srgb, var(--n-primary-color) 14%, var(--n-border-color));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, var(--n-primary-color) 6%);
+  background: color-mix(
+    in srgb,
+    var(--app-surface-raised, #fff) 94%,
+    var(--app-accent, var(--n-primary-color)) 6%
+  );
   overflow: hidden;
   transition:
     border-color 0.18s ease,
@@ -17204,16 +17260,17 @@ defineExpose({
 }
 
 .tool-card.is-plan-tool {
-  border-color: rgba(14, 116, 144, 0.22);
+  border-color: color-mix(in srgb, var(--app-info, #0e7490) 34%, transparent);
   background:
     linear-gradient(
       135deg,
-      rgba(236, 253, 245, 0.98) 0%,
-      rgba(240, 249, 255, 0.96) 52%,
-      rgba(255, 255, 255, 0.98) 100%
+      color-mix(in srgb, var(--app-surface-raised, #fff) 88%, var(--app-success, #14b8a6) 12%) 0%,
+      color-mix(in srgb, var(--app-surface-raised, #fff) 90%, var(--app-info, #0ea5e9) 10%) 52%,
+      var(--app-surface-raised, #fff) 100%
     ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 18px 36px rgba(8, 47, 73, 0.08);
+    var(--app-surface-raised, var(--app-surface-color, #fff));
+  box-shadow: 0 18px 36px
+    color-mix(in srgb, var(--app-shadow, rgba(8, 47, 73, 0.08)) 62%, transparent);
 }
 
 .tool-card.is-plan-tool.is-static-plan-tool {
@@ -17235,21 +17292,22 @@ defineExpose({
 }
 
 .tool-card.is-context-compaction-tool {
-  border-color: rgba(37, 99, 235, 0.24);
+  border-color: color-mix(in srgb, var(--app-info, #2563eb) 34%, transparent);
   background:
     linear-gradient(
       135deg,
-      rgba(239, 246, 255, 0.98) 0%,
-      rgba(219, 234, 254, 0.92) 48%,
-      rgba(255, 255, 255, 0.98) 100%
+      color-mix(in srgb, var(--app-surface-raised, #fff) 88%, var(--app-info, #2563eb) 12%) 0%,
+      color-mix(in srgb, var(--app-surface-raised, #fff) 82%, var(--app-info, #2563eb) 18%) 48%,
+      var(--app-surface-raised, #fff) 100%
     ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 16px 32px rgba(30, 64, 175, 0.08);
+    var(--app-surface-raised, var(--app-surface-color, #fff));
+  box-shadow: 0 16px 32px
+    color-mix(in srgb, var(--app-shadow, rgba(30, 64, 175, 0.08)) 62%, transparent);
 }
 
 .tool-card.is-context-compaction-tool .tool-kind {
-  background: rgba(37, 99, 235, 0.12);
-  color: #2563eb;
+  background: var(--app-info-soft, rgba(37, 99, 235, 0.12));
+  color: var(--app-info, #2563eb);
 }
 
 .timeline-tool-card {
@@ -17316,18 +17374,18 @@ defineExpose({
 }
 
 .tool-state-badge.state-running {
-  background: rgba(139, 92, 246, 0.12);
-  color: #7c3aed;
+  background: var(--app-accent-soft, rgba(139, 92, 246, 0.12));
+  color: var(--app-link, #7c3aed);
 }
 
 .tool-state-badge.state-done {
-  background: rgba(16, 185, 129, 0.12);
-  color: #059669;
+  background: var(--app-success-soft, rgba(16, 185, 129, 0.12));
+  color: var(--app-success, #059669);
 }
 
 .tool-state-badge.state-error {
-  background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
+  background: var(--app-error-soft, rgba(239, 68, 68, 0.12));
+  color: var(--app-error, #dc2626);
 }
 
 .tool-state-dot {
@@ -17361,8 +17419,8 @@ defineExpose({
   border-color: color-mix(in srgb, #0ea5e9 20%, var(--n-border-color));
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--app-surface-color, #fff) 92%, rgba(14, 165, 233, 0.08)) 0%,
-    var(--app-surface-color, #fff) 100%
+    color-mix(in srgb, var(--app-surface-raised, #fff) 90%, var(--app-info, #0ea5e9) 10%) 0%,
+    var(--app-surface-raised, #fff) 100%
   );
 }
 
@@ -17417,8 +17475,8 @@ defineExpose({
   align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(14, 165, 233, 0.12);
-  color: #0369a1;
+  background: var(--app-info-soft, rgba(14, 165, 233, 0.12));
+  color: var(--app-info, #0369a1);
   font-size: 11px;
   font-weight: 700;
 }
@@ -17456,8 +17514,8 @@ defineExpose({
   align-items: center;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(20, 184, 166, 0.12);
-  color: #0f766e;
+  background: var(--app-success-soft, rgba(20, 184, 166, 0.12));
+  color: var(--app-success, #0f766e);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -17466,7 +17524,7 @@ defineExpose({
 .plan-tool-caption {
   font-size: 12px;
   line-height: 1.5;
-  color: #155e75;
+  color: var(--app-info, #155e75);
 }
 
 .tool-section {
@@ -17576,11 +17634,11 @@ defineExpose({
 .plan-tool-content {
   padding: 18px 20px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(14, 116, 144, 0.1);
+  background: color-mix(in srgb, var(--app-surface-raised, #fff) 94%, var(--app-info, #0e7490) 6%);
+  border: 1px solid color-mix(in srgb, var(--app-info, #0e7490) 20%, var(--app-border, transparent));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.7),
-    0 10px 24px rgba(14, 116, 144, 0.06);
+    inset 0 1px 0 color-mix(in srgb, var(--app-border-strong, #fff) 28%, transparent),
+    0 10px 24px color-mix(in srgb, var(--app-shadow, rgba(14, 116, 144, 0.06)) 52%, transparent);
 }
 
 .plan-tool-content--raw {
@@ -17632,10 +17690,10 @@ defineExpose({
   align-items: center;
   justify-content: center;
   border: 0;
-  border-left: 1px solid color-mix(in srgb, rgba(255, 255, 255, 0.3) 70%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--app-accent-contrast, #fff) 30%, transparent);
   border-radius: 0 6px 6px 0;
-  background: var(--n-primary-color);
-  color: var(--n-button-text-color, #fff);
+  background: var(--app-accent, var(--n-primary-color));
+  color: var(--app-accent-contrast, var(--n-button-text-color, #fff));
   cursor: pointer;
   transition:
     background-color 0.2s ease,
@@ -17670,9 +17728,9 @@ defineExpose({
 
 .live-card,
 .approval-card {
-  border: 1px solid var(--n-border-color);
+  border: 1px solid var(--app-border, var(--n-border-color));
   border-radius: 10px;
-  background: var(--app-surface-color, #fff);
+  background: var(--app-surface-raised, var(--app-surface-color, #fff));
 }
 
 .live-card {
@@ -17704,9 +17762,9 @@ defineExpose({
   background: linear-gradient(
     120deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.02) 32%,
-    rgba(255, 255, 255, 0.34) 50%,
-    rgba(255, 255, 255, 0.02) 68%,
+    color-mix(in srgb, var(--app-border-strong, #fff) 2%, transparent) 32%,
+    color-mix(in srgb, var(--app-border-strong, #fff) 34%, transparent) 50%,
+    color-mix(in srgb, var(--app-border-strong, #fff) 2%, transparent) 68%,
     transparent 100%
   );
   transform: translateX(-130%);
@@ -17735,22 +17793,24 @@ defineExpose({
 }
 
 .live-card:hover {
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 12px 24px var(--app-shadow, rgba(15, 23, 42, 0.12));
 }
 
 .live-card:active {
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 8px 18px
+    color-mix(in srgb, var(--app-shadow, rgba(15, 23, 42, 0.1)) 82%, transparent);
 }
 
 .live-card:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--n-primary-color) 72%, white);
+  outline: 2px solid
+    color-mix(in srgb, var(--app-focus-ring, var(--n-primary-color)) 72%, transparent);
   outline-offset: 2px;
 }
 
 .live-card.phase-starting,
 .live-card.phase-thinking,
 .live-card.phase-tool {
-  border-color: rgba(139, 92, 246, 0.24);
+  border-color: color-mix(in srgb, var(--app-accent, #8b5cf6) 34%, transparent);
   background:
     linear-gradient(
       135deg,
@@ -17758,8 +17818,9 @@ defineExpose({
       rgba(139, 92, 246, 0.03) 52%,
       transparent 100%
     ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px rgba(139, 92, 246, 0.08);
+    var(--app-surface-raised, var(--app-surface-color, #fff));
+  box-shadow: 0 8px 20px
+    color-mix(in srgb, var(--app-shadow, rgba(139, 92, 246, 0.08)) 54%, transparent);
 }
 
 .live-card.phase-starting::before,
@@ -17777,7 +17838,7 @@ defineExpose({
 }
 
 .live-card.phase-retrying {
-  border-color: rgba(245, 158, 11, 0.3);
+  border-color: color-mix(in srgb, var(--app-warning, #f59e0b) 38%, transparent);
   background:
     linear-gradient(
       135deg,
@@ -17785,8 +17846,9 @@ defineExpose({
       rgba(245, 158, 11, 0.04) 52%,
       transparent 100%
     ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px rgba(245, 158, 11, 0.08);
+    var(--app-surface-raised, var(--app-surface-color, #fff));
+  box-shadow: 0 8px 20px
+    color-mix(in srgb, var(--app-shadow, rgba(245, 158, 11, 0.08)) 54%, transparent);
 }
 
 .live-card.phase-retrying::before {
@@ -17810,11 +17872,11 @@ defineExpose({
     ),
     linear-gradient(
       135deg,
-      color-mix(in srgb, var(--web-session-approval-bg) 24%, var(--app-surface-color, #fff)) 0%,
-      color-mix(in srgb, var(--web-session-approval-bg) 11%, var(--app-surface-color, #fff)) 54%,
-      var(--app-surface-color, #fff) 100%
+      color-mix(in srgb, var(--web-session-approval-bg) 24%, var(--app-surface-raised, #fff)) 0%,
+      color-mix(in srgb, var(--web-session-approval-bg) 11%, var(--app-surface-raised, #fff)) 54%,
+      var(--app-surface-raised, #fff) 100%
     ),
-    var(--app-surface-color, #fff);
+    var(--app-surface-raised, var(--app-surface-color, #fff));
   box-shadow: 0 6px 18px color-mix(in srgb, var(--web-session-approval-glow) 70%, transparent);
 }
 
@@ -17838,12 +17900,13 @@ defineExpose({
     ),
     linear-gradient(
       135deg,
-      color-mix(in srgb, var(--web-session-plan-approval-bg) 24%, var(--app-surface-color, #fff)) 0%,
-      color-mix(in srgb, var(--web-session-plan-approval-bg) 11%, var(--app-surface-color, #fff))
+      color-mix(in srgb, var(--web-session-plan-approval-bg) 24%, var(--app-surface-raised, #fff))
+        0%,
+      color-mix(in srgb, var(--web-session-plan-approval-bg) 11%, var(--app-surface-raised, #fff))
         54%,
-      var(--app-surface-color, #fff) 100%
+      var(--app-surface-raised, #fff) 100%
     ),
-    var(--app-surface-color, #fff);
+    var(--app-surface-raised, var(--app-surface-color, #fff));
   box-shadow: 0 6px 18px color-mix(in srgb, var(--web-session-plan-approval-glow) 70%, transparent);
 }
 
@@ -17853,7 +17916,7 @@ defineExpose({
 }
 
 .live-card.phase-done {
-  border-color: rgba(16, 185, 129, 0.24);
+  border-color: color-mix(in srgb, var(--app-success, #10b981) 34%, transparent);
   background:
     linear-gradient(
       135deg,
@@ -17861,8 +17924,9 @@ defineExpose({
       rgba(16, 185, 129, 0.035) 48%,
       transparent 100%
     ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.08);
+    var(--app-surface-raised, var(--app-surface-color, #fff));
+  box-shadow: 0 8px 20px
+    color-mix(in srgb, var(--app-shadow, rgba(16, 185, 129, 0.08)) 54%, transparent);
 }
 
 .live-card.phase-done::before {
@@ -17871,7 +17935,7 @@ defineExpose({
 }
 
 .live-card.phase-error {
-  border-color: rgba(239, 68, 68, 0.24);
+  border-color: color-mix(in srgb, var(--app-error, #ef4444) 34%, transparent);
   background:
     linear-gradient(
       135deg,
@@ -17879,8 +17943,9 @@ defineExpose({
       rgba(239, 68, 68, 0.03) 48%,
       transparent 100%
     ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px rgba(239, 68, 68, 0.08);
+    var(--app-surface-raised, var(--app-surface-color, #fff));
+  box-shadow: 0 8px 20px
+    color-mix(in srgb, var(--app-shadow, rgba(239, 68, 68, 0.08)) 54%, transparent);
 }
 
 .live-card-main {
@@ -17932,8 +17997,8 @@ defineExpose({
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #8b5cf6;
-  box-shadow: 0 0 0 5px rgba(139, 92, 246, 0.16);
+  background: var(--app-accent, #8b5cf6);
+  box-shadow: 0 0 0 5px var(--app-accent-soft, rgba(139, 92, 246, 0.16));
   animation: livePulse 1.05s ease-in-out infinite;
   flex-shrink: 0;
 }
@@ -17943,7 +18008,7 @@ defineExpose({
   position: absolute;
   inset: -9px;
   border-radius: 50%;
-  background: rgba(139, 92, 246, 0.22);
+  background: color-mix(in srgb, var(--app-accent, #8b5cf6) 22%, transparent);
   opacity: 0;
   animation: liveRipple 1.35s ease-out infinite;
 }
@@ -17985,33 +18050,33 @@ defineExpose({
 }
 
 .live-card.phase-retrying .live-orb {
-  background: #f59e0b;
-  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.14);
+  background: var(--app-warning, #f59e0b);
+  box-shadow: 0 0 0 5px var(--app-warning-soft, rgba(245, 158, 11, 0.14));
 }
 
 .live-card.phase-retrying .live-orb::after {
-  background: rgba(245, 158, 11, 0.2);
+  background: color-mix(in srgb, var(--app-warning, #f59e0b) 20%, transparent);
 }
 
 .live-card.phase-done .live-orb {
-  background: #10b981;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
+  background: var(--app-success, #10b981);
+  box-shadow: 0 0 0 4px var(--app-success-soft, rgba(16, 185, 129, 0.12));
   animation: livePulse 2.8s ease-in-out infinite;
 }
 
 .live-card.phase-done .live-orb::after {
-  background: rgba(16, 185, 129, 0.18);
+  background: color-mix(in srgb, var(--app-success, #10b981) 18%, transparent);
   animation-duration: 2.6s;
 }
 
 .live-card.phase-error .live-orb {
-  background: #ef4444;
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+  background: var(--app-error, #ef4444);
+  box-shadow: 0 0 0 4px var(--app-error-soft, rgba(239, 68, 68, 0.12));
   animation: none;
 }
 
 .live-card.phase-error .live-orb::after {
-  background: rgba(239, 68, 68, 0.18);
+  background: color-mix(in srgb, var(--app-error, #ef4444) 18%, transparent);
   opacity: 0.35;
   animation: none;
 }
@@ -18023,7 +18088,7 @@ defineExpose({
 .live-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  color: var(--app-text-primary, var(--app-text-color, #111827));
 }
 
 .live-detail {
@@ -18095,9 +18160,9 @@ defineExpose({
     ),
     linear-gradient(
       135deg,
-      color-mix(in srgb, var(--web-session-approval-border) 14%, var(--app-surface-color, #fff)) 0%,
-      color-mix(in srgb, var(--web-session-approval-border) 4%, var(--app-surface-color, #fff)) 58%,
-      var(--app-surface-color, #fff) 100%
+      color-mix(in srgb, var(--web-session-approval-border) 14%, var(--app-surface-raised, #fff)) 0%,
+      color-mix(in srgb, var(--web-session-approval-border) 4%, var(--app-surface-raised, #fff)) 58%,
+      var(--app-surface-raised, #fff) 100%
     );
   padding: 11px 12px;
   box-shadow: 0 10px 24px color-mix(in srgb, var(--web-session-approval-glow) 42%, transparent);
@@ -18112,16 +18177,20 @@ defineExpose({
   border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
   border-radius: 14px;
   background:
-    radial-gradient(circle at top right, rgba(14, 165, 233, 0.08) 0%, transparent 42%),
+    radial-gradient(
+      circle at top right,
+      var(--app-info-soft, rgba(14, 165, 233, 0.08)) 0%,
+      transparent 42%
+    ),
     linear-gradient(
       145deg,
-      color-mix(in srgb, var(--app-surface-color, #fff) 92%, #e0f2fe) 0%,
-      var(--app-surface-color, #fff) 100%
+      color-mix(in srgb, var(--app-surface-raised, #fff) 90%, var(--app-info, #0ea5e9) 10%) 0%,
+      var(--app-surface-raised, #fff) 100%
     );
 }
 
 .goal-card.status-empty {
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, #f8fafc);
+  background: var(--app-surface-raised, var(--app-surface-color, #fff));
 }
 
 .goal-card-header,
@@ -18153,13 +18222,13 @@ defineExpose({
 }
 
 .goal-badge {
-  background: #0f172a;
-  color: #fff;
+  background: var(--app-accent, #0f172a);
+  color: var(--app-accent-contrast, #fff);
 }
 
 .goal-status-badge {
-  background: rgba(14, 165, 233, 0.14);
-  color: #0369a1;
+  background: var(--app-info-soft, rgba(14, 165, 233, 0.14));
+  color: var(--app-info, #0369a1);
 }
 
 .goal-card-body {
@@ -18210,13 +18279,13 @@ defineExpose({
 }
 
 .history-interaction-card.type-approval-approve {
-  border-color: rgba(16, 185, 129, 0.28);
-  background: color-mix(in srgb, rgba(16, 185, 129, 0.08) 70%, var(--app-surface-color, #fff));
+  border-color: color-mix(in srgb, var(--app-success, #10b981) 34%, transparent);
+  background: color-mix(in srgb, var(--app-success, #10b981) 8%, var(--app-surface-raised, #fff));
 }
 
 .history-interaction-card.type-approval-reject {
-  border-color: rgba(239, 68, 68, 0.28);
-  background: color-mix(in srgb, rgba(239, 68, 68, 0.08) 70%, var(--app-surface-color, #fff));
+  border-color: color-mix(in srgb, var(--app-error, #ef4444) 34%, transparent);
+  background: color-mix(in srgb, var(--app-error, #ef4444) 8%, var(--app-surface-raised, #fff));
 }
 
 .approval-card.is-stale {
@@ -18238,17 +18307,17 @@ defineExpose({
   align-items: center;
   padding: 4px 10px;
   border-radius: 999px;
-  color: #fff;
+  color: var(--app-text-inverse, #fff);
   font-size: 11px;
   font-weight: 600;
 }
 
 .approval-badge.state-approval-approve {
-  background: #10b981;
+  background: var(--app-success, #10b981);
 }
 
 .approval-badge.state-approval-reject {
-  background: #ef4444;
+  background: var(--app-error, #ef4444);
 }
 
 .approval-badge.state-user-input-request,
@@ -18276,7 +18345,11 @@ defineExpose({
   margin-top: 8px;
   font-size: 12px;
   line-height: 1.55;
-  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 82%, #111827);
+  color: color-mix(
+    in srgb,
+    var(--web-session-approval-accent-strong) 72%,
+    var(--app-text-primary, #111827)
+  );
   white-space: pre-wrap;
 }
 
@@ -18287,7 +18360,10 @@ defineExpose({
   overflow: auto;
   border: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 78%, #111827 6%);
+  background: var(
+    --app-surface-sunken,
+    color-mix(in srgb, var(--app-surface-color, #fff) 78%, #111827 6%)
+  );
   color: var(--app-text-color, var(--n-text-color-1, #111827));
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 12px;
@@ -18848,7 +18924,8 @@ defineExpose({
 }
 
 .composer-sub-agent-trigger:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--n-primary-color) 65%, white);
+  outline: 2px solid
+    color-mix(in srgb, var(--app-focus-ring, var(--n-primary-color)) 65%, transparent);
   outline-offset: 2px;
 }
 
@@ -18929,7 +19006,7 @@ defineExpose({
 }
 
 .live-sub-agent-item.is-active .live-sub-agent-dot {
-  background: color-mix(in srgb, var(--n-primary-color) 85%, white);
+  background: var(--app-focus-ring, var(--n-primary-color));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
 }
 
@@ -19003,17 +19080,25 @@ defineExpose({
 }
 
 .composer-settings-trigger.has-goal {
-  border-color: color-mix(in srgb, #f59e0b 34%, var(--n-border-color));
-  background: color-mix(in srgb, #f59e0b 7%, var(--app-surface-color, #fff));
-  color: color-mix(in srgb, #b45309 72%, #334155);
+  border-color: color-mix(
+    in srgb,
+    var(--app-warning, #f59e0b) 34%,
+    var(--app-border, var(--n-border-color))
+  );
+  background: color-mix(in srgb, var(--app-warning, #f59e0b) 7%, var(--app-surface-raised, #fff));
+  color: var(--app-warning, #b45309);
   box-shadow: 0 0 0 1px color-mix(in srgb, #f59e0b 10%, transparent);
 }
 
 .composer-settings-trigger.has-goal:hover,
 .composer-settings-trigger.has-goal:focus-visible {
-  border-color: color-mix(in srgb, #f59e0b 48%, var(--n-border-color));
-  background: color-mix(in srgb, #f59e0b 10%, var(--app-surface-color, #fff));
-  color: color-mix(in srgb, #92400e 80%, #111827);
+  border-color: color-mix(
+    in srgb,
+    var(--app-warning, #f59e0b) 48%,
+    var(--app-border, var(--n-border-color))
+  );
+  background: color-mix(in srgb, var(--app-warning, #f59e0b) 10%, var(--app-surface-raised, #fff));
+  color: var(--app-warning, #92400e);
   box-shadow:
     0 0 0 2px color-mix(in srgb, #f59e0b 12%, transparent),
     0 4px 10px color-mix(in srgb, #f59e0b 8%, transparent);
@@ -19032,7 +19117,7 @@ defineExpose({
 }
 
 .composer-settings-trigger.has-goal::after {
-  background: #f59e0b;
+  background: var(--app-warning, #f59e0b);
 }
 
 .composer-settings-trigger:active {
@@ -19114,13 +19199,13 @@ defineExpose({
 }
 
 .composer-context-pill.state-active {
-  background: rgba(245, 158, 11, 0.08);
-  color: #b45309;
+  background: var(--app-warning-soft, rgba(245, 158, 11, 0.08));
+  color: var(--app-warning, #b45309);
 }
 
 .composer-context-pill.state-warning {
-  background: rgba(239, 68, 68, 0.08);
-  color: #b91c1c;
+  background: var(--app-error-soft, rgba(239, 68, 68, 0.08));
+  color: var(--app-error, #b91c1c);
 }
 
 .composer-context-pill.state-unavailable {
@@ -19223,13 +19308,21 @@ defineExpose({
 .composer-send-confirm-title {
   font-size: 12px;
   font-weight: 700;
-  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 88%, #111827);
+  color: color-mix(
+    in srgb,
+    var(--web-session-approval-accent-strong) 72%,
+    var(--app-text-primary, #111827)
+  );
 }
 
 .composer-send-confirm-body {
   font-size: 12px;
   line-height: 1.45;
-  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 72%, #1f2937);
+  color: color-mix(
+    in srgb,
+    var(--web-session-approval-accent-strong) 58%,
+    var(--app-text-secondary, #1f2937)
+  );
 }
 
 .composer-stop-btn,
@@ -19265,10 +19358,10 @@ defineExpose({
 .composer-send-menu-btn {
   width: 30px;
   border: none;
-  border-left: 1px solid color-mix(in srgb, rgba(255, 255, 255, 0.3) 70%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--app-accent-contrast, #fff) 30%, transparent);
   border-radius: 0 6px 6px 0;
-  background: var(--n-primary-color);
-  color: var(--n-button-text-color, #fff);
+  background: var(--app-accent, var(--n-primary-color));
+  color: var(--app-accent-contrast, var(--n-button-text-color, #fff));
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -19531,13 +19624,13 @@ defineExpose({
 }
 
 .pending-input-badge.mode-redirect {
-  background: rgba(59, 130, 246, 0.12);
-  color: #2563eb;
+  background: var(--app-info-soft, rgba(59, 130, 246, 0.12));
+  color: var(--app-info, #2563eb);
 }
 
 .pending-input-badge.mode-queue {
-  background: rgba(99, 102, 241, 0.12);
-  color: #4f46e5;
+  background: var(--app-accent-soft, rgba(99, 102, 241, 0.12));
+  color: var(--app-link, #4f46e5);
 }
 
 .pending-input-preview {
@@ -19571,15 +19664,23 @@ defineExpose({
   padding: 4px 5px 4px 7px;
   border: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 95%, rgba(245, 158, 11, 0.05));
+  background: color-mix(
+    in srgb,
+    var(--app-surface-raised, #fff) 92%,
+    var(--app-warning, #f59e0b) 8%
+  );
 }
 
 .scheduled-input-item.state-failed {
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, rgba(239, 68, 68, 0.06));
+  background: color-mix(in srgb, var(--app-surface-raised, #fff) 92%, var(--app-error, #ef4444) 8%);
 }
 
 .scheduled-input-item.state-expired {
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, rgba(100, 116, 139, 0.07));
+  background: color-mix(
+    in srgb,
+    var(--app-surface-raised, #fff) 94%,
+    var(--app-text-muted, #64748b) 6%
+  );
 }
 
 .scheduled-input-trigger {
@@ -19621,13 +19722,13 @@ defineExpose({
 }
 
 .scheduled-input-badge.state-scheduled {
-  background: rgba(245, 158, 11, 0.12);
-  color: #b45309;
+  background: var(--app-warning-soft, rgba(245, 158, 11, 0.12));
+  color: var(--app-warning, #b45309);
 }
 
 .scheduled-input-badge.state-failed {
-  background: rgba(239, 68, 68, 0.12);
-  color: #b91c1c;
+  background: var(--app-error-soft, rgba(239, 68, 68, 0.12));
+  color: var(--app-error, #b91c1c);
 }
 
 .scheduled-input-badge.state-expired {
@@ -19637,12 +19738,15 @@ defineExpose({
 
 .scheduled-input-mode {
   background: color-mix(in srgb, var(--n-border-color) 72%, transparent);
-  color: color-mix(in srgb, var(--app-text-color, #333) 78%, transparent);
+  color: var(
+    --app-text-secondary,
+    color-mix(in srgb, var(--app-text-color, #333) 78%, transparent)
+  );
 }
 
 .scheduled-input-time {
   font-size: 11px;
-  color: color-mix(in srgb, var(--app-text-color, #333) 70%, transparent);
+  color: var(--app-text-muted, color-mix(in srgb, var(--app-text-color, #333) 70%, transparent));
   white-space: nowrap;
 }
 
@@ -19650,7 +19754,10 @@ defineExpose({
   min-width: 0;
   flex: 1 1 auto;
   font-size: 12px;
-  color: color-mix(in srgb, var(--app-text-color, #333) 78%, transparent);
+  color: var(
+    --app-text-secondary,
+    color-mix(in srgb, var(--app-text-color, #333) 78%, transparent)
+  );
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -19665,7 +19772,7 @@ defineExpose({
   border: none;
   border-radius: 5px;
   background: transparent;
-  color: color-mix(in srgb, var(--app-text-color, #333) 58%, transparent);
+  color: var(--app-text-muted, color-mix(in srgb, var(--app-text-color, #333) 58%, transparent));
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
@@ -19676,8 +19783,8 @@ defineExpose({
 }
 
 .scheduled-input-remove:hover {
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
+  background: var(--app-error-soft, rgba(239, 68, 68, 0.1));
+  color: var(--app-error, #dc2626);
 }
 
 .scheduled-input-remove:disabled,
@@ -19709,12 +19816,15 @@ defineExpose({
   align-items: baseline;
   gap: 10px;
   font-size: 11px;
-  color: color-mix(in srgb, var(--app-text-color, #333) 62%, transparent);
+  color: var(--app-text-muted, color-mix(in srgb, var(--app-text-color, #333) 62%, transparent));
 }
 
 .scheduled-input-detail-row strong {
   min-width: 0;
-  color: color-mix(in srgb, var(--app-text-color, #333) 82%, transparent);
+  color: var(
+    --app-text-secondary,
+    color-mix(in srgb, var(--app-text-color, #333) 82%, transparent)
+  );
   font-weight: 600;
   text-align: right;
   overflow-wrap: anywhere;
@@ -19730,17 +19840,17 @@ defineExpose({
 
 .scheduled-input-attachments {
   font-size: 11px;
-  color: color-mix(in srgb, var(--app-text-color, #333) 62%, transparent);
+  color: var(--app-text-muted, color-mix(in srgb, var(--app-text-color, #333) 62%, transparent));
 }
 
 .scheduled-input-error {
   display: grid;
   gap: 3px;
   padding: 8px 9px;
-  border-left: 3px solid rgba(220, 38, 38, 0.72);
+  border-left: 3px solid color-mix(in srgb, var(--app-error, #dc2626) 72%, transparent);
   border-radius: 4px;
-  background: rgba(239, 68, 68, 0.08);
-  color: #b91c1c;
+  background: var(--app-error-soft, rgba(239, 68, 68, 0.08));
+  color: var(--app-error, #b91c1c);
   font-size: 11px;
   line-height: 1.45;
 }
@@ -19759,7 +19869,10 @@ defineExpose({
   padding: 0;
   border: none;
   background: transparent;
-  color: color-mix(in srgb, var(--app-text-color, #333) 76%, transparent);
+  color: var(
+    --app-text-secondary,
+    color-mix(in srgb, var(--app-text-color, #333) 76%, transparent)
+  );
   font-size: 12px;
   line-height: 1.4;
   cursor: pointer;
@@ -19776,7 +19889,7 @@ defineExpose({
 }
 
 .scheduled-input-action.is-danger {
-  color: #dc2626;
+  color: var(--app-error, #dc2626);
 }
 
 .scheduled-send-modal-body {

@@ -708,12 +708,13 @@ function handleTaskViewEvent(event: { taskId?: string; projectId?: string }) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: var(--app-surface-color, #ffffff);
+  background-color: var(--app-surface, var(--app-surface-color, #ffffff));
+  color: var(--app-text-primary, var(--app-text-color, #333333));
 }
 
 .board-header {
   padding: 16px 24px;
-  border-bottom: var(--kanban-border, 1px solid var(--n-border-color));
+  border-bottom: var(--kanban-border, 1px solid var(--app-border, #e0e0e0));
 }
 
 .board-header h2 {
@@ -760,7 +761,7 @@ function handleTaskViewEvent(event: { taskId?: string; projectId?: string }) {
   position: sticky;
   top: 0;
   z-index: 10;
-  background-color: var(--app-surface-color, #ffffff);
+  background-color: var(--app-surface, var(--app-surface-color, #ffffff));
 }
 
 .board-tabs-view :deep(.n-tabs-pane-wrapper) {

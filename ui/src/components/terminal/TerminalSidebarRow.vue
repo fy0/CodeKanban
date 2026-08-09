@@ -22,7 +22,10 @@
     <span
       v-if="row.projectBadge"
       class="terminal-sidebar-project-badge"
-      :style="{ background: row.projectBadge.color }"
+      :style="{
+        background: row.projectBadge.color,
+        color: getReadableTextColor(row.projectBadge.color),
+      }"
       :title="row.projectName"
       >{{ row.projectBadge.label }}</span
     >
@@ -61,6 +64,7 @@ import { nextTick, onBeforeUnmount, ref } from 'vue';
 import { NDropdown, NIcon, type DropdownOption } from 'naive-ui';
 import { EllipsisHorizontal } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
+import { getReadableTextColor } from '@/utils/color';
 
 export interface TerminalSidebarRowView {
   id: string;
@@ -139,7 +143,7 @@ onBeforeUnmount(closeMenu);
 
 <style scoped>
 .terminal-sidebar-item {
-  --terminal-sidebar-outline: #4f8ff7;
+  --terminal-sidebar-outline: var(--app-info, #4f8ff7);
   box-sizing: border-box;
   width: 100%;
   min-height: 34px;
@@ -147,10 +151,11 @@ onBeforeUnmount(closeMenu);
   align-items: center;
   gap: 3px;
   padding: 0 4px 0 0;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 48%, transparent);
+  border: 1px solid color-mix(in srgb, var(--app-border, #e0e0e0) 48%, transparent);
   border-radius: 6px;
-  background: var(--app-surface-color, #fff);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  background: var(--app-surface, var(--app-surface-color, #fff));
+  box-shadow: 0 1px 3px
+    color-mix(in srgb, var(--app-shadow, rgba(15, 23, 42, 0.12)) 50%, transparent);
   text-align: left;
   position: relative;
   cursor: pointer;
@@ -164,27 +169,32 @@ onBeforeUnmount(closeMenu);
   background: color-mix(
     in srgb,
     var(--terminal-sidebar-outline) 7%,
-    var(--app-surface-color, #fff)
+    var(--app-surface, var(--app-surface-color, #fff))
   );
 }
 
 .terminal-sidebar-item.is-active {
-  border-color: color-mix(in srgb, var(--terminal-sidebar-outline) 72%, #ffffff);
+  border-color: color-mix(
+    in srgb,
+    var(--terminal-sidebar-outline) 72%,
+    var(--app-border-strong, #ffffff)
+  );
   background: color-mix(
     in srgb,
     var(--terminal-sidebar-outline) 8%,
-    var(--app-surface-color, #fff)
+    var(--app-surface, var(--app-surface-color, #fff))
   );
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--terminal-sidebar-outline) 22%, transparent),
-    0 1px 3px rgba(15, 23, 42, 0.06);
+    0 1px 3px color-mix(in srgb, var(--app-shadow, rgba(15, 23, 42, 0.12)) 50%, transparent);
 }
 
 .terminal-sidebar-item:focus-within {
-  border-color: color-mix(in srgb, var(--terminal-sidebar-outline) 72%, #ffffff);
+  border-color: var(--app-focus-ring, var(--terminal-sidebar-outline));
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--terminal-sidebar-outline) 22%, transparent),
-    0 1px 3px rgba(15, 23, 42, 0.06);
+    0 0 0 1px
+      color-mix(in srgb, var(--app-focus-ring, var(--terminal-sidebar-outline)) 28%, transparent),
+    0 1px 3px color-mix(in srgb, var(--app-shadow, rgba(15, 23, 42, 0.12)) 50%, transparent);
 }
 
 .terminal-sidebar-main {
@@ -214,7 +224,7 @@ onBeforeUnmount(closeMenu);
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
 }
 
 .terminal-sidebar-agent-icon :deep(svg) {
@@ -233,7 +243,7 @@ onBeforeUnmount(closeMenu);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--app-accent-contrast, #fff);
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
@@ -257,14 +267,14 @@ onBeforeUnmount(closeMenu);
 }
 
 .terminal-sidebar-title {
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  color: var(--app-text-primary, var(--app-text-color, #111827));
   font-size: 12px;
   font-weight: 600;
 }
 
 .terminal-sidebar-agent-name {
   flex-shrink: 1;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
   font-size: 10px;
   font-weight: 500;
 }
@@ -285,7 +295,7 @@ onBeforeUnmount(closeMenu);
 
 .terminal-sidebar-activity-time {
   padding-right: 2px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
@@ -302,7 +312,7 @@ onBeforeUnmount(closeMenu);
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: color-mix(in srgb, var(--n-text-color-2) 84%, #475569);
+  color: var(--app-text-secondary, var(--n-text-color-2));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -327,8 +337,8 @@ onBeforeUnmount(closeMenu);
 }
 
 .terminal-sidebar-menu-button:hover {
-  background: color-mix(in srgb, var(--n-border-color) 40%, transparent);
-  color: var(--n-text-color-1);
+  background: var(--app-surface-hover, color-mix(in srgb, var(--n-border-color) 40%, transparent));
+  color: var(--app-text-primary, var(--n-text-color-1));
 }
 
 .terminal-sidebar-menu-button :deep(svg) {

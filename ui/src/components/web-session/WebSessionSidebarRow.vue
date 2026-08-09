@@ -203,10 +203,10 @@ onBeforeUnmount(clearLongPressTimer);
   align-items: center;
   gap: 3px;
   padding: 0 4px 0 0;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 48%, transparent);
+  border: 1px solid color-mix(in srgb, var(--app-border, var(--n-border-color)) 48%, transparent);
   border-radius: 6px;
-  background: var(--app-surface-color, #fff);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  background: var(--app-surface, var(--app-surface-color, #fff));
+  box-shadow: 0 1px 3px var(--app-shadow, rgba(15, 23, 42, 0.06));
   text-align: left;
   position: relative;
   cursor: pointer;
@@ -218,22 +218,30 @@ onBeforeUnmount(clearLongPressTimer);
 }
 
 .session-sidebar-item:hover {
-  background: color-mix(in srgb, var(--session-sidebar-outline) 7%, var(--app-surface-color, #fff));
+  background: color-mix(in srgb, var(--session-sidebar-outline) 7%, var(--app-surface, #fff));
 }
 
 .session-sidebar-item.is-active {
-  border-color: color-mix(in srgb, var(--session-sidebar-outline) 72%, #ffffff);
-  background: color-mix(in srgb, var(--session-sidebar-outline) 8%, var(--app-surface-color, #fff));
+  border-color: color-mix(
+    in srgb,
+    var(--session-sidebar-outline) 72%,
+    var(--app-focus-ring, #ffffff)
+  );
+  background: color-mix(in srgb, var(--session-sidebar-outline) 8%, var(--app-surface, #fff));
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--session-sidebar-outline) 22%, transparent),
-    0 1px 3px rgba(15, 23, 42, 0.06);
+    0 1px 3px var(--app-shadow, rgba(15, 23, 42, 0.06));
 }
 
 .session-sidebar-item:focus-within {
-  border-color: color-mix(in srgb, var(--session-sidebar-outline) 72%, #ffffff);
+  border-color: color-mix(
+    in srgb,
+    var(--session-sidebar-outline) 72%,
+    var(--app-focus-ring, #ffffff)
+  );
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--session-sidebar-outline) 22%, transparent),
-    0 1px 3px rgba(15, 23, 42, 0.06);
+    0 1px 3px var(--app-shadow, rgba(15, 23, 42, 0.06));
 }
 
 .session-sidebar-item.is-archived {
@@ -249,7 +257,7 @@ onBeforeUnmount(clearLongPressTimer);
   z-index: 2;
   top: -7px;
   left: -6px;
-  color: #6366f1;
+  color: var(--app-link, #6366f1);
   pointer-events: none;
 }
 
@@ -314,7 +322,7 @@ onBeforeUnmount(clearLongPressTimer);
   min-width: 0;
   font-size: var(--session-sidebar-title-font-size, 12px);
   font-weight: 600;
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  color: var(--app-text-primary, var(--app-text-color, #111827));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -414,7 +422,7 @@ onBeforeUnmount(clearLongPressTimer);
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: color-mix(in srgb, var(--n-text-color-2) 84%, #475569);
+  color: var(--app-text-secondary, var(--n-text-color-2));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -448,18 +456,18 @@ onBeforeUnmount(clearLongPressTimer);
 }
 
 .session-sidebar-working {
-  --session-sidebar-outline: #8b5cf6;
-  background: color-mix(in srgb, #8b5cf6 9%, var(--app-surface-color, #fff));
+  --session-sidebar-outline: var(--app-accent, #8b5cf6);
+  background: var(--app-accent-soft, color-mix(in srgb, #8b5cf6 9%, var(--app-surface, #fff)));
 }
 
 .session-sidebar-approval {
-  --session-sidebar-outline: #f79009;
-  background: rgba(247, 144, 9, 0.12);
+  --session-sidebar-outline: var(--app-warning, #f79009);
+  background: var(--app-warning-soft, rgba(247, 144, 9, 0.12));
 }
 
 .session-sidebar-item.session-sidebar-approval.is-active,
 .session-sidebar-item.session-sidebar-approval.is-active:hover {
-  background: rgba(247, 144, 9, 0.18);
+  background: color-mix(in srgb, var(--app-warning, #f79009) 18%, transparent);
 }
 
 .session-sidebar-plan-approval {
@@ -467,7 +475,7 @@ onBeforeUnmount(clearLongPressTimer);
   background: color-mix(
     in srgb,
     var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 82%,
-    var(--app-surface-color, #fff)
+    var(--app-surface, #fff)
   );
 }
 
@@ -476,31 +484,31 @@ onBeforeUnmount(clearLongPressTimer);
   background: color-mix(
     in srgb,
     var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 100%,
-    var(--app-surface-color, #fff)
+    var(--app-surface, #fff)
   );
 }
 
 .session-sidebar-completion {
-  --session-sidebar-outline: #10b981;
-  background: color-mix(in srgb, #10b981 10%, var(--app-surface-color, #fff));
+  --session-sidebar-outline: var(--app-success, #10b981);
+  background: var(--app-success-soft, color-mix(in srgb, #10b981 10%, var(--app-surface, #fff)));
 }
 
 .session-sidebar-idle {
-  background: var(--app-surface-color, #fff);
+  background: var(--app-surface, var(--app-surface-color, #fff));
 }
 
 .session-sidebar-error {
-  --session-sidebar-outline: #e5484d;
-  background: color-mix(in srgb, #e5484d 9%, var(--app-surface-color, #fff));
+  --session-sidebar-outline: var(--app-error, #e5484d);
+  background: var(--app-error-soft, color-mix(in srgb, #e5484d 9%, var(--app-surface, #fff)));
 }
 
 .session-sidebar-item.session-sidebar-error:hover {
-  background: color-mix(in srgb, #e5484d 11%, var(--app-surface-color, #fff));
+  background: color-mix(in srgb, var(--app-error, #e5484d) 11%, var(--app-surface, #fff));
 }
 
 .session-sidebar-item.session-sidebar-error.is-active,
 .session-sidebar-item.session-sidebar-error.is-active:hover {
-  background: color-mix(in srgb, #e5484d 14%, var(--app-surface-color, #fff));
+  background: color-mix(in srgb, var(--app-error, #e5484d) 14%, var(--app-surface, #fff));
 }
 
 @media (prefers-reduced-motion: reduce) {

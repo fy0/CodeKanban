@@ -7,6 +7,76 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico?v=1">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Code Kanban</title>
+  <script>
+    (() => {
+      const LIGHT_BODY = '#f7f8fa';
+      const DARK_BODY = '#1e1e1e';
+      let bodyColor = LIGHT_BODY;
+      let textColor = '#333333';
+      let surfaceColor = '#ffffff';
+      let dark = false;
+      let followsSystem = false;
+      let activeTheme = null;
+
+      try {
+        const settings = JSON.parse(localStorage.getItem('general_settings') || 'null');
+        followsSystem = settings?.followSystemTheme === 1;
+        activeTheme = settings?.customTheme || settings?.theme;
+        if (!settings?.customTheme && settings?.currentPresetId === 'dark') {
+          activeTheme = {
+            bodyColor: DARK_BODY,
+            surfaceColor: '#252526',
+            textColor: '#d4d4d4',
+          };
+        } else if (!settings?.customTheme && settings?.currentPresetId === 'light') {
+          activeTheme = {
+            bodyColor: LIGHT_BODY,
+            surfaceColor: '#ffffff',
+            textColor: '#333333',
+          };
+        }
+        bodyColor = followsSystem
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches
+            ? DARK_BODY
+            : LIGHT_BODY
+          : activeTheme?.bodyColor || LIGHT_BODY;
+        const hex = bodyColor.replace('#', '');
+        if (/^[0-9a-f]{6}$/i.test(hex)) {
+          const red = parseInt(hex.slice(0, 2), 16);
+          const green = parseInt(hex.slice(2, 4), 16);
+          const blue = parseInt(hex.slice(4, 6), 16);
+          dark = (0.299 * red + 0.587 * green + 0.114 * blue) / 255 < 0.5;
+        }
+        textColor = followsSystem
+          ? dark
+            ? '#d4d4d4'
+            : '#333333'
+          : activeTheme?.textColor || (dark ? '#d4d4d4' : '#333333');
+        surfaceColor = followsSystem
+          ? dark
+            ? '#252526'
+            : '#ffffff'
+          : activeTheme?.surfaceColor || (dark ? '#252526' : '#ffffff');
+      } catch {
+        bodyColor = LIGHT_BODY;
+        textColor = '#333333';
+        surfaceColor = '#ffffff';
+        dark = false;
+      }
+
+      const scheme = dark ? 'dark' : 'light';
+      document.documentElement.dataset.colorScheme = scheme;
+      document.documentElement.style.colorScheme = scheme;
+      document.documentElement.style.backgroundColor = bodyColor;
+      document.documentElement.style.setProperty('--app-body-color', bodyColor);
+      document.documentElement.style.setProperty('--app-canvas', bodyColor);
+      document.documentElement.style.setProperty('--color-background', bodyColor);
+      document.documentElement.style.setProperty('--app-surface-color', surfaceColor);
+      document.documentElement.style.setProperty('--app-surface', surfaceColor);
+      document.documentElement.style.setProperty('--app-text-color', textColor);
+      document.documentElement.style.setProperty('--app-text-primary', textColor);
+    })();
+  </script>
 </head>
 
 <body>

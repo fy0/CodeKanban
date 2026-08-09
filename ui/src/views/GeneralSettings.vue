@@ -1950,6 +1950,7 @@ import {
 } from '@/stores/settings';
 import type { WebSessionActivityDisplayMode } from '@/constants/webSessionActivityDisplayMode';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
+import { isSupportedThemePreset } from '@/constants/themes';
 import {
   DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
   TERMINAL_SNAPSHOT_INTERVAL_OPTIONS,
@@ -2128,6 +2129,8 @@ const themeSelectionController = createThemeSelectionController({
   toggleFollowSystemTheme: enabled => settingsStore.toggleFollowSystemTheme(enabled),
   confirmPresetThemeChange: themeWarningController.confirmPresetThemeChange,
   confirmFollowSystemEnable: themeWarningController.confirmFollowSystemEnable,
+  shouldConfirmPresetThemeChange: presetId => !isSupportedThemePreset(presetId),
+  shouldConfirmFollowSystemEnable: () => false,
 });
 const settingsBackupExporting = ref(false);
 const settingsBackupImporting = ref(false);
@@ -4416,7 +4419,7 @@ function formatShortcutLabel(event: KeyboardEvent) {
   border: none;
   border-radius: 10px;
   background: transparent;
-  color: var(--n-text-color-2);
+  color: var(--app-text-secondary);
   font-size: 14px;
   font-weight: 500;
   text-align: left;
@@ -4428,14 +4431,14 @@ function formatShortcutLabel(event: KeyboardEvent) {
 }
 
 .settings-nav-item:hover {
-  background-color: var(--n-color-hover);
-  color: var(--n-text-color-1);
+  background-color: var(--app-surface-hover);
+  color: var(--app-text-primary);
   transform: translateX(2px);
 }
 
 .settings-nav-item.is-active {
-  background-color: var(--n-primary-color);
-  color: #ffffff;
+  background-color: var(--app-accent);
+  color: var(--app-accent-contrast);
   transform: translateX(0);
 }
 
@@ -4447,7 +4450,7 @@ function formatShortcutLabel(event: KeyboardEvent) {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background-color: #ffffff;
+  background-color: var(--app-accent-contrast);
   flex-shrink: 0;
 }
 
@@ -4472,20 +4475,20 @@ function formatShortcutLabel(event: KeyboardEvent) {
 }
 
 .settings-card-shell.is-highlighted :deep(.n-card) {
-  box-shadow: 0 0 0 2px var(--n-primary-color);
+  box-shadow: 0 0 0 2px var(--app-focus-ring);
 }
 
 /* 表单样式 */
 .form-tip {
   font-size: 13px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
   margin-top: 6px;
   line-height: 1.5;
 }
 
 .form-error {
   font-size: 13px;
-  color: var(--n-error-color, #d03050);
+  color: var(--app-error);
   margin-top: 6px;
   line-height: 1.5;
 }
@@ -4503,7 +4506,7 @@ function formatShortcutLabel(event: KeyboardEvent) {
   display: flex;
   align-items: flex-start;
   font-weight: 500;
-  color: var(--n-text-color-1);
+  color: var(--app-text-primary);
   font-size: 14px;
   padding-top: 6px;
 }
@@ -4526,15 +4529,15 @@ function formatShortcutLabel(event: KeyboardEvent) {
 
 /* 卡片样式 */
 :deep(.n-card) {
-  border: 1px solid var(--n-border-color);
+  border: 1px solid var(--app-border);
   border-radius: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  background-color: var(--app-surface-color, var(--n-card-color));
+  box-shadow: 0 1px 3px var(--app-shadow);
+  background-color: var(--app-surface);
 }
 
 :deep(.n-card-header) {
   padding: 18px 24px;
-  border-bottom: 1px solid var(--n-border-color);
+  border-bottom: 1px solid var(--app-border);
 }
 
 :deep(.n-card__content) {
@@ -4559,12 +4562,12 @@ function formatShortcutLabel(event: KeyboardEvent) {
 .preview-panel {
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid var(--n-border-color);
-  background-color: var(--preview-panel-bg, var(--app-surface-color));
+  border: 1px solid var(--app-border);
+  background-color: var(--preview-panel-bg, var(--app-surface));
 }
 
 .preview-banner {
-  background-color: var(--preview-banner-bg, var(--n-primary-color));
+  background-color: var(--preview-banner-bg, var(--app-accent));
   color: var(--preview-banner-text, var(--kanban-terminal-fg));
   padding: 12px;
   font-size: 14px;
@@ -4573,7 +4576,7 @@ function formatShortcutLabel(event: KeyboardEvent) {
 
 .preview-content {
   padding: 16px;
-  background-color: var(--preview-content-bg, var(--app-surface-color));
+  background-color: var(--preview-content-bg, var(--app-surface));
   color: var(--preview-content-text, var(--kanban-terminal-fg));
 }
 
@@ -4601,7 +4604,7 @@ function formatShortcutLabel(event: KeyboardEvent) {
 
 .settings-backup-file-name {
   font-size: 13px;
-  color: var(--n-text-color-2);
+  color: var(--app-text-secondary);
 }
 
 .settings-backup-group,
@@ -4619,25 +4622,25 @@ function formatShortcutLabel(event: KeyboardEvent) {
 .settings-backup-subgroup__title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--n-text-color-1);
+  color: var(--app-text-primary);
 }
 
 .settings-backup-meta-label {
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
   margin-bottom: 4px;
 }
 
 .settings-backup-meta-value {
   font-size: 14px;
-  color: var(--n-text-color-1);
+  color: var(--app-text-primary);
   font-weight: 500;
 }
 
 .settings-backup-section-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--n-text-color-1);
+  color: var(--app-text-primary);
   margin-bottom: 12px;
 }
 
@@ -4648,23 +4651,23 @@ function formatShortcutLabel(event: KeyboardEvent) {
 }
 
 .settings-backup-section-item {
-  border: 1px solid var(--n-border-color);
+  border: 1px solid var(--app-border);
   border-radius: 10px;
   padding: 12px 14px;
-  background: var(--app-surface-color, var(--n-card-color));
+  background: var(--app-surface);
 }
 
 .settings-backup-section-item__title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--n-text-color-1);
+  color: var(--app-text-primary);
 }
 
 .settings-backup-section-item__meta,
 .settings-backup-section-item__keys {
   margin-top: 4px;
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
   word-break: break-word;
 }
 
@@ -4675,12 +4678,12 @@ function formatShortcutLabel(event: KeyboardEvent) {
 
 .shortcut-hint {
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
 }
 
 .unit-label {
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
   margin-left: 4px;
 }
 
@@ -4734,10 +4737,10 @@ function formatShortcutLabel(event: KeyboardEvent) {
   width: 42px;
   height: 32px;
   padding: 0;
-  border: 1px solid var(--n-border-color);
+  border: 1px solid var(--app-border);
   border-radius: 8px;
-  background-color: var(--n-color, transparent);
-  color: var(--n-text-color-2);
+  background-color: var(--app-surface);
+  color: var(--app-text-secondary);
   cursor: pointer;
   transition:
     border-color 0.15s ease,
@@ -4746,14 +4749,15 @@ function formatShortcutLabel(event: KeyboardEvent) {
 }
 
 .terminal-quick-action-icon-button:hover {
-  border-color: var(--n-primary-color-hover, var(--n-primary-color));
-  color: var(--n-primary-color-hover, var(--n-primary-color));
+  border-color: var(--app-accent-hover);
+  background-color: var(--app-surface-hover);
+  color: var(--app-accent-hover);
 }
 
 .terminal-quick-action-icon-button.is-active {
-  border-color: var(--n-primary-color);
-  background-color: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
-  color: var(--n-primary-color);
+  border-color: var(--app-accent);
+  background-color: var(--app-accent-soft);
+  color: var(--app-accent);
 }
 
 .terminal-quick-action-icon-button :deep(.n-icon) {
@@ -5035,8 +5039,8 @@ function formatShortcutLabel(event: KeyboardEvent) {
    搜索高亮样式
    ======================================== */
 :deep(.search-highlight) {
-  background-color: var(--n-primary-color-hover, #ffec3d);
-  color: inherit;
+  background-color: var(--app-accent-soft);
+  color: var(--app-text-primary);
   padding: 1px 2px;
   border-radius: 2px;
   font-weight: 600;

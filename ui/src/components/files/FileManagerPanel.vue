@@ -1583,9 +1583,12 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(246, 248, 252, 0.98), rgba(238, 242, 247, 0.96)),
-    radial-gradient(circle at top right, rgba(53, 119, 186, 0.12), transparent 30%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-canvas) 96%, var(--app-accent) 4%),
+    var(--app-canvas)
+  );
+  color: var(--app-text-primary);
 }
 
 .file-manager-toolbar {
@@ -1594,7 +1597,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid rgba(24, 35, 51, 0.08);
+  border-bottom: 1px solid var(--app-border);
 }
 
 .scope-select {
@@ -1613,7 +1616,7 @@ onBeforeUnmount(() => {
 
 .file-manager-breadcrumb-label {
   flex: 0 0 auto;
-  color: rgba(34, 46, 67, 0.62);
+  color: var(--app-text-muted);
   font-size: 12px;
   font-weight: 600;
 }
@@ -1673,8 +1676,8 @@ onBeforeUnmount(() => {
   gap: 12px;
   flex-shrink: 0;
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(24, 35, 51, 0.08);
-  background: rgba(255, 255, 255, 0.72);
+  border-bottom: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-surface) 72%, var(--app-canvas) 28%);
 }
 
 .file-manager-action-controls {
@@ -1689,7 +1692,7 @@ onBeforeUnmount(() => {
   min-width: 72px;
   font-size: 13px;
   font-weight: 600;
-  color: rgba(34, 46, 67, 0.8);
+  color: var(--app-text-secondary);
 }
 
 .file-manager-body {
@@ -1738,10 +1741,10 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px dashed rgba(53, 119, 186, 0.45);
+  border: 2px dashed color-mix(in srgb, var(--app-accent) 55%, transparent);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.85);
-  color: #1f4c7f;
+  background: color-mix(in srgb, var(--app-surface-raised) 88%, var(--app-canvas) 12%);
+  color: var(--app-info);
   font-weight: 600;
   pointer-events: none;
 }
@@ -1759,9 +1762,10 @@ onBeforeUnmount(() => {
   gap: 10px;
   min-height: 44px;
   padding: 8px 10px;
-  border: 1px solid rgba(24, 35, 51, 0.08);
+  border: 1px solid var(--app-border);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.88);
+  background: color-mix(in srgb, var(--app-surface) 88%, var(--app-canvas) 12%);
+  color: var(--app-text-primary);
   text-align: left;
   cursor: pointer;
   transition:
@@ -1772,15 +1776,20 @@ onBeforeUnmount(() => {
 
 .file-tree-row:hover,
 .file-tree-row.is-active {
-  border-color: rgba(53, 119, 186, 0.32);
-  background: rgba(240, 247, 255, 0.9);
-  box-shadow: 0 10px 24px rgba(40, 73, 118, 0.08);
+  border-color: color-mix(in srgb, var(--app-accent) 40%, var(--app-border) 60%);
+  background: color-mix(in srgb, var(--app-surface) 94%, var(--app-accent) 6%);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--app-shadow) 45%, transparent);
+}
+
+.file-tree-row:focus-visible {
+  outline: 2px solid var(--app-focus-ring);
+  outline-offset: 1px;
 }
 
 .tree-expand-hit {
   width: 16px;
   flex: 0 0 16px;
-  color: rgba(34, 46, 67, 0.72);
+  color: var(--app-text-secondary);
   text-align: center;
 }
 
@@ -1821,7 +1830,7 @@ onBeforeUnmount(() => {
 .file-preview-content,
 .file-transfer-items {
   scrollbar-width: thin;
-  scrollbar-color: rgba(37, 90, 143, 0.38) transparent;
+  scrollbar-color: color-mix(in srgb, var(--app-accent) 42%, transparent) transparent;
 }
 
 .file-list-scroll::-webkit-scrollbar,
@@ -1841,13 +1850,13 @@ onBeforeUnmount(() => {
 .file-preview-content::-webkit-scrollbar-thumb,
 .file-transfer-items::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(37, 90, 143, 0.28);
+  background: color-mix(in srgb, var(--app-accent) 32%, transparent);
 }
 
 .file-list-scroll::-webkit-scrollbar-thumb:hover,
 .file-preview-content::-webkit-scrollbar-thumb:hover,
 .file-transfer-items::-webkit-scrollbar-thumb:hover {
-  background: rgba(37, 90, 143, 0.42);
+  background: color-mix(in srgb, var(--app-accent) 48%, transparent);
 }
 
 .file-list-checkbox {
@@ -1862,7 +1871,7 @@ onBeforeUnmount(() => {
 }
 
 .file-list-checkbox:hover {
-  background: rgba(37, 90, 143, 0.08);
+  background: var(--app-accent-soft);
 }
 
 .file-list-checkbox :deep(input[type='checkbox']) {
@@ -1890,7 +1899,7 @@ onBeforeUnmount(() => {
 }
 
 .file-kind-icon {
-  color: #255a8f;
+  color: var(--app-info);
 }
 
 .file-name-text {
@@ -1906,7 +1915,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: rgba(34, 46, 67, 0.78);
+  color: var(--app-text-secondary);
   font-size: 12px;
   text-align: right;
 }
@@ -1927,20 +1936,25 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: rgba(34, 46, 67, 0.88);
+  color: var(--app-text-primary);
   cursor: pointer;
   text-align: left;
 }
 
 .file-display-option:hover,
 .file-display-option.is-selected {
-  background: rgba(37, 90, 143, 0.08);
+  background: var(--app-accent-soft);
+}
+
+.file-display-option:focus-visible {
+  outline: 2px solid var(--app-focus-ring);
+  outline-offset: -2px;
 }
 
 .file-display-option-check {
   width: 14px;
   flex: 0 0 14px;
-  color: #255a8f;
+  color: var(--app-info);
   font-size: 13px;
   font-weight: 700;
   text-align: center;
@@ -1958,8 +1972,8 @@ onBeforeUnmount(() => {
 .file-preview-pane {
   flex: 1;
   min-width: 0;
-  border-left: 1px solid rgba(24, 35, 51, 0.08);
-  background: rgba(255, 255, 255, 0.78);
+  border-left: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-surface) 78%, var(--app-canvas) 22%);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1983,7 +1997,7 @@ onBeforeUnmount(() => {
 
 .file-mobile-preview-surface {
   min-height: min(100vh, 100dvh);
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--app-surface-raised);
 }
 
 .file-image-modal-title {
@@ -2000,13 +2014,13 @@ onBeforeUnmount(() => {
   max-height: 78vh;
   object-fit: contain;
   border-radius: 12px;
-  background: #f4f7fb;
+  background: var(--app-surface-sunken);
 }
 
 .file-transfer-queue {
   flex-shrink: 0;
-  border-top: 1px solid rgba(24, 35, 51, 0.08);
-  background: rgba(255, 255, 255, 0.88);
+  border-top: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-surface) 88%, var(--app-canvas) 12%);
   padding: 12px 16px;
 }
 
@@ -2033,9 +2047,9 @@ onBeforeUnmount(() => {
   gap: 12px;
   align-items: flex-start;
   padding: 10px 12px;
-  border: 1px solid rgba(24, 35, 51, 0.08);
+  border: 1px solid var(--app-border);
   border-radius: 14px;
-  background: rgba(248, 250, 253, 0.96);
+  background: color-mix(in srgb, var(--app-canvas) 86%, var(--app-surface) 14%);
 }
 
 .file-transfer-main {
@@ -2053,7 +2067,7 @@ onBeforeUnmount(() => {
 
 .file-transfer-meta {
   margin: 4px 0 8px;
-  color: rgba(34, 46, 67, 0.66);
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 
@@ -2065,7 +2079,7 @@ onBeforeUnmount(() => {
 
 .file-transfer-error {
   margin-top: 6px;
-  color: #b42318;
+  color: var(--app-error);
   font-size: 12px;
 }
 
@@ -2089,7 +2103,7 @@ onBeforeUnmount(() => {
     min-width: 0;
     min-height: 220px;
     border-left: none;
-    border-top: 1px solid rgba(24, 35, 51, 0.08);
+    border-top: 1px solid var(--app-border);
   }
 }
 
