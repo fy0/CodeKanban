@@ -77,7 +77,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(6);
+    expect(persisted.version).toBe(7);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -103,7 +103,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(6);
+    expect(persisted.version).toBe(7);
     expect(persisted.followSystemTheme).toBe(1);
 
     setActivePinia(createPinia());
@@ -133,7 +133,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(6);
+    expect(persisted.version).toBe(7);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -157,7 +157,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(6);
+    expect(persisted.version).toBe(7);
     expect(persisted.followSystemTheme).toBe(1);
   });
 
@@ -197,7 +197,7 @@ describe('settings theme storage', () => {
       customTheme?: Record<string, unknown>;
     };
 
-    expect(persisted.version).toBe(6);
+    expect(persisted.version).toBe(7);
     expect(persisted.terminalDisplayMode).toBeUndefined();
     expect(persisted.theme?.terminalFloatingButtonBg).toBeUndefined();
     expect(persisted.customTheme?.terminalFloatingButtonFg).toBeUndefined();
@@ -256,41 +256,33 @@ describe('settings theme storage', () => {
     expect(persisted.webSessionActivityDisplayMode).toBe('text');
   });
 
-  it('defaults retry failure dispatch to disabled and persists updates', async () => {
-    const store = useSettingsStore();
-    const { webSessionAutoRetryDispatchPendingOnFailure } = storeToRefs(store);
+  it('drops legacy browser auto-retry defaults during the v7 migration', () => {
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 6,
+        webSessionAutoContinueScope: 'all_failures',
+        webSessionAutoContinuePreset: 'sustain_60s',
+        webSessionAutoContinueMaxAttempts: 88,
+        webSessionAutoRetryDispatchPendingOnFailure: true,
+      })
+    );
 
-    expect(webSessionAutoRetryDispatchPendingOnFailure.value).toBe(false);
+    useSettingsStore();
 
-    store.updateWebSessionAutoRetryDispatchPendingOnFailure(true);
-    await nextTick();
-
-    expect(webSessionAutoRetryDispatchPendingOnFailure.value).toBe(true);
     const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
       version?: number;
+      webSessionAutoContinueScope?: string;
+      webSessionAutoContinuePreset?: string;
+      webSessionAutoContinueMaxAttempts?: number;
       webSessionAutoRetryDispatchPendingOnFailure?: boolean;
     };
-    expect(persisted.version).toBe(6);
-    expect(persisted.webSessionAutoRetryDispatchPendingOnFailure).toBe(true);
-  });
 
-  it('sanitizes and persists the auto-continue maximum attempts', async () => {
-    const store = useSettingsStore();
-    const { webSessionAutoContinueMaxAttempts } = storeToRefs(store);
-
-    expect(webSessionAutoContinueMaxAttempts.value).toBe(0);
-
-    store.updateWebSessionAutoContinueMaxAttempts(7.6);
-    await nextTick();
-    expect(webSessionAutoContinueMaxAttempts.value).toBe(8);
-
-    store.updateWebSessionAutoContinueMaxAttempts(999);
-    await nextTick();
-    expect(webSessionAutoContinueMaxAttempts.value).toBe(100);
-    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
-      webSessionAutoContinueMaxAttempts?: number;
-    };
-    expect(persisted.webSessionAutoContinueMaxAttempts).toBe(100);
+    expect(persisted.version).toBe(7);
+    expect(persisted.webSessionAutoContinueScope).toBeUndefined();
+    expect(persisted.webSessionAutoContinuePreset).toBeUndefined();
+    expect(persisted.webSessionAutoContinueMaxAttempts).toBeUndefined();
+    expect(persisted.webSessionAutoRetryDispatchPendingOnFailure).toBeUndefined();
   });
 
   it('defaults web session streaming markdown cadence to the built-in profile', () => {
@@ -326,7 +318,7 @@ describe('settings theme storage', () => {
       dailyTipEnabled?: boolean;
     };
 
-    expect(persisted.version).toBe(6);
+    expect(persisted.version).toBe(7);
     expect(persisted.dailyTipEnabled).toBeUndefined();
   });
 

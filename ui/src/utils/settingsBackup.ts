@@ -8,8 +8,6 @@ import type {
   TerminalQuickAction,
   ThemeSettings,
   WebSessionQuickInputSettings,
-  WebSessionAutoContinuePreset,
-  WebSessionAutoContinueScope,
   WebSessionStreamingMarkdownThrottleMode,
   FollowSystemThemeSetting,
 } from '@/stores/settings';
@@ -71,10 +69,6 @@ export interface SettingsBackupClientSettings {
   confirmBeforeTerminalClose: boolean;
   showWebSessionReasoning: boolean;
   webSessionActivityDisplayMode: WebSessionActivityDisplayMode;
-  webSessionAutoContinueScope: WebSessionAutoContinueScope;
-  webSessionAutoContinuePreset: WebSessionAutoContinuePreset;
-  webSessionAutoContinueMaxAttempts: number;
-  webSessionAutoRetryDispatchPendingOnFailure: boolean;
   webSessionStreamingMarkdownThrottleMode: WebSessionStreamingMarkdownThrottleMode;
   webSessionStreamingMarkdownThrottleCustomMs: number;
   terminalThemeId: string;

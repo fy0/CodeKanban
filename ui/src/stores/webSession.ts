@@ -60,6 +60,7 @@ type WireSession = {
   pl: 'default' | 'elevated' | 'yolo';
   acte?: boolean;
   ae?: boolean;
+  arpm?: 'default' | 'custom';
   ars?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
   arp?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
   aram?: number;
@@ -709,6 +710,7 @@ type LoadSessionSnapshotOptions = {
 
 type PendingAutoRetryOverride = {
   enabled: boolean;
+  policyMode: WebSessionSummary['autoRetryPolicyMode'];
   scope: WebSessionSummary['autoRetryScope'];
   preset: WebSessionSummary['autoRetryPreset'];
   maxAttempts: number;
@@ -2230,6 +2232,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sessionId: string,
     config: {
       enabled: boolean;
+      policyMode: WebSessionSummary['autoRetryPolicyMode'];
       scope: WebSessionSummary['autoRetryScope'];
       preset: WebSessionSummary['autoRetryPreset'];
       maxAttempts?: number;
@@ -2238,6 +2241,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   ) {
     pendingAutoRetryOverrides.set(sessionId, {
       enabled: config.enabled === true,
+      policyMode: config.policyMode,
       scope: config.scope,
       preset: config.preset,
       maxAttempts: normalizeAutoRetryMaxAttempts(config.maxAttempts),
@@ -2267,6 +2271,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
     const matchesPendingConfig =
       summary.autoRetryEnabled === pendingOverride.enabled &&
+      summary.autoRetryPolicyMode === pendingOverride.policyMode &&
       summary.autoRetryScope === pendingOverride.scope &&
       summary.autoRetryPreset === pendingOverride.preset &&
       normalizeAutoRetryMaxAttempts(summary.autoRetryMaxAttempts) === pendingOverride.maxAttempts;
@@ -2284,6 +2289,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return {
       ...summary,
       autoRetryEnabled: pendingOverride.enabled,
+      autoRetryPolicyMode: pendingOverride.policyMode,
       autoRetryScope: pendingOverride.scope,
       autoRetryPreset: pendingOverride.preset,
       autoRetryMaxAttempts: pendingOverride.maxAttempts,
@@ -2749,6 +2755,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       permissionLevel: session.pl ?? 'elevated',
       activeCallTimeoutEnabled: session.acte === true,
       autoRetryEnabled: session.ae === true,
+      autoRetryPolicyMode: session.arpm === 'custom' ? 'custom' : 'default',
       autoRetryScope:
         session.ars === 'network_and_rate_limit' || session.ars === 'all_failures'
           ? session.ars
@@ -3967,8 +3974,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     } else if (
       block.kind === 'user' &&
       block.timestamp > 0 &&
-      (!accumulator.runActive ||
-        Boolean(blockRunId && blockRunId !== accumulator.activeRunId))
+      (!accumulator.runActive || Boolean(blockRunId && blockRunId !== accumulator.activeRunId))
     ) {
       accumulator.runStartedAt = block.timestamp;
       accumulator.activeRunId = blockRunId || undefined;
@@ -6360,12 +6366,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sessionId: string,
     config: {
       enabled: boolean;
-      scope: 'network_only' | 'network_and_rate_limit' | 'all_failures';
-      preset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+      policyMode?: 'default' | 'custom';
+      scope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+      preset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
       maxAttempts?: number;
     }
   ) {
     const session = findSessionById(sessionId);
+    const hasPolicyOverride =
+      config.scope !== undefined || config.preset !== undefined || config.maxAttempts !== undefined;
+    const policyMode =
+      config.policyMode ??
+      (hasPolicyOverride
+        ? 'custom'
+        : session?.autoRetryPolicyMode === 'custom'
+          ? 'custom'
+          : 'default');
+    const scope = config.scope ?? session?.autoRetryScope ?? 'network_only';
+    const preset = config.preset ?? session?.autoRetryPreset ?? 'gentle_stop';
     const maxAttempts = normalizeAutoRetryMaxAttempts(
       config.maxAttempts ?? session?.autoRetryMaxAttempts
     );
@@ -6374,6 +6392,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       session && !session.archivedAt
         ? {
             enabled: session.autoRetryEnabled,
+            policyMode: session.autoRetryPolicyMode,
             scope: session.autoRetryScope,
             preset: session.autoRetryPreset,
             maxAttempts: normalizeAutoRetryMaxAttempts(session.autoRetryMaxAttempts),
@@ -6382,14 +6401,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (previous) {
       setPendingAutoRetryOverride(
         sessionId,
-        { ...config, maxAttempts },
+        { enabled: config.enabled, policyMode, scope, preset, maxAttempts },
         Date.parse(optimisticUpdatedAt)
       );
       updateSessionStatus(sessionId, current => ({
         ...current,
         autoRetryEnabled: config.enabled === true,
-        autoRetryScope: config.scope,
-        autoRetryPreset: config.preset,
+        autoRetryPolicyMode: policyMode,
+        autoRetryScope: scope,
+        autoRetryPreset: preset,
         autoRetryMaxAttempts: maxAttempts,
         updatedAt: optimisticUpdatedAt,
       }));
@@ -6397,9 +6417,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     try {
       await sendCommand('set_ar', sessionId, {
         ae: config.enabled === true,
-        ars: config.scope,
-        arp: config.preset,
-        aram: maxAttempts,
+        arpm: policyMode,
+        ...(policyMode === 'custom' ? { ars: scope, arp: preset, aram: maxAttempts } : {}),
       });
     } catch (error) {
       clearPendingAutoRetryOverride(sessionId);
@@ -6407,6 +6426,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         updateSessionStatus(sessionId, current => ({
           ...current,
           autoRetryEnabled: previous.enabled,
+          autoRetryPolicyMode: previous.policyMode,
           autoRetryScope: previous.scope,
           autoRetryPreset: previous.preset,
           autoRetryMaxAttempts: previous.maxAttempts,
@@ -6625,6 +6645,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       permissionLevel?: 'default' | 'elevated' | 'yolo';
       activeCallTimeoutEnabled?: boolean;
       autoRetryEnabled?: boolean;
+      autoRetryPolicyMode?: 'default' | 'custom';
       autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
       autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
       autoRetryMaxAttempts?: number;

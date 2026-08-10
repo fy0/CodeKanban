@@ -114,6 +114,9 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		DefaultCodexSyncMode: func() websession.SyncMode {
 			return websession.SyncMode(cfg.Developer.WebSessionCodexDefaultSyncMode)
 		},
+		AutoRetryDefaultsConfig: func() utils.WebSessionAutoRetryDefaultsConfig {
+			return cfg.Developer.WebSessionAutoRetryDefaults
+		},
 		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
 			return cfg.Developer.WebSessionActiveCallTimeout
 		},

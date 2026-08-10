@@ -170,6 +170,7 @@ func TestSystemSettingsBackupPreviewWarnsOnVersionDifference(t *testing.T) {
 		t.Fatalf("expected breaking version warning, got %#v", payload.Item.Warnings)
 	}
 	foundPermissionSetting := false
+	foundAutoRetryDefaults := false
 	for _, section := range payload.Item.Sections {
 		if section.Key != "server.developer" {
 			continue
@@ -177,12 +178,17 @@ func TestSystemSettingsBackupPreviewWarnsOnVersionDifference(t *testing.T) {
 		for _, key := range section.ChangedKeys {
 			if key == "webSessionCodexDefaultPermissionLevel" {
 				foundPermissionSetting = true
-				break
+			}
+			if key == "webSessionAutoRetryDefaults" {
+				foundAutoRetryDefaults = true
 			}
 		}
 	}
 	if !foundPermissionSetting {
 		t.Fatalf("expected developer backup preview to include the Codex permission setting, got %#v", payload.Item.Sections)
+	}
+	if !foundAutoRetryDefaults {
+		t.Fatalf("expected developer backup preview to include the web session auto-retry defaults, got %#v", payload.Item.Sections)
 	}
 }
 

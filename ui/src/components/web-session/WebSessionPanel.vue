@@ -4047,10 +4047,6 @@ const {
   confirmBeforeTerminalClose,
   showWebSessionReasoning,
   webSessionActivityDisplayMode,
-  webSessionAutoContinueScope,
-  webSessionAutoContinuePreset,
-  webSessionAutoContinueMaxAttempts,
-  webSessionAutoRetryDispatchPendingOnFailure,
   webSessionStreamingMarkdownThrottleMs,
   effectiveTerminalThemeId,
   webSessionQuickInput,
@@ -4061,6 +4057,18 @@ const globalActiveCallTimeoutEnabled = ref(true);
 const globalActiveCallTimeoutSeconds = ref(DEFAULT_ACTIVE_CALL_TIMEOUT_SECONDS);
 const developerConfigStore = useDeveloperConfigStore();
 const { config: developerConfig } = storeToRefs(developerConfigStore);
+const webSessionAutoContinueScope = computed(
+  () => developerConfig.value.webSessionAutoRetryDefaults.scope
+);
+const webSessionAutoContinuePreset = computed(
+  () => developerConfig.value.webSessionAutoRetryDefaults.preset
+);
+const webSessionAutoContinueMaxAttempts = computed(
+  () => developerConfig.value.webSessionAutoRetryDefaults.maxAttempts
+);
+const webSessionAutoRetryDispatchPendingOnFailure = computed(
+  () => developerConfig.value.webSessionAutoRetryDefaults.dispatchPendingOnFailure
+);
 
 watch(
   developerConfig,
@@ -4765,9 +4773,19 @@ const webSessionAutoContinueEnabledValue = computed({
       updateActiveDraftSession(current => ({
         ...current,
         autoRetryEnabled: next,
-        autoRetryScope: webSessionAutoContinueScope.value,
-        autoRetryPreset: webSessionAutoContinuePreset.value,
-        autoRetryMaxAttempts: webSessionAutoContinueMaxAttempts.value,
+        autoRetryPolicyMode: current.autoRetryPolicyMode === 'custom' ? 'custom' : 'default',
+        autoRetryScope:
+          current.autoRetryPolicyMode === 'custom'
+            ? current.autoRetryScope
+            : webSessionAutoContinueScope.value,
+        autoRetryPreset:
+          current.autoRetryPolicyMode === 'custom'
+            ? current.autoRetryPreset
+            : webSessionAutoContinuePreset.value,
+        autoRetryMaxAttempts:
+          current.autoRetryPolicyMode === 'custom'
+            ? current.autoRetryMaxAttempts
+            : webSessionAutoContinueMaxAttempts.value,
         updatedAt: new Date().toISOString(),
       }));
       return;
@@ -4776,9 +4794,19 @@ const webSessionAutoContinueEnabledValue = computed({
       void webSessionStore
         .updateAutoRetry(currentRealSession.value.id, {
           enabled: next,
-          scope: webSessionAutoContinueScope.value,
-          preset: webSessionAutoContinuePreset.value,
-          maxAttempts: webSessionAutoContinueMaxAttempts.value,
+          policyMode: currentRealSession.value.autoRetryPolicyMode,
+          scope:
+            currentRealSession.value.autoRetryPolicyMode === 'custom'
+              ? currentRealSession.value.autoRetryScope
+              : webSessionAutoContinueScope.value,
+          preset:
+            currentRealSession.value.autoRetryPolicyMode === 'custom'
+              ? currentRealSession.value.autoRetryPreset
+              : webSessionAutoContinuePreset.value,
+          maxAttempts:
+            currentRealSession.value.autoRetryPolicyMode === 'custom'
+              ? currentRealSession.value.autoRetryMaxAttempts
+              : webSessionAutoContinueMaxAttempts.value,
         })
         .catch(error => {
           message.error(error instanceof Error ? error.message : t('common.error'));
@@ -8569,20 +8597,26 @@ function normalizeDraftSession(
         : defaultPermissionLevelForAgent(agent),
     activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(session, agent),
     autoRetryEnabled: session.autoRetryEnabled === true,
+    autoRetryPolicyMode: session.autoRetryPolicyMode === 'custom' ? 'custom' : 'default',
     autoRetryScope:
-      session.autoRetryScope === 'network_and_rate_limit' ||
-      session.autoRetryScope === 'all_failures'
+      session.autoRetryPolicyMode === 'custom' &&
+      (session.autoRetryScope === 'network_and_rate_limit' ||
+        session.autoRetryScope === 'all_failures')
         ? session.autoRetryScope
         : webSessionAutoContinueScope.value,
     autoRetryPreset:
-      session.autoRetryPreset === 'aggressive_stop' || session.autoRetryPreset === 'sustain_60s'
+      session.autoRetryPolicyMode === 'custom' &&
+      (session.autoRetryPreset === 'aggressive_stop' || session.autoRetryPreset === 'sustain_60s')
         ? session.autoRetryPreset
         : webSessionAutoContinuePreset.value,
     autoRetryMaxAttempts:
-      typeof session.autoRetryMaxAttempts === 'number'
+      session.autoRetryPolicyMode === 'custom' && typeof session.autoRetryMaxAttempts === 'number'
         ? session.autoRetryMaxAttempts
         : webSessionAutoContinueMaxAttempts.value,
-    autoRetryDispatchPendingOnFailure: session.autoRetryDispatchPendingOnFailure === true,
+    autoRetryDispatchPendingOnFailure:
+      typeof session.autoRetryDispatchPendingOnFailure === 'boolean'
+        ? session.autoRetryDispatchPendingOnFailure
+        : webSessionAutoRetryDispatchPendingOnFailure.value,
     cwd: presentation.cwd,
     nativeSessionId: null,
     status: 'idle',
@@ -9035,14 +9069,22 @@ function createDraftSession(forceAgent?: WebSessionAgent) {
     permissionLevel: defaultPermissionLevelForAgent(nextAgent),
     activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, nextAgent),
     autoRetryEnabled: source?.autoRetryEnabled === true,
+    autoRetryPolicyMode:
+      source?.autoRetryEnabled === true && source.autoRetryPolicyMode === 'custom'
+        ? 'custom'
+        : 'default',
     autoRetryScope:
-      source?.autoRetryEnabled === true ? source.autoRetryScope : webSessionAutoContinueScope.value,
+      source?.autoRetryEnabled === true && source.autoRetryPolicyMode === 'custom'
+        ? source.autoRetryScope
+        : webSessionAutoContinueScope.value,
     autoRetryPreset:
-      source?.autoRetryEnabled === true
+      source?.autoRetryEnabled === true && source.autoRetryPolicyMode === 'custom'
         ? source.autoRetryPreset
         : webSessionAutoContinuePreset.value,
     autoRetryMaxAttempts:
-      source?.autoRetryEnabled === true && typeof source.autoRetryMaxAttempts === 'number'
+      source?.autoRetryEnabled === true &&
+      source.autoRetryPolicyMode === 'custom' &&
+      typeof source.autoRetryMaxAttempts === 'number'
         ? source.autoRetryMaxAttempts
         : webSessionAutoContinueMaxAttempts.value,
     autoRetryDispatchPendingOnFailure:
@@ -11996,16 +12038,19 @@ async function handleCreateSession(
             : source?.permissionLevel) || draftPermissionLevel.value,
         activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, agent),
         autoRetryEnabled: source?.autoRetryEnabled === true,
+        autoRetryPolicyMode: source?.autoRetryPolicyMode === 'custom' ? 'custom' : 'default',
         autoRetryScope:
-          source?.autoRetryEnabled === true
+          source?.autoRetryEnabled === true && source.autoRetryPolicyMode === 'custom'
             ? source.autoRetryScope
             : webSessionAutoContinueScope.value,
         autoRetryPreset:
-          source?.autoRetryEnabled === true
+          source?.autoRetryEnabled === true && source.autoRetryPolicyMode === 'custom'
             ? source.autoRetryPreset
             : webSessionAutoContinuePreset.value,
         autoRetryMaxAttempts:
-          source?.autoRetryEnabled === true && typeof source.autoRetryMaxAttempts === 'number'
+          source?.autoRetryEnabled === true &&
+          source.autoRetryPolicyMode === 'custom' &&
+          typeof source.autoRetryMaxAttempts === 'number'
             ? source.autoRetryMaxAttempts
             : webSessionAutoContinueMaxAttempts.value,
         autoRetryDispatchPendingOnFailure:
@@ -15706,7 +15751,10 @@ watch(
     () => webSessionAutoContinueMaxAttempts.value,
   ],
   ([scope, preset, maxAttempts]) => {
-    if (!isDraftSession(currentSession.value)) {
+    if (
+      !isDraftSession(currentSession.value) ||
+      currentSession.value.autoRetryPolicyMode === 'custom'
+    ) {
       return;
     }
     if (
@@ -15723,39 +15771,6 @@ watch(
       autoRetryMaxAttempts: maxAttempts,
       updatedAt: new Date().toISOString(),
     }));
-  }
-);
-
-watch(
-  [
-    () => currentRealSession.value?.id ?? '',
-    () => currentRealSession.value?.autoRetryEnabled === true,
-    () => webSessionAutoContinueScope.value,
-    () => webSessionAutoContinuePreset.value,
-    () => webSessionAutoContinueMaxAttempts.value,
-  ],
-  ([sessionId, enabled, scope, preset, maxAttempts]) => {
-    const session = currentRealSession.value;
-    if (!sessionId || !session || !enabled) {
-      return;
-    }
-    if (
-      session.autoRetryScope === scope &&
-      session.autoRetryPreset === preset &&
-      session.autoRetryMaxAttempts === maxAttempts
-    ) {
-      return;
-    }
-    void webSessionStore
-      .updateAutoRetry(sessionId, {
-        enabled: true,
-        scope,
-        preset,
-        maxAttempts,
-      })
-      .catch(error => {
-        message.error(error instanceof Error ? error.message : t('common.error'));
-      });
   }
 );
 

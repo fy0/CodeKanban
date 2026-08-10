@@ -66,6 +66,7 @@ type wireSess struct {
 	PermissionLevel                   string         `json:"pl"`
 	ActiveCallTimeoutEnabled          bool           `json:"acte"`
 	AutoRetryEnabled                  bool           `json:"ae"`
+	AutoRetryPolicyMode               string         `json:"arpm"`
 	AutoRetryScope                    string         `json:"ars"`
 	AutoRetryPreset                   string         `json:"arp"`
 	AutoRetryMaxAttempts              int            `json:"aram"`
@@ -482,6 +483,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		PermissionLevel:                   string(session.PermissionLevel),
 		ActiveCallTimeoutEnabled:          session.ActiveCallTimeoutEnabled,
 		AutoRetryEnabled:                  session.AutoRetryEnabled,
+		AutoRetryPolicyMode:               string(session.AutoRetryPolicyMode),
 		AutoRetryScope:                    string(session.AutoRetryScope),
 		AutoRetryPreset:                   string(session.AutoRetryPreset),
 		AutoRetryMaxAttempts:              session.AutoRetryMaxAttempts,

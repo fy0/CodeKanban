@@ -175,8 +175,10 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
         workflowMode: 'plan',
         permissionLevel: 'elevated',
         autoRetryEnabled: false,
-        autoRetryScope: 'network_only',
-        autoRetryPreset: 'gentle_stop',
+        autoRetryPolicyMode: 'custom',
+        autoRetryScope: 'all_failures',
+        autoRetryPreset: 'sustain_60s',
+        autoRetryMaxAttempts: 12,
         autoRetryDispatchPendingOnFailure: false,
         permissionMode: '',
         title: '',
@@ -310,6 +312,11 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
     reasoningEffort: 'high',
     workflowMode: 'plan',
     permissionLevel: 'elevated',
+    autoRetryPolicyMode: 'custom',
+    autoRetryScope: 'all_failures',
+    autoRetryPreset: 'sustain_60s',
+    autoRetryMaxAttempts: 12,
+    autoRetryDispatchPendingOnFailure: false,
   });
   assert.equal(created.id, 'ws2');
 
@@ -449,9 +456,6 @@ test('CodeKanbanClient createWebSession auto-selects main worktree and delegates
         claudeRuntime: 'claude',
         workflowMode: 'default',
         autoRetryEnabled: false,
-        autoRetryScope: 'network_only',
-        autoRetryPreset: 'gentle_stop',
-        autoRetryDispatchPendingOnFailure: false,
         permissionMode: '',
         title: '',
       });

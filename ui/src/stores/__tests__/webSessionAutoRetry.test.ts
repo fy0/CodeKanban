@@ -50,6 +50,7 @@ function makeSession(overrides: Partial<WebSessionSummary> = {}): WebSessionSumm
     permissionLevel: 'elevated',
     activeCallTimeoutEnabled: false,
     autoRetryEnabled: false,
+    autoRetryPolicyMode: 'default',
     autoRetryScope: 'network_only',
     autoRetryPreset: 'gentle_stop',
     autoRetryDispatchPendingOnFailure: false,
@@ -114,8 +115,10 @@ function toWireSession(session: WebSessionSummary) {
     pl: session.permissionLevel,
     acte: session.activeCallTimeoutEnabled === true,
     ae: session.autoRetryEnabled,
+    arpm: session.autoRetryPolicyMode,
     ars: session.autoRetryScope,
     arp: session.autoRetryPreset,
+    aram: session.autoRetryMaxAttempts,
     ardpf: session.autoRetryDispatchPendingOnFailure,
     ttl: session.title,
     cwd: session.cwd,
@@ -255,6 +258,17 @@ describe('webSession auto retry optimistic updates', () => {
 
     const optimisticSession = store.getSessions(session.projectId)[0];
     expect(optimisticSession?.autoRetryEnabled).toBe(true);
+    expect(optimisticSession?.autoRetryPolicyMode).toBe('custom');
+    expect(commandSocket.sent[0]).toMatchObject({
+      op: 'set_ar',
+      sid: session.id,
+      p: {
+        ae: true,
+        arpm: 'custom',
+        ars: 'network_only',
+        arp: 'gentle_stop',
+      },
+    });
 
     eventSocket.dispatch({
       v: 1,
@@ -294,6 +308,7 @@ describe('webSession auto retry optimistic updates', () => {
       s: toWireSession(
         makeSession({
           autoRetryEnabled: true,
+          autoRetryPolicyMode: 'custom',
           updatedAt: '2026-04-10T10:00:02.000Z',
         })
       ),
@@ -365,6 +380,7 @@ describe('webSession auto retry optimistic updates', () => {
       s: toWireSession(
         makeSession({
           autoRetryEnabled: true,
+          autoRetryPolicyMode: 'custom',
           updatedAt: '2026-04-10T10:00:02.000Z',
         })
       ),
@@ -374,6 +390,46 @@ describe('webSession auto retry optimistic updates', () => {
     expect(confirmedSession?.autoRetryEnabled).toBe(true);
     expect(confirmedSession?.autoRetryScope).toBe('network_only');
     expect(confirmedSession?.autoRetryPreset).toBe('gentle_stop');
+  });
+
+  it('toggles a default policy without sending browser-owned policy values', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession();
+    listMock.mockResolvedValue([session]);
+
+    await store.loadSessions(session.projectId, true);
+    await store.openEventStream();
+    await flushMicrotasks();
+
+    const updatePromise = store.updateAutoRetry(session.id, {
+      enabled: true,
+      policyMode: 'default',
+    });
+    await flushMicrotasks();
+
+    const commandSocket = findSocket('/api/v1/web-sessions/ws');
+    if (!commandSocket) {
+      throw new Error('expected the command socket to be connected');
+    }
+    expect(commandSocket.sent[0]).toMatchObject({
+      op: 'set_ar',
+      sid: session.id,
+      p: { ae: true, arpm: 'default' },
+    });
+    expect(commandSocket.sent[0]?.p).not.toHaveProperty('ars');
+    expect(commandSocket.sent[0]?.p).not.toHaveProperty('arp');
+    expect(commandSocket.sent[0]?.p).not.toHaveProperty('aram');
+
+    const requestId = String(commandSocket.sent[0]?.rid ?? '');
+    commandSocket.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'set_ar',
+    });
+    await updatePromise;
   });
 
   it('keeps the optimistic retry failure dispatch toggle until a newer summary confirms it', async () => {

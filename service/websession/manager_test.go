@@ -139,6 +139,9 @@ func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	if created.AutoRetryDispatchPendingOnFailure {
 		t.Fatal("expected retry failure pending dispatch to default to disabled")
 	}
+	if created.AutoRetryPolicyMode != AutoRetryPolicyModeDefault {
+		t.Fatalf("expected server-managed retry defaults, got policy mode %q", created.AutoRetryPolicyMode)
+	}
 }
 
 func TestManagerCreateSessionRejectsInvalidAgent(t *testing.T) {
@@ -222,14 +225,17 @@ func TestManagerCreateSessionPersistsAutoRetryMaxAttempts(t *testing.T) {
 		ProjectID:            project.ID,
 		Agent:                AgentCodex,
 		AutoRetryEnabled:     true,
-		AutoRetryPreset:      AutoRetryPresetGentleStop,
-		AutoRetryMaxAttempts: 7,
+		AutoRetryPreset:      ptr(AutoRetryPresetGentleStop),
+		AutoRetryMaxAttempts: ptr(7),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	if created.AutoRetryMaxAttempts != 7 {
 		t.Fatalf("expected summary max attempts 7, got %d", created.AutoRetryMaxAttempts)
+	}
+	if created.AutoRetryPolicyMode != AutoRetryPolicyModeCustom {
+		t.Fatalf("expected explicit legacy retry fields to select custom mode, got %q", created.AutoRetryPolicyMode)
 	}
 
 	record, err := manager.GetSession(context.Background(), created.ID)
@@ -246,8 +252,10 @@ func TestManagerCreateSessionPersistsAutoRetryMaxAttempts(t *testing.T) {
 		context.Background(),
 		created.ID,
 		true,
-		AutoRetryScopeNetworkOnly,
-		AutoRetryPresetGentleStop,
+		nil,
+		ptr(AutoRetryScopeNetworkOnly),
+		ptr(AutoRetryPresetGentleStop),
+		nil,
 	); err != nil {
 		t.Fatalf("UpdateAutoRetry without max attempts returned error: %v", err)
 	}
@@ -257,6 +265,120 @@ func TestManagerCreateSessionPersistsAutoRetryMaxAttempts(t *testing.T) {
 	}
 	if record.AutoRetryMaxAttempts != 7 {
 		t.Fatalf("expected omitted max attempts to preserve 7, got %d", record.AutoRetryMaxAttempts)
+	}
+}
+
+func TestManualMessageRefreshesLegacyDefaultAutoRetryPolicy(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	defaults := utils.WebSessionAutoRetryDefaultsConfig{
+		Scope:       string(AutoRetryScopeNetworkOnly),
+		Preset:      string(AutoRetryPresetGentleStop),
+		MaxAttempts: 2,
+	}
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+		AutoRetryDefaultsConfig: func() utils.WebSessionAutoRetryDefaultsConfig {
+			return defaults
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", created.ID).
+		Updates(map[string]any{
+			"auto_retry_policy_mode":  "",
+			"auto_retry_scope":        string(AutoRetryScopeNetworkOnly),
+			"auto_retry_preset":       string(AutoRetryPresetGentleStop),
+			"auto_retry_max_attempts": 2,
+		}).Error; err != nil {
+		t.Fatalf("failed to seed legacy retry policy: %v", err)
+	}
+
+	defaults = utils.WebSessionAutoRetryDefaultsConfig{
+		Scope:                    string(AutoRetryScopeAllFailures),
+		Preset:                   string(AutoRetryPresetSustain60s),
+		MaxAttempts:              9,
+		DispatchPendingOnFailure: true,
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "use current defaults", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.AutoRetryPolicyMode != string(AutoRetryPolicyModeDefault) ||
+		record.AutoRetryScope != string(AutoRetryScopeAllFailures) ||
+		record.AutoRetryPreset != string(AutoRetryPresetSustain60s) ||
+		record.AutoRetryMaxAttempts != 9 {
+		t.Fatalf("expected the manual message to refresh the default retry policy, got %#v", record)
+	}
+	if record.AutoRetryDispatchPendingOnFailure {
+		t.Fatal("expected the existing session dispatch override to remain unchanged")
+	}
+}
+
+func TestAutomaticContinueKeepsAutoRetryPolicySnapshot(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	defaults := utils.WebSessionAutoRetryDefaultsConfig{
+		Scope:       string(AutoRetryScopeNetworkOnly),
+		Preset:      string(AutoRetryPresetGentleStop),
+		MaxAttempts: 2,
+	}
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+		AutoRetryDefaultsConfig: func() utils.WebSessionAutoRetryDefaultsConfig {
+			return defaults
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	defaults = utils.WebSessionAutoRetryDefaultsConfig{
+		Scope:       string(AutoRetryScopeAllFailures),
+		Preset:      string(AutoRetryPresetSustain60s),
+		MaxAttempts: 9,
+	}
+	if err := manager.sendMessageInternal(context.Background(), created.ID, "continue", nil, true); err != nil {
+		t.Fatalf("sendMessageInternal returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.AutoRetryScope != string(AutoRetryScopeNetworkOnly) ||
+		record.AutoRetryPreset != string(AutoRetryPresetGentleStop) ||
+		record.AutoRetryMaxAttempts != 2 {
+		t.Fatalf("expected automatic continue to keep the retry policy snapshot, got %#v", record)
 	}
 }
 
@@ -1066,7 +1188,7 @@ func TestHandleSetAutoRetryDispatchPendingOnFailureCommand(t *testing.T) {
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID:                         project.ID,
 		Agent:                             AgentCodex,
-		AutoRetryDispatchPendingOnFailure: true,
+		AutoRetryDispatchPendingOnFailure: ptr(true),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -4203,7 +4325,7 @@ func TestRunFailureReclassifiesMessageOnlyCyberPolicyError(t *testing.T) {
 		ProjectID:        project.ID,
 		Agent:            AgentCodex,
 		AutoRetryEnabled: true,
-		AutoRetryScope:   AutoRetryScopeAllFailures,
+		AutoRetryScope:   ptr(AutoRetryScopeAllFailures),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -4499,8 +4621,8 @@ func TestAutoRetryEnabledSessionContinuesAfterFailure(t *testing.T) {
 		ProjectID:        project.ID,
 		Agent:            AgentCodex,
 		AutoRetryEnabled: true,
-		AutoRetryScope:   AutoRetryScopeNetworkOnly,
-		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+		AutoRetryScope:   ptr(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:  ptr(AutoRetryPresetAggressiveStop),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -4586,8 +4708,8 @@ func TestCodexSteerRunsBeforeAutoRetryContinuation(t *testing.T) {
 		ProjectID:        project.ID,
 		Agent:            AgentCodex,
 		AutoRetryEnabled: true,
-		AutoRetryScope:   AutoRetryScopeNetworkOnly,
-		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+		AutoRetryScope:   ptr(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:  ptr(AutoRetryPresetAggressiveStop),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -4645,8 +4767,8 @@ func TestTerminalAutoRetryFailureHoldsPendingUntilEnabled(t *testing.T) {
 		ProjectID:        project.ID,
 		Agent:            AgentCodex,
 		AutoRetryEnabled: true,
-		AutoRetryScope:   AutoRetryScopeNetworkOnly,
-		AutoRetryPreset:  AutoRetryPresetGentleStop,
+		AutoRetryScope:   ptr(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:  ptr(AutoRetryPresetGentleStop),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -4714,8 +4836,8 @@ func TestAutoRetryEnabledSessionRetriesModelCapacityFailure(t *testing.T) {
 		ProjectID:        project.ID,
 		Agent:            AgentCodex,
 		AutoRetryEnabled: true,
-		AutoRetryScope:   AutoRetryScopeNetworkOnly,
-		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+		AutoRetryScope:   ptr(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:  ptr(AutoRetryPresetAggressiveStop),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -4777,8 +4899,8 @@ func TestAutoRetryDisabledSessionDoesNotRetryModelCapacityFailure(t *testing.T) 
 		ProjectID:        project.ID,
 		Agent:            AgentCodex,
 		AutoRetryEnabled: false,
-		AutoRetryScope:   AutoRetryScopeNetworkOnly,
-		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+		AutoRetryScope:   ptr(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:  ptr(AutoRetryPresetAggressiveStop),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -4825,8 +4947,8 @@ func TestAutoRetryEnabledMidRunAppliesToCurrentFailure(t *testing.T) {
 		ProjectID:        project.ID,
 		Agent:            AgentCodex,
 		AutoRetryEnabled: false,
-		AutoRetryScope:   AutoRetryScopeNetworkOnly,
-		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+		AutoRetryScope:   ptr(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:  ptr(AutoRetryPresetAggressiveStop),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -4851,8 +4973,10 @@ func TestAutoRetryEnabledMidRunAppliesToCurrentFailure(t *testing.T) {
 		context.Background(),
 		created.ID,
 		true,
-		AutoRetryScopeNetworkOnly,
-		AutoRetryPresetAggressiveStop,
+		nil,
+		ptr(AutoRetryScopeNetworkOnly),
+		ptr(AutoRetryPresetAggressiveStop),
+		nil,
 	); err != nil {
 		t.Fatalf("UpdateAutoRetry returned error: %v", err)
 	}
@@ -4912,8 +5036,8 @@ func TestUpdateAutoRetryOnErroredSessionSchedulesContinue(t *testing.T) {
 		ProjectID:        project.ID,
 		Agent:            AgentCodex,
 		AutoRetryEnabled: false,
-		AutoRetryScope:   AutoRetryScopeNetworkOnly,
-		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+		AutoRetryScope:   ptr(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:  ptr(AutoRetryPresetAggressiveStop),
 	})
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
@@ -4947,8 +5071,10 @@ func TestUpdateAutoRetryOnErroredSessionSchedulesContinue(t *testing.T) {
 		context.Background(),
 		created.ID,
 		true,
-		AutoRetryScopeNetworkOnly,
-		AutoRetryPresetAggressiveStop,
+		nil,
+		ptr(AutoRetryScopeNetworkOnly),
+		ptr(AutoRetryPresetAggressiveStop),
+		nil,
 	); err != nil {
 		t.Fatalf("UpdateAutoRetry returned error: %v", err)
 	}

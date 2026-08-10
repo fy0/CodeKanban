@@ -161,14 +161,35 @@ test('CLI web-session create prints the created session JSON', { concurrency: fa
       assert.equal(Object.hasOwn(body, 'reasoningEffort'), false);
       assert.equal(Object.hasOwn(body, 'permissionLevel'), false);
       assert.equal(body.autoRetryEnabled, false);
-      assert.equal(body.autoRetryScope, 'network_only');
-      assert.equal(body.autoRetryPreset, 'gentle_stop');
+      assert.equal(body.autoRetryPolicyMode, 'custom');
+      assert.equal(body.autoRetryScope, 'all_failures');
+      assert.equal(body.autoRetryPreset, 'sustain_60s');
+      assert.equal(body.autoRetryMaxAttempts, 9);
       return createJsonResponse({ item: { id: 'ws-created', projectId: 'p1', title: 'Created' } }, 201);
     }],
   ]);
 
   const result = await runCliCaptured(
-    ['web-session', 'create', '--base-url', 'http://127.0.0.1:3000', '--project-id', 'p1', '--agent', 'codex', '--workflow-mode', 'plan'],
+    [
+      'web-session',
+      'create',
+      '--base-url',
+      'http://127.0.0.1:3000',
+      '--project-id',
+      'p1',
+      '--agent',
+      'codex',
+      '--workflow-mode',
+      'plan',
+      '--auto-retry-policy-mode',
+      'custom',
+      '--auto-retry-scope',
+      'all_failures',
+      '--auto-retry-preset',
+      'sustain_60s',
+      '--auto-retry-max-attempts',
+      '9',
+    ],
     { fetchImpl: createFetchMock(handlers) },
   );
 

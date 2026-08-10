@@ -117,6 +117,7 @@ type Config struct {
 	DefaultCodexReasoningEffort func() ReasoningEffort
 	DefaultCodexPermissionLevel func() string
 	DefaultCodexSyncMode        func() SyncMode
+	AutoRetryDefaultsConfig     func() utils.WebSessionAutoRetryDefaultsConfig
 	ActiveCallTimeoutConfig     func() utils.WebSessionActiveCallTimeoutConfig
 }
 
@@ -133,8 +134,8 @@ type Manager struct {
 	eventStates          map[string]*sessionEventState
 	textDeltaFlushWindow time.Duration
 
-	mu                          sync.RWMutex
-	runs                        map[string]*activeRun
+	mu   sync.RWMutex
+	runs map[string]*activeRun
 	// Codex can report turn completion before its app-server releases the thread writer.
 	codexRunDrains              map[string]*activeRun
 	clients                     map[*client]struct{}
@@ -314,6 +315,13 @@ func normalizeAutoRetryPreset(preset AutoRetryPreset) AutoRetryPreset {
 	}
 }
 
+func normalizeAutoRetryPolicyMode(mode AutoRetryPolicyMode) AutoRetryPolicyMode {
+	if strings.EqualFold(strings.TrimSpace(string(mode)), string(AutoRetryPolicyModeCustom)) {
+		return AutoRetryPolicyModeCustom
+	}
+	return AutoRetryPolicyModeDefault
+}
+
 const maxAutoRetryAttempts = 100
 
 func normalizeAutoRetryMaxAttempts(attempts int) int {
@@ -324,6 +332,112 @@ func normalizeAutoRetryMaxAttempts(attempts int) int {
 		return maxAutoRetryAttempts
 	}
 	return attempts
+}
+
+type resolvedAutoRetryCreateConfig struct {
+	policyMode               AutoRetryPolicyMode
+	scope                    AutoRetryScope
+	preset                   AutoRetryPreset
+	maxAttempts              int
+	dispatchPendingOnFailure bool
+}
+
+func (m *Manager) autoRetryDefaults() resolvedAutoRetryCreateConfig {
+	raw := utils.NormalizeWebSessionAutoRetryDefaultsConfig(utils.WebSessionAutoRetryDefaultsConfig{})
+	if m != nil && m.cfg.AutoRetryDefaultsConfig != nil {
+		raw = utils.NormalizeWebSessionAutoRetryDefaultsConfig(m.cfg.AutoRetryDefaultsConfig())
+	}
+	return resolvedAutoRetryCreateConfig{
+		policyMode:               AutoRetryPolicyModeDefault,
+		scope:                    normalizeAutoRetryScope(AutoRetryScope(raw.Scope)),
+		preset:                   normalizeAutoRetryPreset(AutoRetryPreset(raw.Preset)),
+		maxAttempts:              normalizeAutoRetryMaxAttempts(raw.MaxAttempts),
+		dispatchPendingOnFailure: raw.DispatchPendingOnFailure,
+	}
+}
+
+func (m *Manager) resolveAutoRetryCreateConfig(params CreateParams) resolvedAutoRetryCreateConfig {
+	resolved := m.autoRetryDefaults()
+	hasPolicyOverride := params.AutoRetryScope != nil ||
+		params.AutoRetryPreset != nil ||
+		params.AutoRetryMaxAttempts != nil
+	if params.AutoRetryPolicyMode != nil {
+		resolved.policyMode = normalizeAutoRetryPolicyMode(*params.AutoRetryPolicyMode)
+	} else if hasPolicyOverride {
+		resolved.policyMode = AutoRetryPolicyModeCustom
+	}
+	if resolved.policyMode == AutoRetryPolicyModeCustom {
+		if params.AutoRetryScope != nil {
+			resolved.scope = normalizeAutoRetryScope(*params.AutoRetryScope)
+		}
+		if params.AutoRetryPreset != nil {
+			resolved.preset = normalizeAutoRetryPreset(*params.AutoRetryPreset)
+		}
+		if params.AutoRetryMaxAttempts != nil {
+			resolved.maxAttempts = normalizeAutoRetryMaxAttempts(*params.AutoRetryMaxAttempts)
+		}
+	}
+	if params.AutoRetryDispatchPendingOnFailure != nil {
+		resolved.dispatchPendingOnFailure = *params.AutoRetryDispatchPendingOnFailure
+	}
+	return resolved
+}
+
+func (m *Manager) resolveAutoRetryUpdateConfig(
+	record tables.WebSessionTable,
+	policyMode *AutoRetryPolicyMode,
+	scope *AutoRetryScope,
+	preset *AutoRetryPreset,
+	maxAttempts *int,
+) resolvedAutoRetryCreateConfig {
+	hasPolicyOverride := scope != nil || preset != nil || maxAttempts != nil
+	mode := normalizeAutoRetryPolicyMode(AutoRetryPolicyMode(record.AutoRetryPolicyMode))
+	if policyMode != nil {
+		mode = normalizeAutoRetryPolicyMode(*policyMode)
+	} else if hasPolicyOverride {
+		mode = AutoRetryPolicyModeCustom
+	}
+
+	if mode == AutoRetryPolicyModeDefault {
+		resolved := m.autoRetryDefaults()
+		resolved.dispatchPendingOnFailure = record.AutoRetryDispatchPendingOnFailure
+		return resolved
+	}
+
+	resolved := resolvedAutoRetryCreateConfig{
+		policyMode:               AutoRetryPolicyModeCustom,
+		scope:                    normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),
+		preset:                   normalizeAutoRetryPreset(AutoRetryPreset(record.AutoRetryPreset)),
+		maxAttempts:              normalizeAutoRetryMaxAttempts(record.AutoRetryMaxAttempts),
+		dispatchPendingOnFailure: record.AutoRetryDispatchPendingOnFailure,
+	}
+	if scope != nil {
+		resolved.scope = normalizeAutoRetryScope(*scope)
+	}
+	if preset != nil {
+		resolved.preset = normalizeAutoRetryPreset(*preset)
+	}
+	if maxAttempts != nil {
+		resolved.maxAttempts = normalizeAutoRetryMaxAttempts(*maxAttempts)
+	}
+	return resolved
+}
+
+func (m *Manager) refreshDefaultAutoRetryPolicy(record *tables.WebSessionTable) map[string]any {
+	if record == nil || normalizeAutoRetryPolicyMode(AutoRetryPolicyMode(record.AutoRetryPolicyMode)) != AutoRetryPolicyModeDefault {
+		return nil
+	}
+	defaults := m.autoRetryDefaults()
+	record.AutoRetryPolicyMode = string(AutoRetryPolicyModeDefault)
+	record.AutoRetryScope = string(defaults.scope)
+	record.AutoRetryPreset = string(defaults.preset)
+	record.AutoRetryMaxAttempts = defaults.maxAttempts
+	return map[string]any{
+		"auto_retry_policy_mode":  string(AutoRetryPolicyModeDefault),
+		"auto_retry_scope":        string(defaults.scope),
+		"auto_retry_preset":       string(defaults.preset),
+		"auto_retry_max_attempts": defaults.maxAttempts,
+	}
 }
 
 func effectiveAssistantState(record tables.WebSessionTable) AssistantState {
@@ -911,6 +1025,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 			return SessionSummary{}, err
 		}
 	}
+	autoRetry := m.resolveAutoRetryCreateConfig(params)
 	now := time.Now()
 	record := tables.WebSessionTable{
 		ProjectID:                         project.Id,
@@ -927,10 +1042,11 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		PermissionLevel:                   string(permissionLevel),
 		ActiveCallTimeoutEnabled:          params.ActiveCallTimeoutEnabled,
 		AutoRetryEnabled:                  params.AutoRetryEnabled,
-		AutoRetryScope:                    string(normalizeAutoRetryScope(params.AutoRetryScope)),
-		AutoRetryPreset:                   string(normalizeAutoRetryPreset(params.AutoRetryPreset)),
-		AutoRetryMaxAttempts:              normalizeAutoRetryMaxAttempts(params.AutoRetryMaxAttempts),
-		AutoRetryDispatchPendingOnFailure: params.AutoRetryDispatchPendingOnFailure,
+		AutoRetryPolicyMode:               string(autoRetry.policyMode),
+		AutoRetryScope:                    string(autoRetry.scope),
+		AutoRetryPreset:                   string(autoRetry.preset),
+		AutoRetryMaxAttempts:              autoRetry.maxAttempts,
+		AutoRetryDispatchPendingOnFailure: autoRetry.dispatchPendingOnFailure,
 		Cwd:                               cwd,
 		Status:                            string(StatusIdle),
 		AssistantState:                    "",
@@ -1054,6 +1170,7 @@ func (m *Manager) createImportedCodexSession(
 
 	now := time.Now()
 	modelName := m.resolveSessionModel(AgentCodex, source.Model)
+	autoRetry := m.autoRetryDefaults()
 	record := tables.WebSessionTable{
 		ProjectID:                         project.Id,
 		WorktreeID:                        nil,
@@ -1067,10 +1184,11 @@ func (m *Manager) createImportedCodexSession(
 		WorkflowMode:                      string(WorkflowModeDefault),
 		PermissionLevel:                   string(m.resolveSessionPermissionLevel(AgentCodex, "")),
 		AutoRetryEnabled:                  false,
-		AutoRetryScope:                    string(AutoRetryScopeNetworkOnly),
-		AutoRetryPreset:                   string(AutoRetryPresetGentleStop),
-		AutoRetryMaxAttempts:              0,
-		AutoRetryDispatchPendingOnFailure: false,
+		AutoRetryPolicyMode:               string(AutoRetryPolicyModeDefault),
+		AutoRetryScope:                    string(autoRetry.scope),
+		AutoRetryPreset:                   string(autoRetry.preset),
+		AutoRetryMaxAttempts:              autoRetry.maxAttempts,
+		AutoRetryDispatchPendingOnFailure: autoRetry.dispatchPendingOnFailure,
 		LegacyPermissionMode:              "default",
 		Cwd:                               filepath.Clean(strings.TrimSpace(source.ProjectPath)),
 		NativeSessionID:                   nilIfEmpty(source.SessionID),
@@ -2290,25 +2408,22 @@ func (m *Manager) UpdateAutoRetry(
 	ctx context.Context,
 	sessionID string,
 	enabled bool,
-	scope AutoRetryScope,
-	preset AutoRetryPreset,
-	maxAttempts ...int,
+	policyMode *AutoRetryPolicyMode,
+	scope *AutoRetryScope,
+	preset *AutoRetryPreset,
+	maxAttempts *int,
 ) (SessionSummary, error) {
-	configuredMaxAttempts := 0
-	if len(maxAttempts) > 0 {
-		configuredMaxAttempts = normalizeAutoRetryMaxAttempts(maxAttempts[0])
-	} else {
-		record, err := m.GetSession(ctx, sessionID)
-		if err != nil {
-			return SessionSummary{}, err
-		}
-		configuredMaxAttempts = normalizeAutoRetryMaxAttempts(record.AutoRetryMaxAttempts)
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
 	}
+	resolved := m.resolveAutoRetryUpdateConfig(record, policyMode, scope, preset, maxAttempts)
 	summary, err := m.updateFields(ctx, sessionID, map[string]any{
 		"auto_retry_enabled":      enabled,
-		"auto_retry_scope":        string(normalizeAutoRetryScope(scope)),
-		"auto_retry_preset":       string(normalizeAutoRetryPreset(preset)),
-		"auto_retry_max_attempts": configuredMaxAttempts,
+		"auto_retry_policy_mode":  string(resolved.policyMode),
+		"auto_retry_scope":        string(resolved.scope),
+		"auto_retry_preset":       string(resolved.preset),
+		"auto_retry_max_attempts": resolved.maxAttempts,
 		"auto_retry_attempt":      0,
 		"auto_retry_next_at":      nil,
 		"updated_at":              time.Now(),
@@ -3009,21 +3124,22 @@ func (m *Manager) GetAttachment(id string) (Attachment, error) {
 
 func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
-		ProjectID                         string `json:"pid"`
-		WorktreeID                        string `json:"wid"`
-		Agent                             string `json:"ag"`
-		ClaudeRuntime                     string `json:"cr"`
-		Model                             string `json:"md"`
-		ReasoningEffort                   string `json:"re"`
-		WorkflowMode                      string `json:"wm"`
-		PermissionLevel                   string `json:"pl"`
-		AutoRetryEnabled                  bool   `json:"ae"`
-		AutoRetryScope                    string `json:"ars"`
-		AutoRetryPreset                   string `json:"arp"`
-		AutoRetryMaxAttempts              int    `json:"aram"`
-		AutoRetryDispatchPendingOnFailure bool   `json:"ardpf"`
-		PermissionMode                    string `json:"pm"`
-		Title                             string `json:"ttl"`
+		ProjectID                         string  `json:"pid"`
+		WorktreeID                        string  `json:"wid"`
+		Agent                             string  `json:"ag"`
+		ClaudeRuntime                     string  `json:"cr"`
+		Model                             string  `json:"md"`
+		ReasoningEffort                   string  `json:"re"`
+		WorkflowMode                      string  `json:"wm"`
+		PermissionLevel                   string  `json:"pl"`
+		AutoRetryEnabled                  bool    `json:"ae"`
+		AutoRetryPolicyMode               *string `json:"arpm"`
+		AutoRetryScope                    *string `json:"ars"`
+		AutoRetryPreset                   *string `json:"arp"`
+		AutoRetryMaxAttempts              *int    `json:"aram"`
+		AutoRetryDispatchPendingOnFailure *bool   `json:"ardpf"`
+		PermissionMode                    string  `json:"pm"`
+		Title                             string  `json:"ttl"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, "", "bad_req", "invalid create payload", false))
@@ -3051,8 +3167,9 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 		WorkflowMode:                      workflowMode,
 		PermissionLevel:                   permissionLevel,
 		AutoRetryEnabled:                  payload.AutoRetryEnabled,
-		AutoRetryScope:                    AutoRetryScope(payload.AutoRetryScope),
-		AutoRetryPreset:                   AutoRetryPreset(payload.AutoRetryPreset),
+		AutoRetryPolicyMode:               mapOptionalAutoRetryValue[AutoRetryPolicyMode](payload.AutoRetryPolicyMode),
+		AutoRetryScope:                    mapOptionalAutoRetryValue[AutoRetryScope](payload.AutoRetryScope),
+		AutoRetryPreset:                   mapOptionalAutoRetryValue[AutoRetryPreset](payload.AutoRetryPreset),
 		AutoRetryMaxAttempts:              payload.AutoRetryMaxAttempts,
 		AutoRetryDispatchPendingOnFailure: payload.AutoRetryDispatchPendingOnFailure,
 		Title:                             payload.Title,
@@ -3423,29 +3540,35 @@ func (m *Manager) handleSetAutoRetryCommand(
 	frame wireCommandFrame,
 ) error {
 	var payload struct {
-		Enabled     bool   `json:"ae"`
-		Scope       string `json:"ars"`
-		Preset      string `json:"arp"`
-		MaxAttempts *int   `json:"aram"`
+		Enabled     bool    `json:"ae"`
+		PolicyMode  *string `json:"arpm"`
+		Scope       *string `json:"ars"`
+		Preset      *string `json:"arp"`
+		MaxAttempts *int    `json:"aram"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid auto retry payload", false))
-	}
-	maxAttempts := []int(nil)
-	if payload.MaxAttempts != nil {
-		maxAttempts = []int{*payload.MaxAttempts}
 	}
 	if _, err := m.UpdateAutoRetry(
 		ctx,
 		frame.SessionID,
 		payload.Enabled,
-		AutoRetryScope(payload.Scope),
-		AutoRetryPreset(payload.Preset),
-		maxAttempts...,
+		mapOptionalAutoRetryValue[AutoRetryPolicyMode](payload.PolicyMode),
+		mapOptionalAutoRetryValue[AutoRetryScope](payload.Scope),
+		mapOptionalAutoRetryValue[AutoRetryPreset](payload.Preset),
+		payload.MaxAttempts,
 	); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
 	return m.sendMutationAck(ctx, client, frame, nil)
+}
+
+func mapOptionalAutoRetryValue[T ~string](value *string) *T {
+	if value == nil {
+		return nil
+	}
+	mapped := T(*value)
+	return &mapped
 }
 
 func (m *Manager) handleSetAutoRetryDispatchPendingOnFailureCommand(
@@ -3930,6 +4053,10 @@ func (m *Manager) sendMessageInternal(
 	if text == "" && len(attachments) == 0 {
 		return fmt.Errorf("message is empty")
 	}
+	defaultAutoRetryUpdates := map[string]any(nil)
+	if !fromAutoRetry {
+		defaultAutoRetryUpdates = m.refreshDefaultAutoRetryPolicy(&record)
+	}
 
 	runID := utils.NewID()
 	userMessageID := utils.NewID()
@@ -3976,6 +4103,9 @@ func (m *Manager) sendMessageInternal(
 		"auto_retry_last_error_code": nil,
 		"updated_at":                 now,
 		"last_message_at":            now,
+	}
+	for key, value := range defaultAutoRetryUpdates {
+		updates[key] = value
 	}
 	if fromAutoRetry {
 		updates["auto_retry_next_at"] = nil
@@ -6436,6 +6566,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		PermissionLevel:                   effectivePermissionLevel(record),
 		ActiveCallTimeoutEnabled:          activeCallTimeoutOverrideOrDefault(record.ActiveCallTimeoutEnabled),
 		AutoRetryEnabled:                  record.AutoRetryEnabled,
+		AutoRetryPolicyMode:               normalizeAutoRetryPolicyMode(AutoRetryPolicyMode(record.AutoRetryPolicyMode)),
 		AutoRetryScope:                    normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),
 		AutoRetryPreset:                   normalizeAutoRetryPreset(AutoRetryPreset(record.AutoRetryPreset)),
 		AutoRetryMaxAttempts:              normalizeAutoRetryMaxAttempts(record.AutoRetryMaxAttempts),

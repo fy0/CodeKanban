@@ -193,7 +193,7 @@ func addPayloadSections(result *utils.SettingsBackupPreviewResult, backup utils.
 		if server.Developer != nil {
 			result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
 				Key: "server.developer", Label: "Developer config", Action: "replace", Target: "server",
-				ChangedKeys: []string{"enableTerminalScrollback", "enableTerminalStateSnapshot", "webSessionCodexDefaultModel", "webSessionCodexDefaultReasoningEffort", "webSessionCodexDefaultPermissionLevel", "webSessionCodexDefaultSyncMode", "webSessionActiveCallTimeout"},
+				ChangedKeys: []string{"enableTerminalScrollback", "enableTerminalStateSnapshot", "webSessionCodexDefaultModel", "webSessionCodexDefaultReasoningEffort", "webSessionCodexDefaultPermissionLevel", "webSessionCodexDefaultSyncMode", "webSessionAutoRetryDefaults", "webSessionActiveCallTimeout"},
 			})
 		}
 		if server.PageTitle != nil {

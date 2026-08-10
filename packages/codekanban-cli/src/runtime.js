@@ -177,6 +177,22 @@ function parseCliArgs(argv) {
         flags.permissionMode = readFlagValue(argv, index, token);
         index += 1;
         break;
+      case '--auto-retry-policy-mode':
+        flags.autoRetryPolicyMode = readFlagValue(argv, index, token);
+        index += 1;
+        break;
+      case '--auto-retry-scope':
+        flags.autoRetryScope = readFlagValue(argv, index, token);
+        index += 1;
+        break;
+      case '--auto-retry-preset':
+        flags.autoRetryPreset = readFlagValue(argv, index, token);
+        index += 1;
+        break;
+      case '--auto-retry-max-attempts':
+        flags.autoRetryMaxAttempts = readFlagValue(argv, index, token);
+        index += 1;
+        break;
       case '--limit':
         flags.limit = readFlagValue(argv, index, token);
         index += 1;
@@ -310,6 +326,10 @@ Common options:
   --session-id <id>     Session identifier
   --image <path>        Upload a local image for web-session send/run; repeatable
   --claude-runtime <rt> Claude launcher for workflow terminal mode: claude or ccr
+  --auto-retry-policy-mode <mode>  Retry policy mode: default or custom
+  --auto-retry-scope <scope>       Retry scope: network_only, network_and_rate_limit, or all_failures
+  --auto-retry-preset <preset>     Retry timing: gentle_stop, aggressive_stop, or sustain_60s
+  --auto-retry-max-attempts <n>    Maximum automatic continue attempts (0-100)
   --help                Show this help text
 
 Examples:
@@ -597,6 +617,13 @@ async function runWebSessionFlow(client, flags) {
       workflowMode: flags.workflowMode || 'plan',
       permissionLevel: flags.permissionLevel,
       permissionMode: flags.permissionMode,
+      autoRetryPolicyMode: flags.autoRetryPolicyMode,
+      autoRetryScope: flags.autoRetryScope,
+      autoRetryPreset: flags.autoRetryPreset,
+      autoRetryMaxAttempts: parseIntegerFlag(
+        flags.autoRetryMaxAttempts,
+        'autoRetryMaxAttempts',
+      ),
       title: flags.title,
     });
     sessionId = session?.id;
@@ -779,6 +806,13 @@ export async function runCli(argv, options = {}) {
         workflowMode: flags.workflowMode,
         permissionLevel: flags.permissionLevel,
         permissionMode: flags.permissionMode,
+        autoRetryPolicyMode: flags.autoRetryPolicyMode,
+        autoRetryScope: flags.autoRetryScope,
+        autoRetryPreset: flags.autoRetryPreset,
+        autoRetryMaxAttempts: parseIntegerFlag(
+          flags.autoRetryMaxAttempts,
+          'autoRetryMaxAttempts',
+        ),
         title: flags.title,
       });
     } else if (scope === 'web-session' && action === 'connect') {

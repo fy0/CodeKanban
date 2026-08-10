@@ -223,10 +223,6 @@ interface GeneralSettings {
   confirmBeforeTerminalClose: boolean;
   showWebSessionReasoning: boolean;
   webSessionActivityDisplayMode: WebSessionActivityDisplayMode;
-  webSessionAutoContinueScope: WebSessionAutoContinueScope;
-  webSessionAutoContinuePreset: WebSessionAutoContinuePreset;
-  webSessionAutoContinueMaxAttempts: number;
-  webSessionAutoRetryDispatchPendingOnFailure: boolean;
   webSessionStreamingMarkdownThrottleMode: WebSessionStreamingMarkdownThrottleMode;
   webSessionStreamingMarkdownThrottleCustomMs: number;
   terminalThemeId: string;
@@ -257,14 +253,10 @@ type LoadSettingsResult = {
   shouldPersist: boolean;
 };
 
-const STORAGE_VERSION = 6;
+const STORAGE_VERSION = 7;
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
-const DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE: WebSessionAutoContinueScope = 'network_only';
-const DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET: WebSessionAutoContinuePreset = 'gentle_stop';
-export const DEFAULT_WEB_SESSION_AUTO_CONTINUE_MAX_ATTEMPTS = 0;
-const MAX_WEB_SESSION_AUTO_CONTINUE_ATTEMPTS = 100;
 export const DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS = 100;
 export const WEB_SESSION_QUICK_INPUT_RECENT_LIMIT = 30;
 const FOLLOW_SYSTEM_THEME_DEFAULT: FollowSystemThemeSetting = -1;
@@ -351,10 +343,6 @@ const defaultSettings: GeneralSettings = {
   confirmBeforeTerminalClose: true,
   showWebSessionReasoning: false,
   webSessionActivityDisplayMode: DEFAULT_WEB_SESSION_ACTIVITY_DISPLAY_MODE,
-  webSessionAutoContinueScope: DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE,
-  webSessionAutoContinuePreset: DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET,
-  webSessionAutoContinueMaxAttempts: DEFAULT_WEB_SESSION_AUTO_CONTINUE_MAX_ATTEMPTS,
-  webSessionAutoRetryDispatchPendingOnFailure: false,
   webSessionStreamingMarkdownThrottleMode: 'default',
   webSessionStreamingMarkdownThrottleCustomMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
@@ -411,14 +399,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const showWebSessionReasoning = computed(() => settings.value.showWebSessionReasoning);
   const webSessionActivityDisplayMode = computed(
     () => settings.value.webSessionActivityDisplayMode
-  );
-  const webSessionAutoContinueScope = computed(() => settings.value.webSessionAutoContinueScope);
-  const webSessionAutoContinuePreset = computed(() => settings.value.webSessionAutoContinuePreset);
-  const webSessionAutoContinueMaxAttempts = computed(
-    () => settings.value.webSessionAutoContinueMaxAttempts
-  );
-  const webSessionAutoRetryDispatchPendingOnFailure = computed(
-    () => settings.value.webSessionAutoRetryDispatchPendingOnFailure
   );
   const webSessionStreamingMarkdownThrottleMode = computed(
     () => settings.value.webSessionStreamingMarkdownThrottleMode
@@ -807,23 +787,6 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.webSessionActivityDisplayMode = sanitizeWebSessionActivityDisplayMode(value);
   }
 
-  function updateWebSessionAutoContinueScope(value: WebSessionAutoContinueScope) {
-    settings.value.webSessionAutoContinueScope = sanitizeWebSessionAutoContinueScope(value);
-  }
-
-  function updateWebSessionAutoContinuePreset(value: WebSessionAutoContinuePreset) {
-    settings.value.webSessionAutoContinuePreset = sanitizeWebSessionAutoContinuePreset(value);
-  }
-
-  function updateWebSessionAutoContinueMaxAttempts(value: number | null) {
-    settings.value.webSessionAutoContinueMaxAttempts =
-      sanitizeWebSessionAutoContinueMaxAttempts(value);
-  }
-
-  function updateWebSessionAutoRetryDispatchPendingOnFailure(value: boolean) {
-    settings.value.webSessionAutoRetryDispatchPendingOnFailure = value === true;
-  }
-
   function updateWebSessionStreamingMarkdownThrottleMode(
     value: WebSessionStreamingMarkdownThrottleMode
   ) {
@@ -941,8 +904,11 @@ export const useSettingsStore = defineStore('settings', () => {
   ): SettingsBackupClientPayload {
     const serialized = serializeSettingsForBackup(settings.value);
     if (options?.includeQuickInputRecent === false && serialized.webSessionQuickInput) {
-      const { recent: _recent, recentByProject: _recentByProject, ...restQuickInput } =
-        serialized.webSessionQuickInput;
+      const {
+        recent: _recent,
+        recentByProject: _recentByProject,
+        ...restQuickInput
+      } = serialized.webSessionQuickInput;
       serialized.webSessionQuickInput = restQuickInput;
       if (!('pinned' in serialized.webSessionQuickInput)) {
         delete serialized.webSessionQuickInput;
@@ -1001,10 +967,6 @@ export const useSettingsStore = defineStore('settings', () => {
     confirmBeforeTerminalClose,
     showWebSessionReasoning,
     webSessionActivityDisplayMode,
-    webSessionAutoContinueScope,
-    webSessionAutoContinuePreset,
-    webSessionAutoContinueMaxAttempts,
-    webSessionAutoRetryDispatchPendingOnFailure,
     webSessionStreamingMarkdownThrottleMode,
     webSessionStreamingMarkdownThrottleCustomMs,
     webSessionStreamingMarkdownThrottleMs,
@@ -1041,10 +1003,6 @@ export const useSettingsStore = defineStore('settings', () => {
     updateConfirmBeforeTerminalClose,
     updateShowWebSessionReasoning,
     updateWebSessionActivityDisplayMode,
-    updateWebSessionAutoContinueScope,
-    updateWebSessionAutoContinuePreset,
-    updateWebSessionAutoContinueMaxAttempts,
-    updateWebSessionAutoRetryDispatchPendingOnFailure,
     updateWebSessionStreamingMarkdownThrottleMode,
     updateWebSessionStreamingMarkdownThrottleCustomMs,
     updateTerminalTheme,
@@ -1140,10 +1098,7 @@ function preserveImportedQuickInputFields(
   }
   if (!('recentByProject' in next)) {
     next.recentByProject = Object.fromEntries(
-      Object.entries(current.recentByProject).map(([projectId, recent]) => [
-        projectId,
-        [...recent],
-      ])
+      Object.entries(current.recentByProject).map(([projectId, recent]) => [projectId, [...recent]])
     );
   }
   return next;
@@ -1177,11 +1132,6 @@ function cloneDefaultSettings(): GeneralSettings {
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
     showWebSessionReasoning: defaultSettings.showWebSessionReasoning,
     webSessionActivityDisplayMode: defaultSettings.webSessionActivityDisplayMode,
-    webSessionAutoContinueScope: defaultSettings.webSessionAutoContinueScope,
-    webSessionAutoContinuePreset: defaultSettings.webSessionAutoContinuePreset,
-    webSessionAutoContinueMaxAttempts: defaultSettings.webSessionAutoContinueMaxAttempts,
-    webSessionAutoRetryDispatchPendingOnFailure:
-      defaultSettings.webSessionAutoRetryDispatchPendingOnFailure,
     webSessionStreamingMarkdownThrottleMode:
       defaultSettings.webSessionStreamingMarkdownThrottleMode,
     webSessionStreamingMarkdownThrottleCustomMs:
@@ -1262,17 +1212,6 @@ function loadSettingsFromParsed(
       webSessionActivityDisplayMode: sanitizeWebSessionActivityDisplayMode(
         parsed.webSessionActivityDisplayMode
       ),
-      webSessionAutoContinueScope: sanitizeWebSessionAutoContinueScope(
-        parsed.webSessionAutoContinueScope
-      ),
-      webSessionAutoContinuePreset: sanitizeWebSessionAutoContinuePreset(
-        parsed.webSessionAutoContinuePreset
-      ),
-      webSessionAutoContinueMaxAttempts: sanitizeWebSessionAutoContinueMaxAttempts(
-        parsed.webSessionAutoContinueMaxAttempts
-      ),
-      webSessionAutoRetryDispatchPendingOnFailure:
-        parsed.webSessionAutoRetryDispatchPendingOnFailure === true,
       webSessionStreamingMarkdownThrottleMode: sanitizeWebSessionStreamingMarkdownThrottleMode(
         parsed.webSessionStreamingMarkdownThrottleMode
       ),
@@ -1334,14 +1273,6 @@ function sanitizeRecentProjectsLimit(value: number | undefined) {
   return Math.min(Math.max(Math.round(parsed), 1), 20);
 }
 
-function sanitizeWebSessionAutoContinueMaxAttempts(value: unknown) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_WEB_SESSION_AUTO_CONTINUE_MAX_ATTEMPTS;
-  }
-  return Math.min(Math.max(Math.round(parsed), 0), MAX_WEB_SESSION_AUTO_CONTINUE_ATTEMPTS);
-}
-
 function sanitizeTerminalLimit(value: number | undefined) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -1384,38 +1315,6 @@ function sanitizeOptionalThemeSettings(value: unknown) {
     return null;
   }
   return sanitizeThemeSettings(value);
-}
-
-const VALID_WEB_SESSION_AUTO_CONTINUE_SCOPES: WebSessionAutoContinueScope[] = [
-  'network_only',
-  'network_and_rate_limit',
-  'all_failures',
-];
-
-function sanitizeWebSessionAutoContinueScope(value: unknown): WebSessionAutoContinueScope {
-  if (
-    typeof value === 'string' &&
-    VALID_WEB_SESSION_AUTO_CONTINUE_SCOPES.includes(value as WebSessionAutoContinueScope)
-  ) {
-    return value as WebSessionAutoContinueScope;
-  }
-  return DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE;
-}
-
-const VALID_WEB_SESSION_AUTO_CONTINUE_PRESETS: WebSessionAutoContinuePreset[] = [
-  'gentle_stop',
-  'aggressive_stop',
-  'sustain_60s',
-];
-
-function sanitizeWebSessionAutoContinuePreset(value: unknown): WebSessionAutoContinuePreset {
-  if (
-    typeof value === 'string' &&
-    VALID_WEB_SESSION_AUTO_CONTINUE_PRESETS.includes(value as WebSessionAutoContinuePreset)
-  ) {
-    return value as WebSessionAutoContinuePreset;
-  }
-  return DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET;
 }
 
 const VALID_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MODES: WebSessionStreamingMarkdownThrottleMode[] =

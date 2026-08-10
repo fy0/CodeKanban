@@ -69,6 +69,21 @@ function normalizeWebSessionAutoRetryPreset(preset) {
   return DEFAULT_WEB_SESSION_AUTO_RETRY_PRESET;
 }
 
+function normalizeWebSessionAutoRetryPolicyMode(mode) {
+  const normalized = ensureOptionalString(mode).toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  return normalized === "custom" ? "custom" : "default";
+}
+
+function normalizeWebSessionAutoRetryMaxAttempts(value) {
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.min(100, Math.max(0, Math.trunc(value)));
+}
+
 function normalizeRequestRetryConfig(value = {}) {
   const attempts = Number.isFinite(value.attempts)
     ? Math.max(1, Math.trunc(value.attempts))
@@ -1086,6 +1101,14 @@ export class CodeKanbanClient {
     const model = ensureOptionalString(input.model);
     const reasoningEffort = ensureOptionalString(input.reasoningEffort);
     const permissionLevel = ensureOptionalString(input.permissionLevel);
+    const autoRetryPolicyMode = normalizeWebSessionAutoRetryPolicyMode(
+      input.autoRetryPolicyMode,
+    );
+    const autoRetryScope = ensureOptionalString(input.autoRetryScope);
+    const autoRetryPreset = ensureOptionalString(input.autoRetryPreset);
+    const autoRetryMaxAttempts = normalizeWebSessionAutoRetryMaxAttempts(
+      input.autoRetryMaxAttempts,
+    );
     const worktree = await this.resolveWorktree({
       projectId,
       worktreeId: input.worktreeId,
@@ -1106,14 +1129,22 @@ export class CodeKanbanClient {
             defaultWebSessionWorkflowMode(permissionMode),
           ...(permissionLevel ? { permissionLevel } : {}),
           autoRetryEnabled: input.autoRetryEnabled === true,
-          autoRetryScope: normalizeWebSessionAutoRetryScope(
-            input.autoRetryScope,
-          ),
-          autoRetryPreset: normalizeWebSessionAutoRetryPreset(
-            input.autoRetryPreset,
-          ),
-          autoRetryDispatchPendingOnFailure:
-            input.autoRetryDispatchPendingOnFailure === true,
+          ...(autoRetryPolicyMode ? { autoRetryPolicyMode } : {}),
+          ...(autoRetryScope
+            ? { autoRetryScope: normalizeWebSessionAutoRetryScope(autoRetryScope) }
+            : {}),
+          ...(autoRetryPreset
+            ? { autoRetryPreset: normalizeWebSessionAutoRetryPreset(autoRetryPreset) }
+            : {}),
+          ...(autoRetryMaxAttempts !== undefined
+            ? { autoRetryMaxAttempts }
+            : {}),
+          ...(typeof input.autoRetryDispatchPendingOnFailure === "boolean"
+            ? {
+                autoRetryDispatchPendingOnFailure:
+                  input.autoRetryDispatchPendingOnFailure,
+              }
+            : {}),
           permissionMode,
           title: ensureOptionalString(input.title),
         },

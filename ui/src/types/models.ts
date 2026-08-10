@@ -257,6 +257,13 @@ export interface WebSessionActiveCallTimeoutConfig {
   callKinds: WebSessionActiveCallTimeoutKindsConfig;
 }
 
+export interface WebSessionAutoRetryDefaultsConfig {
+  scope: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+  preset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+  maxAttempts: number;
+  dispatchPendingOnFailure: boolean;
+}
+
 export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
   enableTerminalStateSnapshot: boolean;
@@ -264,6 +271,7 @@ export interface DeveloperConfig {
   webSessionCodexDefaultReasoningEffort: WebSessionCodexDefaultReasoningEffort;
   webSessionCodexDefaultPermissionLevel: WebSessionCodexDefaultPermissionLevel;
   webSessionCodexDefaultSyncMode: 'default' | 'fast' | 'deep';
+  webSessionAutoRetryDefaults: WebSessionAutoRetryDefaultsConfig;
   webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig;
 }
 
@@ -469,6 +477,7 @@ export interface WebSessionSummary {
   permissionLevel: 'default' | 'elevated' | 'yolo';
   activeCallTimeoutEnabled?: boolean;
   autoRetryEnabled: boolean;
+  autoRetryPolicyMode: 'default' | 'custom';
   autoRetryScope: 'network_only' | 'network_and_rate_limit' | 'all_failures';
   autoRetryPreset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
   autoRetryMaxAttempts?: number;

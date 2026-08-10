@@ -84,7 +84,7 @@ describe('settingsBackup helpers', () => {
       clientPayload: {
         locale: 'zh-CN',
         settings: {
-          version: 6,
+          version: 7,
           theme: {
             primaryColor: '#123456',
             surfaceColor: '#ffffff',
@@ -108,10 +108,6 @@ describe('settingsBackup helpers', () => {
           confirmBeforeTerminalClose: true,
           showWebSessionReasoning: false,
           webSessionActivityDisplayMode: 'default',
-          webSessionAutoContinueScope: 'network_only',
-          webSessionAutoContinuePreset: 'gentle_stop',
-          webSessionAutoContinueMaxAttempts: 0,
-          webSessionAutoRetryDispatchPendingOnFailure: false,
           webSessionStreamingMarkdownThrottleMode: 'default',
           webSessionStreamingMarkdownThrottleCustomMs: 100,
           terminalThemeId: 'follow-theme',
@@ -222,10 +218,6 @@ describe('settingsBackup helpers', () => {
               confirmBeforeTerminalClose: true,
               showWebSessionReasoning: false,
               webSessionActivityDisplayMode: 'default',
-              webSessionAutoContinueScope: 'network_only',
-              webSessionAutoContinuePreset: 'gentle_stop',
-              webSessionAutoContinueMaxAttempts: 0,
-              webSessionAutoRetryDispatchPendingOnFailure: true,
               webSessionStreamingMarkdownThrottleMode: 'default',
               webSessionStreamingMarkdownThrottleCustomMs: 100,
               terminalThemeId: 'follow-theme',
@@ -262,7 +254,9 @@ describe('settingsBackup helpers', () => {
     expect(filtered.payload.server?.webSessionQuickInput?.recentByProject).toBeUndefined();
     expect(filtered.payload.client?.locale).toBeUndefined();
     expect(filtered.payload.client?.settings?.webSessionQuickInput?.recent).toBeUndefined();
-    expect(filtered.payload.client?.settings?.webSessionQuickInput?.recentByProject).toBeUndefined();
+    expect(
+      filtered.payload.client?.settings?.webSessionQuickInput?.recentByProject
+    ).toBeUndefined();
   });
 
   it('formats backup file names using selected rule', () => {

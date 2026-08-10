@@ -72,7 +72,15 @@ type DeveloperConfig struct {
 	WebSessionCodexDefaultReasoningEffort string                            `json:"webSessionCodexDefaultReasoningEffort" yaml:"webSessionCodexDefaultReasoningEffort"`
 	WebSessionCodexDefaultPermissionLevel string                            `json:"webSessionCodexDefaultPermissionLevel" yaml:"webSessionCodexDefaultPermissionLevel"`
 	WebSessionCodexDefaultSyncMode        string                            `json:"webSessionCodexDefaultSyncMode" yaml:"webSessionCodexDefaultSyncMode"`
+	WebSessionAutoRetryDefaults           WebSessionAutoRetryDefaultsConfig `json:"webSessionAutoRetryDefaults" yaml:"webSessionAutoRetryDefaults"`
 	WebSessionActiveCallTimeout           WebSessionActiveCallTimeoutConfig `json:"webSessionActiveCallTimeout" yaml:"webSessionActiveCallTimeout"`
+}
+
+type WebSessionAutoRetryDefaultsConfig struct {
+	Scope                    string `json:"scope" yaml:"scope"`
+	Preset                   string `json:"preset" yaml:"preset"`
+	MaxAttempts              int    `json:"maxAttempts" yaml:"maxAttempts"`
+	DispatchPendingOnFailure bool   `json:"dispatchPendingOnFailure" yaml:"dispatchPendingOnFailure"`
 }
 
 type SettingMode string
@@ -128,7 +136,18 @@ const (
 	WebSessionCodexDefaultSetting         = "default"
 	WebSessionCodexModelDefaultEffort     = "model_default"
 	WebSessionCodexStandardPermission     = "standard"
+	DefaultWebSessionAutoRetryScope       = "network_only"
+	DefaultWebSessionAutoRetryPreset      = "gentle_stop"
+	DefaultWebSessionAutoRetryMaxAttempts = 0
+	MaxWebSessionAutoRetryMaxAttempts     = 100
 )
+
+var defaultWebSessionAutoRetryDefaultsConfig = WebSessionAutoRetryDefaultsConfig{
+	Scope:                    DefaultWebSessionAutoRetryScope,
+	Preset:                   DefaultWebSessionAutoRetryPreset,
+	MaxAttempts:              DefaultWebSessionAutoRetryMaxAttempts,
+	DispatchPendingOnFailure: false,
+}
 
 var defaultWebSessionQuickInputConfig = WebSessionQuickInputConfig{
 	Pinned:          []string{"continue"},
@@ -334,6 +353,7 @@ func ReadConfig() *AppConfig {
 			WebSessionCodexDefaultReasoningEffort: WebSessionCodexDefaultSetting,
 			WebSessionCodexDefaultPermissionLevel: WebSessionCodexDefaultSetting,
 			WebSessionCodexDefaultSyncMode:        WebSessionCodexDefaultSetting,
+			WebSessionAutoRetryDefaults:           NormalizeWebSessionAutoRetryDefaultsConfig(defaultWebSessionAutoRetryDefaultsConfig),
 			WebSessionActiveCallTimeout:           NormalizeWebSessionActiveCallTimeoutConfig(defaultWebSessionActiveCallTimeoutConfig),
 		},
 		UI: UIConfig{
@@ -459,8 +479,34 @@ func NormalizeDeveloperConfig(config DeveloperConfig) DeveloperConfig {
 	default:
 		config.WebSessionCodexDefaultSyncMode = WebSessionCodexDefaultSetting
 	}
+	config.WebSessionAutoRetryDefaults = NormalizeWebSessionAutoRetryDefaultsConfig(config.WebSessionAutoRetryDefaults)
 	config.WebSessionActiveCallTimeout = NormalizeWebSessionActiveCallTimeoutConfig(config.WebSessionActiveCallTimeout)
 	return config
+}
+
+func NormalizeWebSessionAutoRetryDefaultsConfig(config WebSessionAutoRetryDefaultsConfig) WebSessionAutoRetryDefaultsConfig {
+	normalized := defaultWebSessionAutoRetryDefaultsConfig
+	switch strings.ToLower(strings.TrimSpace(config.Scope)) {
+	case "network_and_rate_limit", "all_failures":
+		normalized.Scope = strings.ToLower(strings.TrimSpace(config.Scope))
+	case DefaultWebSessionAutoRetryScope:
+		normalized.Scope = DefaultWebSessionAutoRetryScope
+	}
+	switch strings.ToLower(strings.TrimSpace(config.Preset)) {
+	case "aggressive_stop", "sustain_60s":
+		normalized.Preset = strings.ToLower(strings.TrimSpace(config.Preset))
+	case DefaultWebSessionAutoRetryPreset:
+		normalized.Preset = DefaultWebSessionAutoRetryPreset
+	}
+	normalized.MaxAttempts = config.MaxAttempts
+	if normalized.MaxAttempts < 0 {
+		normalized.MaxAttempts = 0
+	}
+	if normalized.MaxAttempts > MaxWebSessionAutoRetryMaxAttempts {
+		normalized.MaxAttempts = MaxWebSessionAutoRetryMaxAttempts
+	}
+	normalized.DispatchPendingOnFailure = config.DispatchPendingOnFailure
+	return normalized
 }
 
 func MergeDeveloperConfig(current DeveloperConfig, incoming DeveloperConfig) DeveloperConfig {
@@ -475,6 +521,9 @@ func MergeDeveloperConfig(current DeveloperConfig, incoming DeveloperConfig) Dev
 	}
 	if strings.TrimSpace(incoming.WebSessionCodexDefaultSyncMode) == "" {
 		incoming.WebSessionCodexDefaultSyncMode = current.WebSessionCodexDefaultSyncMode
+	}
+	if incoming.WebSessionAutoRetryDefaults == (WebSessionAutoRetryDefaultsConfig{}) {
+		incoming.WebSessionAutoRetryDefaults = current.WebSessionAutoRetryDefaults
 	}
 	if incoming.WebSessionActiveCallTimeout == (WebSessionActiveCallTimeoutConfig{}) {
 		incoming.WebSessionActiveCallTimeout = current.WebSessionActiveCallTimeout

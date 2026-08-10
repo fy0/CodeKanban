@@ -107,6 +107,9 @@ func TestNormalizeDeveloperConfigDefaultsActiveCallTimeout(t *testing.T) {
 	if got.WebSessionCodexDefaultSyncMode != WebSessionCodexDefaultSetting {
 		t.Fatalf("expected Codex sync sentinel %q, got %q", WebSessionCodexDefaultSetting, got.WebSessionCodexDefaultSyncMode)
 	}
+	if got.WebSessionAutoRetryDefaults != defaultWebSessionAutoRetryDefaultsConfig {
+		t.Fatalf("expected default auto-retry config, got %#v", got.WebSessionAutoRetryDefaults)
+	}
 	if got.WebSessionActiveCallTimeout.EnabledMode != SettingModeDefault {
 		t.Fatalf("expected enabled mode default, got %q", got.WebSessionActiveCallTimeout.EnabledMode)
 	}
@@ -130,6 +133,24 @@ func TestNormalizeDeveloperConfigDefaultsActiveCallTimeout(t *testing.T) {
 		got.WebSessionActiveCallTimeout.CallKinds.Command ||
 		!got.WebSessionActiveCallTimeout.CallKinds.Tool {
 		t.Fatalf("expected default call kinds to exclude command, got %#v", got.WebSessionActiveCallTimeout.CallKinds)
+	}
+}
+
+func TestNormalizeWebSessionAutoRetryDefaultsConfig(t *testing.T) {
+	got := NormalizeWebSessionAutoRetryDefaultsConfig(WebSessionAutoRetryDefaultsConfig{
+		Scope:                    " ALL_FAILURES ",
+		Preset:                   " SUSTAIN_60S ",
+		MaxAttempts:              200,
+		DispatchPendingOnFailure: true,
+	})
+	want := WebSessionAutoRetryDefaultsConfig{
+		Scope:                    "all_failures",
+		Preset:                   "sustain_60s",
+		MaxAttempts:              MaxWebSessionAutoRetryMaxAttempts,
+		DispatchPendingOnFailure: true,
+	}
+	if got != want {
+		t.Fatalf("NormalizeWebSessionAutoRetryDefaultsConfig() = %#v, want %#v", got, want)
 	}
 }
 
@@ -245,6 +266,12 @@ func TestMergeDeveloperConfigPreservesNestedTimeoutConfigForLegacyPayloads(t *te
 		WebSessionCodexDefaultReasoningEffort: "medium",
 		WebSessionCodexDefaultPermissionLevel: "yolo",
 		WebSessionCodexDefaultSyncMode:        "deep",
+		WebSessionAutoRetryDefaults: WebSessionAutoRetryDefaultsConfig{
+			Scope:                    "all_failures",
+			Preset:                   "sustain_60s",
+			MaxAttempts:              8,
+			DispatchPendingOnFailure: true,
+		},
 		WebSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig{
 			EnabledMode:          SettingModeOff,
 			TimeoutMode:          WebSessionActiveCallTimeoutModeCustom,
@@ -266,6 +293,9 @@ func TestMergeDeveloperConfigPreservesNestedTimeoutConfigForLegacyPayloads(t *te
 	}
 	if merged.WebSessionActiveCallTimeout != current.WebSessionActiveCallTimeout {
 		t.Fatalf("expected nested timeout config to be preserved, got %#v", merged.WebSessionActiveCallTimeout)
+	}
+	if merged.WebSessionAutoRetryDefaults != current.WebSessionAutoRetryDefaults {
+		t.Fatalf("expected nested auto-retry config to be preserved, got %#v", merged.WebSessionAutoRetryDefaults)
 	}
 	if merged.WebSessionCodexDefaultModel != current.WebSessionCodexDefaultModel ||
 		merged.WebSessionCodexDefaultReasoningEffort != current.WebSessionCodexDefaultReasoningEffort ||

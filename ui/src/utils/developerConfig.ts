@@ -6,7 +6,18 @@ import {
   normalizeConfiguredCodexPermissionLevel,
   normalizeConfiguredCodexReasoningEffort,
 } from '@/constants/webSessionDefaults';
-import type { DeveloperConfig, WebSessionActiveCallTimeoutConfig } from '@/types/models';
+import type {
+  DeveloperConfig,
+  WebSessionActiveCallTimeoutConfig,
+  WebSessionAutoRetryDefaultsConfig,
+} from '@/types/models';
+
+export const DEFAULT_WEB_SESSION_AUTO_RETRY_DEFAULTS = {
+  scope: 'network_only',
+  preset: 'gentle_stop',
+  maxAttempts: 0,
+  dispatchPendingOnFailure: false,
+} as const satisfies WebSessionAutoRetryDefaultsConfig;
 
 export const DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS = 120;
 export const DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS = {
@@ -42,6 +53,23 @@ export function sanitizeActiveCallTimeoutConfig(
   };
 }
 
+export function sanitizeAutoRetryDefaultsConfig(
+  value?: Partial<WebSessionAutoRetryDefaultsConfig> | null
+): WebSessionAutoRetryDefaultsConfig {
+  return {
+    scope:
+      value?.scope === 'network_and_rate_limit' || value?.scope === 'all_failures'
+        ? value.scope
+        : DEFAULT_WEB_SESSION_AUTO_RETRY_DEFAULTS.scope,
+    preset:
+      value?.preset === 'aggressive_stop' || value?.preset === 'sustain_60s'
+        ? value.preset
+        : DEFAULT_WEB_SESSION_AUTO_RETRY_DEFAULTS.preset,
+    maxAttempts: Math.min(100, Math.max(0, Math.trunc(Number(value?.maxAttempts) || 0))),
+    dispatchPendingOnFailure: value?.dispatchPendingOnFailure === true,
+  };
+}
+
 export function sanitizeDeveloperConfig(value?: Partial<DeveloperConfig> | null): DeveloperConfig {
   const configuredModel = value?.webSessionCodexDefaultModel?.trim();
   return {
@@ -62,6 +90,9 @@ export function sanitizeDeveloperConfig(value?: Partial<DeveloperConfig> | null)
       value?.webSessionCodexDefaultSyncMode === 'deep'
         ? value.webSessionCodexDefaultSyncMode
         : DEFAULT_WEB_SESSION_CODEX_SYNC_MODE,
+    webSessionAutoRetryDefaults: sanitizeAutoRetryDefaultsConfig(
+      value?.webSessionAutoRetryDefaults
+    ),
     webSessionActiveCallTimeout: sanitizeActiveCallTimeoutConfig(
       value?.webSessionActiveCallTimeout
     ),

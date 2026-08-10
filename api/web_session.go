@@ -463,21 +463,22 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		input *struct {
 			ProjectID string `path:"projectId"`
 			Body      struct {
-				WorktreeID                        string `json:"worktreeId"`
-				Agent                             string `json:"agent"`
-				ClaudeRuntime                     string `json:"claudeRuntime"`
-				Model                             string `json:"model"`
-				ReasoningEffort                   string `json:"reasoningEffort"`
-				WorkflowMode                      string `json:"workflowMode"`
-				PermissionLevel                   string `json:"permissionLevel"`
-				ActiveCallTimeoutEnabled          *bool  `json:"activeCallTimeoutEnabled,omitempty"`
-				AutoRetryEnabled                  bool   `json:"autoRetryEnabled"`
-				AutoRetryScope                    string `json:"autoRetryScope"`
-				AutoRetryPreset                   string `json:"autoRetryPreset"`
-				AutoRetryMaxAttempts              int    `json:"autoRetryMaxAttempts"`
-				AutoRetryDispatchPendingOnFailure bool   `json:"autoRetryDispatchPendingOnFailure"`
-				PermissionMode                    string `json:"permissionMode,omitempty"`
-				Title                             string `json:"title"`
+				WorktreeID                        string  `json:"worktreeId"`
+				Agent                             string  `json:"agent"`
+				ClaudeRuntime                     string  `json:"claudeRuntime"`
+				Model                             string  `json:"model"`
+				ReasoningEffort                   string  `json:"reasoningEffort"`
+				WorkflowMode                      string  `json:"workflowMode"`
+				PermissionLevel                   string  `json:"permissionLevel"`
+				ActiveCallTimeoutEnabled          *bool   `json:"activeCallTimeoutEnabled,omitempty"`
+				AutoRetryEnabled                  bool    `json:"autoRetryEnabled"`
+				AutoRetryPolicyMode               *string `json:"autoRetryPolicyMode,omitempty"`
+				AutoRetryScope                    *string `json:"autoRetryScope,omitempty"`
+				AutoRetryPreset                   *string `json:"autoRetryPreset,omitempty"`
+				AutoRetryMaxAttempts              *int    `json:"autoRetryMaxAttempts,omitempty"`
+				AutoRetryDispatchPendingOnFailure *bool   `json:"autoRetryDispatchPendingOnFailure,omitempty"`
+				PermissionMode                    string  `json:"permissionMode,omitempty"`
+				Title                             string  `json:"title"`
 			}
 		},
 	) (*h.ItemResponse[websession.SessionSummary], error) {
@@ -519,8 +520,9 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			PermissionLevel:                   permissionLevel,
 			ActiveCallTimeoutEnabled:          input.Body.ActiveCallTimeoutEnabled,
 			AutoRetryEnabled:                  input.Body.AutoRetryEnabled,
-			AutoRetryScope:                    websession.AutoRetryScope(input.Body.AutoRetryScope),
-			AutoRetryPreset:                   websession.AutoRetryPreset(input.Body.AutoRetryPreset),
+			AutoRetryPolicyMode:               mapOptionalString[websession.AutoRetryPolicyMode](input.Body.AutoRetryPolicyMode),
+			AutoRetryScope:                    mapOptionalString[websession.AutoRetryScope](input.Body.AutoRetryScope),
+			AutoRetryPreset:                   mapOptionalString[websession.AutoRetryPreset](input.Body.AutoRetryPreset),
 			AutoRetryMaxAttempts:              input.Body.AutoRetryMaxAttempts,
 			AutoRetryDispatchPendingOnFailure: input.Body.AutoRetryDispatchPendingOnFailure,
 			Title:                             input.Body.Title,
@@ -992,6 +994,14 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		ctx.Set(fiber.HeaderContentDisposition, "inline")
 		return ctx.SendFile(attachment.Path, false)
 	})
+}
+
+func mapOptionalString[T ~string](value *string) *T {
+	if value == nil {
+		return nil
+	}
+	mapped := T(*value)
+	return &mapped
 }
 
 func (c *webSessionController) serveImageViewPreview(ctx *fiber.Ctx) error {

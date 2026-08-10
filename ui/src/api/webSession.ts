@@ -342,6 +342,7 @@ export const webSessionApi = {
       permissionLevel?: 'default' | 'elevated' | 'yolo';
       activeCallTimeoutEnabled?: boolean;
       autoRetryEnabled?: boolean;
+      autoRetryPolicyMode?: 'default' | 'custom';
       autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
       autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
       autoRetryMaxAttempts?: number;
@@ -362,10 +363,19 @@ export const webSessionApi = {
           ...(data.permissionLevel !== undefined ? { permissionLevel: data.permissionLevel } : {}),
           activeCallTimeoutEnabled: data.activeCallTimeoutEnabled,
           autoRetryEnabled: data.autoRetryEnabled === true,
-          autoRetryScope: data.autoRetryScope ?? 'network_only',
-          autoRetryPreset: data.autoRetryPreset ?? 'gentle_stop',
-          autoRetryMaxAttempts: data.autoRetryMaxAttempts ?? 0,
-          autoRetryDispatchPendingOnFailure: data.autoRetryDispatchPendingOnFailure === true,
+          ...(data.autoRetryPolicyMode !== undefined
+            ? { autoRetryPolicyMode: data.autoRetryPolicyMode }
+            : {}),
+          ...(data.autoRetryScope !== undefined ? { autoRetryScope: data.autoRetryScope } : {}),
+          ...(data.autoRetryPreset !== undefined ? { autoRetryPreset: data.autoRetryPreset } : {}),
+          ...(data.autoRetryMaxAttempts !== undefined
+            ? { autoRetryMaxAttempts: data.autoRetryMaxAttempts }
+            : {}),
+          ...(data.autoRetryDispatchPendingOnFailure !== undefined
+            ? {
+                autoRetryDispatchPendingOnFailure: data.autoRetryDispatchPendingOnFailure === true,
+              }
+            : {}),
           permissionMode: data.permissionMode ?? '',
           title: data.title ?? '',
         })

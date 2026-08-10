@@ -152,7 +152,18 @@ export interface DeveloperConfig {
   webSessionCodexDefaultPermissionLevel: string;
   webSessionCodexDefaultReasoningEffort: string;
   webSessionCodexDefaultSyncMode: string;
+  webSessionAutoRetryDefaults: WebSessionAutoRetryDefaultsConfig;
   webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig;
+}
+export interface WebSessionAutoRetryDefaultsConfig {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  dispatchPendingOnFailure: boolean;
+  maxAttempts: number;
+  preset: string;
+  scope: string;
 }
 export interface WebSessionActiveCallTimeoutConfig {
   /**

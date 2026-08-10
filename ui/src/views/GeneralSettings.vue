@@ -507,358 +507,392 @@
             class="settings-card-shell"
             :class="settingsCardShellClass('session')"
           >
-            <n-card :title="t('settings.sessionSettings')" size="huge">
-              <template #header-extra>
-                <n-button
-                  size="small"
-                  :loading="developerSaving"
-                  :disabled="!developerSessionDirty || developerLoading"
-                  @click="handleSaveDeveloperConfig"
+            <n-space vertical size="large" style="width: 100%">
+              <n-card :title="t('settings.sessionDisplaySettings')" size="huge">
+                <n-form
+                  :label-placement="standardFormLabelPlacement"
+                  :label-width="standardFormLabelWidth"
                 >
-                  {{ t('common.save') }}
-                </n-button>
-              </template>
-              <n-form
-                :label-placement="standardFormLabelPlacement"
-                :label-width="standardFormLabelWidth"
-              >
-                <n-form-item
-                  :label="t('settings.showWebSessionReasoning')"
-                  data-search-key="showWebSessionReasoning"
+                  <n-form-item
+                    :label="t('settings.showWebSessionReasoning')"
+                    data-search-key="showWebSessionReasoning"
+                  >
+                    <n-space vertical size="small">
+                      <n-switch v-model:value="showWebSessionReasoningValue" />
+                      <span class="form-tip">{{ t('settings.showWebSessionReasoningTip') }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.webSessionActivityDisplayMode')"
+                    data-search-key="webSessionActivityDisplayMode"
+                  >
+                    <n-space vertical size="small">
+                      <n-radio-group v-model:value="webSessionActivityDisplayModeValue">
+                        <n-space>
+                          <n-radio value="default">{{ t('common.default') }}</n-radio>
+                          <n-radio value="text">{{
+                            t('settings.webSessionActivityDisplayModeText')
+                          }}</n-radio>
+                          <n-radio value="card">{{
+                            t('settings.webSessionActivityDisplayModeCard')
+                          }}</n-radio>
+                        </n-space>
+                      </n-radio-group>
+                      <span class="form-tip">{{
+                        t('settings.webSessionActivityDisplayModeTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.webSessionStreamingMarkdownThrottle')"
+                    data-search-key="webSessionStreamingMarkdownThrottle"
+                  >
+                    <n-space vertical size="small">
+                      <n-radio-group v-model:value="webSessionStreamingMarkdownThrottleModeValue">
+                        <n-space>
+                          <n-radio value="default">{{ t('common.default') }}</n-radio>
+                          <n-radio value="custom">{{ t('common.custom') }}</n-radio>
+                        </n-space>
+                      </n-radio-group>
+                      <n-input-number
+                        v-model:value="webSessionStreamingMarkdownThrottleCustomMsValue"
+                        :min="1"
+                        :step="10"
+                        style="max-width: 180px"
+                        :disabled="webSessionStreamingMarkdownThrottleModeValue !== 'custom'"
+                      />
+                      <span class="form-tip">
+                        {{
+                          t('settings.webSessionStreamingMarkdownThrottleTip', {
+                            defaultMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
+                          })
+                        }}
+                      </span>
+                    </n-space>
+                  </n-form-item>
+                </n-form>
+              </n-card>
+
+              <n-card :title="t('settings.sessionDefaultsSettings')" size="huge">
+                <template #header-extra>
+                  <n-button
+                    size="small"
+                    :loading="developerSaving"
+                    :disabled="!developerSessionDirty || developerLoading"
+                    @click="handleSaveDeveloperConfig"
+                  >
+                    {{ t('common.save') }}
+                  </n-button>
+                </template>
+                <n-form
+                  :label-placement="standardFormLabelPlacement"
+                  :label-width="standardFormLabelWidth"
                 >
-                  <n-space vertical size="small">
-                    <n-switch v-model:value="showWebSessionReasoningValue" />
-                    <span class="form-tip">{{ t('settings.showWebSessionReasoningTip') }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionActivityDisplayMode')"
-                  data-search-key="webSessionActivityDisplayMode"
-                >
-                  <n-space vertical size="small">
-                    <n-radio-group v-model:value="webSessionActivityDisplayModeValue">
-                      <n-space>
-                        <n-radio value="default">{{ t('common.default') }}</n-radio>
-                        <n-radio value="text">{{
-                          t('settings.webSessionActivityDisplayModeText')
-                        }}</n-radio>
-                        <n-radio value="card">{{
-                          t('settings.webSessionActivityDisplayModeCard')
-                        }}</n-radio>
-                      </n-space>
-                    </n-radio-group>
-                    <span class="form-tip">{{
-                      t('settings.webSessionActivityDisplayModeTip')
-                    }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionStreamingMarkdownThrottle')"
-                  data-search-key="webSessionStreamingMarkdownThrottle"
-                >
-                  <n-space vertical size="small">
-                    <n-radio-group v-model:value="webSessionStreamingMarkdownThrottleModeValue">
-                      <n-space>
-                        <n-radio value="default">{{ t('common.default') }}</n-radio>
-                        <n-radio value="custom">{{ t('common.custom') }}</n-radio>
-                      </n-space>
-                    </n-radio-group>
-                    <n-input-number
-                      v-model:value="webSessionStreamingMarkdownThrottleCustomMsValue"
-                      :min="1"
-                      :step="10"
-                      style="max-width: 180px"
-                      :disabled="webSessionStreamingMarkdownThrottleModeValue !== 'custom'"
-                    />
-                    <span class="form-tip">
-                      {{
-                        t('settings.webSessionStreamingMarkdownThrottleTip', {
-                          defaultMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
-                        })
-                      }}
-                    </span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionAutoContinueScope')"
-                  data-search-key="webSessionAutoContinueScope"
-                >
-                  <n-space vertical size="small">
-                    <n-select
-                      v-model:value="webSessionAutoContinueScopeValue"
-                      :options="webSessionAutoContinueScopeOptions"
-                      style="max-width: 320px"
-                    />
-                    <span class="form-tip">{{ t('settings.webSessionAutoContinueScopeTip') }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionAutoContinuePreset')"
-                  data-search-key="webSessionAutoContinuePreset"
-                >
-                  <n-space vertical size="small">
-                    <n-select
-                      v-model:value="webSessionAutoContinuePresetValue"
-                      :options="webSessionAutoContinuePresetOptions"
-                      style="max-width: 320px"
-                    />
-                    <span class="form-tip">{{
-                      t('settings.webSessionAutoContinuePresetTip')
-                    }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionAutoContinueMaxAttempts')"
-                  data-search-key="webSessionAutoContinueMaxAttempts"
-                >
-                  <n-space vertical size="small">
-                    <n-input-number
-                      v-model:value="webSessionAutoContinueMaxAttemptsValue"
-                      :min="0"
-                      :max="100"
-                      :step="1"
-                      style="max-width: 180px"
-                    />
-                    <span class="form-tip">{{
-                      t('settings.webSessionAutoContinueMaxAttemptsTip')
-                    }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionAutoRetryDispatchPendingOnFailure')"
-                  data-search-key="webSessionAutoRetryDispatchPendingOnFailure"
-                >
-                  <n-space vertical size="small">
-                    <n-checkbox v-model:checked="webSessionAutoRetryDispatchPendingOnFailureValue">
-                      {{ t('settings.webSessionAutoRetryDispatchPendingOnFailureEnabled') }}
-                    </n-checkbox>
-                    <span class="form-tip">{{
-                      t('settings.webSessionAutoRetryDispatchPendingOnFailureTip')
-                    }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionCodexDefaultModel')"
-                  data-search-key="webSessionCodexDefaultModel"
-                >
-                  <n-space vertical size="small">
-                    <n-select
-                      v-model:value="developerForm.webSessionCodexDefaultModel"
-                      :options="webSessionCodexDefaultModelOptions"
-                      :disabled="developerLoading"
-                      filterable
-                      tag
-                      style="max-width: 320px"
-                    />
-                    <span class="form-tip">{{ t('settings.webSessionCodexDefaultModelTip') }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionCodexDefaultReasoningEffort')"
-                  data-search-key="webSessionCodexDefaultReasoningEffort"
-                >
-                  <n-space vertical size="small">
-                    <n-select
-                      v-model:value="developerForm.webSessionCodexDefaultReasoningEffort"
-                      :options="webSessionCodexDefaultReasoningEffortOptions"
-                      :disabled="developerLoading"
-                      style="max-width: 320px"
-                    />
-                    <span class="form-tip">{{
-                      t('settings.webSessionCodexDefaultReasoningEffortTip')
-                    }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionCodexDefaultPermissionLevel')"
-                  data-search-key="webSessionCodexDefaultPermissionLevel"
-                >
-                  <n-space vertical size="small">
-                    <n-select
-                      v-model:value="developerForm.webSessionCodexDefaultPermissionLevel"
-                      :options="webSessionCodexDefaultPermissionLevelOptions"
-                      :disabled="developerLoading"
-                      style="max-width: 320px"
-                    />
-                    <span class="form-tip">{{
-                      t('settings.webSessionCodexDefaultPermissionLevelTip')
-                    }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.webSessionCodexDefaultSyncMode')"
-                  data-search-key="webSessionCodexDefaultSyncMode"
-                >
-                  <n-space vertical size="small">
-                    <n-select
-                      v-model:value="developerForm.webSessionCodexDefaultSyncMode"
-                      :options="webSessionSyncModeOptions"
-                      :disabled="developerLoading"
-                      style="max-width: 320px"
-                    />
-                    <span class="form-tip">{{
-                      t('settings.webSessionCodexDefaultSyncModeTip')
-                    }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item :label="t('settings.webSessionActiveCallTimeout')">
-                  <n-space vertical size="small">
-                    <n-radio-group
-                      v-model:value="developerForm.webSessionActiveCallTimeout.enabledMode"
-                      :disabled="developerLoading"
-                    >
-                      <n-space>
-                        <n-radio value="default">{{ t('common.default') }}</n-radio>
-                        <n-radio value="on">{{ t('common.yes') }}</n-radio>
-                        <n-radio value="off">{{ t('common.no') }}</n-radio>
-                      </n-space>
-                    </n-radio-group>
-                    <span class="form-tip">{{ t('settings.webSessionActiveCallTimeoutTip') }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item :label="t('settings.webSessionActiveCallTimeoutSeconds')">
-                  <n-space vertical size="small">
-                    <n-radio-group
-                      v-model:value="developerForm.webSessionActiveCallTimeout.timeoutMode"
-                      :disabled="developerLoading"
-                    >
-                      <n-space>
-                        <n-radio value="default">{{ t('common.default') }}</n-radio>
-                        <n-radio value="custom">{{ t('common.custom') }}</n-radio>
-                      </n-space>
-                    </n-radio-group>
-                    <n-input-number
-                      v-if="developerUsesCustomActiveCallTimeout"
-                      v-model:value="developerForm.webSessionActiveCallTimeout.customTimeoutSeconds"
-                      :min="10"
-                      :step="10"
-                      :disabled="developerLoading"
-                    />
-                    <span class="form-tip">
-                      {{
-                        t('settings.webSessionActiveCallTimeoutSecondsTip', {
-                          defaultSeconds: DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS,
-                        })
-                      }}
-                    </span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item :label="t('settings.webSessionActiveCallTimeoutCallKinds')">
-                  <n-space vertical size="small">
-                    <n-space>
+                  <n-form-item
+                    :label="t('settings.webSessionAutoContinueScope')"
+                    data-search-key="webSessionAutoContinueScope"
+                  >
+                    <n-space vertical size="small">
+                      <n-select
+                        v-model:value="webSessionAutoContinueScopeValue"
+                        :options="webSessionAutoContinueScopeOptions"
+                        :disabled="developerLoading"
+                        style="max-width: 320px"
+                      />
+                      <span class="form-tip">{{
+                        t('settings.webSessionAutoContinueScopeTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.webSessionAutoContinuePreset')"
+                    data-search-key="webSessionAutoContinuePreset"
+                  >
+                    <n-space vertical size="small">
+                      <n-select
+                        v-model:value="webSessionAutoContinuePresetValue"
+                        :options="webSessionAutoContinuePresetOptions"
+                        :disabled="developerLoading"
+                        style="max-width: 320px"
+                      />
+                      <span class="form-tip">{{
+                        t('settings.webSessionAutoContinuePresetTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.webSessionAutoContinueMaxAttempts')"
+                    data-search-key="webSessionAutoContinueMaxAttempts"
+                  >
+                    <n-space vertical size="small">
+                      <n-input-number
+                        v-model:value="webSessionAutoContinueMaxAttemptsValue"
+                        :min="0"
+                        :max="100"
+                        :step="1"
+                        :disabled="developerLoading"
+                        style="max-width: 180px"
+                      />
+                      <span class="form-tip">{{
+                        t('settings.webSessionAutoContinueMaxAttemptsTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.webSessionAutoRetryDispatchPendingOnFailure')"
+                    data-search-key="webSessionAutoRetryDispatchPendingOnFailure"
+                  >
+                    <n-space vertical size="small">
                       <n-checkbox
-                        v-model:checked="
-                          developerForm.webSessionActiveCallTimeout.callKinds.useDefault
-                        "
+                        v-model:checked="webSessionAutoRetryDispatchPendingOnFailureValue"
                         :disabled="developerLoading"
                       >
-                        {{ t('settings.webSessionActiveCallTimeoutKindDefault') }}
+                        {{ t('settings.webSessionAutoRetryDispatchPendingOnFailureEnabled') }}
                       </n-checkbox>
+                      <span class="form-tip">{{
+                        t('settings.webSessionAutoRetryDispatchPendingOnFailureTip')
+                      }}</span>
                     </n-space>
-                    <n-space>
-                      <n-checkbox
-                        v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.mcp"
-                        :disabled="
-                          developerLoading ||
-                          developerForm.webSessionActiveCallTimeout.callKinds.useDefault
-                        "
-                      >
-                        {{ t('settings.webSessionActiveCallTimeoutKindMcp') }}
-                      </n-checkbox>
-                      <n-checkbox
-                        v-model:checked="
-                          developerForm.webSessionActiveCallTimeout.callKinds.command
-                        "
-                        :disabled="
-                          developerLoading ||
-                          developerForm.webSessionActiveCallTimeout.callKinds.useDefault
-                        "
-                      >
-                        {{ t('settings.webSessionActiveCallTimeoutKindCommand') }}
-                      </n-checkbox>
-                      <n-checkbox
-                        v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.tool"
-                        :disabled="
-                          developerLoading ||
-                          developerForm.webSessionActiveCallTimeout.callKinds.useDefault
-                        "
-                      >
-                        {{ t('settings.webSessionActiveCallTimeoutKindTool') }}
-                      </n-checkbox>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.webSessionCodexDefaultModel')"
+                    data-search-key="webSessionCodexDefaultModel"
+                  >
+                    <n-space vertical size="small">
+                      <n-select
+                        v-model:value="developerForm.webSessionCodexDefaultModel"
+                        :options="webSessionCodexDefaultModelOptions"
+                        :disabled="developerLoading"
+                        filterable
+                        tag
+                        style="max-width: 320px"
+                      />
+                      <span class="form-tip">{{
+                        t('settings.webSessionCodexDefaultModelTip')
+                      }}</span>
                     </n-space>
-                    <span class="form-tip">
-                      {{ t('settings.webSessionActiveCallTimeoutCallKindsTip') }}
-                    </span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item :label="t('settings.webSessionActiveCallTimeoutPrompt')">
-                  <n-space vertical size="small" style="width: 100%">
-                    <n-input
-                      v-model:value="developerForm.webSessionActiveCallTimeout.promptTemplate"
-                      type="textarea"
-                      :autosize="{ minRows: 3, maxRows: 6 }"
-                      :placeholder="DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT"
-                      :disabled="developerLoading"
-                    />
-                    <span class="form-tip">
-                      {{ t('settings.webSessionActiveCallTimeoutPromptTip') }}
-                    </span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item :label="t('settings.webSessionQuickInputPinned')">
-                  <n-space vertical size="small" style="width: 100%">
-                    <n-dynamic-input
-                      v-model:value="webSessionQuickInputPinnedLocal"
-                      :on-create="createWebSessionQuickInputPinnedItem"
-                    >
-                      <template #default="{ value, index }">
-                        <n-input
-                          type="textarea"
-                          class="web-session-quick-input-textarea"
-                          :value="value"
-                          :autosize="{ minRows: 2, maxRows: 4 }"
-                          :placeholder="t('settings.webSessionQuickInputPinnedPlaceholder')"
-                          @update:value="handleWebSessionQuickInputPinnedChange(index, $event)"
-                        />
-                      </template>
-                      <template #action="{ index, remove, create }">
-                        <n-button-group size="small">
-                          <n-button quaternary circle @click="remove(index)">
-                            <template #icon>
-                              <n-icon>
-                                <Remove />
-                              </n-icon>
-                            </template>
-                          </n-button>
-                          <n-button quaternary circle @click="create(index)">
-                            <template #icon>
-                              <n-icon>
-                                <Add />
-                              </n-icon>
-                            </template>
-                          </n-button>
-                        </n-button-group>
-                      </template>
-                    </n-dynamic-input>
-                    <n-space>
-                      <n-button
-                        size="small"
-                        type="primary"
-                        :loading="webSessionQuickInputPinnedSaving"
-                        :disabled="!webSessionQuickInputPinnedDirty"
-                        @click="handleSaveWebSessionQuickInputPinned"
-                      >
-                        {{ t('common.save') }}
-                      </n-button>
-                      <n-button size="small" @click="handleResetWebSessionQuickInputPinned">
-                        {{ t('settings.restoreDefault') }}
-                      </n-button>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.webSessionCodexDefaultReasoningEffort')"
+                    data-search-key="webSessionCodexDefaultReasoningEffort"
+                  >
+                    <n-space vertical size="small">
+                      <n-select
+                        v-model:value="developerForm.webSessionCodexDefaultReasoningEffort"
+                        :options="webSessionCodexDefaultReasoningEffortOptions"
+                        :disabled="developerLoading"
+                        style="max-width: 320px"
+                      />
+                      <span class="form-tip">{{
+                        t('settings.webSessionCodexDefaultReasoningEffortTip')
+                      }}</span>
                     </n-space>
-                    <span class="form-tip">{{ t('settings.webSessionQuickInputPinnedTip') }}</span>
-                  </n-space>
-                </n-form-item>
-              </n-form>
-            </n-card>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.webSessionCodexDefaultPermissionLevel')"
+                    data-search-key="webSessionCodexDefaultPermissionLevel"
+                  >
+                    <n-space vertical size="small">
+                      <n-select
+                        v-model:value="developerForm.webSessionCodexDefaultPermissionLevel"
+                        :options="webSessionCodexDefaultPermissionLevelOptions"
+                        :disabled="developerLoading"
+                        style="max-width: 320px"
+                      />
+                      <span class="form-tip">{{
+                        t('settings.webSessionCodexDefaultPermissionLevelTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.webSessionCodexDefaultSyncMode')"
+                    data-search-key="webSessionCodexDefaultSyncMode"
+                  >
+                    <n-space vertical size="small">
+                      <n-select
+                        v-model:value="developerForm.webSessionCodexDefaultSyncMode"
+                        :options="webSessionSyncModeOptions"
+                        :disabled="developerLoading"
+                        style="max-width: 320px"
+                      />
+                      <span class="form-tip">{{
+                        t('settings.webSessionCodexDefaultSyncModeTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item :label="t('settings.webSessionActiveCallTimeout')">
+                    <n-space vertical size="small">
+                      <n-radio-group
+                        v-model:value="developerForm.webSessionActiveCallTimeout.enabledMode"
+                        :disabled="developerLoading"
+                      >
+                        <n-space>
+                          <n-radio value="default">{{ t('common.default') }}</n-radio>
+                          <n-radio value="on">{{ t('common.yes') }}</n-radio>
+                          <n-radio value="off">{{ t('common.no') }}</n-radio>
+                        </n-space>
+                      </n-radio-group>
+                      <span class="form-tip">{{
+                        t('settings.webSessionActiveCallTimeoutTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item :label="t('settings.webSessionActiveCallTimeoutSeconds')">
+                    <n-space vertical size="small">
+                      <n-radio-group
+                        v-model:value="developerForm.webSessionActiveCallTimeout.timeoutMode"
+                        :disabled="developerLoading"
+                      >
+                        <n-space>
+                          <n-radio value="default">{{ t('common.default') }}</n-radio>
+                          <n-radio value="custom">{{ t('common.custom') }}</n-radio>
+                        </n-space>
+                      </n-radio-group>
+                      <n-input-number
+                        v-if="developerUsesCustomActiveCallTimeout"
+                        v-model:value="
+                          developerForm.webSessionActiveCallTimeout.customTimeoutSeconds
+                        "
+                        :min="10"
+                        :step="10"
+                        :disabled="developerLoading"
+                      />
+                      <span class="form-tip">
+                        {{
+                          t('settings.webSessionActiveCallTimeoutSecondsTip', {
+                            defaultSeconds: DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS,
+                          })
+                        }}
+                      </span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item :label="t('settings.webSessionActiveCallTimeoutCallKinds')">
+                    <n-space vertical size="small">
+                      <n-space>
+                        <n-checkbox
+                          v-model:checked="
+                            developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                          "
+                          :disabled="developerLoading"
+                        >
+                          {{ t('settings.webSessionActiveCallTimeoutKindDefault') }}
+                        </n-checkbox>
+                      </n-space>
+                      <n-space>
+                        <n-checkbox
+                          v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.mcp"
+                          :disabled="
+                            developerLoading ||
+                            developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                          "
+                        >
+                          {{ t('settings.webSessionActiveCallTimeoutKindMcp') }}
+                        </n-checkbox>
+                        <n-checkbox
+                          v-model:checked="
+                            developerForm.webSessionActiveCallTimeout.callKinds.command
+                          "
+                          :disabled="
+                            developerLoading ||
+                            developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                          "
+                        >
+                          {{ t('settings.webSessionActiveCallTimeoutKindCommand') }}
+                        </n-checkbox>
+                        <n-checkbox
+                          v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.tool"
+                          :disabled="
+                            developerLoading ||
+                            developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                          "
+                        >
+                          {{ t('settings.webSessionActiveCallTimeoutKindTool') }}
+                        </n-checkbox>
+                      </n-space>
+                      <span class="form-tip">
+                        {{ t('settings.webSessionActiveCallTimeoutCallKindsTip') }}
+                      </span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item :label="t('settings.webSessionActiveCallTimeoutPrompt')">
+                    <n-space vertical size="small" style="width: 100%">
+                      <n-input
+                        v-model:value="developerForm.webSessionActiveCallTimeout.promptTemplate"
+                        type="textarea"
+                        :autosize="{ minRows: 3, maxRows: 6 }"
+                        :placeholder="DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT"
+                        :disabled="developerLoading"
+                      />
+                      <span class="form-tip">
+                        {{ t('settings.webSessionActiveCallTimeoutPromptTip') }}
+                      </span>
+                    </n-space>
+                  </n-form-item>
+                </n-form>
+              </n-card>
+
+              <n-card :title="t('settings.sessionQuickInputSettings')" size="huge">
+                <n-form
+                  :label-placement="standardFormLabelPlacement"
+                  :label-width="standardFormLabelWidth"
+                >
+                  <n-form-item :label="t('settings.webSessionQuickInputPinned')">
+                    <n-space vertical size="small" style="width: 100%">
+                      <n-dynamic-input
+                        v-model:value="webSessionQuickInputPinnedLocal"
+                        :on-create="createWebSessionQuickInputPinnedItem"
+                      >
+                        <template #default="{ value, index }">
+                          <n-input
+                            type="textarea"
+                            class="web-session-quick-input-textarea"
+                            :value="value"
+                            :autosize="{ minRows: 2, maxRows: 4 }"
+                            :placeholder="t('settings.webSessionQuickInputPinnedPlaceholder')"
+                            @update:value="handleWebSessionQuickInputPinnedChange(index, $event)"
+                          />
+                        </template>
+                        <template #action="{ index, remove, create }">
+                          <n-button-group size="small">
+                            <n-button quaternary circle @click="remove(index)">
+                              <template #icon>
+                                <n-icon>
+                                  <Remove />
+                                </n-icon>
+                              </template>
+                            </n-button>
+                            <n-button quaternary circle @click="create(index)">
+                              <template #icon>
+                                <n-icon>
+                                  <Add />
+                                </n-icon>
+                              </template>
+                            </n-button>
+                          </n-button-group>
+                        </template>
+                      </n-dynamic-input>
+                      <n-space>
+                        <n-button
+                          size="small"
+                          type="primary"
+                          :loading="webSessionQuickInputPinnedSaving"
+                          :disabled="!webSessionQuickInputPinnedDirty"
+                          @click="handleSaveWebSessionQuickInputPinned"
+                        >
+                          {{ t('common.save') }}
+                        </n-button>
+                        <n-button size="small" @click="handleResetWebSessionQuickInputPinned">
+                          {{ t('settings.restoreDefault') }}
+                        </n-button>
+                      </n-space>
+                      <span class="form-tip">{{
+                        t('settings.webSessionQuickInputPinnedTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                </n-form>
+              </n-card>
+            </n-space>
           </section>
 
           <section
@@ -2097,10 +2131,6 @@ const {
   confirmBeforeTerminalClose,
   showWebSessionReasoning,
   webSessionActivityDisplayMode,
-  webSessionAutoContinueScope,
-  webSessionAutoContinuePreset,
-  webSessionAutoContinueMaxAttempts,
-  webSessionAutoRetryDispatchPendingOnFailure,
   webSessionStreamingMarkdownThrottleMode,
   webSessionStreamingMarkdownThrottleCustomMs,
   terminalThemeId,
@@ -2480,6 +2510,8 @@ const developerSessionDirty = computed(() => {
       developerOriginal.value.webSessionCodexDefaultPermissionLevel ||
     developerForm.webSessionCodexDefaultSyncMode !==
       developerOriginal.value.webSessionCodexDefaultSyncMode ||
+    JSON.stringify(developerForm.webSessionAutoRetryDefaults) !==
+      JSON.stringify(developerOriginal.value.webSessionAutoRetryDefaults) ||
     JSON.stringify(developerForm.webSessionActiveCallTimeout) !==
       JSON.stringify(developerOriginal.value.webSessionActiveCallTimeout)
   );
@@ -3584,9 +3616,10 @@ const webSessionAutoContinueScopeOptions = computed(() => [
 ]);
 
 const webSessionAutoContinueScopeValue = computed({
-  get: () => webSessionAutoContinueScope.value,
-  set: (value: WebSessionAutoContinueScope) =>
-    settingsStore.updateWebSessionAutoContinueScope(value),
+  get: () => developerForm.webSessionAutoRetryDefaults.scope,
+  set: (value: WebSessionAutoContinueScope) => {
+    developerForm.webSessionAutoRetryDefaults.scope = value;
+  },
 });
 
 const webSessionAutoContinuePresetOptions = computed(() => [
@@ -3605,19 +3638,27 @@ const webSessionAutoContinuePresetOptions = computed(() => [
 ]);
 
 const webSessionAutoContinuePresetValue = computed({
-  get: () => webSessionAutoContinuePreset.value,
-  set: (value: WebSessionAutoContinuePreset) =>
-    settingsStore.updateWebSessionAutoContinuePreset(value),
+  get: () => developerForm.webSessionAutoRetryDefaults.preset,
+  set: (value: WebSessionAutoContinuePreset) => {
+    developerForm.webSessionAutoRetryDefaults.preset = value;
+  },
 });
 
 const webSessionAutoContinueMaxAttemptsValue = computed({
-  get: () => webSessionAutoContinueMaxAttempts.value,
-  set: (value: number | null) => settingsStore.updateWebSessionAutoContinueMaxAttempts(value),
+  get: () => developerForm.webSessionAutoRetryDefaults.maxAttempts,
+  set: (value: number | null) => {
+    developerForm.webSessionAutoRetryDefaults.maxAttempts = Math.min(
+      100,
+      Math.max(0, Math.trunc(Number(value) || 0))
+    );
+  },
 });
 
 const webSessionAutoRetryDispatchPendingOnFailureValue = computed({
-  get: () => webSessionAutoRetryDispatchPendingOnFailure.value,
-  set: (value: boolean) => settingsStore.updateWebSessionAutoRetryDispatchPendingOnFailure(value),
+  get: () => developerForm.webSessionAutoRetryDefaults.dispatchPendingOnFailure,
+  set: (value: boolean) => {
+    developerForm.webSessionAutoRetryDefaults.dispatchPendingOnFailure = value === true;
+  },
 });
 
 const terminalConnectionPolicyValue = computed({

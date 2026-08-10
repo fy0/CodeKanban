@@ -497,10 +497,11 @@ func (m *Manager) createEditedWebSession(
 		PermissionLevel:                   effectivePermissionLevel(source),
 		ActiveCallTimeoutEnabled:          source.ActiveCallTimeoutEnabled,
 		AutoRetryEnabled:                  source.AutoRetryEnabled,
-		AutoRetryScope:                    AutoRetryScope(source.AutoRetryScope),
-		AutoRetryPreset:                   AutoRetryPreset(source.AutoRetryPreset),
-		AutoRetryMaxAttempts:              source.AutoRetryMaxAttempts,
-		AutoRetryDispatchPendingOnFailure: source.AutoRetryDispatchPendingOnFailure,
+		AutoRetryPolicyMode:               ptr(normalizeAutoRetryPolicyMode(AutoRetryPolicyMode(source.AutoRetryPolicyMode))),
+		AutoRetryScope:                    ptr(normalizeAutoRetryScope(AutoRetryScope(source.AutoRetryScope))),
+		AutoRetryPreset:                   ptr(normalizeAutoRetryPreset(AutoRetryPreset(source.AutoRetryPreset))),
+		AutoRetryMaxAttempts:              ptr(normalizeAutoRetryMaxAttempts(source.AutoRetryMaxAttempts)),
+		AutoRetryDispatchPendingOnFailure: ptr(source.AutoRetryDispatchPendingOnFailure),
 		Title:                             title,
 	})
 	if err != nil {

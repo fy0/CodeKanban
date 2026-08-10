@@ -9,6 +9,12 @@ describe('developer config defaults', () => {
     expect(config.webSessionCodexDefaultReasoningEffort).toBe('default');
     expect(config.webSessionCodexDefaultPermissionLevel).toBe('default');
     expect(config.webSessionCodexDefaultSyncMode).toBe('default');
+    expect(config.webSessionAutoRetryDefaults).toEqual({
+      scope: 'network_only',
+      preset: 'gentle_stop',
+      maxAttempts: 0,
+      dispatchPendingOnFailure: false,
+    });
   });
 
   it('trims custom models and normalizes explicit settings', () => {
@@ -17,12 +23,24 @@ describe('developer config defaults', () => {
       webSessionCodexDefaultReasoningEffort: 'model_default',
       webSessionCodexDefaultPermissionLevel: 'standard',
       webSessionCodexDefaultSyncMode: 'deep',
+      webSessionAutoRetryDefaults: {
+        scope: 'all_failures',
+        preset: 'sustain_60s',
+        maxAttempts: 150,
+        dispatchPendingOnFailure: true,
+      },
     });
 
     expect(config.webSessionCodexDefaultModel).toBe('custom-codex-model');
     expect(config.webSessionCodexDefaultReasoningEffort).toBe('model_default');
     expect(config.webSessionCodexDefaultPermissionLevel).toBe('standard');
     expect(config.webSessionCodexDefaultSyncMode).toBe('deep');
+    expect(config.webSessionAutoRetryDefaults).toEqual({
+      scope: 'all_failures',
+      preset: 'sustain_60s',
+      maxAttempts: 100,
+      dispatchPendingOnFailure: true,
+    });
   });
 
   it('falls back from invalid values and returns independent clones', () => {
@@ -37,6 +55,8 @@ describe('developer config defaults', () => {
     expect(source.webSessionCodexDefaultPermissionLevel).toBe('default');
     expect(source.webSessionCodexDefaultSyncMode).toBe('default');
     clone.webSessionActiveCallTimeout.callKinds.mcp = false;
+    clone.webSessionAutoRetryDefaults.scope = 'all_failures';
     expect(source.webSessionActiveCallTimeout.callKinds.mcp).toBe(true);
+    expect(source.webSessionAutoRetryDefaults.scope).toBe('network_only');
   });
 });

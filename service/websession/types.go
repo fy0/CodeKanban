@@ -56,6 +56,13 @@ const (
 	AutoRetryPresetSustain60s     AutoRetryPreset = "sustain_60s"
 )
 
+type AutoRetryPolicyMode string
+
+const (
+	AutoRetryPolicyModeDefault AutoRetryPolicyMode = "default"
+	AutoRetryPolicyModeCustom  AutoRetryPolicyMode = "custom"
+)
+
 type Status string
 
 const (
@@ -256,6 +263,7 @@ type SessionSummary struct {
 	PermissionLevel                   PermissionLevel            `json:"permissionLevel"`
 	ActiveCallTimeoutEnabled          bool                       `json:"activeCallTimeoutEnabled"`
 	AutoRetryEnabled                  bool                       `json:"autoRetryEnabled"`
+	AutoRetryPolicyMode               AutoRetryPolicyMode        `json:"autoRetryPolicyMode"`
 	AutoRetryScope                    AutoRetryScope             `json:"autoRetryScope"`
 	AutoRetryPreset                   AutoRetryPreset            `json:"autoRetryPreset"`
 	AutoRetryMaxAttempts              int                        `json:"autoRetryMaxAttempts"`
@@ -622,9 +630,10 @@ type CreateParams struct {
 	PermissionLevel                   PermissionLevel
 	ActiveCallTimeoutEnabled          *bool
 	AutoRetryEnabled                  bool
-	AutoRetryScope                    AutoRetryScope
-	AutoRetryPreset                   AutoRetryPreset
-	AutoRetryMaxAttempts              int
-	AutoRetryDispatchPendingOnFailure bool
+	AutoRetryPolicyMode               *AutoRetryPolicyMode
+	AutoRetryScope                    *AutoRetryScope
+	AutoRetryPreset                   *AutoRetryPreset
+	AutoRetryMaxAttempts              *int
+	AutoRetryDispatchPendingOnFailure *bool
 	Title                             string
 }
