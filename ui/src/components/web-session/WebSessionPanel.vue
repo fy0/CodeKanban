@@ -255,6 +255,69 @@
     <div class="panel-main">
       <div class="panel-body">
         <div class="panel-content">
+          <div
+            v-if="isMobile"
+            class="mobile-project-context-bar"
+            :aria-label="mobileProjectContextLabel"
+          >
+            <div class="mobile-project-context-main">
+              <span class="mobile-project-context-icon" aria-hidden="true">
+                <n-icon size="17"><FolderOpenOutline /></n-icon>
+              </span>
+              <span class="mobile-project-context-copy">
+                <span class="mobile-project-context-name">{{ mobileProjectName }}</span>
+                <span v-if="mobileProjectBranch" class="mobile-project-context-branch">
+                  <n-icon size="11" aria-hidden="true"><GitBranchOutline /></n-icon>
+                  <span>{{ mobileProjectBranch }}</span>
+                </span>
+              </span>
+            </div>
+
+            <button
+              type="button"
+              class="mobile-project-git-status"
+              :class="`state-${mobileGitStatus.state}`"
+              :disabled="!mobileGitStatusCanOpen"
+              :title="mobileGitStatusLabel"
+              :aria-label="mobileGitStatusLabel"
+              @click="handleMobileChangesOpen"
+            >
+              <span v-if="mobileGitStatusHasDetails" class="mobile-project-git-stats">
+                <span
+                  v-if="mobileGitStatus.conflicts > 0"
+                  class="mobile-project-git-stat is-conflict"
+                >
+                  !{{ mobileGitStatus.conflicts }}
+                </span>
+                <span v-if="mobileGitStatus.staged > 0" class="mobile-project-git-stat is-staged">
+                  +{{ mobileGitStatus.staged }}
+                </span>
+                <span
+                  v-if="mobileGitStatus.modified > 0"
+                  class="mobile-project-git-stat is-modified"
+                >
+                  ~{{ mobileGitStatus.modified }}
+                </span>
+                <span
+                  v-if="mobileGitStatus.untracked > 0"
+                  class="mobile-project-git-stat is-untracked"
+                >
+                  ?{{ mobileGitStatus.untracked }}
+                </span>
+                <span
+                  v-if="mobileGitStatus.ahead > 0 || mobileGitStatus.behind > 0"
+                  class="mobile-project-git-stat is-remote"
+                >
+                  ↑{{ mobileGitStatus.ahead }} ↓{{ mobileGitStatus.behind }}
+                </span>
+              </span>
+              <span v-else class="mobile-project-git-state-text">{{ mobileGitStatusText }}</span>
+              <n-icon v-if="mobileGitStatusCanOpen" size="13" aria-hidden="true">
+                <ChevronForwardOutline />
+              </n-icon>
+            </button>
+          </div>
+
           <div class="panel-header">
             <div
               v-if="isMobile && (sessions.length > 0 || archivedPreviewSession)"
@@ -3341,6 +3404,7 @@ import {
   FolderOpenOutline,
   FunnelOutline,
   GitNetworkOutline,
+  GitBranchOutline,
   ImageOutline,
   LocateOutline,
   RadioOutline,
@@ -3429,6 +3493,7 @@ import {
   type WebSessionPiTreeMutationResult,
 } from '@/api/webSession';
 import { createLongPressTracker } from '@/utils/longPress';
+import { gitOperationAvailable } from '@/utils/projectGitCapability';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
 import IconGoal from '@/components/icons/IconGoal.vue';
@@ -3455,6 +3520,10 @@ import {
   renderWebSessionComposerPastePlan,
   type WebSessionComposerPastePlan,
 } from '@/components/web-session/webSessionComposerPaste';
+import {
+  resolveWebSessionMobileContextWorktree,
+  summarizeWebSessionMobileGitStatus,
+} from '@/components/web-session/webSessionMobileProjectContext';
 import {
   insertCodexSkillTokenAtCursor,
   replaceTextSelection,
@@ -3693,7 +3762,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (event: 'mobile-composer-focus-change', focused: boolean): void;
-  (event: 'request-mobile-view', view: 'webSession'): void;
+  (event: 'request-mobile-view', view: 'webSession' | 'changes'): void;
 }>();
 
 const liveStateClockMs = ref(Date.now());
@@ -4203,6 +4272,90 @@ const currentSession = computed<SessionTab | null>(() => {
   const activeRealId = webSessionStore.getActiveSessionId(props.projectId);
   return realSessions.value.find(session => session.id === activeRealId) ?? null;
 });
+
+const mobileProject = computed(() => {
+  if (projectStore.currentProject?.id === props.projectId) {
+    return projectStore.currentProject;
+  }
+  return (
+    projectStore.projects.find(project => project.id === props.projectId) ??
+    projectStore.recentProjects.find(project => project.id === props.projectId) ??
+    null
+  );
+});
+const mobileProjectName = computed(
+  () => mobileProject.value?.name?.trim() || t('webSession.mobileProjectFallback')
+);
+const mobileContextWorktree = computed(() =>
+  resolveWebSessionMobileContextWorktree(projectStore.worktrees, {
+    projectId: props.projectId,
+    sessionWorktreeId: currentSession.value?.worktreeId,
+    selectedWorktreeId: projectStore.selectedWorktreeId,
+  })
+);
+const mobileProjectBranch = computed(
+  () =>
+    mobileContextWorktree.value?.branchName?.trim() ||
+    mobileProject.value?.defaultBranch?.trim() ||
+    ''
+);
+const mobileGitStatus = computed(() =>
+  summarizeWebSessionMobileGitStatus(mobileContextWorktree.value, {
+    gitAvailable: gitOperationAvailable(
+      projectStore.gitCapabilities,
+      'status',
+      mobileContextWorktree.value?.id
+    ),
+    loading:
+      projectStore.projectDetailLoading || projectStore.currentProject?.id !== props.projectId,
+  })
+);
+const mobileGitStatusCanOpen = computed(
+  () => mobileGitStatus.value.state === 'clean' || mobileGitStatus.value.state === 'dirty'
+);
+const mobileGitStatusHasDetails = computed(
+  () =>
+    mobileGitStatus.value.state === 'dirty' ||
+    mobileGitStatus.value.ahead > 0 ||
+    mobileGitStatus.value.behind > 0
+);
+const mobileProjectContextLabel = computed(() =>
+  t('webSession.mobileProjectContext', {
+    project: mobileProjectName.value,
+    branch: mobileProjectBranch.value || t('webSession.mobileProjectBranchUnknown'),
+  })
+);
+const mobileGitStatusText = computed(() => {
+  switch (mobileGitStatus.value.state) {
+    case 'clean':
+      return t('webSession.mobileGitClean');
+    case 'unavailable':
+      return t('webSession.mobileGitUnavailable');
+    case 'loading':
+    default:
+      return t('webSession.mobileGitLoading');
+  }
+});
+const mobileGitStatusLabel = computed(() => {
+  if (!mobileGitStatusCanOpen.value) {
+    return mobileGitStatusText.value;
+  }
+  return t('webSession.mobileGitStatusSummary', {
+    conflicts: mobileGitStatus.value.conflicts,
+    staged: mobileGitStatus.value.staged,
+    modified: mobileGitStatus.value.modified,
+    untracked: mobileGitStatus.value.untracked,
+    ahead: mobileGitStatus.value.ahead,
+    behind: mobileGitStatus.value.behind,
+  });
+});
+
+function handleMobileChangesOpen() {
+  if (!mobileGitStatusCanOpen.value) {
+    return;
+  }
+  emit('request-mobile-view', 'changes');
+}
 
 function isCurrentVisibleSession(sessionId: string) {
   return Boolean(sessionId && currentSession.value?.id === sessionId);
@@ -15757,6 +15910,161 @@ defineExpose({
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.mobile-project-context-bar {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+  padding: max(7px, env(safe-area-inset-top, 0px)) 10px 7px;
+  flex-shrink: 0;
+  background-color: var(--app-surface-color, var(--n-card-color, #fff));
+  color: var(--app-text-color, var(--n-text-color-1, #1f1f1f));
+  border-bottom: 1px solid var(--n-border-color, rgba(0, 0, 0, 0.1));
+  letter-spacing: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.mobile-project-context-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mobile-project-context-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  border-radius: 6px;
+  color: var(--n-primary-color, #18a058);
+  background: color-mix(in srgb, var(--n-primary-color, #18a058) 11%, transparent);
+}
+
+.mobile-project-context-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1.2;
+}
+
+.mobile-project-context-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--n-text-color-1, #1f1f1f);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-project-context-branch {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--n-text-color-3, #8a8a8a);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.mobile-project-context-branch > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-project-git-status {
+  min-width: 0;
+  min-height: 30px;
+  max-width: 58%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 7px;
+  flex: 0 1 auto;
+  border: 1px solid var(--n-border-color, rgba(0, 0, 0, 0.1));
+  border-radius: 6px;
+  background: var(
+    --n-color-modal,
+    color-mix(in srgb, var(--n-text-color-1, #1f1f1f) 4%, transparent)
+  );
+  color: var(--n-text-color-2, #555);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.mobile-project-git-status:active:not(:disabled) {
+  background: color-mix(in srgb, var(--n-primary-color, #18a058) 9%, transparent);
+}
+
+.mobile-project-git-status:disabled {
+  cursor: default;
+  opacity: 0.68;
+}
+
+.mobile-project-git-status.state-dirty {
+  border-color: color-mix(in srgb, #d97706 34%, var(--n-border-color, transparent));
+}
+
+.mobile-project-git-status.state-clean {
+  border-color: color-mix(in srgb, #16a34a 28%, var(--n-border-color, transparent));
+}
+
+.mobile-project-git-stats {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mobile-project-git-stat {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.mobile-project-git-stat.is-conflict {
+  color: #dc2626;
+}
+
+.mobile-project-git-stat.is-staged {
+  color: #16a34a;
+}
+
+.mobile-project-git-stat.is-modified {
+  color: #d97706;
+}
+
+.mobile-project-git-stat.is-untracked {
+  color: var(--n-text-color-3, #737373);
+}
+
+.mobile-project-git-stat.is-remote {
+  color: #0284c7;
+}
+
+.mobile-project-git-state-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-header {

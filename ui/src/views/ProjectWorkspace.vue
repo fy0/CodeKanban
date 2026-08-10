@@ -113,25 +113,15 @@
             :class="{ active: mobileActiveView === 'projects' }"
             @click="setMobileView('projects')"
           >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"
-                />
-              </svg>
-            </n-icon>
+            <span class="nav-icon-shell">
+              <n-icon size="20"><FolderOutline /></n-icon>
+            </span>
             <span>{{ t('nav.projects') }}</span>
           </button>
           <button type="button" class="nav-item" @click="handleGoToSettings">
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.14 7.14 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.22-1.13.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.58-.22 1.13-.53 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"
-                />
-              </svg>
-            </n-icon>
+            <span class="nav-icon-shell">
+              <n-icon size="20"><SettingsOutline /></n-icon>
+            </span>
             <span>{{ t('nav.settingsShort') }}</span>
           </button>
           <button
@@ -140,14 +130,9 @@
             :class="{ active: mobileActiveView === 'files' }"
             @click="setMobileView('files')"
           >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2zm-2 9h8v2H8v-2zm0-4h10v2H8V9z"
-                />
-              </svg>
-            </n-icon>
+            <span class="nav-icon-shell">
+              <n-icon size="20"><FolderOpenOutline /></n-icon>
+            </span>
             <span>{{ t('nav.files') }}</span>
           </button>
           <button
@@ -156,14 +141,9 @@
             :class="{ active: mobileActiveView === 'changes' }"
             @click="setMobileView('changes')"
           >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M7 7a2 2 0 1 1 1.732-3H16a2 2 0 1 1 0 2H8.732A2 2 0 0 1 7 7Zm0 7a2 2 0 1 1 1.732-3H11a2 2 0 1 1 0 2H8.732A2 2 0 0 1 7 14Zm10-2a2 2 0 1 1 0 2h-2a2 2 0 1 1 0-2h2Zm-8.268 7A2 2 0 1 1 7 17a2 2 0 0 1 1.732 1H16a2 2 0 1 1 0 2H8.732Z"
-                />
-              </svg>
-            </n-icon>
+            <span class="nav-icon-shell">
+              <n-icon size="20"><GitBranchOutline /></n-icon>
+            </span>
             <span>{{ t('nav.changes') }}</span>
           </button>
           <button
@@ -174,6 +154,7 @@
               active: mobileActiveView === 'webSession',
               'is-pressed': isWebSessionNavPressed,
             }"
+            :aria-label="`${t('nav.webSession')} · ${t('project.webSessionCount')}: ${mobileWebSessionCount}`"
             @click="handleWebSessionNavClick"
             @contextmenu.prevent
             @pointerdown="handleWebSessionNavPointerDown"
@@ -181,30 +162,27 @@
             @pointerup="handleWebSessionNavPointerUp"
             @pointercancel="handleWebSessionNavPointerCancel"
           >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M4 5h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8l-4 4V7a2 2 0 0 1 2-2zm2 4v2h12V9H6zm0 4v2h8v-2H6z"
-                />
-              </svg>
-            </n-icon>
+            <span class="nav-icon-shell">
+              <n-icon size="20"><ChatbubblesOutline /></n-icon>
+              <span v-if="mobileWebSessionBadge" class="nav-count-badge" aria-hidden="true">
+                {{ mobileWebSessionBadge }}
+              </span>
+            </span>
             <span>{{ t('nav.webSession') }}</span>
           </button>
           <button
             type="button"
             class="nav-item"
             :class="{ active: mobileActiveView === 'terminal' }"
+            :aria-label="`${t('nav.terminal')} · ${t('project.terminalCount')}: ${mobileTerminalCount}`"
             @click="setMobileView('terminal')"
           >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM7.293 15.707L5.586 14l1.707-1.707 1.414 1.414L7.293 15.707zm6.121-4.293l-1.414 1.414-1.414-1.414L11.879 10l1.535 1.414z"
-                />
-              </svg>
-            </n-icon>
+            <span class="nav-icon-shell">
+              <n-icon size="20"><TerminalOutline /></n-icon>
+              <span v-if="mobileTerminalBadge" class="nav-count-badge" aria-hidden="true">
+                {{ mobileTerminalBadge }}
+              </span>
+            </span>
             <span>{{ t('nav.terminal') }}</span>
           </button>
         </div>
@@ -239,9 +217,18 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router';
 import { useStorage } from '@vueuse/core';
 import { useDialog, useMessage } from 'naive-ui';
+import {
+  ChatbubblesOutline,
+  FolderOpenOutline,
+  FolderOutline,
+  GitBranchOutline,
+  SettingsOutline,
+  TerminalOutline,
+} from '@vicons/ionicons5';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
+import { useWebSessionStore } from '@/stores/webSession';
 import { useResponsive } from '@/composables/useResponsive';
 import { useLocale } from '@/composables/useLocale';
 import WorktreeList from '@/components/worktree/WorktreeList.vue';
@@ -259,6 +246,7 @@ import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
 import type { Worktree } from '@/types/models';
 import {
   DEFAULT_MOBILE_VIEW,
+  formatMobileNavBadge,
   mobileViewToRouteTab,
   normalizeMobileView,
   resolveMobileProjectSelectionAction,
@@ -273,6 +261,7 @@ import {
   isWorkspaceRouteTabQuerySynced,
   resolveMobileWorkspaceRouteTab,
 } from '@/utils/workspaceRoute';
+import { gitOperationAvailable } from '@/utils/projectGitCapability';
 import { createLongPressTracker } from '@/utils/longPress';
 import {
   PROJECT_SIDEBAR_DEFAULT_WIDTH,
@@ -296,6 +285,7 @@ import {
 const WORKSPACE_MOBILE_MAX_WIDTH = 900;
 const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
 const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project';
+const MOBILE_GIT_STATUS_REFRESH_INTERVAL_MS = 10_000;
 
 const route = useRoute();
 const router = useRouter();
@@ -304,6 +294,7 @@ const message = useMessage();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
+const webSessionStore = useWebSessionStore();
 const { windowWidth } = useResponsive();
 const { t, locale } = useLocale();
 type WebSessionPanelControl = {
@@ -326,6 +317,8 @@ const mobileProjectsViewRef = ref<HTMLElement | null>(null);
 const mobileProjectSourceView = ref<MobileProjectSourceView | ''>('');
 const mobileRouteSyncPaused = ref(false);
 let mobileWebSessionComposerFocusFrame: number | null = null;
+let mobileGitStatusRefreshTimer: number | null = null;
+let mobileGitStatusRefreshPending = false;
 
 const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
 
@@ -420,6 +413,28 @@ function startProjectSidebarResize(event: MouseEvent) {
 const currentProjectId = computed(() =>
   typeof route.params.id === 'string' ? route.params.id : ''
 );
+const mobileTerminalCount = computed(() => {
+  const projectId = currentProjectId.value;
+  if (!projectId) {
+    return 0;
+  }
+  return Math.max(
+    terminalStore.getTerminalCount(projectId),
+    terminalStore.terminalCounts.get(projectId) ?? 0
+  );
+});
+const mobileWebSessionCount = computed(() => {
+  const projectId = currentProjectId.value;
+  if (!projectId) {
+    return 0;
+  }
+  return Math.max(
+    webSessionStore.getSessions(projectId).length,
+    webSessionStore.getSessionCount(projectId)
+  );
+});
+const mobileTerminalBadge = computed(() => formatMobileNavBadge(mobileTerminalCount.value));
+const mobileWebSessionBadge = computed(() => formatMobileNavBadge(mobileWebSessionCount.value));
 const dailyTipCount = computed(() => getDailyTips(locale.value).length);
 const activeDailyTip = computed<DailyTipDefinition | null>(() => {
   const tips = getDailyTips(locale.value);
@@ -540,6 +555,61 @@ watch(
   }
 );
 
+function stopMobileGitStatusRefresh() {
+  if (mobileGitStatusRefreshTimer != null) {
+    window.clearInterval(mobileGitStatusRefreshTimer);
+    mobileGitStatusRefreshTimer = null;
+  }
+}
+
+function canRefreshMobileGitStatus() {
+  return Boolean(
+    isMobileLayout.value &&
+      currentProjectId.value &&
+      projectStore.currentProject?.id === currentProjectId.value &&
+      !projectStore.projectDetailLoading &&
+      gitOperationAvailable(projectStore.gitCapabilities, 'status')
+  );
+}
+
+async function refreshMobileGitStatus() {
+  if (
+    !canRefreshMobileGitStatus() ||
+    mobileGitStatusRefreshPending ||
+    (typeof document !== 'undefined' && document.visibilityState === 'hidden')
+  ) {
+    return;
+  }
+
+  mobileGitStatusRefreshPending = true;
+  try {
+    await projectStore.refreshWorktreeCommitInfo(currentProjectId.value);
+  } finally {
+    mobileGitStatusRefreshPending = false;
+  }
+}
+
+watch(
+  () =>
+    [
+      isMobileLayout.value,
+      currentProjectId.value,
+      projectStore.currentProject?.id,
+      projectStore.projectDetailLoading,
+      gitOperationAvailable(projectStore.gitCapabilities, 'status'),
+    ] as const,
+  () => {
+    stopMobileGitStatusRefresh();
+    if (!canRefreshMobileGitStatus() || typeof window === 'undefined') {
+      return;
+    }
+    mobileGitStatusRefreshTimer = window.setInterval(() => {
+      void refreshMobileGitStatus();
+    }, MOBILE_GIT_STATUS_REFRESH_INTERVAL_MS);
+  },
+  { immediate: true }
+);
+
 const loadProject = (id: string) => {
   if (!id) {
     return;
@@ -563,6 +633,7 @@ onBeforeUnmount(() => {
     mobileWebSessionComposerFocusFrame = null;
   }
   mobileWebSessionLongPress.pointerCancel();
+  stopMobileGitStatusRefresh();
   stopProjectSidebarResize();
 });
 
@@ -648,7 +719,7 @@ function handleMobileWebSessionComposerFocusChange(focused: boolean) {
   });
 }
 
-function handleWebSessionPanelMobileViewRequest(view: 'webSession') {
+function handleWebSessionPanelMobileViewRequest(view: 'webSession' | 'changes') {
   setMobileView(view);
 }
 
@@ -1067,16 +1138,23 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 3px;
   min-height: var(--workspace-mobile-bottom-nav-height);
-  padding: 8px 16px;
+  padding: 6px 2px;
   border: none;
   background: transparent;
   color: var(--app-text-muted, #999);
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
   transition: color 0.2s;
   min-width: 0;
+}
+
+.mobile-bottom-nav .nav-item > span:last-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mobile-bottom-nav .nav-item.active {
@@ -1095,6 +1173,39 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
 .mobile-bottom-nav .nav-item.is-pressed {
   opacity: 0.88;
   transform: translateY(1px);
+}
+
+.mobile-bottom-nav .nav-icon-shell {
+  width: 28px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.mobile-bottom-nav .nav-count-badge {
+  box-sizing: border-box;
+  position: absolute;
+  top: -7px;
+  left: 16px;
+  min-width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: 2px solid var(--app-surface-color, #ffffff);
+  border-radius: 9px;
+  background: var(--n-primary-color, #18a058);
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: 0;
+  pointer-events: none;
 }
 
 /* 平板端适配 */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_MOBILE_VIEW,
+  formatMobileNavBadge,
   mobileViewToRouteTab,
   normalizeMobileView,
   resolveMobileProjectSelectionAction,
@@ -11,6 +12,14 @@ import {
 } from '@/views/projectWorkspaceMobileView';
 
 describe('projectWorkspaceMobileView', () => {
+  it('formats compact mobile navigation badges', () => {
+    expect(formatMobileNavBadge(0)).toBe('');
+    expect(formatMobileNavBadge(7)).toBe('7');
+    expect(formatMobileNavBadge(99)).toBe('99');
+    expect(formatMobileNavBadge(100)).toBe('99+');
+    expect(formatMobileNavBadge('invalid')).toBe('');
+  });
+
   it('keeps visible mobile views unchanged', () => {
     expect(normalizeMobileView('projects')).toBe('projects');
     expect(normalizeMobileView('terminal')).toBe('terminal');

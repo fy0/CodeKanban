@@ -10,6 +10,15 @@ export type MobileProjectSelectionAction =
   | { type: 'navigate'; targetView: 'webSession' }
   | { type: 'prompt-return'; sourceView: MobileProjectSourceView };
 
+export function formatMobileNavBadge(value: unknown): string {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return '';
+  }
+  const count = Math.trunc(numericValue);
+  return count > 99 ? '99+' : String(count);
+}
+
 export function normalizeMobileView(value: unknown): MobileView {
   if (value === 'kanban') {
     return DEFAULT_MOBILE_VIEW;
