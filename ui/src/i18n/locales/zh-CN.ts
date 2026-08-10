@@ -895,6 +895,13 @@ export default {
     contextUsageTitleClaude: '上下文窗口剩余估算',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
+    contextUsageCurrent: '当前占用',
+    contextUsageWindowLabel: '窗口上限',
+    contextUsageCompactLabel: '压缩线',
+    contextUsageCurrentMarker: '当前',
+    contextUsageWindowMarker: '上限',
+    contextUsageShowExact: '显示精确值',
+    contextUsageShowCompact: '显示紧凑值',
     contextUsageDisclaimer:
       '说明：可用时使用 Codex 隐藏 usage 的最新快照估算当前上下文占用；累计消耗仍单独展示。',
     contextUsageDisclaimerClaude:
@@ -933,6 +940,15 @@ export default {
     contextUsageUnavailableTitle: 'Context 估算暂不可用',
     contextUsageUnavailableDescription:
       '会话尚未上报可用的 context window；Claude 通常会在首轮 result 返回后提供。',
+    workTimingTitle: '累计工作时间',
+    workTimingCurrentRun: '本次运行：{duration}',
+    workTimingComplete: '已完成计时',
+    workTimingRecordedPartial: '已记录（历史不完整）',
+    workTimingUnavailable: '暂无可用历史记录',
+    workTimingPending: '打开后补算历史记录',
+    workTimingCalculating: '正在补算历史记录',
+    workTimingCalculationFailed: '补算失败，可再次打开重试',
+    runDuration: '用时 {duration}',
     composerHintIdle: 'Enter 发送，Shift + Enter 换行，支持 Ctrl/Cmd+V 粘贴或拖拽图片。',
     composerHintCodexMissing: '未检测到 Codex，请先安装后再发送会话消息。',
     codexCompatibilityAgentLabel: 'Codex（兼容模式）',
@@ -1450,6 +1466,17 @@ export default {
     historyCleanupSuccess: '已清理 {sessions} 个会话，硬删除 {rows} 行聊天数据',
     historyCleanupFileFailures: '有 {count} 个内部历史文件未能删除，可稍后重试',
     historyCleanupFailed: '聊天缓存清理失败',
+    workTimingBackfillTitle: '会话工作时间',
+    workTimingBackfillDescription:
+      '历史会话只在打开计时浮层或点击这里时补算。按批次处理以保持界面响应。',
+    workTimingBackfillRemaining: '待补算 {count} 个会话',
+    workTimingBackfillBatchSize: '每批数量',
+    workTimingBackfillAction: '补充计算',
+    workTimingBackfillRunning: '正在补充计算',
+    workTimingBackfillSuccess:
+      '本批处理 {attempted} 个会话，完成 {calculated} 个，剩余 {remaining} 个',
+    workTimingBackfillFailed: '工作时间补算失败',
+    workTimingBackfillBusy: '补算任务正在运行，请稍后再试',
     backupTitle: '备份与恢复',
     backupDescription:
       '导出当前实例的可迁移设置为 JSON，或导入之前导出的备份文件。导入前会先校验版本兼容性并展示影响范围。',

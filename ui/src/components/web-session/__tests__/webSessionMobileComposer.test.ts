@@ -66,7 +66,7 @@ describe('webSession mobile composer', () => {
 
   it('keeps the mobile summary limited to agent, model, and workflow', () => {
     const summarySource = webSessionPanelSource.match(
-      /const mobileComposerSummaryTokens = computed[\s\S]*?(?=const tokenNumberFormatter)/
+      /const mobileComposerSummaryTokens = computed[\s\S]*?(?=type ContextUsageIndicator)/
     )?.[0];
 
     expect(summarySource).toContain("key: 'agent'");

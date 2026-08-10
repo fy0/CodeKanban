@@ -124,6 +124,40 @@ const (
 	ContextWindowSourceUnavailable  ContextWindowSource = "unavailable"
 )
 
+type WorkTimingBackfillState string
+
+const (
+	WorkTimingBackfillPending     WorkTimingBackfillState = "pending"
+	WorkTimingBackfillComplete    WorkTimingBackfillState = "complete"
+	WorkTimingBackfillPartial     WorkTimingBackfillState = "partial"
+	WorkTimingBackfillUnavailable WorkTimingBackfillState = "unavailable"
+	WorkTimingBackfillFailed      WorkTimingBackfillState = "failed"
+)
+
+type WorkTimingOutcome string
+
+const (
+	WorkTimingOutcomeCompleted   WorkTimingOutcome = "completed"
+	WorkTimingOutcomeCanceled    WorkTimingOutcome = "canceled"
+	WorkTimingOutcomeFailed      WorkTimingOutcome = "failed"
+	WorkTimingOutcomeTimeout     WorkTimingOutcome = "timeout"
+	WorkTimingOutcomeInterrupted WorkTimingOutcome = "interrupted"
+)
+
+type WorkTimingCurrentRun struct {
+	ID               string     `json:"id"`
+	StartedAt        time.Time  `json:"startedAt"`
+	PausedAt         *time.Time `json:"pausedAt,omitempty"`
+	PausedDurationMs int64      `json:"pausedDurationMs"`
+}
+
+type WorkTiming struct {
+	CompletedDurationMs int64                   `json:"completedDurationMs"`
+	CurrentRun          *WorkTimingCurrentRun   `json:"currentRun,omitempty"`
+	BackfillState       WorkTimingBackfillState `json:"backfillState"`
+	BackfillVersion     int                     `json:"backfillVersion"`
+}
+
 type GoalStatus string
 
 const (
@@ -262,6 +296,7 @@ type SessionSummary struct {
 	ContextWindowSource               ContextWindowSource        `json:"contextWindowSource"`
 	Goal                              *SessionGoal               `json:"goal,omitempty"`
 	SearchMatchSources                []SessionSearchMatchSource `json:"searchMatchSources,omitempty"`
+	WorkTiming                        WorkTiming                 `json:"workTiming"`
 }
 
 type SessionGoal struct {
@@ -367,6 +402,9 @@ type HistoryItem struct {
 	SourceThreadID *string             `json:"sourceThreadId,omitempty"`
 	SourceTurnID   *string             `json:"sourceTurnId,omitempty"`
 	SourceItemID   *string             `json:"sourceItemId,omitempty"`
+	RunID          *string             `json:"runId,omitempty"`
+	RunDurationMs  *int64              `json:"runDurationMs,omitempty"`
+	RunOutcome     WorkTimingOutcome   `json:"runOutcome,omitempty"`
 	OrderIndex     int64               `json:"orderIndex"`
 	Kind           string              `json:"kind"`
 	ItemType       string              `json:"itemType"`

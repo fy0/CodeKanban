@@ -333,6 +333,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 	agent := m.sessionAgentDB(ctx, db, sessionID)
 	sourceThreadID := nilIfEmptyHistory(event.ThreadID)
 	sourceTurnID := nilIfEmptyHistory(event.TurnID)
+	runID := nilIfEmptyHistory(event.RunID)
 	switch event.Type {
 	case "sub_agent_state":
 		return nil, nil
@@ -348,6 +349,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			SourceThreadID: nilIfEmptyHistory(agentThreadID),
 			SourceTurnID:   sourceTurnID,
 			SourceItemID:   nilIfEmptyHistory(stringValue(payload["itemId"])),
+			RunID:          runID,
 			Kind:           "system",
 			ItemType:       "sub_agent_activity",
 			Text:           subAgentActivityText(kind, path, agentThreadID),
@@ -364,6 +366,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
+			RunID:          runID,
 			Kind:           "user",
 			ItemType:       "user_message",
 			Text:           stringValue(payload["txt"]),
@@ -383,6 +386,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 		item, err := m.upsertHistoryItemBySourceIdentityDB(ctx, db, sessionID, event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
 			next.SourceThreadID = sourceThreadID
 			next.SourceTurnID = sourceTurnID
+			next.RunID = runID
 			next.Kind = "assistant"
 			next.ItemType = "agent_message"
 			next.Text = next.Text + stringValue(payload["txt"])
@@ -402,6 +406,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 		item, err := m.upsertHistoryItemBySourceIdentityDB(ctx, db, sessionID, event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
 			next.SourceThreadID = sourceThreadID
 			next.SourceTurnID = sourceTurnID
+			next.RunID = runID
 			next.Kind = "assistant"
 			next.ItemType = "agent_message"
 			if text, authoritative := payload["txt"].(string); authoritative {
@@ -433,6 +438,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			existingPayload := cloneMap(next.Payload)
 			next.SourceThreadID = sourceThreadID
 			next.SourceTurnID = sourceTurnID
+			next.RunID = runID
 			next.Kind = "tool"
 			next.ItemType = firstNonEmpty(stringValue(payload["kind"]), "tool")
 			next.Tool = historyToolFromEventPayload(payload, "running")
@@ -473,6 +479,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			existingPayload := cloneMap(next.Payload)
 			next.SourceThreadID = sourceThreadID
 			next.SourceTurnID = sourceTurnID
+			next.RunID = runID
 			mergedPayload := mergeHistoryToolPayload(existingPayload, payload)
 			next.Kind = "tool"
 			next.ItemType = firstNonEmpty(stringValue(mergedPayload["kind"]), next.ItemType, "tool")
@@ -502,6 +509,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			SourceItemID:   nilIfEmptyHistory(itemID),
+			RunID:          runID,
 			Kind:           "system",
 			ItemType:       "approval_request",
 			Text:           firstNonEmpty(stringValue(payload["prompt"]), "Approval required"),
@@ -534,6 +542,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
+			RunID:          runID,
 			Kind:           "system",
 			ItemType:       "approval_response",
 			Text:           text,
@@ -557,6 +566,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			SourceItemID:   nilIfEmptyHistory(stringValue(payload["iid"])),
+			RunID:          runID,
 			Kind:           "system",
 			ItemType:       "user_input_request",
 			Text:           firstNonEmpty(stringValue(payload["txt"]), summarizeHistoryQuestions(questions)),
@@ -603,6 +613,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
 			SourceItemID:   nilIfEmptyHistory(itemID),
+			RunID:          runID,
 			Kind:           "system",
 			ItemType:       "user_input_response",
 			Text:           text,
@@ -624,6 +635,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
+			RunID:          runID,
 			Kind:           "system",
 			ItemType:       "note",
 			Text:           stringValue(payload["txt"]),
@@ -640,6 +652,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
+			RunID:          runID,
 			Kind:           "system",
 			ItemType:       "run_fail",
 			Text:           firstNonEmpty(stringValue(payload["msg"]), "Run failed"),
@@ -656,6 +669,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 		item, err := m.appendHistoryItemDB(ctx, db, sessionID, HistoryItem{
 			SourceThreadID: sourceThreadID,
 			SourceTurnID:   sourceTurnID,
+			RunID:          runID,
 			Kind:           "system",
 			ItemType:       "run_abort",
 			Text:           firstNonEmpty(stringValue(payload["msg"]), "Run aborted"),

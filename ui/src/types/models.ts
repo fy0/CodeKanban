@@ -316,6 +316,34 @@ export type WebSessionContextWindowSource =
   | 'session_usage'
   | 'unavailable';
 
+export type WebSessionWorkTimingBackfillState =
+  | 'pending'
+  | 'complete'
+  | 'partial'
+  | 'unavailable'
+  | 'failed';
+
+export type WebSessionWorkTimingOutcome =
+  | 'completed'
+  | 'canceled'
+  | 'failed'
+  | 'timeout'
+  | 'interrupted';
+
+export interface WebSessionWorkTimingCurrentRun {
+  id: string;
+  startedAt: string;
+  pausedAt?: string | null;
+  pausedDurationMs: number;
+}
+
+export interface WebSessionWorkTiming {
+  completedDurationMs: number;
+  currentRun?: WebSessionWorkTimingCurrentRun | null;
+  backfillState: WebSessionWorkTimingBackfillState;
+  backfillVersion: number;
+}
+
 export type WebSessionReasoningEffort =
   | 'default'
   | 'none'
@@ -484,6 +512,7 @@ export interface WebSessionSummary {
   lastContextCompactionAt?: string | null;
   contextWindowTokens?: number | null;
   contextWindowSource: WebSessionContextWindowSource;
+  workTiming?: WebSessionWorkTiming;
   goal?: WebSessionGoal | null;
   searchMatchSources?: Array<'title' | 'body'>;
 }

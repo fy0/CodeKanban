@@ -59,6 +59,17 @@ type WebSessionTable struct {
 	LastEventSeq     int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`
 	SnapshotRevision int64      `gorm:"type:integer;not null;default:1" json:"snapshotRevision"`
 
+	WorkDurationMs                 int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	WorkCurrentRunID               *string    `gorm:"type:text;index" json:"-"`
+	WorkCurrentRunStartedAt        *time.Time `gorm:"type:datetime" json:"-"`
+	WorkCurrentRunPausedAt         *time.Time `gorm:"type:datetime" json:"-"`
+	WorkCurrentRunPausedDurationMs int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	WorkCurrentRunPauseDepth       int        `gorm:"type:integer;not null;default:0" json:"-"`
+	WorkRetryWaitStartedAt         *time.Time `gorm:"type:datetime" json:"-"`
+	WorkRetrySourceRunID           *string    `gorm:"type:text" json:"-"`
+	WorkTimingBackfillState        string     `gorm:"type:text;not null;default:pending;index:idx_web_session_work_backfill,priority:1" json:"-"`
+	WorkTimingBackfillVersion      int        `gorm:"type:integer;not null;default:0;index:idx_web_session_work_backfill,priority:2" json:"-"`
+
 	GoalObjective       *string    `gorm:"type:text" json:"goalObjective"`
 	GoalStatus          *string    `gorm:"type:text" json:"goalStatus"`
 	GoalTokenBudget     *int64     `gorm:"type:integer" json:"goalTokenBudget"`

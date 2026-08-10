@@ -106,6 +106,9 @@ func mapHistoryItemRow(row tables.WebSessionItemTable) HistoryItem {
 		SourceThreadID: row.SourceThreadID,
 		SourceTurnID:   row.SourceTurnID,
 		SourceItemID:   row.SourceItemID,
+		RunID:          row.RunID,
+		RunDurationMs:  row.RunDurationMs,
+		RunOutcome:     WorkTimingOutcome(row.RunOutcome),
 		OrderIndex:     row.OrderIndex,
 		Kind:           row.ItemKind,
 		ItemType:       row.ItemType,
@@ -137,6 +140,9 @@ func applyHistoryItemToRow(row *tables.WebSessionItemTable, sessionID string, it
 	row.SourceThreadID = item.SourceThreadID
 	row.SourceTurnID = item.SourceTurnID
 	row.SourceItemID = item.SourceItemID
+	row.RunID = item.RunID
+	row.RunDurationMs = item.RunDurationMs
+	row.RunOutcome = string(item.RunOutcome)
 	row.OrderIndex = item.OrderIndex
 	row.ItemKind = strings.TrimSpace(item.Kind)
 	row.ItemType = strings.TrimSpace(item.ItemType)
@@ -477,6 +483,9 @@ func (m *Manager) replaceSessionHistoryCache(
 			if err := tx.Create(&items).Error; err != nil {
 				return err
 			}
+		}
+		if err := m.reapplyWorkTimingAnnotationsDB(ctx, tx, session.ID); err != nil {
+			return err
 		}
 		if len(updates) > 0 {
 			if err := tx.Model(&tables.WebSessionTable{}).

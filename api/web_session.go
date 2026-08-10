@@ -349,6 +349,30 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/work-timing/calculate", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+		},
+	) (*h.ItemResponse[websession.WorkTimingCalculationResult], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		item, err := c.manager.CalculateSessionWorkTiming(ctx, input.SessionID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to calculate session work timing", err)
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-work-timing-calculate"
+		op.Summary = "按需补算会话工作时间"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/search", func(
 		ctx context.Context,
 		input *struct {

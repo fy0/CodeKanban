@@ -83,6 +83,7 @@ type eventProjectionRetry struct {
 	event      Event
 	stage      eventProjectionStage
 	cachedItem *HistoryItem
+	timingItem *HistoryItem
 	subAgent   *WebSessionSubAgent
 }
 
@@ -169,6 +170,8 @@ type Manager struct {
 	ccrHookErr                  error
 	ccrHookClaudePath           string
 	historyCleanupMu            sync.Mutex
+	workTimingBackfillMu        sync.Mutex
+	workTimingLocks             [64]sync.Mutex
 }
 
 type clientKind string
@@ -944,6 +947,8 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		TurnCount:                         0,
 		ItemCount:                         0,
 		LastEventSeq:                      0,
+		WorkTimingBackfillState:           string(WorkTimingBackfillComplete),
+		WorkTimingBackfillVersion:         currentWorkTimingBackfillVersion,
 		TotalInputTokens:                  0,
 		TotalCachedInputTokens:            0,
 		TotalOutputTokens:                 0,
@@ -2558,6 +2563,10 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 		eventState.closed = false
 		return err
 	}
+	if err := db.WithContext(ctx).Unscoped().Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionRunTimingTable{}).Error; err != nil {
+		eventState.closed = false
+		return err
+	}
 	if err := model.GetDB().WithContext(ctx).Delete(&tables.WebSessionTable{}, "id = ?", sessionID).Error; err != nil {
 		eventState.closed = false
 		return err
@@ -2608,18 +2617,20 @@ func (m *Manager) setAutoRetryTimer(sessionID string, nextAt time.Time) {
 
 func (m *Manager) resetAutoRetryProgress(ctx context.Context, sessionID string) {
 	m.cancelAutoRetryTimer(sessionID)
-	_ = m.updateRuntimeState(ctx, sessionID, map[string]any{
+	now := time.Now()
+	_ = m.settleRetryWaitAndUpdateSession(ctx, sessionID, now, map[string]any{
 		"auto_retry_attempt": 0,
 		"auto_retry_next_at": nil,
-		"updated_at":         time.Now(),
+		"updated_at":         now,
 	})
 }
 
 func (m *Manager) clearAutoRetryNextAt(ctx context.Context, sessionID string) {
 	m.cancelAutoRetryTimer(sessionID)
-	_ = m.updateRuntimeState(ctx, sessionID, map[string]any{
+	now := time.Now()
+	_ = m.settleRetryWaitAndUpdateSession(ctx, sessionID, now, map[string]any{
 		"auto_retry_next_at": nil,
-		"updated_at":         time.Now(),
+		"updated_at":         now,
 	})
 }
 
@@ -2682,7 +2693,7 @@ func (m *Manager) scheduleAutoRetry(record tables.WebSessionTable, code string, 
 	)
 	if !ok {
 		m.cancelAutoRetryTimer(record.ID)
-		_ = m.updateRuntimeState(context.Background(), record.ID, map[string]any{
+		_ = m.settleRetryWaitAndUpdateSession(context.Background(), record.ID, now, map[string]any{
 			"auto_retry_attempt": nextAttempt,
 			"auto_retry_next_at": nil,
 			"updated_at":         now,
@@ -2691,11 +2702,16 @@ func (m *Manager) scheduleAutoRetry(record tables.WebSessionTable, code string, 
 	}
 
 	nextAt := now.Add(delay)
-	_ = m.updateRuntimeState(context.Background(), record.ID, map[string]any{
-		"auto_retry_attempt": nextAttempt,
-		"auto_retry_next_at": nextAt,
-		"updated_at":         now,
-	})
+	retryUpdates := map[string]any{
+		"auto_retry_attempt":         nextAttempt,
+		"auto_retry_next_at":         nextAt,
+		"updated_at":                 now,
+		"work_retry_wait_started_at": now,
+	}
+	if runID := m.latestCompletedWorkTimingRunID(context.Background(), record.ID); runID != "" {
+		retryUpdates["work_retry_source_run_id"] = runID
+	}
+	_ = m.updateRuntimeState(context.Background(), record.ID, retryUpdates)
 	m.setAutoRetryTimer(record.ID, nextAt)
 }
 
@@ -3934,11 +3950,12 @@ func (m *Manager) sendMessageInternal(
 		RunID:     runID,
 		Timestamp: time.Now(),
 		Payload: map[string]any{
-			"ag": string(normalizeAgent(Agent(record.Agent))),
-			"md": record.Model,
-			"re": record.ReasoningEffort,
-			"wm": effectiveWorkflowMode(record),
-			"pl": effectivePermissionLevel(record),
+			"ag":        string(normalizeAgent(Agent(record.Agent))),
+			"md":        record.Model,
+			"re":        record.ReasoningEffort,
+			"wm":        effectiveWorkflowMode(record),
+			"pl":        effectivePermissionLevel(record),
+			"autoRetry": fromAutoRetry,
 		},
 	}); err != nil {
 		return err
@@ -5197,6 +5214,9 @@ func (m *Manager) projectPersistedEvent(
 		if retry.cachedItem != nil {
 			m.broadcast(newHistoryItemFrame(sessionID, *retry.cachedItem, m.summaryForBroadcast(ctx, sessionID)))
 		}
+		if retry.timingItem != nil && (retry.cachedItem == nil || retry.cachedItem.ID != retry.timingItem.ID) {
+			m.broadcast(newHistoryItemFrame(sessionID, *retry.timingItem, m.summaryForBroadcast(ctx, sessionID)))
+		}
 		if retry.event.Type == "tool_end" {
 			m.maybeInterruptForRedirect(sessionID)
 		}
@@ -5219,6 +5239,7 @@ func (m *Manager) projectPersistedEventDatabase(
 	}
 	working := *retry
 	working.cachedItem = nil
+	working.timingItem = nil
 	working.subAgent = nil
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		event := working.event
@@ -5246,7 +5267,17 @@ func (m *Manager) projectPersistedEventDatabase(
 				}
 			}
 		}
-		if err := m.updateRuntimeStateDB(ctx, tx, sessionID, m.runtimeUpdatesForEvent(sessionID, event)); err != nil {
+		timingUpdates, timingItem, err := m.applyWorkTimingEventDB(ctx, tx, sessionID, event)
+		if err != nil {
+			return err
+		}
+		working.timingItem = timingItem
+		if timingItem != nil && working.cachedItem != nil && timingItem.ID == working.cachedItem.ID {
+			working.cachedItem = timingItem
+			working.timingItem = nil
+		}
+		runtimeUpdates := mergeRuntimeUpdates(m.runtimeUpdatesForEvent(sessionID, event), timingUpdates)
+		if err := m.updateRuntimeStateDB(ctx, tx, sessionID, runtimeUpdates); err != nil {
 			return err
 		}
 		working.stage = eventProjectionBroadcast
@@ -6409,7 +6440,8 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 			}
 			return ""
 		}(),
-		Goal: sessionGoalFromRecord(record),
+		Goal:       sessionGoalFromRecord(record),
+		WorkTiming: workTimingFromRecord(record),
 	}
 }
 

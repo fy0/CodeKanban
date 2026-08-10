@@ -20,7 +20,7 @@ export interface WebSessionLiveTimeCopy {
 export interface ResolveWebSessionLiveTimeCopyInput {
   state: WebSessionLiveState;
   blocks: WebSessionBlock[];
-  session?: Pick<WebSessionSummary, 'activityAt'> | null;
+  session?: Pick<WebSessionSummary, 'activityAt' | 'workTiming'> | null;
   pendingApproval?: Pick<WebSessionApprovalState, 'requestedAt'> | null;
   pendingUserInput?: Pick<WebSessionUserInputState, 'requestedAt'> | null;
   now: number;
@@ -68,6 +68,46 @@ function getTurnStartedAt(
   blocks: WebSessionBlock[],
   endedAt: number
 ): number | undefined {
+  let latestOriginRunId = '';
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    const timestamp = block.observedAt ?? block.timestamp;
+    if (!isValidTimestamp(timestamp) || timestamp > endedAt || !isTurnOriginBlock(block)) {
+      continue;
+    }
+    latestOriginRunId = String(block.runId ?? '').trim();
+    break;
+  }
+  if (latestOriginRunId) {
+    let earliestRunOrigin: number | undefined;
+    for (const block of blocks) {
+      const timestamp = block.observedAt ?? block.timestamp;
+      if (
+        !isValidTimestamp(timestamp) ||
+        timestamp > endedAt ||
+        String(block.runId ?? '').trim() !== latestOriginRunId ||
+        !isTurnOriginBlock(block)
+      ) {
+        continue;
+      }
+      if (earliestRunOrigin == null || timestamp < earliestRunOrigin) {
+        earliestRunOrigin = timestamp;
+      }
+    }
+    if (earliestRunOrigin != null) {
+      return earliestRunOrigin;
+    }
+  }
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    const timestamp = block.observedAt ?? block.timestamp;
+    if (!isValidTimestamp(timestamp) || timestamp > endedAt) {
+      continue;
+    }
+    if (block.itemType === 'run_st') {
+      return timestamp;
+    }
+  }
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
     const block = blocks[index];
     const timestamp = block.observedAt ?? block.timestamp;
@@ -112,11 +152,36 @@ function getLastActivityAt(
   return latest;
 }
 
+function getCurrentRunTiming(
+  session: Pick<WebSessionSummary, 'workTiming'> | null | undefined,
+  now: number
+) {
+  const currentRun = session?.workTiming?.currentRun;
+  const startedAt = Date.parse(currentRun?.startedAt ?? '');
+  if (!currentRun || !isValidTimestamp(startedAt)) {
+    return null;
+  }
+  const pausedAt = Date.parse(currentRun.pausedAt ?? '');
+  const endedAt = isValidTimestamp(pausedAt) ? Math.min(now, pausedAt) : now;
+  const pausedDurationMs = Math.max(0, Number(currentRun.pausedDurationMs) || 0);
+  return {
+    startedAt,
+    elapsedMs: Math.max(0, endedAt - startedAt - pausedDurationMs),
+  };
+}
+
 export function resolveWebSessionLiveTimeCopy(
   input: ResolveWebSessionLiveTimeCopyInput
 ): WebSessionLiveTimeCopy {
   const endedAt = getEndedAt(input.state, input.now);
-  const turnStartedAt = getTurnStartedAt(input.state, input.blocks, endedAt);
+  const currentRunTiming = getCurrentRunTiming(input.session, input.now);
+  const turnStartedAt =
+    currentRunTiming?.startedAt ?? getTurnStartedAt(input.state, input.blocks, endedAt);
+  const elapsedText = currentRunTiming
+    ? formatElapsedDuration(0, currentRunTiming.elapsedMs)
+    : turnStartedAt
+      ? formatElapsedDuration(turnStartedAt, endedAt)
+      : '';
   const lastActivityAt = getLastActivityAt(
     input.state,
     input.blocks,
@@ -136,7 +201,7 @@ export function resolveWebSessionLiveTimeCopy(
     tooltipItems.push({
       key: 'elapsed',
       label: input.labels.elapsed,
-      value: formatElapsedDuration(turnStartedAt, endedAt),
+      value: elapsedText,
     });
   }
   if (lastActivityAt) {
@@ -149,7 +214,7 @@ export function resolveWebSessionLiveTimeCopy(
 
   if (turnStartedAt) {
     return {
-      timeText: formatElapsedDuration(turnStartedAt, endedAt),
+      timeText: elapsedText,
       tooltipItems,
     };
   }

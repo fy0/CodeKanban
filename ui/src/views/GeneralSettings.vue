@@ -1584,7 +1584,11 @@
             :class="settingsCardShellClass('maintenance')"
           >
             <n-card :title="t('settings.dataMaintenanceTitle')" size="huge">
-              <WebSessionHistoryCleanup />
+              <n-space vertical size="large">
+                <WebSessionWorkTimingBackfill />
+                <n-divider />
+                <WebSessionHistoryCleanup />
+              </n-space>
             </n-card>
           </section>
 
@@ -1979,6 +1983,7 @@ import { webSessionApi } from '@/api/webSession';
 import { useReq, useInit } from '@/api/composable';
 import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
 import WebSessionHistoryCleanup from '@/components/settings/WebSessionHistoryCleanup.vue';
+import WebSessionWorkTimingBackfill from '@/components/settings/WebSessionWorkTimingBackfill.vue';
 import GitSettingsSection from '@/components/settings/GitSettingsSection.vue';
 import type {
   DeveloperConfig,

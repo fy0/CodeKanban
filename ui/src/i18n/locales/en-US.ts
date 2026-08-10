@@ -931,6 +931,13 @@ export default {
     contextUsageTitleClaude: 'Remaining Context Window Estimate',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
+    contextUsageCurrent: 'Current',
+    contextUsageWindowLabel: 'Window limit',
+    contextUsageCompactLabel: 'Compact line',
+    contextUsageCurrentMarker: 'Current',
+    contextUsageWindowMarker: 'Limit',
+    contextUsageShowExact: 'Show exact value',
+    contextUsageShowCompact: 'Show compact value',
     contextUsageDisclaimer:
       'Note: when available, the latest hidden Codex usage snapshot estimates current context occupancy; cumulative usage is still shown separately.',
     contextUsageDisclaimerClaude:
@@ -970,6 +977,15 @@ export default {
     contextUsageUnavailableTitle: 'Context estimate unavailable',
     contextUsageUnavailableDescription:
       'The session has not reported a usable context window yet. Claude normally provides it after the first result.',
+    workTimingTitle: 'Cumulative Work Time',
+    workTimingCurrentRun: 'Current run: {duration}',
+    workTimingComplete: 'Timing complete',
+    workTimingRecordedPartial: 'Recorded (history incomplete)',
+    workTimingUnavailable: 'No usable history',
+    workTimingPending: 'History calculates when opened',
+    workTimingCalculating: 'Calculating history',
+    workTimingCalculationFailed: 'Calculation failed; open again to retry',
+    runDuration: 'Duration {duration}',
     composerHintIdle:
       'Press Enter to send. Use Shift + Enter for a new line. Paste or drag images.',
     composerHintCodexMissing:
@@ -1528,6 +1544,17 @@ export default {
     historyCleanupFileFailures:
       '{count} internal history file(s) could not be removed. You can retry later.',
     historyCleanupFailed: 'Failed to clean chat cache',
+    workTimingBackfillTitle: 'Session Work Time',
+    workTimingBackfillDescription:
+      'Historical sessions are calculated only when the timing popover or this action is opened. Batch processing keeps the interface responsive.',
+    workTimingBackfillRemaining: '{count} session(s) remaining',
+    workTimingBackfillBatchSize: 'Batch size',
+    workTimingBackfillAction: 'Calculate History',
+    workTimingBackfillRunning: 'Calculating',
+    workTimingBackfillSuccess:
+      'Processed {attempted} session(s), calculated {calculated}; {remaining} remaining',
+    workTimingBackfillFailed: 'Failed to calculate work time',
+    workTimingBackfillBusy: 'A calculation is already running; try again shortly',
     backupTitle: 'Backup & Restore',
     backupDescription:
       'Export the current instance settings as JSON or import a previously exported backup. Imports are validated first and show version compatibility warnings plus affected sections.',

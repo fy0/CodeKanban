@@ -815,6 +815,14 @@
                     <span class="item-time" :title="formatDateTime(item.timestamp)">{{
                       formatTime(item.timestamp)
                     }}</span>
+                    <span v-if="item.runDurationMs != null" class="item-duration">
+                      ·
+                      {{
+                        t('webSession.runDuration', {
+                          duration: formatWorkDuration(item.runDurationMs),
+                        })
+                      }}
+                    </span>
                   </div>
 
                   <div
@@ -2686,28 +2694,156 @@
                     @select="handleSendQuickActionSelect"
                     @clickoutside="closeSendQuickActions"
                   />
-                  <n-tooltip v-if="contextUsageIndicator" trigger="hover" placement="top">
+                  <n-popover
+                    v-if="contextUsageIndicator"
+                    v-model:show="showContextUsagePopover"
+                    trigger="click"
+                    placement="top-end"
+                    :show-arrow="false"
+                    @update:show="handleContextUsagePopoverVisibilityChange"
+                  >
                     <template #trigger>
-                      <span
+                      <button
+                        type="button"
                         class="composer-context-pill"
                         :class="`state-${contextUsageIndicator.state}`"
+                        :aria-label="contextUsageIndicator.title"
                       >
                         {{ contextUsageIndicator.label }}
-                      </span>
+                      </button>
                     </template>
-                    <div class="composer-context-tooltip">
-                      <div class="composer-context-tooltip-title">
-                        {{ contextUsageIndicator.title }}
+                    <div class="context-usage-popover">
+                      <div class="context-usage-popover__header">
+                        <span class="context-usage-popover__title">{{
+                          contextUsageIndicator.title
+                        }}</span>
+                        <span
+                          class="context-usage-popover__percent"
+                          :class="`state-${contextUsageIndicator.state}`"
+                        >
+                          {{ contextUsageIndicator.label }}
+                        </span>
                       </div>
-                      <div
-                        v-for="line in contextUsageIndicator.lines"
-                        :key="line"
-                        class="composer-context-tooltip-line"
-                      >
-                        {{ line }}
+                      <template v-if="contextUsageIndicator.available">
+                        <div
+                          class="context-usage-stats"
+                          :class="{
+                            'has-compact-marker': contextUsageIndicator.showCompactMarker,
+                          }"
+                        >
+                          <div class="context-usage-stat">
+                            <span class="context-usage-stat__label">{{
+                              t('webSession.contextUsageCurrent')
+                            }}</span>
+                            <button
+                              type="button"
+                              class="context-usage-number"
+                              :title="contextNumberTitle('used')"
+                              @click="toggleContextNumber('used')"
+                            >
+                              {{
+                                formatContextTokenCount(contextUsageIndicator.usedTokens, 'used')
+                              }}
+                            </button>
+                          </div>
+                          <div class="context-usage-stat">
+                            <span class="context-usage-stat__label">{{
+                              t('webSession.contextUsageWindowLabel')
+                            }}</span>
+                            <button
+                              type="button"
+                              class="context-usage-number"
+                              :title="contextNumberTitle('window')"
+                              @click="toggleContextNumber('window')"
+                            >
+                              {{
+                                formatContextTokenCount(
+                                  contextUsageIndicator.contextWindowTokens,
+                                  'window'
+                                )
+                              }}
+                            </button>
+                          </div>
+                          <div
+                            v-if="contextUsageIndicator.showCompactMarker"
+                            class="context-usage-stat"
+                          >
+                            <span class="context-usage-stat__label">{{
+                              t('webSession.contextUsageCompactLabel')
+                            }}</span>
+                            <button
+                              type="button"
+                              class="context-usage-number"
+                              :title="contextNumberTitle('compact')"
+                              @click="toggleContextNumber('compact')"
+                            >
+                              {{
+                                formatContextTokenCount(
+                                  contextUsageIndicator.compactLimitTokens,
+                                  'compact'
+                                )
+                              }}
+                            </button>
+                          </div>
+                        </div>
+                        <div class="context-usage-axis" aria-hidden="true">
+                          <span
+                            class="context-usage-axis__fill"
+                            :style="{
+                              width: `${contextUsageIndicator.usedPercent}%`,
+                            }"
+                          ></span>
+                          <span
+                            class="context-usage-axis__marker context-usage-axis__marker--current"
+                            :style="{
+                              left: `${contextUsageIndicator.usedPercent}%`,
+                            }"
+                          ></span>
+                          <span
+                            v-if="contextUsageIndicator.showCompactMarker"
+                            class="context-usage-axis__marker context-usage-axis__marker--compact"
+                            :style="{
+                              left: `${contextUsageIndicator.compactPercent}%`,
+                            }"
+                          ></span>
+                        </div>
+                        <div class="context-usage-axis-labels">
+                          <span>{{ t('webSession.contextUsageCurrentMarker') }}</span>
+                          <span>{{ t('webSession.contextUsageWindowMarker') }}</span>
+                        </div>
+                      </template>
+                      <div v-else class="context-usage-unavailable">
+                        {{ t('webSession.contextUsageUnavailableDescription') }}
+                      </div>
+
+                      <div class="context-usage-divider"></div>
+                      <div class="work-timing-popover">
+                        <div class="work-timing-popover__header">
+                          <span class="work-timing-popover__title">
+                            <n-icon size="15"><TimeOutline /></n-icon>
+                            {{ t('webSession.workTimingTitle') }}
+                          </span>
+                          <span class="work-timing-popover__value">{{
+                            formatWorkDuration(currentWorkTimingDurationMs)
+                          }}</span>
+                        </div>
+                        <div class="work-timing-popover__status">
+                          <n-spin v-if="workTimingCalculationLoading" :size="13" />
+                          <span v-else>{{ workTimingStatusLabel }}</span>
+                        </div>
+                        <div
+                          v-if="currentWorkRunDurationMs != null"
+                          class="work-timing-popover__current"
+                        >
+                          {{
+                            t('webSession.workTimingCurrentRun', {
+                              duration: formatWorkDuration(currentWorkRunDurationMs),
+                            })
+                          }}
+                        </div>
                       </div>
                     </div>
-                  </n-tooltip>
+                  </n-popover>
                   <n-button
                     v-if="isRunActive"
                     secondary
@@ -3645,13 +3781,12 @@ import {
   formatWebSessionTimestamp,
 } from '@/components/web-session/webSessionTimeFormat';
 import {
+  formatElapsedDuration,
   resolveWebSessionLiveTimeCopy,
   type WebSessionLiveTimeTooltipItem,
 } from '@/components/web-session/webSessionLiveTime';
-import {
-  calculateBillableTokenUsage,
-  calculateCodexRemainingContext,
-} from '@/components/web-session/webSessionContextUsage';
+import { calculateCodexRemainingContext } from '@/components/web-session/webSessionContextUsage';
+import { formatWebSessionTokenCount } from '@/components/web-session/webSessionContextDisplay';
 import {
   buildOrderedTabSessions,
   resolveNextWebSessionTabAfterClose,
@@ -4051,6 +4186,17 @@ const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>
 const showMobileTabSelector = ref(false);
 const mobileTabSelectorSource = ref<MobileTabSelectorSource>('header');
 const showQuickInputPopover = ref(false);
+const showContextUsagePopover = ref(false);
+const workTimingCalculationLoading = ref(false);
+const workTimingCalculationError = ref('');
+const workTimingBusyRetryPending = ref(false);
+const workTimingBusyRetryConsumed = ref(false);
+type ContextNumberKey = 'used' | 'window' | 'compact';
+const contextExactNumbers = ref<Record<ContextNumberKey, boolean>>({
+  used: false,
+  window: false,
+  compact: false,
+});
 const quickInputScope = ref<WebSessionQuickInputScope>(props.projectId ? 'project' : 'global');
 const quickInputSearch = ref('');
 const quickInputPage = ref(1);
@@ -4372,6 +4518,29 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
   const session = currentSession.value;
   return session && !isDraftSession(session) ? session : null;
 });
+watch(
+  () => [currentRealSession.value?.id, workTimingSessionBusy.value] as const,
+  ([sessionId, isBusy], previous) => {
+    if (sessionId !== previous?.[0]) {
+      showContextUsagePopover.value = false;
+      workTimingBusyRetryPending.value = false;
+      workTimingBusyRetryConsumed.value = false;
+      workTimingCalculationError.value = '';
+      return;
+    }
+    if (
+      showContextUsagePopover.value &&
+      workTimingBusyRetryPending.value &&
+      workTimingBusyRetryConsumed.value === false &&
+      previous?.[1] === true &&
+      isBusy === false
+    ) {
+      workTimingBusyRetryConsumed.value = true;
+      workTimingBusyRetryPending.value = false;
+      void calculateWorkTimingOnPopoverOpen();
+    }
+  }
+);
 const currentCyberPolicyWarningDismissed = computed(() => {
   const sessionId = currentRealSession.value?.id;
   return Boolean(sessionId && dismissedCyberPolicyWarnings.value[sessionId] === true);
@@ -6728,13 +6897,37 @@ const mobileComposerSummaryTokens = computed(() => [
   { key: 'model', label: selectedModelLabel.value },
   { key: 'workflow', label: selectedWorkflowModeLabel.value },
 ]);
-const tokenNumberFormatter = new Intl.NumberFormat();
-const contextUsageIndicator = computed(() => {
+
+type ContextUsageIndicator = {
+  state: 'idle' | 'active' | 'warning' | 'unavailable';
+  label: string;
+  title: string;
+  available: boolean;
+  usedTokens: number;
+  contextWindowTokens: number;
+  compactLimitTokens: number;
+  usedPercent: number;
+  compactPercent: number;
+  showCompactMarker: boolean;
+};
+
+const contextUsageIndicator = computed<ContextUsageIndicator | null>(() => {
   const session = currentSession.value;
+  const unavailable = {
+    state: 'unavailable' as const,
+    label: t('webSession.contextUsageLabelUnavailable'),
+    title: t('webSession.contextUsageUnavailableTitle'),
+    available: false,
+    usedTokens: 0,
+    contextWindowTokens: 0,
+    compactLimitTokens: 0,
+    usedPercent: 0,
+    compactPercent: 0,
+    showCompactMarker: false,
+  };
   if (!session) {
     return null;
   }
-
   if (session.agent === 'codex' && isDraftSession(session) && !codexRuntimeConfigReady.value) {
     return null;
   }
@@ -6772,11 +6965,6 @@ const contextUsageIndicator = computed(() => {
       sessionSource === 'config' ||
       sessionSource === 'model_catalog');
   const contextWindowTokens = canUseSessionWindow ? sessionWindowTokens : runtimeWindowTokens;
-  const source = canUseSessionWindow
-    ? sessionSource
-    : runtimeWindowTokens
-      ? (runtimeConfig?.source ?? 'unavailable')
-      : 'unavailable';
   const runtimeCompactLimitTokens =
     runtimeConfigMatchesModel &&
     typeof runtimeConfig?.compactLimitTokens === 'number' &&
@@ -6785,146 +6973,182 @@ const contextUsageIndicator = computed(() => {
       ? runtimeConfig.compactLimitTokens
       : null;
   const compactLimitTokens =
-    source === 'session_usage'
+    sessionSource === 'session_usage'
       ? contextWindowTokens
       : (runtimeCompactLimitTokens ?? contextWindowTokens);
-
-  // Claude exposes the context window on result.modelUsage after a turn. Use
-  // that authoritative window with Claude-specific wording; Claude Code keeps
-  // control of the actual automatic-compaction trigger.
   if (
     (session.agent !== 'codex' && session.agent !== 'claude') ||
     !contextWindowTokens ||
     !compactLimitTokens
   ) {
-    return {
-      state: 'unavailable',
-      label: t('webSession.contextUsageLabelUnavailable'),
-      title: t('webSession.contextUsageUnavailableTitle'),
-      lines: [t('webSession.contextUsageUnavailableDescription')],
-    };
+    return unavailable;
   }
 
-  const estimateInputTokens = Number(session.contextEstimate.inputTokens || 0);
-  const estimateCachedInputTokens = Number(session.contextEstimate.cachedInputTokens || 0);
-  const estimateOutputTokens = Number(session.contextEstimate.outputTokens || 0);
   const usedTokens = Math.max(0, Number(session.contextEstimate.usedTokens || 0));
-  const totalInputTokens = Number(session.usage.inputTokens || 0);
-  const totalCachedInputTokens = Number(session.usage.cachedInputTokens || 0);
-  const totalOutputTokens = Number(session.usage.outputTokens || 0);
-  const totalUsedTokens = calculateBillableTokenUsage(
-    totalInputTokens,
-    totalCachedInputTokens,
-    totalOutputTokens
+  const { remainingPercent } = calculateCodexRemainingContext({
+    compactLimitTokens,
+    usedTokens,
+    baselineTokens: session.agent === 'claude' ? 0 : undefined,
+  });
+  const usedPercent = Math.max(
+    0,
+    Math.min(100, Math.round((usedTokens / contextWindowTokens) * 100))
   );
-  const { remainingTokens: remainingEstimateTokens, remainingPercent } =
-    calculateCodexRemainingContext({
-      compactLimitTokens,
-      usedTokens,
-      baselineTokens: session.agent === 'claude' ? 0 : undefined,
-    });
-  const sourceLabel =
-    session.agent === 'claude'
-      ? t('webSession.contextUsageSourceClaudeResult')
-      : source === 'session_usage'
-        ? t('webSession.contextUsageSourceSessionUsage')
-        : source === 'config'
-          ? t('webSession.contextUsageSourceConfig')
-          : t('webSession.contextUsageSourceDefault');
-  const estimateMode =
-    session.contextEstimateMode === 'latest_token_count'
-      ? 'latest_token_count'
-      : session.contextEstimateMode === 'latest_turn_delta'
-        ? 'latest_turn_delta'
-        : session.contextEstimateMode === 'since_compaction'
-          ? 'since_compaction'
-          : 'cumulative_total';
-  const estimateModeLabel =
-    estimateMode === 'latest_token_count'
-      ? t('webSession.contextUsageModeLatestTokenCount')
-      : estimateMode === 'latest_turn_delta'
-        ? t('webSession.contextUsageModeLatestTurnDelta')
-        : estimateMode === 'since_compaction'
-          ? t('webSession.contextUsageModeSinceCompaction')
-          : t('webSession.contextUsageModeCumulativeTotal');
-  const estimateNote =
-    estimateMode === 'latest_token_count'
-      ? t('webSession.contextUsageNoteLatestTokenCount')
-      : estimateMode === 'latest_turn_delta'
-        ? t(
-            session.agent === 'claude'
-              ? 'webSession.contextUsageNoteLatestTurnDeltaClaude'
-              : 'webSession.contextUsageNoteLatestTurnDelta'
-          )
-        : estimateMode === 'since_compaction'
-          ? t(
-              session.agent === 'claude'
-                ? 'webSession.contextUsageNoteSinceCompactionClaude'
-                : 'webSession.contextUsageNoteSinceCompaction'
-            )
-          : t('webSession.contextUsageNoteCumulativeTotal');
-  const remainingLine = t(
-    session.agent === 'claude'
-      ? 'webSession.contextUsageRemainingWindowEstimate'
-      : 'webSession.contextUsageRemainingEstimate',
-    { count: tokenNumberFormatter.format(remainingEstimateTokens) }
+  const compactPercent = Math.max(
+    0,
+    Math.min(100, Math.round((compactLimitTokens / contextWindowTokens) * 100))
   );
-  const limitLines =
-    session.agent === 'claude'
-      ? []
-      : [
-          t('webSession.contextUsageCompactLimit', {
-            count: tokenNumberFormatter.format(compactLimitTokens),
-          }),
-        ];
+  const showCompactMarker =
+    compactLimitTokens > 0 &&
+    compactLimitTokens < contextWindowTokens &&
+    Math.abs(contextWindowTokens - compactLimitTokens) >= 1;
 
   return {
     state: remainingPercent <= 10 ? 'warning' : remainingPercent <= 25 ? 'active' : 'idle',
-    label: t('webSession.contextUsageLabel', {
-      percent: remainingPercent,
-    }),
+    label: t('webSession.contextUsageLabel', { percent: remainingPercent }),
     title: t(
       session.agent === 'claude'
         ? 'webSession.contextUsageTitleClaude'
         : 'webSession.contextUsageTitle'
     ),
-    lines: [
-      t(
-        session.agent === 'claude'
-          ? 'webSession.contextUsageDisclaimerClaude'
-          : 'webSession.contextUsageDisclaimer'
-      ),
-      remainingLine,
-      t('webSession.contextUsageEstimatedUsed', {
-        count: tokenNumberFormatter.format(usedTokens),
-      }),
-      t('webSession.contextUsageWindow', {
-        count: tokenNumberFormatter.format(contextWindowTokens),
-      }),
-      ...limitLines,
-      t('webSession.contextUsageSource', {
-        source: sourceLabel,
-      }),
-      t('webSession.contextUsageMode', {
-        mode: estimateModeLabel,
-      }),
-      t('webSession.contextUsageEstimatedBreakdown', {
-        input: tokenNumberFormatter.format(estimateInputTokens),
-        cached: tokenNumberFormatter.format(estimateCachedInputTokens),
-        output: tokenNumberFormatter.format(estimateOutputTokens),
-      }),
-      t('webSession.contextUsageTotalUsed', {
-        count: tokenNumberFormatter.format(totalUsedTokens),
-      }),
-      t('webSession.contextUsageTotalBreakdown', {
-        input: tokenNumberFormatter.format(totalInputTokens),
-        cached: tokenNumberFormatter.format(totalCachedInputTokens),
-        output: tokenNumberFormatter.format(totalOutputTokens),
-      }),
-      estimateNote,
-    ],
+    available: true,
+    usedTokens,
+    contextWindowTokens,
+    compactLimitTokens,
+    usedPercent,
+    compactPercent,
+    showCompactMarker,
   };
 });
+
+function formatContextTokenCount(value: number, key: ContextNumberKey) {
+  return formatWebSessionTokenCount(value, contextExactNumbers.value[key]);
+}
+
+function toggleContextNumber(key: ContextNumberKey) {
+  contextExactNumbers.value = {
+    ...contextExactNumbers.value,
+    [key]: !contextExactNumbers.value[key],
+  };
+}
+
+function contextNumberTitle(key: ContextNumberKey) {
+  return contextExactNumbers.value[key]
+    ? t('webSession.contextUsageShowCompact')
+    : t('webSession.contextUsageShowExact');
+}
+
+const currentWorkRunDurationMs = computed<number | null>(() => {
+  const currentRun = currentRealSession.value?.workTiming?.currentRun;
+  const startedAt = Date.parse(currentRun?.startedAt ?? '');
+  if (!currentRun || !Number.isFinite(startedAt) || startedAt <= 0) {
+    return null;
+  }
+  const pausedAt = Date.parse(currentRun.pausedAt ?? '');
+  const end =
+    Number.isFinite(pausedAt) && pausedAt > 0
+      ? Math.min(liveStateClockMs.value, pausedAt)
+      : liveStateClockMs.value;
+  return Math.max(0, end - startedAt - Math.max(0, Number(currentRun.pausedDurationMs) || 0));
+});
+
+const currentWorkTimingDurationMs = computed(() => {
+  const completed = Math.max(
+    0,
+    Number(currentRealSession.value?.workTiming?.completedDurationMs ?? 0) || 0
+  );
+  return completed + (currentWorkRunDurationMs.value ?? 0);
+});
+
+const workTimingSessionBusy = computed(() => {
+  const session = currentRealSession.value;
+  return Boolean(
+    session?.workTiming?.currentRun ||
+      session?.status === 'running' ||
+      session?.status === 'waiting_approval' ||
+      session?.status === 'aborting'
+  );
+});
+
+const workTimingStatusLabel = computed(() => {
+  if (workTimingCalculationError.value) {
+    return t('webSession.workTimingCalculationFailed');
+  }
+  if (workTimingCalculationLoading.value) {
+    return t('webSession.workTimingCalculating');
+  }
+  const state = currentRealSession.value?.workTiming?.backfillState ?? 'pending';
+  if (state === 'partial') {
+    return t('webSession.workTimingRecordedPartial');
+  }
+  if (state === 'unavailable') {
+    return t('webSession.workTimingUnavailable');
+  }
+  if (state === 'failed') {
+    return t('webSession.workTimingCalculationFailed');
+  }
+  if (state === 'pending') {
+    return t('webSession.workTimingPending');
+  }
+  return t('webSession.workTimingComplete');
+});
+
+function formatWorkDuration(valueMs: number) {
+  return formatElapsedDuration(0, Math.max(0, Number(valueMs) || 0));
+}
+
+async function calculateWorkTimingOnPopoverOpen() {
+  const session = currentRealSession.value;
+  if (
+    !session ||
+    isDraftSession(session) ||
+    workTimingCalculationLoading.value ||
+    (session.workTiming?.backfillState !== 'pending' &&
+      session.workTiming?.backfillState !== 'failed')
+  ) {
+    return;
+  }
+  workTimingCalculationLoading.value = true;
+  workTimingCalculationError.value = '';
+  let retryAfterBusyResponse = false;
+  try {
+    const result = await webSessionStore.calculateSessionWorkTiming(session.projectId, session.id);
+    if (result.status === 'busy') {
+      if (
+        showContextUsagePopover.value &&
+        workTimingSessionBusy.value === false &&
+        workTimingBusyRetryConsumed.value === false
+      ) {
+        workTimingBusyRetryConsumed.value = true;
+        retryAfterBusyResponse = true;
+      } else {
+        workTimingBusyRetryPending.value = true;
+      }
+      return;
+    }
+    if (result.status === 'failed') {
+      workTimingCalculationError.value = result.error || 'failed';
+    }
+  } catch (error) {
+    workTimingCalculationError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    workTimingCalculationLoading.value = false;
+    if (retryAfterBusyResponse && showContextUsagePopover.value) {
+      void calculateWorkTimingOnPopoverOpen();
+    }
+  }
+}
+
+function handleContextUsagePopoverVisibilityChange(show: boolean) {
+  showContextUsagePopover.value = show;
+  if (!show) {
+    workTimingBusyRetryPending.value = false;
+    workTimingBusyRetryConsumed.value = false;
+    return;
+  }
+  workTimingBusyRetryConsumed.value = false;
+  void calculateWorkTimingOnPopoverOpen();
+}
 
 function setMobileComposerFocusState(focused: boolean) {
   if (isMobileComposerFocused.value === focused) {
@@ -17447,10 +17671,17 @@ defineExpose({
 
 .item-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   font-size: 12px;
   color: var(--n-text-color-3);
+}
+
+.item-duration {
+  color: var(--n-text-color-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .user-message-navigation {
@@ -20000,9 +20231,11 @@ defineExpose({
   color: var(--n-text-color-2);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
   white-space: nowrap;
-  cursor: help;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .composer-context-pill.state-active {
@@ -20019,23 +20252,160 @@ defineExpose({
   opacity: 0.8;
 }
 
-.composer-context-tooltip {
+.context-usage-popover {
+  width: min(360px, calc(100vw - 32px));
   display: grid;
-  gap: 6px;
-  min-width: 240px;
-  max-width: 320px;
-}
-
-.composer-context-tooltip-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--n-text-color);
-}
-
-.composer-context-tooltip-line {
-  font-size: 12px;
-  line-height: 1.45;
+  gap: 12px;
   color: var(--n-text-color-2);
+}
+
+.context-usage-popover__header,
+.work-timing-popover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.context-usage-popover__title,
+.work-timing-popover__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--n-text-color-1);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.context-usage-popover__percent {
+  flex: 0 0 auto;
+  color: var(--n-text-color-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.context-usage-popover__percent.state-warning {
+  color: var(--n-error-color, #dc2626);
+}
+
+.context-usage-popover__percent.state-active {
+  color: var(--n-warning-color, #d97706);
+}
+
+.context-usage-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.context-usage-stats.has-compact-marker {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.context-usage-stat {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.context-usage-stat__label {
+  color: var(--n-text-color-3);
+  font-size: 11px;
+}
+
+.context-usage-number {
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--n-text-color-1);
+  cursor: pointer;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.context-usage-number:hover,
+.context-usage-number:focus-visible {
+  color: var(--n-primary-color);
+  outline: none;
+}
+
+.context-usage-axis {
+  position: relative;
+  height: 8px;
+  overflow: visible;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--n-text-color-3) 18%, transparent);
+}
+
+.context-usage-axis__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--n-primary-color);
+  opacity: 0.68;
+}
+
+.context-usage-axis__marker {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 16px;
+  transform: translateX(-1px);
+  border-radius: 1px;
+}
+
+.context-usage-axis__marker--current {
+  background: var(--n-text-color-1);
+}
+
+.context-usage-axis__marker--compact {
+  background: var(--n-warning-color, #d97706);
+}
+
+.context-usage-axis-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--n-text-color-3);
+  font-size: 10px;
+}
+
+.context-usage-unavailable,
+.work-timing-popover__status,
+.work-timing-popover__current {
+  color: var(--n-text-color-3);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.context-usage-divider {
+  height: 1px;
+  background: var(--n-divider-color, var(--n-border-color));
+}
+
+.work-timing-popover {
+  display: grid;
+  gap: 5px;
+}
+
+.work-timing-popover__value {
+  flex: 0 0 auto;
+  color: var(--n-text-color-1);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.work-timing-popover__current {
+  color: var(--n-primary-color);
+  font-variant-numeric: tabular-nums;
 }
 
 .composer-footer-left {

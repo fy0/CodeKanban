@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveWebSessionLiveTimeCopy } from '@/components/web-session/webSessionLiveTime';
 import type { WebSessionBlock, WebSessionLiveState } from '@/stores/webSession';
+import type { WebSessionWorkTiming } from '@/types/models';
 
 function block(input: Partial<WebSessionBlock> & Pick<WebSessionBlock, 'kind'>): WebSessionBlock {
   return {
@@ -9,6 +10,7 @@ function block(input: Partial<WebSessionBlock> & Pick<WebSessionBlock, 'kind'>):
     id: String(input.id ?? input.key ?? `${input.kind}-${input.timestamp ?? 0}`),
     sourceTurnId: input.sourceTurnId ?? null,
     sourceItemId: input.sourceItemId ?? null,
+    runId: input.runId ?? null,
     orderIndex: Number(input.orderIndex ?? 0),
     kind: input.kind,
     itemType: String(input.itemType ?? ''),
@@ -45,19 +47,22 @@ function resolve(input: {
   blocks: WebSessionBlock[];
   now: number;
   activityAt?: string;
+  workTiming?: WebSessionWorkTiming;
   pendingApprovalAt?: number;
   pendingUserInputAt?: number;
 }) {
   return resolveWebSessionLiveTimeCopy({
     state: input.state,
     blocks: input.blocks,
-    session: input.activityAt ? { activityAt: input.activityAt } : null,
-    pendingApproval: input.pendingApprovalAt
-      ? { requestedAt: input.pendingApprovalAt }
-      : null,
-    pendingUserInput: input.pendingUserInputAt
-      ? { requestedAt: input.pendingUserInputAt }
-      : null,
+    session:
+      input.activityAt || input.workTiming
+        ? {
+            activityAt: input.activityAt ?? new Date(input.now).toISOString(),
+            workTiming: input.workTiming,
+          }
+        : null,
+    pendingApproval: input.pendingApprovalAt ? { requestedAt: input.pendingApprovalAt } : null,
+    pendingUserInput: input.pendingUserInputAt ? { requestedAt: input.pendingUserInputAt } : null,
     now: input.now,
     labels: {
       startedAt: 'Started at',
@@ -203,5 +208,94 @@ describe('webSessionLiveTime', () => {
       { key: 'elapsed', label: 'Elapsed', value: '00:09' },
       { key: 'since-last-activity', label: 'Since last activity', value: '00:00' },
     ]);
+  });
+
+  it('keeps the persisted run start when a steer message arrives', () => {
+    const result = resolve({
+      state: liveState({
+        phase: 'thinking',
+        running: true,
+        updatedAt: 30_000,
+        startedAt: 30_000,
+      }),
+      blocks: [
+        block({ kind: 'user', timestamp: 10_000, orderIndex: 1, text: 'start' }),
+        block({ kind: 'user', timestamp: 30_000, orderIndex: 2, text: 'steer' }),
+      ],
+      now: 61_000,
+      activityAt: new Date(30_000).toISOString(),
+      workTiming: {
+        completedDurationMs: 0,
+        currentRun: {
+          id: 'run-1',
+          startedAt: new Date(10_000).toISOString(),
+          pausedDurationMs: 0,
+        },
+        backfillState: 'complete',
+        backfillVersion: 1,
+      },
+    });
+
+    expect(result.timeText).toBe('00:51');
+    expect(result.tooltipItems[0]).toEqual({
+      key: 'started-at',
+      label: 'Started at',
+      value: 'dt:10000',
+    });
+  });
+
+  it('groups steer messages by run when persisted timing is unavailable', () => {
+    const result = resolve({
+      state: liveState({
+        phase: 'thinking',
+        running: true,
+        updatedAt: 30_000,
+        startedAt: 30_000,
+      }),
+      blocks: [
+        block({ kind: 'user', runId: 'run-1', timestamp: 10_000, orderIndex: 1, text: 'start' }),
+        block({ kind: 'user', runId: 'run-1', timestamp: 30_000, orderIndex: 2, text: 'steer' }),
+      ],
+      now: 61_000,
+      activityAt: new Date(30_000).toISOString(),
+    });
+
+    expect(result.timeText).toBe('00:51');
+    expect(result.tooltipItems[0]).toEqual({
+      key: 'started-at',
+      label: 'Started at',
+      value: 'dt:10000',
+    });
+  });
+
+  it('freezes persisted work time while waiting for human input', () => {
+    const result = resolve({
+      state: liveState({
+        phase: 'waiting_approval',
+        running: true,
+        updatedAt: 25_000,
+      }),
+      blocks: [block({ kind: 'user', timestamp: 10_000, orderIndex: 1, text: 'start' })],
+      now: 61_000,
+      pendingApprovalAt: 25_000,
+      workTiming: {
+        completedDurationMs: 0,
+        currentRun: {
+          id: 'run-1',
+          startedAt: new Date(10_000).toISOString(),
+          pausedAt: new Date(25_000).toISOString(),
+          pausedDurationMs: 5_000,
+        },
+        backfillState: 'complete',
+        backfillVersion: 1,
+      },
+    });
+
+    expect(result.timeText).toBe('00:10');
+    expect(result.tooltipItems[1]).toEqual({
+      key: 'elapsed',
+      label: 'Elapsed',
+      value: '00:10',
+    });
   });
 });

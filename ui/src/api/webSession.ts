@@ -4,6 +4,7 @@ import type {
   WebSessionReasoningEffort,
   WebSessionRuntimeConfig,
   WebSessionSummary,
+  WebSessionWorkTimingOutcome,
 } from '@/types/models';
 import { ApiError, urlBase } from '@/api';
 import { extractItem } from './response';
@@ -91,6 +92,45 @@ export type WebSessionHistoryCleanupStats = {
 export type WebSessionHistoryCleanupResult = WebSessionHistoryCleanupStats & {
   clearedSessionIds: string[];
   historyFileFailureCount: number;
+};
+
+export type WebSessionWorkTimingItemPatch = {
+  itemId: string;
+  runId: string;
+  runDurationMs: number;
+  runOutcome: WebSessionWorkTimingOutcome;
+};
+
+export type WebSessionWorkTimingCalculationStatus =
+  | 'calculated'
+  | 'already_current'
+  | 'busy'
+  | 'partial'
+  | 'unavailable'
+  | 'failed';
+
+export type WebSessionWorkTimingCalculationResult = {
+  status: WebSessionWorkTimingCalculationStatus;
+  session: WebSessionSummary;
+  items: WebSessionWorkTimingItemPatch[];
+  error?: string;
+};
+
+export type WebSessionWorkTimingBackfillStatus = {
+  remainingSessionCount: number;
+  busySessionCount: number;
+  completeSessionCount: number;
+  partialSessionCount: number;
+  unavailableSessionCount: number;
+  failedSessionCount: number;
+};
+
+export type WebSessionWorkTimingBackfillResult = WebSessionWorkTimingBackfillStatus & {
+  attemptedSessionCount: number;
+  calculatedSessionCount: number;
+  partialResultCount: number;
+  unavailableResultCount: number;
+  failedResultCount: number;
 };
 
 type CountsResponse = {
@@ -535,6 +575,22 @@ export const webSessionApi = {
     return body.item;
   },
 
+  async calculateWorkTiming(
+    projectId: string,
+    sessionId: string
+  ): Promise<WebSessionWorkTimingCalculationResult> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionWorkTimingCalculationResult>
+        >(`/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/work-timing/calculate`)
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to calculate web session work timing');
+    }
+    return body.item;
+  },
+
   async commandGroupDetail(
     projectId: string,
     sessionId: string,
@@ -544,10 +600,7 @@ export const webSessionApi = {
       (await http
         .Get<
           ItemResponse<WebSessionCommandExecutionGroupDetail>
-        >(
-          `/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/command-groups/${encodeURIComponent(groupId)}`,
-          { cacheFor: 0 }
-        )
+        >(`/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/command-groups/${encodeURIComponent(groupId)}`, { cacheFor: 0 })
         .send(true)) ?? {};
     if (!body.item) {
       throw new Error('failed to load tool group detail');
@@ -607,6 +660,32 @@ export const webSessionApi = {
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to run web session history cleanup');
+    }
+    return body.item;
+  },
+
+  async workTimingBackfillStatus(): Promise<WebSessionWorkTimingBackfillStatus> {
+    const body =
+      (await http
+        .Get<
+          ItemResponse<WebSessionWorkTimingBackfillStatus>
+        >('/system/web-session-work-timing-backfill/status', { cacheFor: 0 })
+        .send(true)) ?? {};
+    if (!body.item) {
+      throw new Error('failed to load web session work timing backfill status');
+    }
+    return body.item;
+  },
+
+  async runWorkTimingBackfill(limit = 50): Promise<WebSessionWorkTimingBackfillResult> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionWorkTimingBackfillResult>
+        >('/system/web-session-work-timing-backfill/run', { limit })
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to run web session work timing backfill');
     }
     return body.item;
   },

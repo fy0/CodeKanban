@@ -348,6 +348,66 @@ describe('webSessionApi.commandGroupDetail', () => {
   });
 });
 
+describe('webSessionApi work timing', () => {
+  beforeEach(() => {
+    getMethodMock.mockReset();
+    postMethodMock.mockClear();
+    postSendMock.mockReset();
+  });
+
+  it('requests a single session calculation from the encoded endpoint', async () => {
+    postSendMock.mockResolvedValueOnce({
+      item: {
+        status: 'calculated',
+        session: { id: 'session/1' },
+        items: [],
+      },
+    });
+
+    const result = await webSessionApi.calculateWorkTiming('project 1', 'session/1');
+
+    expect(postMethodMock).toHaveBeenCalledWith(
+      '/projects/project%201/web-sessions/session%2F1/work-timing/calculate'
+    );
+    expect(result.status).toBe('calculated');
+  });
+
+  it('loads indexed status and sends the requested batch size', async () => {
+    const getSendMock = vi.fn().mockResolvedValue({
+      item: {
+        remainingSessionCount: 12,
+        busySessionCount: 1,
+        completeSessionCount: 3,
+        partialSessionCount: 0,
+        unavailableSessionCount: 0,
+        failedSessionCount: 0,
+      },
+    });
+    getMethodMock.mockReturnValueOnce({ send: getSendMock });
+
+    const status = await webSessionApi.workTimingBackfillStatus();
+    expect(getMethodMock).toHaveBeenCalledWith('/system/web-session-work-timing-backfill/status', {
+      cacheFor: 0,
+    });
+    expect(status.remainingSessionCount).toBe(12);
+
+    postSendMock.mockResolvedValueOnce({
+      item: {
+        ...status,
+        attemptedSessionCount: 25,
+        calculatedSessionCount: 20,
+        partialResultCount: 1,
+        unavailableResultCount: 4,
+        failedResultCount: 0,
+      },
+    });
+    await webSessionApi.runWorkTimingBackfill(25);
+    expect(postMethodMock).toHaveBeenCalledWith('/system/web-session-work-timing-backfill/run', {
+      limit: 25,
+    });
+  });
+});
+
 describe('webSessionApi local files', () => {
   beforeEach(() => {
     postMethodMock.mockClear();

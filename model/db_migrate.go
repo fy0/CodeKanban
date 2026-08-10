@@ -22,6 +22,7 @@ func GetAllModels() []any {
 		&tables.WebSessionScheduledInputTable{},
 		&tables.WebSessionTurnTable{},
 		&tables.WebSessionItemTable{},
+		&tables.WebSessionRunTimingTable{},
 		&tables.WebSessionSubAgentTable{},
 	}
 }

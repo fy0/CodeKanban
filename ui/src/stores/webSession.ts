@@ -17,6 +17,7 @@ import type {
   WebSessionGoal,
   WebSessionReasoningEffort,
   WebSessionSummary,
+  WebSessionWorkTimingOutcome,
 } from '@/types/models';
 import {
   buildWebSessionSnapshotVersion,
@@ -121,6 +122,17 @@ type WireSession = {
     ca?: number | null;
     ua?: number | null;
   } | null;
+  wt?: {
+    dur?: number;
+    cur?: {
+      id?: string;
+      sa?: number | null;
+      pa?: number | null;
+      pd?: number;
+    } | null;
+    bs?: 'pending' | 'complete' | 'partial' | 'unavailable' | 'failed' | string;
+    bv?: number;
+  };
 };
 
 type WirePendingInput = {
@@ -159,6 +171,9 @@ type WireHistoryItem = {
   sthid?: string | null;
   stid?: string | null;
   siid?: string | null;
+  rid?: string | null;
+  dur?: number | null;
+  out?: WebSessionWorkTimingOutcome | string;
   oi: number;
   kd: 'user' | 'assistant' | 'system' | 'tool';
   tp: string;
@@ -325,6 +340,9 @@ export interface WebSessionBlock {
   sourceThreadId?: string | null;
   sourceTurnId?: string | null;
   sourceItemId?: string | null;
+  runId?: string | null;
+  runDurationMs?: number | null;
+  runOutcome?: WebSessionWorkTimingOutcome | null;
   orderIndex: number;
   kind: 'user' | 'assistant' | 'system' | 'tool';
   itemType: string;
@@ -474,6 +492,8 @@ type RuntimeAccumulator = {
   errorMessage: string;
   updatedAt: number;
   runStartedAt?: number;
+  activeRunId?: string;
+  runActive: boolean;
   retryState?: RuntimeRetryState;
   latestProgressTimestamp?: number;
 };
@@ -1821,6 +1841,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const observedRevisionBySession = new Map<string, string>();
   const fullSnapshotBaselineSessions = new Set<string>();
   const inFlightSessionLists = new Map<string, Promise<WebSessionSummary[]>>();
+  const inFlightWorkTimingCalculations = new Map<
+    string,
+    ReturnType<typeof webSessionApi.calculateWorkTiming>
+  >();
   const inFlightSnapshots = new Map<
     string,
     {
@@ -1829,10 +1853,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       consumers: Set<symbol>;
     }
   >();
-  const commandGroupDetailsByKey = new Map<
-    string,
-    WebSessionCommandExecutionGroupDetail
-  >();
+  const commandGroupDetailsByKey = new Map<string, WebSessionCommandExecutionGroupDetail>();
   const inFlightCommandGroupDetailsByKey = new Map<
     string,
     Promise<WebSessionCommandExecutionGroupDetail>
@@ -2809,6 +2830,29 @@ export const useWebSessionStore = defineStore('web-session', () => {
         session.cws === 'unavailable'
           ? session.cws
           : 'unavailable',
+      workTiming: {
+        completedDurationMs: Math.max(0, Number(session.wt?.dur ?? 0) || 0),
+        currentRun:
+          typeof session.wt?.cur?.sa === 'number' && Number.isFinite(session.wt.cur.sa)
+            ? {
+                id: String(session.wt.cur.id ?? ''),
+                startedAt: new Date(session.wt.cur.sa).toISOString(),
+                pausedAt:
+                  typeof session.wt.cur.pa === 'number' && Number.isFinite(session.wt.cur.pa)
+                    ? new Date(session.wt.cur.pa).toISOString()
+                    : null,
+                pausedDurationMs: Math.max(0, Number(session.wt.cur.pd ?? 0) || 0),
+              }
+            : null,
+        backfillState:
+          session.wt?.bs === 'complete' ||
+          session.wt?.bs === 'partial' ||
+          session.wt?.bs === 'unavailable' ||
+          session.wt?.bs === 'failed'
+            ? session.wt.bs
+            : 'pending',
+        backfillVersion: Math.max(0, Math.trunc(Number(session.wt?.bv ?? 0) || 0)),
+      },
       goal: normalizeGoal(session.goal),
     };
   }
@@ -3050,6 +3094,31 @@ export const useWebSessionStore = defineStore('web-session', () => {
             ? record.sourceTurnId
             : null,
       sourceItemId: normalizeHistorySourceItemId(record, rawPayload),
+      runId:
+        typeof record.rid === 'string'
+          ? record.rid
+          : typeof record.runId === 'string'
+            ? record.runId
+            : null,
+      runDurationMs:
+        typeof (record.dur ?? record.runDurationMs) === 'number' &&
+        Number.isFinite(record.dur ?? record.runDurationMs)
+          ? Math.max(0, Number(record.dur ?? record.runDurationMs))
+          : null,
+      runOutcome:
+        record.out === 'completed' ||
+        record.out === 'canceled' ||
+        record.out === 'failed' ||
+        record.out === 'timeout' ||
+        record.out === 'interrupted'
+          ? record.out
+          : record.runOutcome === 'completed' ||
+              record.runOutcome === 'canceled' ||
+              record.runOutcome === 'failed' ||
+              record.runOutcome === 'timeout' ||
+              record.runOutcome === 'interrupted'
+            ? record.runOutcome
+            : null,
       orderIndex: Number(record.oi ?? record.orderIndex ?? 0),
       kind:
         kind === 'user' || kind === 'assistant' || kind === 'system' || kind === 'tool'
@@ -3798,6 +3867,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       assistantDone: false,
       errorMessage: '',
       updatedAt: session ? Date.parse(session.updatedAt) || Date.now() : Date.now(),
+      runActive: false,
     };
   }
 
@@ -3880,8 +3950,29 @@ export const useWebSessionStore = defineStore('web-session', () => {
         accumulator.activeSubAgents
       );
     }
-    if (block.kind === 'user' && block.timestamp > 0) {
+    const blockRunId = String(block.runId ?? '').trim();
+    if (block.itemType === 'run_st' && block.timestamp > 0) {
       accumulator.runStartedAt = block.timestamp;
+      accumulator.activeRunId = blockRunId || undefined;
+      accumulator.runActive = true;
+      accumulator.sawAssistantOutput = false;
+      accumulator.assistantDone = false;
+      accumulator.firstAssistantOutputAt = undefined;
+      accumulator.activeTool = undefined;
+      if (!accumulator.authoritativeSubAgents) {
+        accumulator.activeSubAgents = new Map();
+        accumulator.knownSubAgents = new Map();
+      }
+      accumulator.errorMessage = '';
+    } else if (
+      block.kind === 'user' &&
+      block.timestamp > 0 &&
+      (!accumulator.runActive ||
+        Boolean(blockRunId && blockRunId !== accumulator.activeRunId))
+    ) {
+      accumulator.runStartedAt = block.timestamp;
+      accumulator.activeRunId = blockRunId || undefined;
+      accumulator.runActive = true;
       accumulator.sawAssistantOutput = false;
       accumulator.assistantDone = false;
       accumulator.firstAssistantOutputAt = undefined;
@@ -3946,6 +4037,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (!accumulator.authoritativeSubAgents) {
         accumulator.activeSubAgents = new Map();
       }
+    }
+    if (
+      block.itemType === 'run_done' ||
+      block.itemType === 'run_abort' ||
+      block.itemType === 'run_fail'
+    ) {
+      accumulator.runActive = false;
+      accumulator.activeRunId = undefined;
     }
   }
 
@@ -6451,6 +6550,69 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }));
   }
 
+  function applyWorkTimingItemPatches(
+    sessionId: string,
+    items: Array<{
+      itemId: string;
+      runId: string;
+      runDurationMs: number;
+      runOutcome: WebSessionWorkTimingOutcome;
+    }>
+  ) {
+    const current = eventsBySession.value[sessionId];
+    if (!current?.length || items.length === 0) {
+      return;
+    }
+    const patches = new Map(items.map(item => [item.itemId, item]));
+    let changed = false;
+    const next = current.map(block => {
+      const patch = patches.get(block.id);
+      if (!patch) {
+        return block;
+      }
+      changed = true;
+      return {
+        ...block,
+        runId: patch.runId,
+        runDurationMs: Math.max(0, Number(patch.runDurationMs) || 0),
+        runOutcome: patch.runOutcome,
+      };
+    });
+    if (changed) {
+      eventsBySession.value = {
+        ...eventsBySession.value,
+        [sessionId]: next,
+      };
+    }
+  }
+
+  function calculateSessionWorkTiming(projectId: string, sessionId: string) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId) {
+      return Promise.reject(new Error('project and session are required'));
+    }
+    const requestKey = `${normalizedProjectId}:${normalizedSessionId}`;
+    const existing = inFlightWorkTimingCalculations.get(requestKey);
+    if (existing) {
+      return existing;
+    }
+    const request = webSessionApi
+      .calculateWorkTiming(normalizedProjectId, normalizedSessionId)
+      .then(result => {
+        upsertSession(result.session);
+        applyWorkTimingItemPatches(normalizedSessionId, result.items);
+        return result;
+      })
+      .finally(() => {
+        if (inFlightWorkTimingCalculations.get(requestKey) === request) {
+          inFlightWorkTimingCalculations.delete(requestKey);
+        }
+      });
+    inFlightWorkTimingCalculations.set(requestKey, request);
+    return request;
+  }
+
   async function createSessionViaHttp(
     projectId: string,
     payload: {
@@ -6564,6 +6726,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     importRemoteAttachment,
     importClipboardAttachment,
     removeDraftAttachment,
+    calculateSessionWorkTiming,
     removePendingInput,
     updatePendingInput,
     pausePendingInput,
