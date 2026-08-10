@@ -80,6 +80,20 @@ test('CLI --help prints usage text', { concurrency: false }, async () => {
   assert.equal(result.stderr, '');
 });
 
+test('CLI runtime rejects removed Kanban scopes before creating an SDK client', { concurrency: false }, async () => {
+  let clientCreated = false;
+  const result = await runCliCaptured(['tasks', 'list'], {
+    clientFactory: () => {
+      clientCreated = true;
+      return {};
+    },
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /removed with the Kanban task API/);
+  assert.equal(clientCreated, false);
+});
+
 test('CLI workflow command supports Claude Code Router runtime', { concurrency: false }, async () => {
   const result = await runCliCaptured([
     'workflow',

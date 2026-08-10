@@ -14,6 +14,10 @@ Use this skill after installing the `codekanban-cli` package and copying this pa
 - Use `workflow start` only when the user explicitly wants a PTY-style startup flow.
 - Use `terminal continue` only when the user explicitly wants to continue an existing terminal session.
 
+## Command boundary
+
+The CLI surface is limited to the scopes documented here: `project`, `web-session`, `workflow`, `session`, `terminal`, `file`, and `auth`. The former Kanban task scope is removed; do not invent task or board API calls. For repository work, send instructions through `web-session` or use the `file` commands.
+
 ## Prerequisites
 
 - `codekanban-cli` is installed and available on `PATH`

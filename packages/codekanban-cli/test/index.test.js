@@ -114,6 +114,31 @@ test('runCodeKanbanCli prints help and version', async () => {
   assert.equal(versionOut.toString(), 'codekanban-cli 9.9.9\n');
 });
 
+test('runCodeKanbanCli rejects removed Kanban scopes before contacting the server', async () => {
+  for (const scope of ['task', 'tasks', 'kanban', 'board']) {
+    let fetchCalls = 0;
+    let runnerCalls = 0;
+    const stderr = createMemoryStream();
+    const code = await runCodeKanbanCli([scope, 'list'], {
+      stdout: createMemoryStream(),
+      stderr,
+      fetchImpl: async () => {
+        fetchCalls += 1;
+        throw new Error('unexpected request');
+      },
+      runner: async () => {
+        runnerCalls += 1;
+        return 0;
+      },
+    });
+
+    assert.equal(code, 1);
+    assert.match(stderr.toString(), /removed with the Kanban task API/);
+    assert.equal(fetchCalls, 0);
+    assert.equal(runnerCalls, 0);
+  }
+});
+
 test('runCodeKanbanCli injects default base URL and saved token into the command runner', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'codekanban-cli-home-'));
   await writeSavedSession(

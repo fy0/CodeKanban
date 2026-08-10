@@ -1,5 +1,14 @@
 import { CodeKanbanClient, buildAgentLaunchSpec } from '@codekanban/sdk';
 
+const REMOVED_COMMAND_SCOPES = new Set(['board', 'boards', 'kanban', 'task', 'tasks']);
+
+export function assertCommandScope(scope) {
+  const normalizedScope = String(scope || '').trim().toLowerCase();
+  if (REMOVED_COMMAND_SCOPES.has(normalizedScope)) {
+    throw new Error(`command scope "${scope}" was removed with the Kanban task API`);
+  }
+}
+
 function createJsonOutput(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -664,6 +673,7 @@ export async function runCli(argv, options = {}) {
       stdout.write(createHelpText(commandName));
       return 0;
     }
+    assertCommandScope(scope);
 
     if (scope === 'workflow' && action === 'command') {
       const result = buildAgentLaunchSpec({

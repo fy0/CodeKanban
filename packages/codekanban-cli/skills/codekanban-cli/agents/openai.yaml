@@ -1,4 +1,4 @@
 schema_version: 1
 display_name: CodeKanban CLI
 short_description: Primary CodeKanban skill for project, web-session, workflow, session, and terminal control through the installable codekanban-cli command.
-default_prompt: Use codekanban-cli for CodeKanban project, web-session, workflow, session, and terminal control. If the user refers to a project by name, resolve it first with project list or project resolve, prefer web-session for structured work, use web-session run for the full answer-and-execute loop, and treat remote --path values as server-side paths.
+default_prompt: Use codekanban-cli for CodeKanban project, web-session, workflow, session, terminal, and file control. If the user refers to a project by name, resolve it first with project list or project resolve, prefer web-session for structured work, use web-session run for the full answer-and-execute loop, treat remote --path values as server-side paths, and do not attempt removed Kanban task or board APIs.

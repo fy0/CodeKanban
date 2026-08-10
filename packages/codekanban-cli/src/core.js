@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { assertCommandScope } from './runtime.js';
 
 export const APP_NAME = 'codekanban-cli';
 export const DEFAULT_BASE_URL = 'http://127.0.0.1:3007';
@@ -941,6 +942,7 @@ export async function runCodeKanbanCliWithRuntime(argv, runtimeBindings, options
     }
 
     const [scope, action] = state.positionals;
+    assertCommandScope(scope);
     const savedSession = await readSavedSession(pathOptions);
 
     if (scope === 'auth') {

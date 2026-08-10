@@ -78,6 +78,10 @@ codekanban-cli session list --project-name codekanban
 If the service is local and you omit `--project-id`, `--project-name`, and `--path`, project-scoped commands fall back to the current working directory.
 If the service is remote, prefer `--project-id` or `--project-name`. In remote mode, `--path` means a server-side path on the machine running CodeKanban.
 
+## Command boundary
+
+The CLI supports only the documented `project`, `web-session`, `workflow`, `session`, `terminal`, `file`, and `auth` scopes. The former Kanban task and board commands are removed and are rejected before authentication or network access.
+
 ## Image attachments
 
 Pass `--image <path>` to upload a local image with a web-session message. The option is repeatable and can be combined with existing `--attachment-id` values:
