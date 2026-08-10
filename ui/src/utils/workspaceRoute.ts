@@ -6,7 +6,7 @@ export const WORKSPACE_TAB_QUERY_KEY = 'tab';
 
 type RouteQueryLike = LocationQuery | LocationQueryRaw;
 
-export type WorkspaceRouteTab = 'projects' | 'terminal' | 'web' | 'changes' | 'files' | 'kanban';
+export type WorkspaceRouteTab = 'projects' | 'terminal' | 'web' | 'changes' | 'files';
 
 export type DesktopWorkspaceRouteTab = Extract<
   WorkspaceRouteTab,
@@ -54,7 +54,6 @@ export function normalizeWorkspaceRouteTab(value: unknown): WorkspaceRouteTab | 
     case 'web':
     case 'changes':
     case 'files':
-    case 'kanban':
       return normalizedValue as WorkspaceRouteTab;
     default:
       return '';

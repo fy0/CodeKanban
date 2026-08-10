@@ -259,8 +259,7 @@ func mapWorktreeError(err error) error {
 	case errors.Is(err, model.ErrWorktreeNotFound),
 		errors.Is(err, model.ErrProjectNotFound):
 		return huma.Error404NotFound(err.Error())
-	case errors.Is(err, model.ErrWorktreeIsMain),
-		errors.Is(err, model.ErrWorktreeHasTasks):
+	case errors.Is(err, model.ErrWorktreeIsMain):
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, model.ErrWorktreeClean):
 		return huma.Error400BadRequest(err.Error())

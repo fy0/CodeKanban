@@ -57,14 +57,13 @@ describe('workspaceRoute', () => {
 
   it('normalizes invalid desktop and mobile tabs to their defaults', () => {
     expect(normalizeDesktopWorkspaceRouteTab('projects')).toBe('terminal');
-    expect(normalizeDesktopWorkspaceRouteTab('kanban')).toBe('terminal');
-    expect(normalizeMobileWorkspaceRouteTab('kanban')).toBe('projects');
+    expect(normalizeMobileWorkspaceRouteTab('notifications')).toBe('projects');
   });
 
   it('resolves desktop tabs from explicit query values, legacy deep links, and fallback state', () => {
     expect(resolveDesktopWorkspaceRouteTab({ tab: 'files' }, 'terminal')).toBe('files');
     expect(resolveDesktopWorkspaceRouteTab({ tab: 'changes' }, 'terminal')).toBe('changes');
-    expect(resolveDesktopWorkspaceRouteTab({ tab: 'kanban' }, 'web')).toBe('terminal');
+    expect(resolveDesktopWorkspaceRouteTab({ tab: 'notifications' }, 'web')).toBe('web');
     expect(resolveDesktopWorkspaceRouteTab({ webSessionId: 'session-1' }, 'terminal')).toBe('web');
     expect(resolveDesktopWorkspaceRouteTab({}, 'web')).toBe('web');
     expect(resolveDesktopWorkspaceRouteTab({}, undefined)).toBe('web');
@@ -73,7 +72,7 @@ describe('workspaceRoute', () => {
   it('resolves mobile tabs with a projects fallback for unsupported values', () => {
     expect(resolveMobileWorkspaceRouteTab({ tab: 'changes' }, 'terminal')).toBe('changes');
     expect(resolveMobileWorkspaceRouteTab({ tab: 'notifications' }, 'terminal')).toBe('terminal');
-    expect(resolveMobileWorkspaceRouteTab({ tab: 'kanban' }, 'web')).toBe('projects');
+    expect(resolveMobileWorkspaceRouteTab({ tab: 'notifications' }, 'web')).toBe('web');
     expect(resolveMobileWorkspaceRouteTab({}, 'web')).toBe('web');
   });
 });

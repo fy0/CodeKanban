@@ -54,15 +54,6 @@
     <!-- 移动端布局 -->
     <template v-else>
       <div class="mobile-workspace">
-        <!-- 看板视图 -->
-        <div
-          v-if="mobileKanbanEnabled"
-          v-show="mobileActiveView === 'kanban'"
-          class="mobile-view mobile-kanban-view"
-        >
-          <KanbanBoard :project-id="currentProjectId" />
-        </div>
-
         <!-- 终端视图占位（实际终端由 TerminalPanel 控制） -->
         <div v-show="mobileActiveView === 'terminal'" class="mobile-view mobile-terminal-view">
           <!-- 终端面板会覆盖此区域 -->
@@ -232,7 +223,6 @@ import { useWebSessionStore } from '@/stores/webSession';
 import { useResponsive } from '@/composables/useResponsive';
 import { useLocale } from '@/composables/useLocale';
 import WorktreeList from '@/components/worktree/WorktreeList.vue';
-import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
 import RecentProjects from '@/components/project/RecentProjects.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import WorkspaceTabView from '@/components/workspace/WorkspaceTabView.vue';
@@ -310,7 +300,6 @@ const isMobileWebSessionComposerFocused = ref(false);
 const showDailyTipDialog = ref(false);
 const activeDailyTipIndex = ref(0);
 const isWebSessionNavPressed = ref(false);
-const mobileKanbanEnabled = false;
 const webSessionPanelRef = ref<WebSessionPanelControl | null>(null);
 const webSessionNavButtonRef = ref<HTMLButtonElement | null>(null);
 const mobileProjectsViewRef = ref<HTMLElement | null>(null);
@@ -1073,10 +1062,6 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-}
-
-.mobile-kanban-view {
-  padding-bottom: var(--workspace-mobile-bottom-nav-space);
 }
 
 .mobile-projects-view {

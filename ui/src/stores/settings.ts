@@ -53,11 +53,6 @@ export interface ThemeSettings {
   terminalHeaderBorder?: boolean | string; // 终端 header 边框：false=无边框, true=默认边框, string=自定义边框
   // 空终端引导文字颜色
   terminalEmptyGuideFg?: string;
-  // 看板相关颜色
-  kanbanBoardBg?: string;
-  kanbanCardBg?: string;
-  // 看板边框控制
-  kanbanBorderEnabled?: boolean;
 }
 
 /**
@@ -1381,9 +1376,6 @@ function sanitizeThemeSettings(value: unknown): ThemeSettings {
     terminalTabActiveBg: source.terminalTabActiveBg ?? defaultTheme.terminalTabActiveBg,
     terminalHeaderBorder: source.terminalHeaderBorder ?? defaultTheme.terminalHeaderBorder,
     terminalEmptyGuideFg: source.terminalEmptyGuideFg ?? defaultTheme.terminalEmptyGuideFg,
-    kanbanBoardBg: source.kanbanBoardBg ?? defaultTheme.kanbanBoardBg,
-    kanbanCardBg: source.kanbanCardBg ?? defaultTheme.kanbanCardBg,
-    kanbanBorderEnabled: source.kanbanBorderEnabled ?? defaultTheme.kanbanBorderEnabled,
   };
 }
 

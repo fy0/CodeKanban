@@ -1,9 +1,7 @@
 -- 数据库建表语句
 -- 生成时间: 2026-07-26 22:41:41
 -- 数据库方言: sqlite
--- 总共 108 条语句
-
-
+-- 总共 98 条语句
 CREATE TABLE "users" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"nickname" text,"avatar" text,"brief" text,"username" text NOT NULL,"password" text NOT NULL,"salt" text NOT NULL,"disabled" numeric NOT NULL DEFAULT false,PRIMARY KEY ("id"));
 CREATE UNIQUE INDEX "idx_users_username" ON "users"("username");
 CREATE INDEX "idx_users_deleted_at" ON "users"("deleted_at");
@@ -34,20 +32,6 @@ CREATE INDEX "idx_worktrees_project_id" ON "worktrees"("project_id");
 CREATE INDEX "idx_worktrees_deleted_at" ON "worktrees"("deleted_at");
 
 
-CREATE TABLE "tasks" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"project_id" text NOT NULL,"worktree_id" text,"branch_name" text,"title" text NOT NULL,"description" text,"status" text NOT NULL,"priority" integer DEFAULT 0,"order_index" real NOT NULL,"tags" text,"due_date" datetime,"completed_at" datetime,PRIMARY KEY ("id"));
-CREATE INDEX "idx_tasks_order_index" ON "tasks"("order_index");
-CREATE INDEX "idx_tasks_priority" ON "tasks"("priority");
-CREATE INDEX "idx_tasks_status" ON "tasks"("status");
-CREATE INDEX "idx_tasks_worktree_id" ON "tasks"("worktree_id");
-CREATE INDEX "idx_tasks_project_id" ON "tasks"("project_id");
-CREATE INDEX "idx_tasks_deleted_at" ON "tasks"("deleted_at");
-
-
-CREATE TABLE "task_comments" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"task_id" text NOT NULL,"content" text NOT NULL,PRIMARY KEY ("id"));
-CREATE INDEX "idx_task_comments_task_id" ON "task_comments"("task_id");
-CREATE INDEX "idx_task_comments_deleted_at" ON "task_comments"("deleted_at");
-
-
 CREATE TABLE "notepads" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"project_id" text,"name" text NOT NULL,"content" text,"order_index" real NOT NULL,PRIMARY KEY ("id"));
 CREATE INDEX "idx_notepads_order_index" ON "notepads"("order_index");
 CREATE INDEX "idx_notepads_project_id" ON "notepads"("project_id");
@@ -58,6 +42,13 @@ CREATE TABLE "ai_sessions" ("id" text NOT NULL,"created_at" datetime,"updated_at
 CREATE INDEX "idx_ai_sessions_project_path" ON "ai_sessions"("project_path");
 CREATE UNIQUE INDEX "idx_session_type" ON "ai_sessions"("session_id","type");
 CREATE INDEX "idx_ai_sessions_deleted_at" ON "ai_sessions"("deleted_at");
+
+
+CREATE TABLE "terminal_restore_sessions" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"project_id" text NOT NULL,"worktree_id" text NOT NULL,"title" text NOT NULL,"order_index" real NOT NULL DEFAULT 0,"initial_working_dir" text NOT NULL,"last_cwd" text NOT NULL,"shell_family" text NOT NULL DEFAULT "","shell_supported" boolean NOT NULL DEFAULT false,"shell_state" text NOT NULL DEFAULT "idle","pending_command" text,"replay_eligible" boolean NOT NULL DEFAULT false,"command_started_at" datetime,PRIMARY KEY ("id"));
+CREATE INDEX "idx_terminal_restore_sessions_order_index" ON "terminal_restore_sessions"("order_index");
+CREATE INDEX "idx_terminal_restore_sessions_worktree_id" ON "terminal_restore_sessions"("worktree_id");
+CREATE INDEX "idx_terminal_restore_sessions_project_id" ON "terminal_restore_sessions"("project_id");
+CREATE INDEX "idx_terminal_restore_sessions_deleted_at" ON "terminal_restore_sessions"("deleted_at");
 
 
 CREATE TABLE "web_sessions" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"project_id" text NOT NULL,"worktree_id" text,"order_index" real NOT NULL DEFAULT 0,"agent" text NOT NULL,"claude_runtime" text NOT NULL DEFAULT "claude","backend" text NOT NULL DEFAULT "legacy_exec","title" text NOT NULL,"title_auto" boolean NOT NULL DEFAULT false,"model" text,"reasoning_effort" text,"workflow_mode" text NOT NULL DEFAULT "default","permission_level" text NOT NULL DEFAULT "elevated","active_call_timeout_enabled" boolean,"auto_retry_enabled" boolean NOT NULL DEFAULT false,"auto_retry_scope" text NOT NULL DEFAULT "network_only","auto_retry_preset" text NOT NULL DEFAULT "gentle_stop","auto_retry_max_attempts" integer NOT NULL DEFAULT 0,"auto_retry_dispatch_pending_on_failure" boolean NOT NULL DEFAULT false,"permission_mode" text,"cwd" text NOT NULL,"native_session_id" text,"native_leaf_id" text,"source_revision" text,"cyber_policy_flagged" boolean NOT NULL DEFAULT false,"status" text NOT NULL,"assistant_state" text,"has_unread" boolean NOT NULL DEFAULT false,"archived_at" datetime,"activity_at" datetime,"status_updated_at" datetime,"assistant_state_updated_at" datetime,"source_kind" text NOT NULL DEFAULT "codex_app_server","sync_state" text NOT NULL DEFAULT "missing","last_sync_mode" text,"source_created_at" datetime,"source_updated_at" datetime,"last_synced_at" datetime,"thread_path" text,"thread_preview" text,"turn_count" integer NOT NULL DEFAULT 0,"item_count" integer NOT NULL DEFAULT 0,"last_message_at" datetime,"last_event_seq" integer NOT NULL DEFAULT 0,"snapshot_revision" integer NOT NULL DEFAULT 1,"goal_objective" text,"goal_status" text,"goal_token_budget" integer,"goal_tokens_used" integer NOT NULL DEFAULT 0,"goal_time_used_seconds" integer NOT NULL DEFAULT 0,"goal_created_at" datetime,"goal_updated_at" datetime,"total_input_tokens" integer NOT NULL DEFAULT 0,"total_cached_input_tokens" integer NOT NULL DEFAULT 0,"total_output_tokens" integer NOT NULL DEFAULT 0,"total_cost" real NOT NULL DEFAULT 0,"last_completed_input_tokens" integer NOT NULL DEFAULT 0,"last_completed_cached_input_tokens" integer NOT NULL DEFAULT 0,"last_completed_output_tokens" integer NOT NULL DEFAULT 0,"latest_turn_input_tokens" integer NOT NULL DEFAULT 0,"latest_turn_cached_input_tokens" integer NOT NULL DEFAULT 0,"latest_turn_output_tokens" integer NOT NULL DEFAULT 0,"latest_turn_usage_updated_at" datetime,"latest_token_count_input_tokens" integer NOT NULL DEFAULT 0,"latest_token_count_cached_input_tokens" integer NOT NULL DEFAULT 0,"latest_token_count_output_tokens" integer NOT NULL DEFAULT 0,"latest_token_count_total_tokens" integer NOT NULL DEFAULT 0,"latest_token_count_updated_at" datetime,"session_context_window_tokens" integer NOT NULL DEFAULT 0,"session_context_window_observed_at" datetime,"context_baseline_input_tokens" integer NOT NULL DEFAULT 0,"context_baseline_cached_input_tokens" integer NOT NULL DEFAULT 0,"context_baseline_output_tokens" integer NOT NULL DEFAULT 0,"last_context_compaction_at" datetime,"auto_retry_attempt" integer NOT NULL DEFAULT 0,"auto_retry_next_at" datetime,"auto_retry_last_error_code" text,"last_error" text,"sync_error" text,PRIMARY KEY ("id"));
@@ -118,10 +109,3 @@ CREATE INDEX "idx_web_session_sub_agents_thread_id" ON "web_session_sub_agents"(
 CREATE INDEX "idx_web_session_sub_agents_web_session_id" ON "web_session_sub_agents"("web_session_id");
 CREATE UNIQUE INDEX "idx_web_session_sub_agent_thread" ON "web_session_sub_agents"("web_session_id","thread_id");
 CREATE INDEX "idx_web_session_sub_agents_deleted_at" ON "web_session_sub_agents"("deleted_at");
-
-
-CREATE TABLE "task_ai_sessions" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"task_id" text NOT NULL,"ai_session_id" text NOT NULL,PRIMARY KEY ("id"));
-CREATE INDEX "idx_task_ai_sessions_ai_session_id" ON "task_ai_sessions"("ai_session_id");
-CREATE UNIQUE INDEX "idx_task_ai_session" ON "task_ai_sessions"("task_id","ai_session_id");
-CREATE INDEX "idx_task_ai_sessions_task_id" ON "task_ai_sessions"("task_id");
-CREATE INDEX "idx_task_ai_sessions_deleted_at" ON "task_ai_sessions"("deleted_at");

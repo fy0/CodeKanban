@@ -15,8 +15,6 @@ func GetAllModels() []any {
 		&tables.ProjectTable{},
 		&tables.ProjectAgentTrustTable{},
 		&tables.WorktreeTable{},
-		&tables.TaskTable{},
-		&tables.TaskCommentTable{},
 		&tables.NotePadTable{},
 		&tables.AISessionTable{},
 		&tables.TerminalRestoreSessionTable{},
@@ -25,7 +23,6 @@ func GetAllModels() []any {
 		&tables.WebSessionTurnTable{},
 		&tables.WebSessionItemTable{},
 		&tables.WebSessionSubAgentTable{},
-		&tables.TaskAISessionTable{},
 	}
 }
 
@@ -36,6 +33,8 @@ func DBMigrate(autoMigrate bool) {
 
 	logger := utils.Logger()
 	logger.Info("database migration started")
+
+	dropRemovedKanbanArtifacts(logger)
 
 	for _, model := range GetAllModels() {
 		if err := db.AutoMigrate(model); err != nil {
@@ -48,4 +47,33 @@ func DBMigrate(autoMigrate bool) {
 	}
 
 	logger.Info("database migration finished")
+}
+
+func dropRemovedKanbanArtifacts(logger *zap.Logger) {
+	for _, tableName := range []string{"task_ai_sessions", "task_comments", "tasks"} {
+		if !db.Migrator().HasTable(tableName) {
+			continue
+		}
+		if err := db.Migrator().DropTable(tableName); err != nil {
+			logger.Error("removed kanban table cleanup failed",
+				zap.Error(err),
+				zap.String("table", tableName),
+			)
+			panic(err)
+		}
+		logger.Info("removed kanban table", zap.String("table", tableName))
+	}
+
+	legacyRestoreTable := &tables.TerminalRestoreSessionTable{}
+	if db.Migrator().HasTable(legacyRestoreTable) && db.Migrator().HasColumn(legacyRestoreTable, "task_id") {
+		if err := db.Migrator().DropColumn(legacyRestoreTable, "task_id"); err != nil {
+			logger.Error("removed kanban column cleanup failed",
+				zap.Error(err),
+				zap.String("table", legacyRestoreTable.TableName()),
+				zap.String("column", "task_id"),
+			)
+			panic(err)
+		}
+		logger.Info("removed kanban column", zap.String("table", legacyRestoreTable.TableName()), zap.String("column", "task_id"))
+	}
 }

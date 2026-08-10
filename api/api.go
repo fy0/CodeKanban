@@ -129,7 +129,6 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	registerProjectRoutes(v1, webSessionManager)
 	registerWorktreeRoutes(v1, cfg)
 	registerBranchRoutes(v1)
-	registerTaskRoutes(v1)
 	registerNotePadRoutes(v1)
 	registerAISessionRoutes(app, v1)
 	registerWebSessionRoutes(app, v1, webSessionManager, theLogger)

@@ -224,15 +224,6 @@ func (s *WorktreeService) DeleteWorktree(ctx context.Context, id string, force, 
 		return model.ErrWorktreeIsMain
 	}
 
-	worktreeID := worktree.Id
-	taskCount, err := q.TaskCountByWorktree(ctx, &worktreeID)
-	if err != nil {
-		return err
-	}
-	if taskCount > 0 && !force {
-		return model.ErrWorktreeHasTasks
-	}
-
 	project, err := q.ProjectGetByID(ctx, worktree.ProjectId)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

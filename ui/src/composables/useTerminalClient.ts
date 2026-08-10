@@ -73,12 +73,6 @@ export function useTerminalClient(projectIdRef: Ref<string>) {
     closeSession(sessionId: string) {
       return store.closeSession(projectIdRef.value, sessionId);
     },
-    linkTask(sessionId: string, taskId: string) {
-      return store.linkSessionTask(projectIdRef.value, sessionId, taskId);
-    },
-    unlinkTask(sessionId: string) {
-      return store.unlinkSessionTask(projectIdRef.value, sessionId);
-    },
     setRenderMode(sessionId: string, mode: 'live' | 'snapshot' | null) {
       return store.setSessionRenderMode(projectIdRef.value, sessionId, mode);
     },
@@ -87,12 +81,6 @@ export function useTerminalClient(projectIdRef: Ref<string>) {
     },
     focusSession(sessionId: string) {
       return store.focusSession(projectIdRef.value, sessionId);
-    },
-    getLinkedTaskId(sessionId: string) {
-      return store.getLinkedTaskId(sessionId);
-    },
-    getSessionByTask(taskId: string) {
-      return store.getSessionByTask(taskId, projectIdRef.value);
     },
     send: store.send,
     disconnectTab: store.disconnectTab,

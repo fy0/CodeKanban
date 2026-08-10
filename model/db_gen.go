@@ -66,9 +66,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.projectUpdateWorktreeBasePathStmt, err = db.PrepareContext(ctx, projectUpdateWorktreeBasePath); err != nil {
 		return nil, fmt.Errorf("error preparing query ProjectUpdateWorktreeBasePath: %w", err)
 	}
-	if q.taskCountByWorktreeStmt, err = db.PrepareContext(ctx, taskCountByWorktree); err != nil {
-		return nil, fmt.Errorf("error preparing query TaskCountByWorktree: %w", err)
-	}
 	if q.userCreateStmt, err = db.PrepareContext(ctx, userCreate); err != nil {
 		return nil, fmt.Errorf("error preparing query UserCreate: %w", err)
 	}
@@ -187,11 +184,6 @@ func (q *Queries) Close() error {
 	if q.projectUpdateWorktreeBasePathStmt != nil {
 		if cerr := q.projectUpdateWorktreeBasePathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing projectUpdateWorktreeBasePathStmt: %w", cerr)
-		}
-	}
-	if q.taskCountByWorktreeStmt != nil {
-		if cerr := q.taskCountByWorktreeStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing taskCountByWorktreeStmt: %w", cerr)
 		}
 	}
 	if q.userCreateStmt != nil {
@@ -322,7 +314,6 @@ type Queries struct {
 	projectUpdateStmt                 *sql.Stmt
 	projectUpdatePriorityStmt         *sql.Stmt
 	projectUpdateWorktreeBasePathStmt *sql.Stmt
-	taskCountByWorktreeStmt           *sql.Stmt
 	userCreateStmt                    *sql.Stmt
 	userDeleteStmt                    *sql.Stmt
 	userDisableStmt                   *sql.Stmt
@@ -358,7 +349,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		projectUpdateStmt:                 q.projectUpdateStmt,
 		projectUpdatePriorityStmt:         q.projectUpdatePriorityStmt,
 		projectUpdateWorktreeBasePathStmt: q.projectUpdateWorktreeBasePathStmt,
-		taskCountByWorktreeStmt:           q.taskCountByWorktreeStmt,
 		userCreateStmt:                    q.userCreateStmt,
 		userDeleteStmt:                    q.userDeleteStmt,
 		userDisableStmt:                   q.userDisableStmt,

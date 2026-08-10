@@ -395,8 +395,8 @@ interface ContextMenuState {
   projectId: string | null;
 }
 
-type MobileView = 'kanban' | 'terminal' | 'webSession' | 'files' | 'changes' | 'projects';
-type WorkspaceTab = 'kanban' | 'terminal' | 'web' | 'changes' | 'files';
+type MobileView = 'terminal' | 'webSession' | 'files' | 'changes' | 'projects';
+type WorkspaceTab = 'terminal' | 'web' | 'changes' | 'files';
 
 const emit = defineEmits<{ editCurrent: []; showTerminal: [] }>();
 const props = defineProps<{

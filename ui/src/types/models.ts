@@ -78,32 +78,6 @@ export interface GitCapabilityResult {
   worktrees: GitWorktreeCapabilityResult[];
 }
 
-export interface Task {
-  id: string;
-  projectId: string;
-  worktreeId?: string | null;
-  branchName: string; // 关联的分支名称，即使worktree被删除也能显示
-  title: string;
-  description: string;
-  status: 'todo' | 'in_progress' | 'done' | 'archived';
-  priority: number;
-  orderIndex: number;
-  tags: string[];
-  dueDate?: string | null;
-  completedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  worktree?: Worktree;
-}
-
-export interface TaskComment {
-  id: string;
-  taskId: string;
-  content: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface TerminalSession {
   id: string;
   projectId: string;
@@ -145,7 +119,6 @@ export interface TerminalSession {
     detected: boolean;
     command?: string;
   };
-  taskId?: string;
 }
 
 export interface ProjectAgentTrustStatus {
@@ -203,20 +176,6 @@ export interface ProjectAISessions {
   codexScanPhase?: ScanPhase;
   piScanPhase?: ScanPhase;
   piBeforeCursor?: string;
-}
-
-// 任务关联的 AI Session（包含详情）
-export interface TaskAISessionWithDetails {
-  id: string;
-  taskId: string;
-  sessionId: string;
-  aiSessionDbId: string;
-  type: AISessionType;
-  model: string;
-  title: string;
-  sessionStartedAt: string;
-  lastMessageAt?: string | null;
-  messageCount: number;
 }
 
 // AI Session 对话内容

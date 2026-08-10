@@ -39,7 +39,6 @@ type terminalController struct {
 	cfg            *utils.AppConfig
 	manager        *terminal.Manager
 	worktreeSvc    *service.WorktreeService
-	taskService    *model.TaskService
 	logger         *zap.Logger
 	upgrader       websocket.Upgrader
 	wsPathTemplate string
@@ -53,7 +52,6 @@ func registerTerminalRoutes(app *fiber.App, group *huma.Group, cfg *utils.AppCon
 		cfg:         cfg,
 		manager:     manager,
 		worktreeSvc: service.NewWorktreeService(),
-		taskService: &model.TaskService{},
 		logger:      logger.Named("terminal-controller"),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:    32 * 1024,
@@ -181,8 +179,6 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 				return nil, huma.Error404NotFound(err.Error())
 			case errors.Is(err, terminal.ErrInvalidSessionTitle):
 				return nil, huma.Error400BadRequest(err.Error())
-			case errors.Is(err, terminal.ErrSessionTitleLocked):
-				return nil, huma.Error409Conflict(err.Error())
 			default:
 				return nil, huma.Error500InternalServerError("failed to rename session", err)
 			}
@@ -224,88 +220,6 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "terminal-session-move"
 		op.Summary = "调整终端标签顺序"
-		op.Tags = []string{terminalTag}
-	})
-
-	huma.Post(group, "/projects/{projectId}/terminals/{sessionId}/tasks/link", func(
-		ctx context.Context,
-		input *terminalTaskLinkInput,
-	) (*h.ItemResponse[terminalSessionView], error) {
-		taskID := strings.TrimSpace(input.Body.TaskID)
-		if taskID == "" {
-			return nil, huma.Error400BadRequest("taskId is required")
-		}
-
-		session, err := c.manager.GetSession(input.SessionID)
-		if err != nil {
-			if errors.Is(err, terminal.ErrSessionNotFound) {
-				return nil, huma.Error404NotFound(err.Error())
-			}
-			return nil, huma.Error500InternalServerError("failed to load session", err)
-		}
-		if session.ProjectID() != input.ProjectID {
-			return nil, huma.Error404NotFound("session not found")
-		}
-
-		task, err := c.taskService.GetTask(ctx, taskID)
-		if err != nil {
-			if errors.Is(err, model.ErrTaskNotFound) {
-				return nil, huma.Error404NotFound("task not found")
-			}
-			return nil, huma.Error500InternalServerError("failed to load task", err)
-		}
-		if task.ProjectID != input.ProjectID {
-			return nil, huma.Error404NotFound("task not found")
-		}
-
-		session, err = c.manager.LinkTask(input.SessionID, taskID)
-		if err != nil {
-			if errors.Is(err, terminal.ErrSessionNotFound) {
-				return nil, huma.Error404NotFound(err.Error())
-			}
-			return nil, huma.Error500InternalServerError("failed to link task", err)
-		}
-
-		view := c.viewFromSnapshot(session.Snapshot())
-		resp := h.NewItemResponse(view)
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-session-link-task"
-		op.Summary = "关联任务到终端会话"
-		op.Tags = []string{terminalTag}
-	})
-
-	huma.Post(group, "/projects/{projectId}/terminals/{sessionId}/tasks/unlink", func(
-		ctx context.Context,
-		input *terminalTaskUnlinkInput,
-	) (*h.ItemResponse[terminalSessionView], error) {
-		session, err := c.manager.GetSession(input.SessionID)
-		if err != nil {
-			if errors.Is(err, terminal.ErrSessionNotFound) {
-				return nil, huma.Error404NotFound(err.Error())
-			}
-			return nil, huma.Error500InternalServerError("failed to load session", err)
-		}
-		if session.ProjectID() != input.ProjectID {
-			return nil, huma.Error404NotFound("session not found")
-		}
-
-		session, err = c.manager.UnlinkTask(input.SessionID)
-		if err != nil {
-			if errors.Is(err, terminal.ErrSessionNotFound) {
-				return nil, huma.Error404NotFound(err.Error())
-			}
-			return nil, huma.Error500InternalServerError("failed to unlink task", err)
-		}
-
-		view := c.viewFromSnapshot(session.Snapshot())
-		resp := h.NewItemResponse(view)
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-session-unlink-task"
-		op.Summary = "解除终端与任务的关联"
 		op.Tags = []string{terminalTag}
 	})
 
@@ -359,27 +273,6 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 		op.Summary = "触发 resize 并捕获下一个输出 chunk"
 		op.Tags = []string{terminalTag}
 		op.Description = "发送一个 resize 命令给终端，然后捕获并返回接下来的第一个输出 chunk，用于调试和测试"
-	})
-
-	// 根据任务 ID 获取关联的终端列表
-	huma.Get(group, "/tasks/{taskId}/terminals", func(
-		ctx context.Context,
-		input *struct {
-			TaskID string `path:"taskId"`
-		},
-	) (*h.ItemsResponse[terminalSessionView], error) {
-		sessions := c.manager.ListSessionsByTask(input.TaskID)
-		views := make([]terminalSessionView, 0, len(sessions))
-		for _, snapshot := range sessions {
-			views = append(views, c.viewFromSnapshot(snapshot))
-		}
-		resp := h.NewItemsResponse(views)
-		resp.Status = http.StatusOK
-		return resp, nil
-	}, func(op *huma.Operation) {
-		op.OperationID = "terminal-sessions-by-task"
-		op.Summary = "获取与任务关联的终端列表"
-		op.Tags = []string{terminalTag}
 	})
 
 }
@@ -460,20 +353,6 @@ func (c *terminalController) handleCreate(ctx context.Context, input *terminalCr
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 
-	taskID := strings.TrimSpace(input.Body.TaskID)
-	if taskID != "" {
-		task, err := c.taskService.GetTask(ctx, taskID)
-		if err != nil {
-			if errors.Is(err, model.ErrTaskNotFound) {
-				return nil, huma.Error404NotFound("task not found")
-			}
-			return nil, huma.Error500InternalServerError("failed to fetch task", err)
-		}
-		if task.ProjectID != input.ProjectID {
-			return nil, huma.Error404NotFound("task not found")
-		}
-	}
-
 	title := strings.TrimSpace(input.Body.Title)
 	if title == "" {
 		title = fmt.Sprintf("%s 终端", worktree.BranchName)
@@ -495,7 +374,6 @@ func (c *terminalController) handleCreate(ctx context.Context, input *terminalCr
 		Title:                title,
 		Rows:                 rows,
 		Cols:                 cols,
-		TaskID:               taskID,
 		InsertAfterSessionID: input.Body.InsertAfterSessionID,
 	})
 	if err != nil {
@@ -1029,7 +907,6 @@ func (c *terminalController) viewFromSnapshot(snapshot terminal.SessionSnapshot)
 		ProcessHasChildren: snapshot.ProcessHasChildren,
 		RunningCommand:     snapshot.RunningCommand,
 		AIAssistant:        snapshot.AIAssistant,
-		TaskID:             snapshot.TaskID,
 		Traffic:            snapshot.Traffic,
 	}
 }
@@ -1089,7 +966,6 @@ type terminalCreateInput struct {
 		Title                string `json:"title" doc:"终端标题"`
 		Rows                 int    `json:"rows" doc:"终端行数"`
 		Cols                 int    `json:"cols" doc:"终端列数"`
-		TaskID               string `json:"taskId,omitempty" doc:"要关联的任务ID"`
 		InsertAfterSessionID string `json:"insertAfterSessionId,omitempty" doc:"插入到指定终端会话之后"`
 	} `json:"body"`
 }
@@ -1109,19 +985,6 @@ type terminalMoveInput struct {
 		PreviousSessionID string `json:"previousSessionId" doc:"前一个终端会话ID"`
 		NextSessionID     string `json:"nextSessionId" doc:"后一个终端会话ID"`
 	} `json:"body"`
-}
-
-type terminalTaskLinkInput struct {
-	ProjectID string `path:"projectId"`
-	SessionID string `path:"sessionId"`
-	Body      struct {
-		TaskID string `json:"taskId" doc:"要关联的任务ID"`
-	} `json:"body"`
-}
-
-type terminalTaskUnlinkInput struct {
-	ProjectID string `path:"projectId"`
-	SessionID string `path:"sessionId"`
 }
 
 type terminalSessionView struct {
@@ -1146,7 +1009,6 @@ type terminalSessionView struct {
 	ProcessHasChildren bool                           `json:"processHasChildren,omitempty"`
 	RunningCommand     string                         `json:"runningCommand,omitempty"`
 	AIAssistant        *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
-	TaskID             string                         `json:"taskId,omitempty"`
 	Traffic            *terminal.SessionTrafficStats  `json:"traffic,omitempty"`
 }
 

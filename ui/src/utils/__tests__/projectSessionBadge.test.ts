@@ -86,7 +86,7 @@ describe('projectSessionBadge', () => {
       resolvePreferredProjectSessionKind({
         isMobile: true,
         isProjectWorkspace: false,
-        mobileActiveView: 'kanban',
+        mobileActiveView: 'projects',
       })
     ).toBe('terminal');
   });
@@ -116,7 +116,7 @@ describe('projectSessionBadge', () => {
       resolvePreferredProjectSessionKind({
         isMobile: false,
         isProjectWorkspace: true,
-        workspaceActiveTab: 'kanban',
+        workspaceActiveTab: 'files',
       })
     ).toBe('terminal');
     expect(

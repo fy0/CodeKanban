@@ -1,11 +1,11 @@
 export const DEFAULT_MOBILE_VIEW = 'projects' as const;
 
-const MOBILE_VIEWS = ['kanban', 'terminal', 'webSession', 'files', 'changes', 'projects'] as const;
+const MOBILE_VIEWS = ['terminal', 'webSession', 'files', 'changes', 'projects'] as const;
 const MOBILE_ROUTE_TABS = ['projects', 'terminal', 'web', 'files', 'changes'] as const;
 
 export type MobileView = (typeof MOBILE_VIEWS)[number];
 export type MobileRouteTab = (typeof MOBILE_ROUTE_TABS)[number];
-export type MobileProjectSourceView = Exclude<MobileView, 'kanban' | 'projects'>;
+export type MobileProjectSourceView = Exclude<MobileView, 'projects'>;
 export type MobileProjectSelectionAction =
   | { type: 'navigate'; targetView: 'webSession' }
   | { type: 'prompt-return'; sourceView: MobileProjectSourceView };
@@ -20,9 +20,6 @@ export function formatMobileNavBadge(value: unknown): string {
 }
 
 export function normalizeMobileView(value: unknown): MobileView {
-  if (value === 'kanban') {
-    return DEFAULT_MOBILE_VIEW;
-  }
   return MOBILE_VIEWS.includes(value as MobileView) ? (value as MobileView) : DEFAULT_MOBILE_VIEW;
 }
 
@@ -42,7 +39,6 @@ export function mobileViewToRouteTab(value: unknown): MobileRouteTab {
     case 'changes':
       return 'changes';
     case 'projects':
-    case 'kanban':
     default:
       return 'projects';
   }
@@ -59,7 +55,6 @@ export function routeTabToMobileView(value: unknown): MobileView {
     case 'changes':
       return 'changes';
     case 'projects':
-    case 'kanban':
     default:
       return DEFAULT_MOBILE_VIEW;
   }
@@ -67,7 +62,7 @@ export function routeTabToMobileView(value: unknown): MobileView {
 
 export function normalizeMobileProjectSourceView(value: unknown): MobileProjectSourceView | '' {
   const normalizedView = normalizeMobileView(value);
-  return normalizedView !== 'kanban' && normalizedView !== 'projects' ? normalizedView : '';
+  return normalizedView !== 'projects' ? normalizedView : '';
 }
 
 export function resolveMobileProjectSelectionAction(

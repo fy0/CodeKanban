@@ -27,14 +27,6 @@ vi.mock('@/api', () => ({
   urlBase: 'http://localhost:5173',
 }));
 
-vi.mock('@/composables/useTaskActions', () => ({
-  taskActions: {
-    getTask: {
-      send: vi.fn(),
-    },
-  },
-}));
-
 vi.mock('@/utils/ws', () => ({
   resolveWsUrl: (path: string) => path,
 }));

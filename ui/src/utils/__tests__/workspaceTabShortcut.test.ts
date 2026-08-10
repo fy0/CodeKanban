@@ -11,7 +11,7 @@ describe('workspaceTabShortcut', () => {
   it('falls back to web when only one non-web tab has been visited', () => {
     expect(resolveWorkspaceShortcutTarget('terminal', null)).toBe('web');
     expect(resolveWorkspaceShortcutTarget('files', null)).toBe('web');
-    expect(resolveWorkspaceShortcutTarget('kanban', 'kanban')).toBe('web');
+    expect(resolveWorkspaceShortcutTarget('terminal', 'terminal')).toBe('web');
   });
 
   it('falls back to terminal when web is the only visited tab', () => {

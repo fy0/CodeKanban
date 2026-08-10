@@ -67,7 +67,7 @@ func generateSchemaFile(models []any, dialect, outputPath string) error {
 		}
 	}
 
-	finalSQL := strings.Join(formattedSQL, "\n")
+	finalSQL := strings.TrimRight(strings.Join(formattedSQL, "\n"), "\r\n") + "\n"
 
 	// 写入文件
 	err = os.WriteFile(outputPath, []byte(finalSQL), 0644)

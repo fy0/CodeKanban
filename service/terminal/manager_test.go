@@ -123,7 +123,6 @@ func TestPersistRestoreSessionStoresCurrentState(t *testing.T) {
 	session.title = "Backend"
 	session.workingDir = t.TempDir()
 	session.initialWorkingDir = t.TempDir()
-	session.associatedTaskID = "task-1"
 	session.shellIntegration.family = shellIntegrationFamilyBash
 	session.shellIntegration.supported = true
 	session.shellIntegration.pendingCommand = "go run ."
@@ -153,9 +152,6 @@ func TestPersistRestoreSessionStoresCurrentState(t *testing.T) {
 	}
 	if !record.ReplayEligible {
 		t.Fatal("expected replay_eligible to be true")
-	}
-	if record.TaskID == nil || *record.TaskID != "task-1" {
-		t.Fatalf("expected task id task-1, got %#v", record.TaskID)
 	}
 }
 

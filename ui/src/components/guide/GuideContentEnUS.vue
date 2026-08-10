@@ -18,7 +18,7 @@
         <n-alert type="warning" title="Challenges in the AI Programming Era">
           When using CLI AI programming tools like Claude Code, Codex, Qwen Code, you often need to
           switch between multiple projects and branches frequently. Traditional terminal windows
-          become chaotic, ongoing tasks are hard to track, and running multiple AI CLI tools
+          become chaotic, ongoing work is hard to track, and running multiple AI CLI tools
           simultaneously creates even more confusion. Code Kanban helps you control everything in
           one interface!
         </n-alert>
@@ -84,9 +84,8 @@
                   terminal and switch to that worktree directory.
                 </n-text>
                 <n-text depth="3">
-                  Now you can open multiple terminals based on your tasks, run several AI
-                  programming tools in them, and it's best to rename the terminal titles to the task
-                  names to avoid confusion.
+                  Now you can open multiple terminals for different worktrees, run several AI
+                  programming tools in them, and rename terminal titles to match their purpose.
                 </n-text>
                 <n-text depth="3">
                   The terminal window shortcut is ` (the key to the left of number 1), which can be
@@ -101,21 +100,6 @@
               </n-space>
             </n-step>
 
-            <n-step title="Complete Tasks">
-              <n-space vertical>
-                <n-text depth="3"> Commit code when you feel appropriate. </n-text>
-                <n-text depth="3">
-                  Additionally, there's a simple task board for goal management and a notepad for
-                  quick notes (right side of screen, shortcut key 1). By the way, terminals can be
-                  launched from the task board, and the terminal title will directly use the
-                  corresponding task title.
-                </n-text>
-                <n-text depth="3">
-                  If you want AI to work on multiple things simultaneously without code conflicts,
-                  you can use the worktree management feature.
-                </n-text>
-              </n-space>
-            </n-step>
           </n-steps>
         </n-tab-pane>
 
@@ -153,18 +137,6 @@
               </n-space>
             </n-step>
 
-            <n-step title="Manage Tasks">
-              <n-space vertical>
-                <n-text depth="3">
-                  Create tasks on the kanban board. Drag task cards to adjust their status (To Do →
-                  In Progress → Done).
-                </n-text>
-                <n-text depth="3">
-                  Tasks can be associated with specific worktrees and branches.
-                </n-text>
-                <n-text depth="3"> List everything you need to do. </n-text>
-              </n-space>
-            </n-step>
 
             <n-step title="Start Terminal and Begin Work">
               <n-space vertical>
@@ -173,9 +145,8 @@
                   terminal and switch to that worktree directory.
                 </n-text>
                 <n-text depth="3">
-                  Now you can open multiple terminals based on your tasks, run several AI
-                  programming tools in them, and it's best to rename the terminal titles to the task
-                  names to avoid confusion.
+                  Now you can open multiple terminals for different worktrees, run several AI
+                  programming tools in them, and rename terminal titles to match their purpose.
                 </n-text>
                 <n-text depth="3">
                   The terminal window shortcut is ` (the key to the left of number 1), which can be
@@ -201,14 +172,6 @@
               </n-space>
             </n-step>
 
-            <n-step title="Complete Tasks">
-              <n-space vertical>
-                <n-text depth="3">
-                  When everything is done, drag the task to "Done" on the task board.
-                </n-text>
-                <n-text depth="3"> Finally, delete the temporary working branch. Finished! </n-text>
-              </n-space>
-            </n-step>
           </n-steps>
         </n-tab-pane>
       </n-tabs>
@@ -307,49 +270,6 @@
           </n-space>
         </n-collapse-item>
 
-        <n-collapse-item title="Task Kanban System" name="kanban">
-          <n-space vertical>
-            <n-h3>Kanban Layout</n-h3>
-            <n-text>The kanban has three columns:</n-text>
-            <n-ul>
-              <n-li><strong>To Do:</strong> Planned tasks</n-li>
-              <n-li><strong>In Progress:</strong> Tasks currently being developed</n-li>
-              <n-li><strong>Done:</strong> Completed tasks</n-li>
-            </n-ul>
-
-            <n-h3>Create Task</n-h3>
-            <n-text
-              >Click the "+" button at the top of a column and fill in task information:</n-text
-            >
-            <n-ul>
-              <n-li><strong>Title:</strong> Brief task description</n-li>
-              <n-li
-                ><strong>Description:</strong> Detailed task explanation (supports Markdown)</n-li
-              >
-              <n-li><strong>Priority:</strong> Low/Medium/High, indicated by colors</n-li>
-              <n-li
-                ><strong>Related Branch:</strong> Optional, marks which branch the task belongs
-                to</n-li
-              >
-            </n-ul>
-
-            <n-h3>Drag and Drop Sorting</n-h3>
-            <n-text>You can:</n-text>
-            <n-ul>
-              <n-li
-                >Drag task cards up and down within the same column to adjust priority order</n-li
-              >
-              <n-li>Drag task cards across columns to change task status</n-li>
-            </n-ul>
-
-            <n-h3>Task Operations</n-h3>
-            <n-ul>
-              <n-li>Click a task card to view details and full description</n-li>
-              <n-li>Click the edit button to modify task information</n-li>
-              <n-li>Click the delete button to remove a task</n-li>
-            </n-ul>
-          </n-space>
-        </n-collapse-item>
 
         <n-collapse-item title="Integrated Terminal" name="terminal">
           <n-space vertical>
@@ -495,24 +415,7 @@
             </div>
 
             <div>
-              <n-text strong>3. Associate Tasks with Branches</n-text>
-              <n-text depth="3" style="display: block; margin-top: 8px">
-                Associate corresponding branches when creating tasks to easily track development
-                progress for each branch. You can add related commit hashes or PR links in task
-                descriptions.
-              </n-text>
-            </div>
-
-            <div>
-              <n-text strong>4. Utilize Task Priority</n-text>
-              <n-text depth="3" style="display: block; margin-top: 8px">
-                Use priority levels (High/Medium/Low) to mark task urgency. High-priority tasks are
-                marked in red. Prioritize high-priority tasks in the "In Progress" column.
-              </n-text>
-            </div>
-
-            <div>
-              <n-text strong>5. Terminal Reuse</n-text>
+              <n-text strong>3. Terminal Reuse</n-text>
               <n-text depth="3" style="display: block; margin-top: 8px">
                 Open independent terminal tabs for different worktrees to avoid frequent cd
                 directory switching. You can run a development server in one terminal and execute
@@ -521,7 +424,7 @@
             </div>
 
             <div>
-              <n-text strong>6. Notepad Magic</n-text>
+              <n-text strong>4. Notepad Magic</n-text>
               <n-text depth="3" style="display: block; margin-top: 8px">
                 Record frequently used project commands (like build, test, deploy commands) in the
                 notepad, and copy them to the terminal when needed. You can also record environment
@@ -530,7 +433,7 @@
             </div>
 
             <div>
-              <n-text strong>7. Personalized Theme</n-text>
+              <n-text strong>5. Personalized Theme</n-text>
               <n-text depth="3" style="display: block; margin-top: 8px">
                 Adjust theme colors in settings to create an interface that suits your aesthetic.
                 You can set a dark theme to protect your eyes.
@@ -564,7 +467,7 @@
             </n-alert>
 
             <n-alert type="info" title="Data Storage">
-              Tasks, worktree information, and other data are stored in the application database.
+              Project, worktree information, and other data are stored in the application database.
               Deleting a project only removes records and doesn't affect the Git repository itself.
             </n-alert>
           </n-space>
@@ -580,17 +483,14 @@
           <n-card>
             <n-steps vertical :current="null">
               <n-step title="Receive New Feature Request">
-                <n-text depth="3"
-                  >Create a task in the "To Do" column on the kanban, fill in feature description
-                  and acceptance criteria.</n-text
-                >
+                <n-text depth="3">Review the feature description and acceptance criteria.</n-text>
               </n-step>
 
               <n-step title="Start Development">
                 <n-space vertical size="small">
                   <n-text depth="3">
                     Create a new feature branch feature/xxx from the develop branch and create a
-                    worktree for it. Drag the task card to the "In Progress" column.
+                    worktree for it.
                   </n-text>
                 </n-space>
               </n-step>
@@ -611,9 +511,6 @@
                 <n-space vertical size="small">
                   <n-text depth="3">
                     Execute git add, git commit, git push commands in the terminal.
-                  </n-text>
-                  <n-text depth="3">
-                    You can record key commit hashes in the task description.
                   </n-text>
                 </n-space>
               </n-step>
@@ -661,9 +558,6 @@
 
               <n-step title="Delete Temporary Branch and Worktree">
                 <n-space vertical size="small">
-                  <n-text depth="3">
-                    After merging, drag the task card to the "Done" column.
-                  </n-text>
                   <n-text depth="3">
                     Select "Delete" from the feature branch worktree card menu (click "···" in the
                     top right corner of the card) to clean up the worktree directory.

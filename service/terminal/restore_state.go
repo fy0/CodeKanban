@@ -23,7 +23,6 @@ type terminalRestoreStateSnapshot struct {
 	ProjectID         string
 	WorktreeID        string
 	Title             string
-	TaskID            *string
 	OrderIndex        float64
 	InitialWorkingDir string
 	LastCwd           string
@@ -53,7 +52,6 @@ func (m *Manager) persistRestoreSession(ctx context.Context, session *Session) e
 		ProjectID:         snapshot.ProjectID,
 		WorktreeID:        snapshot.WorktreeID,
 		Title:             snapshot.Title,
-		TaskID:            snapshot.TaskID,
 		OrderIndex:        snapshot.OrderIndex,
 		InitialWorkingDir: snapshot.InitialWorkingDir,
 		LastCwd:           snapshot.LastCwd,
@@ -77,7 +75,6 @@ func (m *Manager) persistRestoreSession(ctx context.Context, session *Session) e
 			"project_id",
 			"worktree_id",
 			"title",
-			"task_id",
 			"order_index",
 			"initial_working_dir",
 			"last_cwd",
@@ -190,17 +187,12 @@ func (m *Manager) RestoreProjectSessions(ctx context.Context, projectID string) 
 		if workingDir == "" {
 			workingDir = strings.TrimSpace(record.InitialWorkingDir)
 		}
-		taskID := ""
-		if record.TaskID != nil {
-			taskID = strings.TrimSpace(*record.TaskID)
-		}
 		session, createErr := m.CreateSession(ctx, CreateSessionParams{
 			ID:                   record.ID,
 			ProjectID:            record.ProjectID,
 			WorktreeID:           record.WorktreeID,
 			WorkingDir:           workingDir,
 			Title:                record.Title,
-			TaskID:               taskID,
 			OrderIndex:           record.OrderIndex,
 			StartupReplayCommand: restoreReplayCommand(record),
 		})

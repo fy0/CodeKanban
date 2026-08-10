@@ -30,10 +30,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalHeaderBorder: false,
       // 空终端引导文字 - 白色
       terminalEmptyGuideFg: '#ffffff',
-      // 看板背景和卡片背景
-      kanbanBoardBg: '#f5f5f5',
-      kanbanCardBg: '#ffffff',
-      kanbanBorderEnabled: false,
     },
   },
   {
@@ -54,9 +50,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#2E3440',
       terminalHeaderBorder: false,
       terminalEmptyGuideFg: '#D8DEE9',
-      kanbanBoardBg: '#1E1E1E',
-      kanbanCardBg: '#2a2a2b',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -77,9 +70,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#0D1117',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#E6EDF3',
-      kanbanBoardBg: '#22272E',
-      kanbanCardBg: '#373e47',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -100,9 +90,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#FFF7ED',
       terminalHeaderBorder: false,
       terminalEmptyGuideFg: '#7C2D12',
-      kanbanBoardBg: '#FEF3C7',
-      kanbanCardBg: '#FFFBEB',
-      kanbanBorderEnabled: false,
     },
   },
   {
@@ -123,9 +110,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#0F0F0F',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#E6E1E5',
-      kanbanBoardBg: '#121212',
-      kanbanCardBg: '#2d2833',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -146,9 +130,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#1A1B1E',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#F5F5F7',
-      kanbanBoardBg: '#1E1F22',
-      kanbanCardBg: '#36373b',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -169,9 +150,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#FDF6E3',
       terminalHeaderBorder: false,
       terminalEmptyGuideFg: '#586E75',
-      kanbanBoardBg: '#FDF6E3',
-      kanbanCardBg: '#F5EFD5',
-      kanbanBorderEnabled: false,
     },
   },
   {
@@ -192,9 +170,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#002B36',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#93A1A1',
-      kanbanBoardBg: '#002B36',
-      kanbanCardBg: '#094652',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -215,9 +190,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#2E3440',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#D8DEE9',
-      kanbanBoardBg: '#2E3440',
-      kanbanCardBg: '#434c5e',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -238,9 +210,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#282A36',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#F8F8F2',
-      kanbanBoardBg: '#282A36',
-      kanbanCardBg: '#414558',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -261,9 +230,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#1E2127',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#ABB2BF',
-      kanbanBoardBg: '#21252B',
-      kanbanCardBg: '#31353f',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -284,9 +250,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#1A1B26',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#A9B1D6',
-      kanbanBoardBg: '#1A1B26',
-      kanbanCardBg: '#2f3241',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -307,9 +270,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#0D1117',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#E6EDF3',
-      kanbanBoardBg: '#0D1117',
-      kanbanCardBg: '#1e2329',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -330,9 +290,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#272822',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#F8F8F2',
-      kanbanBoardBg: '#272822',
-      kanbanCardBg: '#4a4a3d',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -353,9 +310,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#282828',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#EBDBB2',
-      kanbanBoardBg: '#282828',
-      kanbanCardBg: '#484442',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -376,9 +330,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#1E1E2E',
       terminalHeaderBorder: 'transparent',
       terminalEmptyGuideFg: '#CDD6F4',
-      kanbanBoardBg: '#1E1E2E',
-      kanbanCardBg: '#3f3f54',
-      kanbanBorderEnabled: true,
     },
   },
   {
@@ -399,9 +350,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#F6F8FA',
       terminalHeaderBorder: false,
       terminalEmptyGuideFg: '#1F2328',
-      kanbanBoardBg: '#F6F8FA',
-      kanbanCardBg: '#FFFFFF',
-      kanbanBorderEnabled: false,
     },
   },
   {
@@ -422,9 +370,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       terminalTabActiveBg: '#FBF1C7',
       terminalHeaderBorder: false,
       terminalEmptyGuideFg: '#3C3836',
-      kanbanBoardBg: '#FBF1C7',
-      kanbanCardBg: '#F2E5BC',
-      kanbanBorderEnabled: false,
     },
   },
 ];

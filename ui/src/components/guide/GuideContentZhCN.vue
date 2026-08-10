@@ -15,7 +15,7 @@
         <n-alert type="warning" title="AI 编程时代的挑战">
           使用 Claude Code、Codex、Qwen Code 等 CLI AI
           编程工具时，经常需要在多个项目、多个分支间频繁切换。
-          传统的终端窗口杂乱无章，进行的任务难以追踪，多个 AI CLI 工具同时运行更是混乱不堪。 Code
+          传统的终端窗口杂乱无章，进行中的工作难以追踪，多个 AI CLI 工具同时运行更是混乱不堪。 Code
           Kanban 让你在一个界面中掌控一切！
         </n-alert>
 
@@ -69,7 +69,7 @@
                   在工作区(Worktrees)卡片中点击「打开终端」按钮，会自动打开终端并切换到该工作区目录。
                 </n-text>
                 <n-text depth="3">
-                  现在你可以根据你要完成的任务开一堆终端了，然后在里面分别运行几个AI编程工具，最好把终端标题改成正在进行的任务名字，以免忘记。
+                  现在你可以根据不同工作内容开启多个终端，分别运行 AI 编程工具，并将终端标题改成当前用途，以免混淆。
                 </n-text>
                 <n-text depth="3">
                   终端窗口的快捷键是 `
@@ -83,17 +83,6 @@
               </n-space>
             </n-step>
 
-            <n-step title="完成任务">
-              <n-space vertical>
-                <n-text depth="3"> 在你感觉合适的时候进行代码提交。 </n-text>
-                <n-text depth="3">
-                  此外，还提供了简易任务板用于目标管理，笔记本用于随手注记（屏幕右侧，快捷键1）。对了，终端可以在任务板中启动，终端标题会直接使用对应任务的标题。
-                </n-text>
-                <n-text depth="3">
-                  如果希望让AI同时做多件事情，而又不希望代码互相打架，可以使用worktree管理功能。
-                </n-text>
-              </n-space>
-            </n-step>
           </n-steps>
         </n-tab-pane>
 
@@ -127,15 +116,6 @@
               </n-space>
             </n-step>
 
-            <n-step title="管理任务">
-              <n-space vertical>
-                <n-text depth="3">
-                  在看板中创建任务，拖拽任务卡片可调整其状态（待办 → 进行中 → 已完成）。
-                </n-text>
-                <n-text depth="3"> 任务可以关联到特定的工作区和分支。 </n-text>
-                <n-text depth="3"> 把你要做的事情一一列上去。 </n-text>
-              </n-space>
-            </n-step>
 
             <n-step title="启动终端，开始工作">
               <n-space vertical>
@@ -143,7 +123,7 @@
                   在工作区(Worktrees)卡片中点击「打开终端」按钮，会自动打开终端并切换到该工作区目录。
                 </n-text>
                 <n-text depth="3">
-                  现在你可以根据你要完成的任务开一堆终端了，然后在里面分别运行几个AI编程工具，最好把终端标题改成正在进行的任务名字，以免忘记。
+                  现在你可以根据不同工作内容开启多个终端，分别运行 AI 编程工具，并将终端标题改成当前用途，以免混淆。
                 </n-text>
                 <n-text depth="3">
                   终端窗口的快捷键是 `
@@ -167,12 +147,6 @@
               </n-space>
             </n-step>
 
-            <n-step title="完成任务">
-              <n-space vertical>
-                <n-text depth="3"> 当你确定已经搞好的时候，在任务板上，将任务拖到已完成。 </n-text>
-                <n-text depth="3"> 最后将临时的工作分支删掉，结束！ </n-text>
-              </n-space>
-            </n-step>
           </n-steps>
         </n-tab-pane>
       </n-tabs>
@@ -250,40 +224,6 @@
           </n-space>
         </n-collapse-item>
 
-        <n-collapse-item title="任务看板系统" name="kanban">
-          <n-space vertical>
-            <n-h3>看板布局</n-h3>
-            <n-text>看板分为三列：</n-text>
-            <n-ul>
-              <n-li><strong>待办（Todo）：</strong>计划要做的任务</n-li>
-              <n-li><strong>进行中（In Progress）：</strong>正在开发的任务</n-li>
-              <n-li><strong>已完成（Done）：</strong>已完成的任务</n-li>
-            </n-ul>
-
-            <n-h3>创建任务</n-h3>
-            <n-text>点击列顶部的「+」按钮，填写任务信息：</n-text>
-            <n-ul>
-              <n-li><strong>标题：</strong>任务的简短描述</n-li>
-              <n-li><strong>描述：</strong>详细的任务说明（支持 Markdown）</n-li>
-              <n-li><strong>优先级：</strong>低/中/高，用颜色标识</n-li>
-              <n-li><strong>关联分支：</strong>可选，标记任务所属分支</n-li>
-            </n-ul>
-
-            <n-h3>拖拽排序</n-h3>
-            <n-text>可以：</n-text>
-            <n-ul>
-              <n-li>在同一列内上下拖动任务卡片，调整优先级顺序</n-li>
-              <n-li>跨列拖动任务卡片，改变任务状态</n-li>
-            </n-ul>
-
-            <n-h3>任务操作</n-h3>
-            <n-ul>
-              <n-li>点击任务卡片查看详情和完整描述</n-li>
-              <n-li>点击编辑按钮修改任务信息</n-li>
-              <n-li>点击删除按钮移除任务</n-li>
-            </n-ul>
-          </n-space>
-        </n-collapse-item>
 
         <n-collapse-item title="集成终端" name="terminal">
           <n-space vertical>
@@ -411,23 +351,7 @@
             </div>
 
             <div>
-              <n-text strong>3. 任务与分支关联</n-text>
-              <n-text depth="3" style="display: block; margin-top: 8px">
-                创建任务时关联对应的分支，方便追踪每个分支的开发进度。 可以在任务描述中添加相关的
-                commit hash 或 PR 链接。
-              </n-text>
-            </div>
-
-            <div>
-              <n-text strong>4. 利用任务优先级</n-text>
-              <n-text depth="3" style="display: block; margin-top: 8px">
-                使用优先级（高/中/低）标记任务紧急程度，高优先级任务会用红色标识。
-                在「进行中」列中优先处理高优先级任务。
-              </n-text>
-            </div>
-
-            <div>
-              <n-text strong>5. 终端复用</n-text>
+              <n-text strong>3. 终端复用</n-text>
               <n-text depth="3" style="display: block; margin-top: 8px">
                 为不同工作区打开独立的终端标签页，避免频繁 cd 切换目录。
                 可以在一个终端运行开发服务器，另一个执行 Git 命令。
@@ -435,7 +359,7 @@
             </div>
 
             <div>
-              <n-text strong>6. 笔记本的妙用</n-text>
+              <n-text strong>4. 笔记本的妙用</n-text>
               <n-text depth="3" style="display: block; margin-top: 8px">
                 在笔记本中记录常用的项目命令（如构建、测试、部署命令），
                 需要时直接复制到终端执行。还可以记录环境配置、API 文档链接等。
@@ -443,7 +367,7 @@
             </div>
 
             <div>
-              <n-text strong>7. 个性化主题</n-text>
+              <n-text strong>5. 个性化主题</n-text>
               <n-text depth="3" style="display: block; margin-top: 8px">
                 在设置中调整主题颜色，打造符合个人审美的界面。 可以设置暗色主题保护视力。
               </n-text>
@@ -474,7 +398,7 @@
             </n-alert>
 
             <n-alert type="info" title="数据存储">
-              任务、工作区信息等数据存储在应用数据库中。 删除项目只会移除记录，不会影响 Git
+              项目、工作区信息等数据存储在应用数据库中。 删除项目只会移除记录，不会影响 Git
               仓库本身。
             </n-alert>
           </n-space>
@@ -490,14 +414,14 @@
           <n-card>
             <n-steps vertical :current="null">
               <n-step title="接到新功能需求">
-                <n-text depth="3">在看板的「待办」列创建任务，填写功能描述和验收标准。</n-text>
+                <n-text depth="3">了解功能描述和验收标准。</n-text>
               </n-step>
 
               <n-step title="开始开发">
                 <n-space vertical size="small">
                   <n-text depth="3">
                     从 develop 分支创建新的功能分支 feature/xxx，并为其创建工作区。
-                    将任务卡片拖到「进行中」列。
+
                   </n-text>
                 </n-space>
               </n-step>
@@ -514,7 +438,6 @@
               <n-step title="提交代码">
                 <n-space vertical size="small">
                   <n-text depth="3"> 在终端中执行 git add、git commit、git push 等命令。 </n-text>
-                  <n-text depth="3"> 可以在任务描述中记录关键的 commit hash。 </n-text>
                 </n-space>
               </n-step>
 
@@ -555,7 +478,6 @@
 
               <n-step title="删除临时分支和工作区">
                 <n-space vertical size="small">
-                  <n-text depth="3"> 合并完成后，将任务卡片拖到「已完成」列。 </n-text>
                   <n-text depth="3">
                     在功能分支的工作区卡片菜单（点击卡片右上角的「···」）中选择「删除」，清理工作区目录。
                   </n-text>

@@ -4,7 +4,7 @@ import EventEmitter from 'eventemitter3';
 import Apis, { alovaInstance, urlBase } from '@/api';
 import { extractItem } from '@/api/response';
 import type { TerminalCreateInputBody } from '@/api/globals';
-import type { Task, TerminalSession } from '@/types/models';
+import type { TerminalSession } from '@/types/models';
 import {
   DEFAULT_TERMINAL_RENDER_MODE,
   DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
@@ -21,8 +21,6 @@ import {
 import { resolveWsUrl } from '@/utils/ws';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
-import { useTaskStore } from '@/stores/task';
-import { taskActions } from '@/composables/useTaskActions';
 
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
 export type TerminalConnectionRole = 'active' | 'mirror' | 'detached';
@@ -96,14 +94,13 @@ export type ServerMessage = {
   snapshotCompressionEnabled?: boolean;
   snapshotIncrementalEnabled?: boolean;
   snapshot?: TerminalRemoteSnapshot;
-  metadata?: {
+	metadata?: {
     title?: string;
     processPid?: number;
     processStatus?: string;
     processHasChildren?: boolean;
-    runningCommand?: string;
-    taskId?: string;
-    aiAssistant?: {
+		runningCommand?: string;
+		aiAssistant?: {
       type: string;
       name: string;
       displayName: string;
@@ -132,10 +129,9 @@ export type TerminalCreateOptions = {
   worktreeId?: string;
   workingDir?: string;
   title?: string;
-  rows?: number;
-  cols?: number;
-  taskId?: string;
-  /** 插入到指定 sessionId 之后，用于复制标签时保持位置 */
+	rows?: number;
+	cols?: number;
+	/** 插入到指定 sessionId 之后，用于复制标签时保持位置 */
   insertAfterSessionId?: string;
 };
 
@@ -577,13 +573,9 @@ export const useTerminalStore = defineStore('terminal', () => {
   let globalLoadToken = 0;
   const projectLoadTokens = new Map<string, number>();
   const emitter = new EventEmitter();
-  const cachedCounts = reactive(new Map<string, number>());
-  const projectConnectionRefCounts = reactive(new Map<string, number>());
-  const settingsStore = useSettingsStore();
-  const taskStore = useTaskStore();
-  const sessionToTaskMap = reactive(new Map<string, string>());
-  const taskToSessionMap = reactive(new Map<string, string>());
-  const pendingTaskFetch = new Set<string>();
+	const cachedCounts = reactive(new Map<string, number>());
+	const projectConnectionRefCounts = reactive(new Map<string, number>());
+	const settingsStore = useSettingsStore();
   // Buffer for WebSocket messages when no listener is attached
   // This prevents data loss when TerminalViewport is unmounted but WebSocket is still active
   const messageBuffers = new Map<string, BufferedTerminalMessage[]>();
@@ -933,48 +925,6 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
   );
 
-  function updateSessionTaskMapping(sessionId: string, nextTaskId?: string | null) {
-    const previousTaskId = sessionToTaskMap.get(sessionId);
-    const record = sessionIndex.get(sessionId);
-    if (previousTaskId && previousTaskId !== nextTaskId) {
-      sessionToTaskMap.delete(sessionId);
-      if (taskToSessionMap.get(previousTaskId) === sessionId) {
-        taskToSessionMap.delete(previousTaskId);
-      }
-    }
-    if (nextTaskId) {
-      sessionToTaskMap.set(sessionId, nextTaskId);
-      taskToSessionMap.set(nextTaskId, sessionId);
-    } else if (!nextTaskId) {
-      sessionToTaskMap.delete(sessionId);
-    }
-
-    if (nextTaskId && nextTaskId !== previousTaskId) {
-      void ensureTaskLoaded(nextTaskId);
-    }
-  }
-
-  async function ensureTaskLoaded(taskId: string) {
-    if (!taskId || pendingTaskFetch.has(taskId)) {
-      return;
-    }
-    if (taskStore.tasks.some(task => task.id === taskId)) {
-      return;
-    }
-    pendingTaskFetch.add(taskId);
-    try {
-      const response = await taskActions.getTask.send(taskId);
-      const task = response?.item as unknown as Task | undefined;
-      if (task) {
-        taskStore.upsertTask(task);
-      }
-    } catch (error) {
-      console.error(`[Terminal] Failed to fetch linked task ${taskId}`, error);
-    } finally {
-      pendingTaskFetch.delete(taskId);
-    }
-  }
-
   function getTabs(projectId?: string) {
     if (!projectId) {
       return [];
@@ -1117,10 +1067,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       rows: options.rows ?? 0,
       cols: options.cols ?? 0,
     };
-    if (options.taskId) {
-      payload.taskId = options.taskId;
-    }
-    if (options.insertAfterSessionId) {
+	if (options.insertAfterSessionId) {
       payload.insertAfterSessionId = options.insertAfterSessionId;
     }
     const response = await Apis.terminalSession
@@ -1187,36 +1134,6 @@ export const useTerminalStore = defineStore('terminal', () => {
       })
       .send();
     disconnectTab(sessionId, true);
-  }
-
-  async function linkSessionTask(projectId: string | undefined, sessionId: string, taskId: string) {
-    const resolved = ensureProjectSelected(projectId);
-    const response = await alovaInstance
-      .Post(
-        `/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/link`,
-        { taskId },
-        { cacheFor: 0 }
-      )
-      .send();
-    const session = extractItem(response) as unknown as TerminalSession | undefined;
-    if (session) {
-      attachOrUpdateSession(session, { projectIdOverride: resolved });
-    }
-    updateSessionTaskMapping(sessionId, taskId);
-    return session;
-  }
-
-  async function unlinkSessionTask(projectId: string | undefined, sessionId: string) {
-    const resolved = ensureProjectSelected(projectId);
-    const response = await alovaInstance
-      .Post(`/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/unlink`, {}, { cacheFor: 0 })
-      .send();
-    const session = extractItem(response) as unknown as TerminalSession | undefined;
-    if (session) {
-      attachOrUpdateSession(session, { projectIdOverride: resolved });
-    }
-    updateSessionTaskMapping(sessionId);
-    return session;
   }
 
   function setSessionRenderMode(
@@ -1339,7 +1256,6 @@ export const useTerminalStore = defineStore('terminal', () => {
         }
       }
       sessionIndex.delete(sessionId);
-      updateSessionTaskMapping(sessionId);
       if (activeTabByProject.get(record.projectId) === sessionId) {
         const nextId = tabStore.get(record.projectId)?.[0]?.id;
         setActiveTab(record.projectId, nextId);
@@ -1651,13 +1567,10 @@ export const useTerminalStore = defineStore('terminal', () => {
           immutableProjectId
         );
       }
-      // 直接使用 session.taskId，如果是 null/undefined 则清除关联
-      const updatedTaskId = session.taskId;
       const updatedTab: TerminalTabState = {
         ...existing.tab,
         ...session,
         projectId: immutableProjectId,
-        taskId: updatedTaskId ?? undefined,
         connectionRole: existing.tab.connectionRole,
         renderMode: existing.tab.renderMode,
         snapshotIntervalMs: existing.tab.snapshotIntervalMs,
@@ -1673,7 +1586,6 @@ export const useTerminalStore = defineStore('terminal', () => {
         }
       }
       existing.tab = updatedTab;
-      updateSessionTaskMapping(session.id, updatedTaskId ?? undefined);
       if (options?.activate) {
         setActiveTab(immutableProjectId, session.id);
       }
@@ -1710,7 +1622,6 @@ export const useTerminalStore = defineStore('terminal', () => {
       bucket.push(tab);
     }
     sessionIndex.set(tab.id, { projectId: resolvedProjectId, tab });
-    updateSessionTaskMapping(tab.id, tab.taskId ?? undefined);
     if (options?.activate) {
       setActiveTab(resolvedProjectId, tab.id);
     } else if (!activeTabByProject.get(resolvedProjectId)) {
@@ -1749,7 +1660,6 @@ export const useTerminalStore = defineStore('terminal', () => {
     const index = bucket.findIndex(t => t.id === sessionId);
     if (index === -1) return;
 
-    const nextTaskId = metadata.taskId ?? bucket[index].taskId;
     const nextTitle = metadata.title;
     bucket[index] = {
       ...bucket[index],
@@ -1758,11 +1668,9 @@ export const useTerminalStore = defineStore('terminal', () => {
       processHasChildren: metadata.processHasChildren,
       runningCommand: metadata.runningCommand,
       aiAssistant: metadata.aiAssistant,
-      taskId: nextTaskId,
       title: typeof nextTitle === 'string' ? nextTitle : bucket[index].title,
     };
     record.tab = bucket[index];
-    updateSessionTaskMapping(sessionId, nextTaskId ?? undefined);
   }
 
   function connect(tab: TerminalTabState) {
@@ -2038,10 +1946,6 @@ export const useTerminalStore = defineStore('terminal', () => {
     return sessionIndex.get(sessionId)?.tab;
   }
 
-  function getLinkedTaskId(sessionId: string) {
-    return sessionToTaskMap.get(sessionId) ?? undefined;
-  }
-
   function focusSession(projectId: string | undefined, sessionId?: string) {
     if (!projectId || !sessionId) {
       return false;
@@ -2096,24 +2000,6 @@ export const useTerminalStore = defineStore('terminal', () => {
     projectConnectionRefCounts.set(projectId, currentCount - 1);
   }
 
-  function getSessionByTask(taskId: string | undefined, projectId?: string) {
-    if (!taskId) {
-      return undefined;
-    }
-    const sessionId = taskToSessionMap.get(taskId);
-    if (!sessionId) {
-      return undefined;
-    }
-    const record = sessionIndex.get(sessionId);
-    if (!record) {
-      return undefined;
-    }
-    if (projectId && record.projectId !== projectId) {
-      return undefined;
-    }
-    return record.tab;
-  }
-
   return {
     emitter,
     getTabs,
@@ -2133,15 +2019,11 @@ export const useTerminalStore = defineStore('terminal', () => {
     terminalCounts: cachedCounts,
     loadTerminalCounts,
     getSessionById,
-    linkSessionTask,
-    unlinkSessionTask,
     setSessionRenderMode,
     setSessionSnapshotInterval,
     focusSession,
     retainProjectConnections,
     releaseProjectConnections,
-    getSessionByTask,
-    getLinkedTaskId,
     replayBufferedMessages,
     saveSerializedSnapshot,
     getSerializedSnapshot,

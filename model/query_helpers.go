@@ -1,6 +1,16 @@
 package model
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
+
+func ensureContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
 
 func resolveQueries(q *Queries) (*Queries, error) {
 	if q != nil {

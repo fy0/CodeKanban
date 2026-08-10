@@ -39,7 +39,6 @@ type CreateSessionParams struct {
 	Rows                 int
 	Cols                 int
 	Encoding             string
-	TaskID               string
 	OrderIndex           float64
 	InsertAfterSessionID string
 	StartupReplayCommand string
@@ -136,7 +135,6 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 		Encoding:                    m.cfg.Encoding,
 		ScrollbackLimit:             m.scrollbackLimit(),
 		EnableTerminalStateSnapshot: m.cfg.TerminalStateSnapshot,
-		TaskID:                      params.TaskID,
 		OrderIndex:                  params.OrderIndex,
 		ShellIntegration:            shellIntegration,
 		StartupReplayCommand:        params.StartupReplayCommand,
@@ -268,34 +266,6 @@ func (m *Manager) CloseSession(id string) error {
 	return nil
 }
 
-// LinkTask associates a task with a terminal session.
-func (m *Manager) LinkTask(sessionID, taskID string) (*Session, error) {
-	session, err := m.GetSession(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	session.AssociateTask(taskID)
-	if err := m.persistRestoreSession(context.Background(), session); err != nil {
-		return nil, err
-	}
-	m.broadcastProjectSessions(session.ProjectID())
-	return session, nil
-}
-
-// UnlinkTask removes the task association from a terminal session.
-func (m *Manager) UnlinkTask(sessionID string) (*Session, error) {
-	session, err := m.GetSession(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	session.ClearTaskAssociation()
-	if err := m.persistRestoreSession(context.Background(), session); err != nil {
-		return nil, err
-	}
-	m.broadcastProjectSessions(session.ProjectID())
-	return session, nil
-}
-
 // ListSessions enumerates sessions, optionally filtering by project.
 func (m *Manager) ListSessions(projectID string) []SessionSnapshot {
 	m.sessionMu.Lock()
@@ -346,21 +316,6 @@ func (m *Manager) broadcastProjectSessions(projectID string) {
 		default:
 		}
 	}
-}
-
-// ListSessionsByTask enumerates sessions associated with a specific task.
-func (m *Manager) ListSessionsByTask(taskID string) []SessionSnapshot {
-	results := make([]SessionSnapshot, 0)
-	if taskID == "" {
-		return results
-	}
-	m.sessions.Range(func(_ string, session *Session) bool {
-		if session.TaskID() == taskID {
-			results = append(results, session.Snapshot())
-		}
-		return true
-	})
-	return results
 }
 
 // GetSessionDebugInfo returns comprehensive debug information for a session.

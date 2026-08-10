@@ -12,8 +12,6 @@ var (
 	ErrWorktreeNotFound = errors.New("worktree not found")
 	// ErrWorktreeIsMain indicates the worktree is the main repository path and cannot be removed.
 	ErrWorktreeIsMain = errors.New("cannot delete main worktree")
-	// ErrWorktreeHasTasks indicates there are tasks referencing the worktree requiring a force delete.
-	ErrWorktreeHasTasks = errors.New("worktree has active tasks")
 	// ErrWorktreeClean indicates there are no changes to commit.
 	ErrWorktreeClean = errors.New("worktree has no changes to commit")
 )

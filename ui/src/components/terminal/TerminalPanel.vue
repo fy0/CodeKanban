@@ -110,20 +110,6 @@
                   {{ t('terminal.snapshotModeTabBadge') }}
                 </span>
                 <span
-                  v-if="resolveTabTaskId(tab as TerminalTabState)"
-                  class="standalone-task-icon"
-                  role="button"
-                  tabindex="0"
-                  :title="t('terminal.viewLinkedTask')"
-                  @click.stop="handleViewTask(tab as TerminalTabState)"
-                  @keydown.enter.prevent.stop="handleViewTask(tab as TerminalTabState)"
-                  @keydown.space.prevent.stop="handleViewTask(tab as TerminalTabState)"
-                >
-                  <n-icon size="12">
-                    <ClipboardOutline />
-                  </n-icon>
-                </span>
-                <span
                   v-if="showAssistantIdentity(tab as TerminalTabState)"
                   class="agent-identity"
                   :title="getAssistantName(tab as TerminalTabState)"
@@ -464,7 +450,6 @@ import {
   CheckmarkOutline,
   InformationCircleOutline,
   Add,
-  ClipboardOutline,
   FolderOpenOutline,
   TimeOutline,
   ChatbubblesOutline,
@@ -689,13 +674,6 @@ function closeEmptyTab(tabId: string) {
 
 function isEmptyTab(tabId: string): boolean {
   return tabId.startsWith(EMPTY_TAB_PREFIX);
-}
-
-function resolveTabTaskId(tab: TerminalTabState | null | undefined) {
-  if (!tab) {
-    return undefined;
-  }
-  return tab.taskId || getLinkedTaskId(tab.id);
 }
 
 const snapshotModeSupported = computed(
@@ -997,7 +975,6 @@ const {
   setRenderMode,
   setSnapshotInterval,
   focusSession: focusSessionInStore,
-  getLinkedTaskId,
 } = useTerminalClient(projectIdRef);
 
 const settingsStore = useSettingsStore();
@@ -2804,19 +2781,6 @@ async function handleContextMenuSelect(key: string) {
   }
 }
 
-function handleViewTask(tab: TerminalTabState) {
-  const taskId = resolveTabTaskId(tab);
-  if (!taskId) {
-    message.warning(t('terminal.noLinkedTask'));
-    return;
-  }
-  emitter.emit('task:view', {
-    sessionId: tab.id,
-    taskId,
-    projectId: props.projectId,
-  });
-}
-
 function promptCloseRightTabs(tab: TerminalTabState) {
   const tabIndex = tabs.value.indexOf(tab);
   if (tabIndex < 0 || tabIndex >= tabs.value.length - 1) {
@@ -3331,27 +3295,6 @@ defineExpose({
   max-width: min(128px, 18vw);
   font-size: 10px;
   line-height: 16px;
-}
-
-/* 独立任务图标（不在 AI 状态条内） */
-.standalone-task-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: -4px;
-  margin-right: -6px;
-  margin-top: -2px;
-  cursor: pointer;
-  line-height: 1;
-}
-
-.standalone-task-icon:focus-visible {
-  outline: 2px solid var(--app-focus-ring, var(--n-color-primary));
-  border-radius: 4px;
-}
-
-.standalone-task-icon :deep(svg) {
-  display: block;
 }
 
 .agent-identity-icon {

@@ -38,10 +38,7 @@ codekanban
   Auto-detect running status of Claude Code / Codex and other tools (idle/working/needs approval), notify when tasks complete.
 
 - **📜 History**
-  Record your conversations with AI, one-click to trace prompt history, automatically add as tasks.
-
-- **📋 Task Kanban**
-  Visualize development task management, clear and intuitive.
+  Record your conversations with AI and trace prompt history in one click.
 
 - **🌿 Worktree Management**
   A hybrid Git engine uses go-git for fast in-process status, diff, and line statistics, while

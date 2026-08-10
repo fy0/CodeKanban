@@ -14,7 +14,6 @@ type TerminalRestoreSessionTable struct {
 	ProjectID         string     `gorm:"type:text;not null;index" json:"projectId"`
 	WorktreeID        string     `gorm:"type:text;not null;index" json:"worktreeId"`
 	Title             string     `gorm:"type:text;not null" json:"title"`
-	TaskID            *string    `gorm:"type:text;index" json:"taskId"`
 	OrderIndex        float64    `gorm:"type:real;not null;default:0;index" json:"orderIndex"`
 	InitialWorkingDir string     `gorm:"type:text;not null" json:"initialWorkingDir"`
 	LastCwd           string     `gorm:"type:text;not null" json:"lastCwd"`

@@ -59,7 +59,6 @@ type SessionSnapshot struct {
 	RunningCommand     string `json:"runningCommand,omitempty"`
 	// AI Assistant information
 	AIAssistant *ai_assistant2.AIAssistantInfo `json:"aiAssistant"`
-	TaskID      string                         `json:"taskId,omitempty"`
 	Traffic     *SessionTrafficStats           `json:"traffic,omitempty"`
 }
 
@@ -87,7 +86,6 @@ type SessionMetadata struct {
 	ProcessHasChildren bool                           `json:"processHasChildren,omitempty"`
 	RunningCommand     string                         `json:"runningCommand,omitempty"`
 	AIAssistant        *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
-	TaskID             string                         `json:"taskId,omitempty"`
 }
 
 type TerminalStateCell struct {
@@ -191,8 +189,6 @@ type Session struct {
 	encoding encoding.Encoding
 	encName  string
 
-	associatedTaskID             string
-	lockedTitle                  string
 	terminalStateEnabled         atomic.Bool
 	terminalStateSuppressReplies atomic.Bool
 
@@ -249,7 +245,6 @@ type SessionParams struct {
 	Encoding                    string
 	ScrollbackLimit             int
 	EnableTerminalStateSnapshot bool
-	TaskID                      string
 	OrderIndex                  float64
 	ShellIntegration            shellIntegrationConfig
 	StartupReplayCommand        string
@@ -310,7 +305,6 @@ func NewSession(params SessionParams) (*Session, error) {
 		encName:            encName,
 		scrollbackLimit:    scrollbackLimit,
 		subscribers:        make(map[string]*sessionSubscriber),
-		associatedTaskID:   params.TaskID,
 		shellEventCallback: params.OnShellEvent,
 	}
 	session.terminalStateEnabled.Store(params.EnableTerminalStateSnapshot && runtime.GOOS != "windows")
@@ -532,7 +526,6 @@ func (s *Session) checkAndBroadcastMetadata() {
 		ProcessPID:         pid,
 		ProcessStatus:      process.GetProcessStatus(pid),
 		ProcessHasChildren: process.IsProcessBusy(pid),
-		TaskID:             s.TaskID(),
 		Title:              s.Title(),
 	}
 
@@ -577,8 +570,7 @@ func (s *Session) metadataChanged(old, new *SessionMetadata) bool {
 		old.ProcessPID != new.ProcessPID ||
 		old.ProcessStatus != new.ProcessStatus ||
 		old.ProcessHasChildren != new.ProcessHasChildren ||
-		old.RunningCommand != new.RunningCommand ||
-		old.TaskID != new.TaskID {
+		old.RunningCommand != new.RunningCommand {
 		return true
 	}
 
@@ -821,41 +813,6 @@ func (s *Session) ProjectID() string {
 	return s.projectID
 }
 
-// TaskID returns the task associated with this session, if any.
-func (s *Session) TaskID() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.associatedTaskID
-}
-
-// AssociateTask links a task to the session.
-func (s *Session) AssociateTask(taskID string) bool {
-	s.mu.Lock()
-	changed := s.associatedTaskID != taskID
-	s.associatedTaskID = taskID
-	s.mu.Unlock()
-
-	if changed {
-		s.broadcastMetadataSnapshot()
-	}
-	return changed
-}
-
-// ClearTaskAssociation removes the task link from the session.
-func (s *Session) ClearTaskAssociation() bool {
-	s.mu.Lock()
-	if s.associatedTaskID == "" {
-		s.mu.Unlock()
-		return false
-	}
-	s.associatedTaskID = ""
-	s.lockedTitle = ""
-	s.mu.Unlock()
-
-	s.broadcastMetadataSnapshot()
-	return true
-}
-
 // WorktreeID returns the associated worktree identifier.
 func (s *Session) WorktreeID() string {
 	return s.worktreeID
@@ -910,19 +867,12 @@ func (s *Session) SetOrderIndex(orderIndex float64) {
 func (s *Session) UpdateTitle(title string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.lockedTitle != "" && s.lockedTitle != title {
-		return ErrSessionTitleLocked
-	}
 	s.title = title
-	if s.associatedTaskID != "" && s.lockedTitle == "" {
-		s.lockedTitle = title
-	}
 	return nil
 }
 
 func (s *Session) restoreStateSnapshot() terminalRestoreStateSnapshot {
 	s.mu.RLock()
-	taskID := s.associatedTaskID
 	title := s.title
 	projectID := s.projectID
 	worktreeID := s.worktreeID
@@ -940,11 +890,6 @@ func (s *Session) restoreStateSnapshot() terminalRestoreStateSnapshot {
 	shellState := s.shellIntegration.shellState
 	s.shellIntegration.mu.Unlock()
 
-	var taskIDPtr *string
-	if strings.TrimSpace(taskID) != "" {
-		value := taskID
-		taskIDPtr = &value
-	}
 	var pendingCommandPtr *string
 	if strings.TrimSpace(pendingCommand) != "" {
 		value := pendingCommand
@@ -961,7 +906,6 @@ func (s *Session) restoreStateSnapshot() terminalRestoreStateSnapshot {
 		ProjectID:         projectID,
 		WorktreeID:        worktreeID,
 		Title:             title,
-		TaskID:            taskIDPtr,
 		OrderIndex:        orderIndex,
 		InitialWorkingDir: initialWorkingDir,
 		LastCwd:           workingDir,
@@ -1035,7 +979,6 @@ func (s *Session) Snapshot() SessionSnapshot {
 		}
 	}
 
-	snapshot.TaskID = s.TaskID()
 	snapshot.Traffic = s.TrafficStatsSnapshot()
 
 	return snapshot
@@ -1336,17 +1279,6 @@ func cloneSessionMetadata(meta *SessionMetadata) *SessionMetadata {
 		copyMeta.AIAssistant = &infoCopy
 	}
 	return &copyMeta
-}
-
-func (s *Session) broadcastMetadataSnapshot() {
-	s.metaMu.RLock()
-	meta := cloneSessionMetadata(s.lastMetadata)
-	s.metaMu.RUnlock()
-	if meta == nil {
-		return
-	}
-	meta.TaskID = s.TaskID()
-	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: meta})
 }
 
 func cloneBytes(src []byte) []byte {

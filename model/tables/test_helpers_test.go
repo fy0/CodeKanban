@@ -25,8 +25,6 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(
 		&ProjectTable{},
 		&WorktreeTable{},
-		&TaskTable{},
-		&TaskCommentTable{},
 	); err != nil {
 		t.Fatalf("auto migrate failed: %v", err)
 	}

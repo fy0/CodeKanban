@@ -77,9 +77,6 @@ const presetTerminalTabColors = computed(() => {
     tabBg: preset?.colors.terminalTabBg,
     tabActiveBg: preset?.colors.terminalTabActiveBg,
     headerBorder: preset?.colors.terminalHeaderBorder,
-    kanbanBoardBg: preset?.colors.kanbanBoardBg,
-    kanbanCardBg: preset?.colors.kanbanCardBg,
-    kanbanBorderEnabled: preset?.colors.kanbanBorderEnabled,
   };
 });
 
@@ -153,19 +150,6 @@ const cssVarsToSet = computed(() => ({
   '--kanban-terminal-header-border': resolvedTerminalHeaderBorder.value,
   // 空终端引导文字颜色
   '--kanban-terminal-empty-guide-fg': theme.value.terminalEmptyGuideFg || theme.value.terminalFg,
-  // 看板颜色
-  '--kanban-board-bg':
-    theme.value.kanbanBoardBg ||
-    presetTerminalTabColors.value.kanbanBoardBg ||
-    theme.value.bodyColor,
-  '--kanban-card-bg':
-    theme.value.kanbanCardBg ||
-    presetTerminalTabColors.value.kanbanCardBg ||
-    theme.value.surfaceColor,
-  '--kanban-border':
-    (theme.value.kanbanBorderEnabled ?? presetTerminalTabColors.value.kanbanBorderEnabled ?? true)
-      ? '1px solid var(--n-border-color)'
-      : 'none',
   '--app-text-color': resolvedTextColor.value,
   '--app-input-border-color': inputBorderColor.value,
   '--app-input-border-hover-color': inputBorderHoverColor.value,

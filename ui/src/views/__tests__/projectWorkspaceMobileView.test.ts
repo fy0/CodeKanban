@@ -28,8 +28,7 @@ describe('projectWorkspaceMobileView', () => {
     expect(normalizeMobileView('changes')).toBe('changes');
   });
 
-  it('blocks kanban and falls back invalid values to the default mobile view', () => {
-    expect(normalizeMobileView('kanban')).toBe(DEFAULT_MOBILE_VIEW);
+  it('falls back invalid values to the default mobile view', () => {
     expect(normalizeMobileView('unknown')).toBe(DEFAULT_MOBILE_VIEW);
     expect(normalizeMobileView(null)).toBe(DEFAULT_MOBILE_VIEW);
     expect(normalizeMobileView(undefined)).toBe(DEFAULT_MOBILE_VIEW);
@@ -37,7 +36,6 @@ describe('projectWorkspaceMobileView', () => {
 
   it('maps hidden persisted views back to projects', () => {
     expect(restorePersistedMobileView('notifications')).toBe(DEFAULT_MOBILE_VIEW);
-    expect(restorePersistedMobileView('kanban')).toBe(DEFAULT_MOBILE_VIEW);
   });
 
   it('keeps non-hidden persisted views unchanged', () => {
@@ -54,7 +52,6 @@ describe('projectWorkspaceMobileView', () => {
     expect(mobileViewToRouteTab('webSession')).toBe('web');
     expect(mobileViewToRouteTab('files')).toBe('files');
     expect(mobileViewToRouteTab('changes')).toBe('changes');
-    expect(mobileViewToRouteTab('kanban')).toBe('projects');
   });
 
   it('maps route tabs back to visible mobile views', () => {
@@ -63,7 +60,6 @@ describe('projectWorkspaceMobileView', () => {
     expect(routeTabToMobileView('web')).toBe('webSession');
     expect(routeTabToMobileView('files')).toBe('files');
     expect(routeTabToMobileView('changes')).toBe('changes');
-    expect(routeTabToMobileView('kanban')).toBe(DEFAULT_MOBILE_VIEW);
     expect(routeTabToMobileView('unknown')).toBe(DEFAULT_MOBILE_VIEW);
   });
 
@@ -111,7 +107,7 @@ describe('projectWorkspaceMobileView', () => {
     ).toBe('');
     expect(
       resolveMobileProjectSourceViewChange({
-        previousView: 'kanban',
+        previousView: 'invalid',
         nextView: 'projects',
       })
     ).toBe('');
