@@ -135,6 +135,8 @@ type Manager struct {
 
 	mu                          sync.RWMutex
 	runs                        map[string]*activeRun
+	// Codex can report turn completion before its app-server releases the thread writer.
+	codexRunDrains              map[string]*activeRun
 	clients                     map[*client]struct{}
 	autoRetryTimers             map[string]*time.Timer
 	scheduledInputTimers        map[string]*time.Timer
@@ -445,6 +447,7 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		piRuntimeTerminators:        make(map[string]piRuntimeTerminator),
 		piRuntimes:                  make(map[string]*piSessionRuntime),
 		runs:                        make(map[string]*activeRun),
+		codexRunDrains:              make(map[string]*activeRun),
 		clients:                     make(map[*client]struct{}),
 		autoRetryTimers:             make(map[string]*time.Timer),
 		scheduledInputTimers:        make(map[string]*time.Timer),
@@ -3908,6 +3911,9 @@ func (m *Manager) sendMessageInternal(
 		return err
 	}
 	m.cancelAutoRetryTimer(sessionID)
+	if err := m.waitForCodexRunDrain(ctx, sessionID); err != nil {
+		return err
+	}
 	if m.hasActiveRun(sessionID) {
 		return fmt.Errorf("session is already running")
 	}
@@ -4100,6 +4106,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		run.closeInput()
 		run.clearPendingApproval()
 		run.clearPendingServerRequest()
+		m.finishCodexRunDrain(session.ID, run)
 		close(run.done)
 		if m.releaseActiveRun(session.ID, run) && run.syncSourceAfterRun && !m.hasPendingSessionWork(session.ID) {
 			m.maybeSyncSessionAfterRun(session)
@@ -6172,6 +6179,47 @@ func (m *Manager) hasActiveRun(sessionID string) bool {
 	defer m.mu.RUnlock()
 	_, ok := m.runs[sessionID]
 	return ok
+}
+
+func (m *Manager) beginCodexRunDrain(sessionID string, run *activeRun) {
+	if run == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.runs[sessionID] == run {
+		if m.codexRunDrains == nil {
+			m.codexRunDrains = make(map[string]*activeRun)
+		}
+		m.codexRunDrains[sessionID] = run
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) finishCodexRunDrain(sessionID string, run *activeRun) {
+	m.mu.Lock()
+	if m.codexRunDrains[sessionID] == run {
+		delete(m.codexRunDrains, sessionID)
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) waitForCodexRunDrain(ctx context.Context, sessionID string) error {
+	for {
+		m.mu.RLock()
+		run := m.codexRunDrains[sessionID]
+		m.mu.RUnlock()
+		if run == nil {
+			return nil
+		}
+
+		select {
+		case <-run.done:
+			// The drain entry is removed immediately before the done channel is
+			// closed. Re-check it to cover that handoff window.
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // Claude invokes the PreToolUse hook before it emits a stdio control_request.

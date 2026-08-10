@@ -661,6 +661,7 @@ func (m *Manager) runCodexAppServerSession(
 
 				stopAndDrainRollout()
 				turnCompleted = true
+				m.beginCodexRunDrain(session.ID, run)
 				finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
 				now := time.Now()
 				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{

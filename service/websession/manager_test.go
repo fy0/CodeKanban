@@ -3553,6 +3553,13 @@ func TestSendMessageCodexAppServerAllowsNextTurnAfterTurnCompleted(t *testing.T)
 		t.Fatalf("second SendMessage returned error after turn completed: %v", err)
 	}
 	waitForSessionToSettle(t, manager, created.ID)
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error after second turn: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected second turn to finish after the first app-server exited, got status=%q error=%v", record.Status, record.LastError)
+	}
 
 	rawEvents, err := manager.store.readEvents(created.ID)
 	if err != nil {
@@ -8314,6 +8321,8 @@ const childThreadId = 'thread_child';
 const childTurnId = 'turn_child';
 const stateFile = (process.env.CODEKANBAN_FAKE_CODEX_PATH || __filename) + '.state';
 const goalStateFile = stateFile + '.goal.json';
+const writerLockFile = stateFile + '.writer';
+let writerLockHeld = false;
 let activeThreadId = threadId;
 
 function readGoalState() {
@@ -8973,6 +8982,19 @@ rl.on('line', line => {
     const resumedThreadId = message.params && typeof message.params.threadId === 'string'
       ? message.params.threadId
       : threadId;
+    if (mode === 'turn_complete_linger') {
+      try {
+        const lock = fs.openSync(writerLockFile, 'wx');
+        fs.closeSync(lock);
+        writerLockHeld = true;
+      } catch (error) {
+        send({
+          id: message.id,
+          error: { message: 'thread ' + resumedThreadId + ' already has an active writer' },
+        });
+        return;
+      }
+    }
     activeThreadId = resumedThreadId;
     respondThread(message.id, resumedThreadId);
     return;
@@ -9413,6 +9435,13 @@ rl.on('line', line => {
 
 rl.on('close', () => process.exit(0));
 process.on('exit', () => {
+  if (writerLockHeld) {
+    try {
+      fs.unlinkSync(writerLockFile);
+    } catch (error) {
+      // Ignore a lock that was already removed by the test process.
+    }
+  }
   if (mode === 'turn_complete_linger') {
     fs.appendFileSync(stateFile + '.exits', '1\n');
   }
