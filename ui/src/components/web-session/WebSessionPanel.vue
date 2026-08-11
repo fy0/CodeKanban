@@ -578,8 +578,39 @@
                         </n-checkbox>
                       </div>
                     </n-popover>
+                    <n-popover
+                      v-if="timelineSearchQuery.trim() && timelineSearchMatches.length > 0"
+                      trigger="click"
+                      placement="bottom-end"
+                      :show-arrow="false"
+                    >
+                      <template #trigger>
+                        <button
+                          type="button"
+                          class="timeline-search-count timeline-search-count-trigger"
+                          :title="t('webSession.conversationSearchJump')"
+                          :aria-label="`${t('webSession.conversationSearchJump')}: ${timelineSearchResultLabel}`"
+                          aria-live="polite"
+                        >
+                          {{ timelineSearchResultLabel }}
+                          <n-icon size="12" aria-hidden="true"><ChevronDownOutline /></n-icon>
+                        </button>
+                      </template>
+                      <div class="timeline-search-jump-popover">
+                        <div class="timeline-search-jump-title">
+                          {{ t('webSession.conversationSearchJump') }}
+                        </div>
+                        <n-pagination
+                          :page="timelineSearchCurrentIndex + 1"
+                          :page-count="timelineSearchMatches.length"
+                          :simple="true"
+                          size="small"
+                          @update:page="handleTimelineSearchPageChange"
+                        />
+                      </div>
+                    </n-popover>
                     <span
-                      v-if="timelineSearchQuery.trim()"
+                      v-else-if="timelineSearchQuery.trim()"
                       class="timeline-search-count"
                       aria-live="polite"
                     >
@@ -3697,6 +3728,7 @@ import {
   findWebSessionConversationSearchMatches,
   matchesWebSessionConversationSearchTarget,
   mergeWebSessionConversationSearchMatches,
+  resolveWebSessionConversationSearchMatchIndex,
   type WebSessionConversationSearchFilters,
   type WebSessionConversationSearchMatch,
 } from '@/components/web-session/webSessionConversationSearch';
@@ -6077,6 +6109,7 @@ async function loadTimelineSearch() {
   timelineSearchRemoteMatches.value = [];
   timelineSearchRemoteLoading.value = true;
   timelineSearchRemoteError.value = false;
+  let shouldLocateInitialRemoteMatch = timelineSearchMatches.value.length === 0;
 
   try {
     let cursor = '';
@@ -6102,16 +6135,18 @@ async function loadTimelineSearch() {
         return;
       }
 
-      const previousCount = timelineSearchRemoteMatches.value.length;
       timelineSearchRemoteMatches.value = mergeWebSessionConversationSearchMatches(
         [],
         [...timelineSearchRemoteMatches.value, ...result.items]
       );
-      if (previousCount === 0 && timelineSearchRemoteMatches.value.length > 0) {
+      if (shouldLocateInitialRemoteMatch && timelineSearchRemoteMatches.value.length > 0) {
+        shouldLocateInitialRemoteMatch = false;
         await nextTick();
-        const firstMatch = timelineSearchMatches.value[0];
-        if (firstMatch) {
-          await locateTimelineSearchMatch(firstMatch);
+        const latestMatchIndex = timelineSearchMatches.value.length - 1;
+        const latestMatch = timelineSearchMatches.value[latestMatchIndex];
+        if (latestMatch) {
+          timelineSearchCurrentIndex.value = latestMatchIndex;
+          await locateTimelineSearchMatch(latestMatch);
         }
       }
       if (result.done || !result.nextCursor) {
@@ -6221,6 +6256,16 @@ async function navigateTimelineSearch(direction: 'previous' | 'next') {
   }
 }
 
+function handleTimelineSearchPageChange(page: number) {
+  const nextIndex = Math.trunc(page) - 1;
+  const match = timelineSearchMatches.value[nextIndex];
+  if (!match) {
+    return;
+  }
+  timelineSearchCurrentIndex.value = nextIndex;
+  void locateTimelineSearchMatch(match);
+}
+
 watch(
   [timelineSearchQuery, timelineSearchFilters, selectedSubAgentThreadId],
   () => {
@@ -6229,9 +6274,11 @@ watch(
     clearTimelineSearchRemoteState();
     if (timelineSearchOpen.value && normalizedTimelineSearchQuery.value) {
       void nextTick().then(() => {
-        const firstMatch = timelineSearchMatches.value[0];
-        if (firstMatch) {
-          void locateTimelineSearchMatch(firstMatch);
+        const latestMatchIndex = timelineSearchMatches.value.length - 1;
+        const latestMatch = timelineSearchMatches.value[latestMatchIndex];
+        if (latestMatch) {
+          timelineSearchCurrentIndex.value = latestMatchIndex;
+          void locateTimelineSearchMatch(latestMatch);
         }
       });
       scheduleTimelineSearchRequest();
@@ -6240,12 +6287,17 @@ watch(
   { deep: true }
 );
 
-watch(timelineSearchMatches, matches => {
+watch(timelineSearchMatches, (matches, previousMatches) => {
   if (matches.length === 0) {
     timelineSearchCurrentIndex.value = 0;
     return;
   }
-  timelineSearchCurrentIndex.value = Math.min(timelineSearchCurrentIndex.value, matches.length - 1);
+  const previousMatch = previousMatches[timelineSearchCurrentIndex.value] ?? null;
+  timelineSearchCurrentIndex.value = resolveWebSessionConversationSearchMatchIndex(
+    matches,
+    previousMatch,
+    timelineSearchCurrentIndex.value
+  );
 });
 
 function setTimelineBlockRef(element: unknown, block: WebSessionBlock) {
@@ -17547,7 +17599,7 @@ defineExpose({
 .timeline-agent-toolbar {
   position: sticky;
   top: 8px;
-  z-index: 3;
+  z-index: 5;
   display: flex;
   align-items: center;
   box-sizing: border-box;
@@ -17564,6 +17616,8 @@ defineExpose({
 
 .timeline-agent-toolbar.is-search-open {
   width: min(520px, 100%);
+  background: var(--app-surface-color, #fff);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--app-text-color, #111827) 10%, transparent);
 }
 
 .timeline-agent-toolbar:not(.is-search-open):not(.has-sub-agent-filter) {
@@ -17586,11 +17640,49 @@ defineExpose({
 .timeline-search-count {
   flex: 0 0 auto;
   min-width: 52px;
+  min-height: 28px;
   color: var(--n-text-color-3);
   font-size: 12px;
-  line-height: 28px;
+  line-height: 1;
   text-align: center;
   white-space: nowrap;
+}
+
+.timeline-search-count-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.timeline-search-count-trigger:hover,
+.timeline-search-count-trigger:focus-visible {
+  color: var(--n-primary-color);
+  background: color-mix(in srgb, var(--n-primary-color) 9%, transparent);
+  outline: none;
+}
+
+.timeline-search-jump-popover {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 176px;
+}
+
+.timeline-search-jump-title {
+  align-self: stretch;
+  color: var(--n-text-color-2);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .timeline-search-filter-popover {

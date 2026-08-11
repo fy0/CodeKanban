@@ -701,6 +701,7 @@ export default {
     conversationSearchSystem: 'System interactions',
     conversationSearchPrevious: 'Previous search result',
     conversationSearchNext: 'Next search result',
+    conversationSearchJump: 'Jump to search result',
     conversationSearchNoResults: 'No matching results',
     conversationSearchSearching: 'Searching',
     conversationSearchFailed: 'Search failed',

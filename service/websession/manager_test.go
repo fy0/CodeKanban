@@ -2991,6 +2991,9 @@ func TestManagerSearchSessionConversationFiltersAndPaginates(t *testing.T) {
 	if pageOne.Total != 5 || pageOne.Done || pageOne.NextCursor == "" || len(pageOne.Items) != 2 {
 		t.Fatalf("unexpected first conversation search page: %+v", pageOne)
 	}
+	if pageOne.Items[0].OrderIndex != 5 || pageOne.Items[1].OrderIndex != 4 {
+		t.Fatalf("expected newest conversation matches first, got %+v", pageOne.Items)
+	}
 
 	pageTwo, err := manager.SearchSessionConversation(
 		context.Background(),
@@ -3009,6 +3012,9 @@ func TestManagerSearchSessionConversationFiltersAndPaginates(t *testing.T) {
 	}
 	if pageTwo.Total != 5 || pageTwo.Done || pageTwo.NextCursor == "" || len(pageTwo.Items) != 2 {
 		t.Fatalf("unexpected second conversation search page: %+v", pageTwo)
+	}
+	if pageTwo.Items[0].OrderIndex != 3 || pageTwo.Items[1].OrderIndex != 2 {
+		t.Fatalf("expected descending second search page, got %+v", pageTwo.Items)
 	}
 
 	pageThree, err := manager.SearchSessionConversation(
@@ -3029,6 +3035,9 @@ func TestManagerSearchSessionConversationFiltersAndPaginates(t *testing.T) {
 	if pageThree.Total != 5 || !pageThree.Done || pageThree.NextCursor != "" || len(pageThree.Items) != 1 {
 		t.Fatalf("unexpected third conversation search page: %+v", pageThree)
 	}
+	if pageThree.Items[0].OrderIndex != 1 {
+		t.Fatalf("expected oldest match on the final search page, got %+v", pageThree.Items)
+	}
 
 	toolOnly, err := manager.SearchSessionConversation(
 		context.Background(),
@@ -3047,6 +3056,33 @@ func TestManagerSearchSessionConversationFiltersAndPaginates(t *testing.T) {
 	}
 	if toolOnly.Items[0].ToolID != "tool-needle" || toolOnly.Items[0].CommandGroupID != "group-needle" {
 		t.Fatalf("expected tool identifiers, got %+v", toolOnly.Items[0])
+	}
+
+	literalPercent := tables.WebSessionItemTable{
+		WebSessionID: session.ID,
+		OrderIndex:   6,
+		ItemKind:     "assistant",
+		ItemType:     "assistant_message",
+		Text:         "progress is 100% complete",
+	}
+	literalPercent.Init()
+	if err := model.GetDB().Create(&literalPercent).Error; err != nil {
+		t.Fatalf("seed literal percent conversation row: %v", err)
+	}
+	percentOnly, err := manager.SearchSessionConversation(
+		context.Background(),
+		session.ID,
+		"%",
+		false,
+		true,
+		false,
+		false,
+		"",
+		"",
+		20,
+	)
+	if err != nil || percentOnly.Total != 1 || len(percentOnly.Items) != 1 || percentOnly.Items[0].ID != literalPercent.ID {
+		t.Fatalf("expected percent to be searched literally, got %+v, %v", percentOnly, err)
 	}
 
 	threadOnly, err := manager.SearchSessionConversation(

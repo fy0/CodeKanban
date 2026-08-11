@@ -145,6 +145,25 @@ export function areWebSessionConversationSearchMatchesEquivalent(
   );
 }
 
+export function resolveWebSessionConversationSearchMatchIndex(
+  matches: WebSessionConversationSearchMatch[],
+  activeMatch: WebSessionConversationSearchMatch | null | undefined,
+  fallbackIndex: number
+) {
+  if (matches.length === 0) {
+    return 0;
+  }
+  if (activeMatch) {
+    const activeIndex = matches.findIndex(match =>
+      areWebSessionConversationSearchMatchesEquivalent(match, activeMatch)
+    );
+    if (activeIndex >= 0) {
+      return activeIndex;
+    }
+  }
+  return Math.max(0, Math.min(Math.trunc(fallbackIndex), matches.length - 1));
+}
+
 export function matchesWebSessionConversationSearchTarget(
   block: WebSessionBlock,
   match: WebSessionConversationSearchMatch

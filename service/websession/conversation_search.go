@@ -90,133 +90,107 @@ func (m *Manager) SearchSessionConversation(
 		return SessionConversationSearchResult{}, err
 	}
 
-	scope := db.WithContext(ctx).
-		Model(&tables.WebSessionItemTable{}).
-		Where("web_session_id = ?", sessionID)
-	if sourceThreadID = strings.TrimSpace(sourceThreadID); sourceThreadID != "" {
-		scope = scope.Where("source_thread_id = ?", sourceThreadID)
-	}
-	scope = scope.Select(
-		"id, source_thread_id, source_turn_id, source_item_id, order_index, item_kind, item_type, text, tool_json, detail_json, payload_json",
+	predicate, predicateArgs := sessionConversationSearchPredicate(
+		query,
+		includeUser,
+		includeAssistant,
+		includeTools,
+		includeSystem,
 	)
+	baseScope := db.WithContext(ctx).
+		Model(&tables.WebSessionItemTable{}).
+		Where("web_session_id = ?", sessionID).
+		Where(predicate, predicateArgs...)
+	if sourceThreadID = strings.TrimSpace(sourceThreadID); sourceThreadID != "" {
+		baseScope = baseScope.Where("source_thread_id = ?", sourceThreadID)
+	}
+
+	total := cursor.Total
+	if cursor.ID == "" {
+		var count int64
+		if err := baseScope.Count(&count).Error; err != nil {
+			return SessionConversationSearchResult{}, err
+		}
+		total = int(count)
+	}
+
+	pageScope := baseScope
+	if cursor.ID != "" {
+		pageScope = pageScope.Where(
+			"(order_index < ? OR (order_index = ? AND id < ?))",
+			cursor.OrderIndex,
+			cursor.OrderIndex,
+			cursor.ID,
+		)
+	}
 
 	var rows []tables.WebSessionItemTable
-	if err := scope.Order("order_index ASC").Order("id ASC").Find(&rows).Error; err != nil {
+	if err := pageScope.
+		Select("id, source_thread_id, source_turn_id, source_item_id, order_index, item_kind, tool_json").
+		Order("order_index DESC").
+		Order("id DESC").
+		Limit(limit + 1).
+		Find(&rows).Error; err != nil {
 		return SessionConversationSearchResult{}, err
 	}
 
-	allMatches := make([]SessionConversationSearchMatch, 0)
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	items := make([]SessionConversationSearchMatch, 0, len(rows))
 	for _, row := range rows {
-		if err := ctx.Err(); err != nil {
-			return SessionConversationSearchResult{}, err
-		}
-		if !matchesSessionConversationItem(
-			row,
-			query,
-			includeUser,
-			includeAssistant,
-			includeTools,
-			includeSystem,
-		) {
-			continue
-		}
-		match := mapSessionConversationSearchMatch(row, sessionID)
-		if cursor.ID != "" && !afterSessionConversationSearchCursor(match, cursor) {
-			continue
-		}
-		allMatches = append(allMatches, match)
+		items = append(items, mapSessionConversationSearchMatch(row, sessionID))
 	}
 
-	total := len(allMatches)
-	if cursor.ID != "" {
-		total = cursor.Total
-	}
 	result := SessionConversationSearchResult{
-		Items: allMatches,
-		Done:  true,
+		Items: items,
+		Done:  !hasMore,
 		Total: total,
 	}
-	if len(result.Items) > limit {
-		result.Items = result.Items[:limit]
-		result.Done = false
+	if hasMore && len(result.Items) > 0 {
 		result.NextCursor = encodeSessionConversationSearchCursor(result.Items[len(result.Items)-1], total)
 	}
 	return result, nil
 }
 
-func afterSessionConversationSearchCursor(
-	match SessionConversationSearchMatch,
-	cursor sessionConversationSearchCursor,
-) bool {
-	return match.OrderIndex > cursor.OrderIndex ||
-		(match.OrderIndex == cursor.OrderIndex && match.ID > cursor.ID)
-}
-
-func matchesSessionConversationItem(
-	row tables.WebSessionItemTable,
+func sessionConversationSearchPredicate(
 	query string,
 	includeUser bool,
 	includeAssistant bool,
 	includeTools bool,
 	includeSystem bool,
-) bool {
-	kind := strings.ToLower(strings.TrimSpace(row.ItemKind))
-	switch kind {
-	case "user":
-		return includeUser && strings.Contains(strings.ToLower(row.Text), query)
-	case "assistant":
-		return includeAssistant && strings.Contains(strings.ToLower(row.Text), query)
-	case "tool":
-		return includeTools && strings.Contains(sessionConversationToolSearchText(row), query)
-	case "system":
-		return includeSystem && strings.Contains(sessionConversationSystemSearchText(row), query)
-	default:
-		return false
-	}
-}
-
-func sessionConversationToolSearchText(row tables.WebSessionItemTable) string {
-	var tool HistoryTool
-	decodeJSONText(row.ToolJSON, &tool)
-
-	var builder strings.Builder
-	appendSearchText := func(value string) {
-		if strings.TrimSpace(value) == "" {
-			return
+) (string, []any) {
+	clauses := make([]string, 0, 4)
+	args := make([]any, 0, 16)
+	appendKind := func(kind string, columns ...string) {
+		columnClauses := make([]string, 0, len(columns))
+		args = append(args, kind)
+		for _, column := range columns {
+			columnClauses = append(
+				columnClauses,
+				"instr(lower(coalesce("+column+", '')), ?) > 0",
+			)
+			args = append(args, query)
 		}
-		builder.WriteString(value)
-		builder.WriteByte('\n')
+		clauses = append(
+			clauses,
+			"(lower(trim(item_kind)) = ? AND ("+strings.Join(columnClauses, " OR ")+"))",
+		)
 	}
-	appendSearchText(row.Text)
-	appendSearchText(row.ItemType)
-	appendSearchText(tool.Name)
-	appendSearchText(tool.Kind)
-	appendSearchText(tool.Output)
-	if tool.Input != nil {
-		if encoded, err := json.Marshal(tool.Input); err == nil {
-			appendSearchText(string(encoded))
-		}
+	if includeUser {
+		appendKind("user", "text")
 	}
-	if tool.Meta != nil {
-		if encoded, err := json.Marshal(tool.Meta); err == nil {
-			appendSearchText(string(encoded))
-		}
+	if includeAssistant {
+		appendKind("assistant", "text")
 	}
-	appendSearchText(row.ToolJSON)
-	appendSearchText(row.PayloadJSON)
-	return strings.ToLower(builder.String())
-}
-
-func sessionConversationSystemSearchText(row tables.WebSessionItemTable) string {
-	var builder strings.Builder
-	for _, value := range []string{row.Text, row.ItemType, row.DetailJSON, row.PayloadJSON} {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		builder.WriteString(value)
-		builder.WriteByte('\n')
+	if includeTools {
+		appendKind("tool", "text", "item_type", "tool_json", "payload_json")
 	}
-	return strings.ToLower(builder.String())
+	if includeSystem {
+		appendKind("system", "text", "item_type", "detail_json", "payload_json")
+	}
+	return strings.Join(clauses, " OR "), args
 }
 
 func mapSessionConversationSearchMatch(

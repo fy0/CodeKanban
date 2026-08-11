@@ -679,6 +679,7 @@ export default {
     conversationSearchSystem: '系统交互',
     conversationSearchPrevious: '上一条搜索结果',
     conversationSearchNext: '下一条搜索结果',
+    conversationSearchJump: '跳转到搜索结果',
     conversationSearchNoResults: '无匹配结果',
     conversationSearchSearching: '搜索中',
     conversationSearchFailed: '搜索失败',

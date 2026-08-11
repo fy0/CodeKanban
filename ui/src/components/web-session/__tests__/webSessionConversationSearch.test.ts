@@ -5,6 +5,7 @@ import {
   findWebSessionConversationSearchMatches,
   matchesWebSessionConversationSearchTarget,
   mergeWebSessionConversationSearchMatches,
+  resolveWebSessionConversationSearchMatchIndex,
   type WebSessionConversationSearchFilters,
 } from '@/components/web-session/webSessionConversationSearch';
 
@@ -176,5 +177,32 @@ describe('webSessionConversationSearch', () => {
         toolId: 'tool-old',
       })
     ).toBe(true);
+  });
+
+  it('keeps the active result when older remote matches are inserted before it', () => {
+    const activeMatch = {
+      id: 'local-latest',
+      orderIndex: 20,
+      kind: 'assistant',
+    };
+    const matches = mergeWebSessionConversationSearchMatches(
+      [activeMatch],
+      [
+        { id: 'remote-oldest', orderIndex: 1, kind: 'user' },
+        { id: 'remote-older', orderIndex: 10, kind: 'assistant' },
+        activeMatch,
+      ]
+    );
+
+    expect(resolveWebSessionConversationSearchMatchIndex(matches, activeMatch, 0)).toBe(2);
+  });
+
+  it('clamps a missing active result to the requested fallback index', () => {
+    const matches = [
+      { id: 'first', orderIndex: 1, kind: 'user' },
+      { id: 'last', orderIndex: 2, kind: 'assistant' },
+    ];
+
+    expect(resolveWebSessionConversationSearchMatchIndex(matches, null, Number.MAX_VALUE)).toBe(1);
   });
 });
