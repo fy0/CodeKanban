@@ -13,6 +13,13 @@ function extractUserInputFieldSource() {
   return matched?.[0] ?? '';
 }
 
+function extractUserInputQuestionOpeningTag() {
+  const matched = webSessionPanelSource.match(
+    /<div\s+v-for="question in pendingUserInput\.questions"[\s\S]*?class="user-input-question"\s*>/
+  );
+  return matched?.[0] ?? '';
+}
+
 describe('web session user input IME protection', () => {
   it('creates a fresh answer card for each request', () => {
     expect(webSessionPanelSource).toMatch(
@@ -20,15 +27,11 @@ describe('web session user input IME protection', () => {
     );
   });
 
-  it('memoizes the freeform input against unrelated live refreshes', () => {
+  it('memoizes each question at the v-for boundary', () => {
+    const questionOpeningTag = extractUserInputQuestionOpeningTag();
     const fieldSource = extractUserInputFieldSource();
 
-    expect(fieldSource).toContain('v-memo="[');
-    expect(fieldSource).toContain('pendingUserInput.itemId');
-    expect(fieldSource).toContain('question.id');
-    expect(fieldSource).toContain('userInputDrafts[question.id]');
-    expect(fieldSource).toContain('isUserInputInteractionDisabled');
-    expect(fieldSource).toContain('question.isSecret');
-    expect(fieldSource).toContain('userInputPlaceholder(question)');
+    expect(questionOpeningTag).toContain('v-memo="userInputQuestionMemoDeps(question)"');
+    expect(fieldSource).not.toContain('v-memo');
   });
 });

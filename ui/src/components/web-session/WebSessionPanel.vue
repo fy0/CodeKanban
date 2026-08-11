@@ -1570,6 +1570,7 @@
                     <div
                       v-for="question in pendingUserInput.questions"
                       :key="question.id"
+                      v-memo="userInputQuestionMemoDeps(question)"
                       class="user-input-question"
                     >
                       <div class="user-input-question-header">
@@ -1626,14 +1627,6 @@
                       </n-radio-group>
                       <n-input
                         v-if="question.isOther || question.options.length === 0"
-                        v-memo="[
-                          pendingUserInput.itemId,
-                          question.id,
-                          userInputDrafts[question.id],
-                          isUserInputInteractionDisabled,
-                          question.isSecret,
-                          userInputPlaceholder(question),
-                        ]"
                         v-model:value="userInputDrafts[question.id]"
                         :type="question.isSecret ? 'password' : 'text'"
                         size="small"
@@ -3787,6 +3780,7 @@ import {
   scheduleWebSessionUserInputSlowHint,
 } from '@/components/web-session/webSessionUserInputSubmit';
 import {
+  buildWebSessionUserInputQuestionMemoDeps,
   buildWebSessionUserInputDraftSyncKey,
   buildWebSessionUserInputDraftStorageKey,
   reconcileWebSessionUserInputLocalState,
@@ -13788,6 +13782,17 @@ function userInputPlaceholder(question: WebSessionUserInputQuestion) {
     return t('webSession.userInputOtherPlaceholder');
   }
   return t('webSession.userInputAnswerPlaceholder');
+}
+
+function userInputQuestionMemoDeps(question: WebSessionUserInputQuestion) {
+  return buildWebSessionUserInputQuestionMemoDeps({
+    requestKey: pendingUserInputSyncKey.value,
+    question,
+    selections: userInputSelections.value[question.id],
+    draft: userInputDrafts.value[question.id],
+    disabled: isUserInputInteractionDisabled.value,
+    placeholder: userInputPlaceholder(question),
+  });
 }
 
 function buildUserInputAnswers() {
