@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -136,6 +137,10 @@ func generateDiffStatsSystem(ctx context.Context, root string, statuses []FileSt
 		if status.Kind == FileChangeKindUntracked || status.Kind == FileChangeKindAdded || !hasHead {
 			file, err := loadWorktreeDiffFile(root, path)
 			if err != nil {
+				if errors.Is(err, errDiffPathNotRegular) {
+					result[path] = DiffStat{}
+					continue
+				}
 				return nil, err
 			}
 			if file == nil || file.binary {

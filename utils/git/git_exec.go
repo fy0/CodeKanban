@@ -296,11 +296,8 @@ func preferenceForOperation(operation GitOperation) EnginePreference {
 	}
 }
 
-func autoPrefersSystem(operation GitOperation) bool {
-	switch operation {
-	case OperationBranchesRead, OperationStatus, OperationDiff, OperationWorktreesRead:
-		return false
-	default:
-		return true
-	}
+func autoPrefersSystem(GitOperation) bool {
+	// Auto keeps the built-in engine as a fallback, while using system Git
+	// whenever it can service the requested repository operation.
+	return true
 }

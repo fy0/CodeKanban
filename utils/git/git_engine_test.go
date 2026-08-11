@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestAutoRoutesReadsToBuiltinAndWritesToSystem(t *testing.T) {
+func TestAutoRoutesAllOperationsToSystem(t *testing.T) {
 	if !ProbeSystemGit(t.Context(), true).Available {
 		t.Skip("system Git is unavailable")
 	}
@@ -23,11 +23,10 @@ func TestAutoRoutesReadsToBuiltinAndWritesToSystem(t *testing.T) {
 	}
 	defer repo.Close()
 
-	if engine, err := repo.requireEngine(repoPath, OperationStatus); err != nil || engine != EngineBuiltin {
-		t.Fatalf("status engine = %q, err=%v, want builtin", engine, err)
-	}
-	if engine, err := repo.requireEngine(repoPath, OperationCommit); err != nil || engine != EngineSystem {
-		t.Fatalf("commit engine = %q, err=%v, want system", engine, err)
+	for _, operation := range allGitOperations {
+		if engine, err := repo.requireEngine(repoPath, operation); err != nil || engine != EngineSystem {
+			t.Fatalf("%s engine = %q, err=%v, want system", operation, engine, err)
+		}
 	}
 }
 
@@ -77,7 +76,7 @@ func TestExplicitEnginePreferencesDoNotFallback(t *testing.T) {
 	})
 }
 
-func TestAutoWriteFallsBackToBuiltinWhenSystemGitIsUnavailable(t *testing.T) {
+func TestAutoFallsBackToBuiltinWhenSystemGitIsUnavailable(t *testing.T) {
 	previous := CurrentEngineSettings()
 	ConfigureEngines(EngineSettings{
 		Read:       EnginePreferenceAuto,
@@ -92,6 +91,15 @@ func TestAutoWriteFallsBackToBuiltinWhenSystemGitIsUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Close()
+	if engine, err := repo.requireEngine(repoPath, OperationBranchesRead); err != nil || engine != EngineBuiltin {
+		t.Fatalf("branches read engine = %q, err=%v, want builtin fallback", engine, err)
+	}
+	if engine, err := repo.requireEngine(repoPath, OperationStatus); err != nil || engine != EngineBuiltin {
+		t.Fatalf("status engine = %q, err=%v, want builtin fallback", engine, err)
+	}
+	if engine, err := repo.requireEngine(repoPath, OperationDiff); err != nil || engine != EngineBuiltin {
+		t.Fatalf("diff engine = %q, err=%v, want builtin fallback", engine, err)
+	}
 	if engine, err := repo.requireEngine(repoPath, OperationCommit); err != nil || engine != EngineBuiltin {
 		t.Fatalf("commit engine = %q, err=%v, want builtin fallback", engine, err)
 	}

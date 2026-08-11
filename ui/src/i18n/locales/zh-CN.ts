@@ -1227,10 +1227,12 @@ export default {
     gitSettings: 'Git',
     gitSettingsDescription: '选择变更读取与仓库写入所使用的 Git 引擎',
     gitReadEngine: '变更读取引擎',
-    gitReadEngineTip: '自动模式优先使用内置引擎读取状态、Diff 和增删行，必要时回退到系统 Git。',
+    gitReadEngineTip:
+      '自动模式优先使用系统 Git 读取状态、Diff 和增删行；仅在系统 Git 不可用时回退到内置引擎。',
     gitWriteEngine: '仓库写入引擎',
-    gitWriteEngineTip: '自动模式优先使用系统 Git，使提交遵循 hook、签名、filter 和用户 Git 配置。',
-    gitEngineAuto: '自动',
+    gitWriteEngineTip:
+      '自动模式优先使用系统 Git，使提交遵循 hook、签名、filter 和用户 Git 配置；仅在系统 Git 不可用时回退到内置引擎。',
+    gitEngineAuto: '自动（系统优先）',
     gitEngineBuiltin: '内置',
     gitEngineSystem: '系统 Git',
     gitExecutable: 'Git 可执行文件',

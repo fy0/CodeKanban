@@ -56,6 +56,8 @@ type FileStatusResult struct {
 
 const maxDiffFileBytes int64 = 32 << 20
 
+var errDiffPathNotRegular = errors.New("diff path is not a regular file")
+
 func ListFileStatuses(path string) (map[string]FileStatus, error) {
 	return ListFileStatusesContext(context.Background(), path, true)
 }
@@ -303,6 +305,10 @@ func GenerateDiffStatsAgainstHEADContext(ctx context.Context, path string, statu
 		}
 		stat, statErr := generateDiffStat(repository, path, status)
 		if statErr != nil {
+			if errors.Is(statErr, errDiffPathNotRegular) {
+				result[normalizeGitRelativePath(status.Path)] = DiffStat{}
+				continue
+			}
 			return result, statErr
 		}
 		result[normalizeGitRelativePath(status.Path)] = stat
@@ -451,7 +457,7 @@ func loadWorktreeDiffFile(root, path string) (*contentDiffFile, error) {
 		content = []byte(target)
 	} else {
 		if !info.Mode().IsRegular() {
-			return nil, errors.New("diff path is not a regular file")
+			return nil, errDiffPathNotRegular
 		}
 		if info.Size() > maxDiffFileBytes {
 			return nil, fmt.Errorf("file exceeds diff limit of %d bytes", maxDiffFileBytes)

@@ -1288,11 +1288,11 @@ export default {
     gitSettingsDescription: 'Choose the engines used for repository inspection and writes',
     gitReadEngine: 'Change inspection engine',
     gitReadEngineTip:
-      'Auto uses the built-in engine for status, diff, and line statistics, then falls back to system Git when needed.',
+      'Auto prefers system Git for status, diff, and line statistics, falling back to the built-in engine only when system Git is unavailable.',
     gitWriteEngine: 'Repository write engine',
     gitWriteEngineTip:
-      'Auto prefers system Git so commits honor hooks, signing, filters, and the user Git configuration.',
-    gitEngineAuto: 'Auto',
+      'Auto prefers system Git so commits honor hooks, signing, filters, and the user Git configuration, falling back to the built-in engine only when system Git is unavailable.',
+    gitEngineAuto: 'Auto (system first)',
     gitEngineBuiltin: 'Built-in',
     gitEngineSystem: 'System Git',
     gitExecutable: 'Git executable',

@@ -283,6 +283,24 @@ func TestGenerateDiffStatAgainstHEADForBinaryUntrackedReturnsZero(t *testing.T) 
 	}
 }
 
+func TestGenerateDiffStatAgainstHEADForUntrackedDirectoryReturnsZero(t *testing.T) {
+	repoDir := initTestRepo(t)
+	if err := os.Mkdir(filepath.Join(repoDir, "nested-repository"), 0o755); err != nil {
+		t.Fatalf("create nested repository directory: %v", err)
+	}
+
+	stat, err := GenerateDiffStatAgainstHEAD(repoDir, FileStatus{
+		Path: "nested-repository",
+		Kind: FileChangeKindUntracked,
+	})
+	if err != nil {
+		t.Fatalf("GenerateDiffStatAgainstHEAD returned error: %v", err)
+	}
+	if stat.Additions != 0 || stat.Deletions != 0 {
+		t.Fatalf("unexpected untracked directory diff stat: %#v", stat)
+	}
+}
+
 func TestGenerateDiffStatsAgainstHEADContextBatchesTrackedAndUntrackedChanges(t *testing.T) {
 	repoDir := initTestRepoWithTrackedFile(t, "notes.txt", "hello\n")
 
