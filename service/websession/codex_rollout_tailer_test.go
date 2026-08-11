@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"code-kanban/model/tables"
 )
 
 func TestCodexRolloutTailerAcceptsLargeSessionMetadata(t *testing.T) {
@@ -28,6 +30,41 @@ func TestCodexRolloutTailerAcceptsLargeSessionMetadata(t *testing.T) {
 	}
 	if _, err := newCodexRolloutTailer(path, "thread-large-meta"); err != nil {
 		t.Fatalf("large valid session metadata was rejected: %v", err)
+	}
+}
+
+func TestWaitForCodexRolloutTailerRetriesUntilSessionMetadataAppears(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("create empty rollout: %v", err)
+	}
+
+	writeDone := make(chan error, 1)
+	go func() {
+		timer := time.NewTimer(100 * time.Millisecond)
+		defer timer.Stop()
+		<-timer.C
+		writeDone <- os.WriteFile(
+			path,
+			[]byte(`{"type":"session_meta","payload":{"id":"thread-delayed-meta"}}`+"\n"),
+			0o600,
+		)
+	}()
+
+	tailer, err := (&Manager{}).waitForCodexRolloutTailer(
+		context.Background(),
+		tables.WebSessionTable{},
+		"thread-delayed-meta",
+		path,
+	)
+	if err != nil {
+		t.Fatalf("wait for delayed rollout metadata: %v", err)
+	}
+	if tailer == nil || tailer.expectedThreadID != "thread-delayed-meta" {
+		t.Fatalf("unexpected rollout tailer: %#v", tailer)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write delayed rollout metadata: %v", err)
 	}
 }
 

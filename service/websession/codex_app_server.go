@@ -252,14 +252,17 @@ func (c *codexAppServerClient) readLoop(stdout io.Reader) {
 	defer close(c.incoming)
 	defer close(c.closed)
 
-	scanner := bufio.NewScanner(stdout)
-	const maxLine = 1024 * 1024 * 8
-	buffer := make([]byte, 64*1024)
-	scanner.Buffer(buffer, maxLine)
-
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
+	reader := bufio.NewReaderSize(stdout, 64*1024)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
+			if readErr != nil {
+				if readErr != io.EOF {
+					c.setCloseErr(readErr)
+				}
+				return
+			}
 			continue
 		}
 
@@ -269,6 +272,7 @@ func (c *codexAppServerClient) readLoop(stdout io.Reader) {
 			return
 		}
 
+		deliveredResponse := false
 		if key := appServerIDKey(message.ID); key != "" && message.Method == "" {
 			c.pendingMu.Lock()
 			responseCh := c.pending[key]
@@ -279,15 +283,19 @@ func (c *codexAppServerClient) readLoop(stdout io.Reader) {
 			if responseCh != nil {
 				responseCh <- message
 				close(responseCh)
-				continue
+				deliveredResponse = true
 			}
 		}
 
-		c.incoming <- message
-	}
-
-	if err := scanner.Err(); err != nil {
-		c.setCloseErr(err)
+		if !deliveredResponse {
+			c.incoming <- message
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				c.setCloseErr(readErr)
+			}
+			return
+		}
 	}
 }
 
@@ -488,7 +496,7 @@ func (m *Manager) runCodexAppServerSession(
 			}
 		}
 		if tailerErr != nil {
-			m.warnCodexCompatibilityFallback(session, run, "resume_rollout", tailerErr)
+			m.warnCodexRolloutMonitoringUnavailable(session, run, "resume_rollout", tailerErr)
 			rolloutTailers = nil
 		}
 	}
@@ -508,7 +516,7 @@ func (m *Manager) runCodexAppServerSession(
 			threadPath,
 		)
 		if tailerErr != nil {
-			m.warnCodexCompatibilityFallback(session, run, "fresh_rollout", tailerErr)
+			m.warnCodexRolloutMonitoringUnavailable(session, run, "fresh_rollout", tailerErr)
 		} else {
 			rolloutTailers = map[string]*codexRolloutTailer{threadID: rootTailer}
 		}
@@ -554,7 +562,7 @@ func (m *Manager) runCodexAppServerSession(
 			},
 		)
 		if monitorErr != nil {
-			m.warnCodexCompatibilityFallback(session, run, "rollout_monitor", monitorErr)
+			m.warnCodexRolloutMonitoringUnavailable(session, run, "rollout_monitor", monitorErr)
 		} else {
 			run.setCodexRolloutMonitor(monitor)
 		}
@@ -1657,6 +1665,37 @@ func (m *Manager) warnCodexCompatibilityFallback(
 		"Codex multi-agent V2 startup failed; continuing in compatibility mode.",
 		map[string]any{
 			"code":  "codex_multi_agent_v2_fallback",
+			"phase": phase,
+			"error": err.Error(),
+		},
+	)
+}
+
+func (m *Manager) warnCodexRolloutMonitoringUnavailable(
+	session tables.WebSessionTable,
+	run *activeRun,
+	phase string,
+	err error,
+) {
+	if err == nil {
+		return
+	}
+	phase = strings.TrimSpace(phase)
+	if m.logger != nil {
+		m.logger.Warn("Codex rollout monitoring unavailable; multi-agent V2 remains active",
+			zap.String("sessionId", session.ID),
+			zap.String("phase", phase),
+			zap.Error(err),
+		)
+	}
+	m.appendRunNote(
+		session.ID,
+		session,
+		run,
+		"warn",
+		"Codex rollout monitoring is unavailable; multi-agent V2 remains active with typed events.",
+		map[string]any{
+			"code":  "codex_rollout_monitor_unavailable",
 			"phase": phase,
 			"error": err.Error(),
 		},

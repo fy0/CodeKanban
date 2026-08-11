@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type codexThreadTestRequest struct {
@@ -55,6 +57,46 @@ func newCodexThreadTestClient(
 		_ = clientResponseReader.Close()
 	})
 	return client
+}
+
+func TestCodexAppServerClientReadsLargeResumeResponseAndStaysUsable(t *testing.T) {
+	const responseSize = 9 * 1024 * 1024
+	client := newCodexThreadTestClient(t, func(request codexThreadTestRequest) map[string]any {
+		switch request.Method {
+		case "thread/resume":
+			return map[string]any{"result": map[string]any{
+				"thread": map[string]any{
+					"id":      "thread_large",
+					"history": strings.Repeat("x", responseSize),
+				},
+			}}
+		case "config/read":
+			return map[string]any{"result": map[string]any{"ok": true}}
+		default:
+			return map[string]any{"error": map[string]any{
+				"code": -32601, "message": "unexpected method",
+			}}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resume, err := client.request(ctx, "thread/resume", map[string]any{"threadId": "thread_large"})
+	if err != nil {
+		t.Fatalf("large thread/resume response failed: %v", err)
+	}
+	if got := parseCodexThreadID(resume.Result); got != "thread_large" {
+		t.Fatalf("unexpected resumed thread id %q", got)
+	}
+
+	followUp, err := client.request(ctx, "config/read", map[string]any{})
+	if err != nil {
+		t.Fatalf("request after large thread/resume response failed: %v", err)
+	}
+	if decodeRawObject(followUp.Result)["ok"] != true {
+		t.Fatalf("unexpected follow-up response: %s", followUp.Result)
+	}
 }
 
 func TestListCodexDescendantsUsesAncestorPaginationAcrossArchiveStates(t *testing.T) {

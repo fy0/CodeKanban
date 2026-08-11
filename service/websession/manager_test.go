@@ -3563,7 +3563,7 @@ func TestSendMessageCodexAppServerFallsBackWhenV2ThreadStartFails(t *testing.T) 
 	requireCodexCompatibilityFallback(t, manager, created.ID, "thread_bootstrap")
 }
 
-func TestSendMessageCodexAppServerFallsBackWithoutRepeatingStartedTurn(t *testing.T) {
+func TestSendMessageCodexAppServerContinuesWhenFreshRolloutAttachmentFails(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -3594,16 +3594,17 @@ func TestSendMessageCodexAppServerFallsBackWithoutRepeatingStartedTurn(t *testin
 		t.Fatalf("GetSession returned error: %v", err)
 	}
 	if record.Status != string(StatusDone) {
-		t.Fatalf("expected rollout fallback to finish, got status=%q error=%v", record.Status, record.LastError)
+		t.Fatalf("expected run to finish without rollout monitoring, got status=%q error=%v", record.Status, record.LastError)
 	}
 	startedTurns, err := os.ReadFile(codexPath + ".state.turn-start-count")
 	if err != nil {
 		t.Fatalf("read turn start count: %v", err)
 	}
 	if strings.TrimSpace(string(startedTurns)) != "1" {
-		t.Fatalf("expected fallback not to repeat turn/start, got %q", startedTurns)
+		t.Fatalf("expected rollout monitoring failure not to repeat turn/start, got %q", startedTurns)
 	}
-	requireCodexCompatibilityFallback(t, manager, created.ID, "fresh_rollout")
+	requireCodexRolloutMonitoringWarning(t, manager, created.ID, "fresh_rollout")
+	requireNoCodexCompatibilityFallback(t, manager, created.ID)
 }
 
 func TestSendMessageCodexPreV2VersionUsesCompatibilityAppServerParams(t *testing.T) {
@@ -9901,6 +9902,35 @@ func requireCodexCompatibilityFallback(t *testing.T, manager *Manager, sessionID
 		}
 	}
 	t.Fatalf("expected compatibility fallback note for phase %q, got %#v", phase, events)
+}
+
+func requireCodexRolloutMonitoringWarning(t *testing.T, manager *Manager, sessionID string, phase string) {
+	t.Helper()
+	events, err := manager.store.readEvents(sessionID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	for _, event := range events {
+		if event.Type == "note" &&
+			stringValue(event.Payload["code"]) == "codex_rollout_monitor_unavailable" &&
+			stringValue(event.Payload["phase"]) == phase {
+			return
+		}
+	}
+	t.Fatalf("expected rollout monitoring warning for phase %q, got %#v", phase, events)
+}
+
+func requireNoCodexCompatibilityFallback(t *testing.T, manager *Manager, sessionID string) {
+	t.Helper()
+	events, err := manager.store.readEvents(sessionID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	for _, event := range events {
+		if event.Type == "note" && stringValue(event.Payload["code"]) == "codex_multi_agent_v2_fallback" {
+			t.Fatalf("unexpected compatibility fallback note: %#v", event)
+		}
+	}
 }
 
 func historyHasToolKind(events []Event, kind string) bool {

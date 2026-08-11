@@ -19,6 +19,8 @@ import (
 
 const codexRolloutTailerMaxLine = 8 * 1024 * 1024
 
+var errCodexRolloutSessionMetadataPending = errors.New("codex rollout session metadata is not available yet")
+
 type codexRolloutEntry struct {
 	Timestamp string         `json:"timestamp"`
 	Ordinal   *uint64        `json:"ordinal,omitempty"`
@@ -197,10 +199,7 @@ func isRetryableCodexRolloutAttachError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return true
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "session metadata was not found")
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, errCodexRolloutSessionMetadataPending)
 }
 
 func prepareCodexRolloutMonitorTailers(
@@ -536,7 +535,7 @@ func codexRolloutSessionID(file *os.File) (string, error) {
 	if err := scanner.Err(); err != nil {
 		return "", err
 	}
-	return "", fmt.Errorf("codex rollout session_meta was not found")
+	return "", errCodexRolloutSessionMetadataPending
 }
 
 func codexRolloutLocalHistoryOffset(file *os.File) (int64, error) {
@@ -571,7 +570,7 @@ func codexRolloutLocalHistoryOffset(file *os.File) (int64, error) {
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
-				return 0, fmt.Errorf("codex rollout session metadata was not found")
+				return 0, errCodexRolloutSessionMetadataPending
 			}
 			return 0, readErr
 		}
