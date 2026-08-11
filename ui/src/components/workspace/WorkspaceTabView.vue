@@ -87,6 +87,7 @@
                 placement="bottom-end"
                 :options="projectSwitchOptions"
                 @select="handleProjectSwitchSelect"
+                @update:show="handleProjectSwitchMenuShow"
               >
                 <button
                   type="button"
@@ -221,15 +222,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, h, onBeforeUnmount, ref, watch, type CSSProperties } from 'vue';
 import { useEventListener, useStorage } from '@vueuse/core';
-import { NIcon, type DropdownOption } from 'naive-ui';
+import { NIcon, NInput, type DropdownOption } from 'naive-ui';
 import {
   ChatbubblesOutline,
   ChevronDownOutline,
   FolderOpenOutline,
   GitBranchOutline,
   GridOutline,
+  SearchOutline,
   SyncOutline,
   TerminalOutline,
   WarningOutline,
@@ -453,22 +455,114 @@ const projectSwitchBadges = computed(() => {
 const currentProjectBadge = computed<ProjectBadge | null>(
   () => projectSwitchBadges.value.get(props.projectId) ?? null
 );
+const projectSwitchSearchStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  width: '180px',
+  padding: '7px 10px 6px',
+};
+const projectSwitchSearchLabelStyle: CSSProperties = {
+  margin: '0 2px 6px',
+  color: 'var(--n-text-color-3)',
+  fontSize: '12px',
+  fontWeight: '500',
+  lineHeight: '1.4',
+  userSelect: 'none',
+};
+const projectSwitchSearchEmptyStyle: CSSProperties = {
+  boxSizing: 'border-box',
+  width: '180px',
+  padding: '8px 12px',
+  color: 'var(--n-text-color-3)',
+  fontSize: '12px',
+  textAlign: 'center',
+};
+const projectSwitchSearch = ref('');
+const filteredRecentProjectIds = computed(() => {
+  const query = projectSwitchSearch.value.trim().toLocaleLowerCase();
+  if (!query) {
+    return recentProjectIds.value;
+  }
+  return recentProjectIds.value.filter(projectId => {
+    const project = projectStore.projects.find(item => item.id === projectId);
+    return [project?.name, project?.path, projectId].some(value =>
+      value?.toLocaleLowerCase().includes(query)
+    );
+  });
+});
 const projectSwitchOptions = computed<DropdownOption[]>(() => [
   {
-    label: projectSwitchLabel.value,
-    key: '__header__',
-    disabled: true,
+    type: 'render',
+    key: '__search__',
+    render: () =>
+      h(
+        'div',
+        {
+          class: 'project-switch-search',
+          style: projectSwitchSearchStyle,
+          onClick: (event: MouseEvent) => event.stopPropagation(),
+          onKeydown: (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') {
+              event.stopPropagation();
+            }
+          },
+        },
+        [
+          h(
+            'div',
+            {
+              class: 'project-switch-search-label',
+              style: projectSwitchSearchLabelStyle,
+            },
+            projectSwitchLabel.value
+          ),
+          h(
+            NInput,
+            {
+              value: projectSwitchSearch.value,
+              size: 'small',
+              clearable: true,
+              autofocus: true,
+              placeholder: t('terminal.projectSearchPlaceholder'),
+              'aria-label': t('terminal.projectSearchPlaceholder'),
+              'onUpdate:value': (value: string) => {
+                projectSwitchSearch.value = value;
+              },
+            },
+            {
+              prefix: () =>
+                h(NIcon, { size: 14, 'aria-hidden': true }, { default: () => h(SearchOutline) }),
+            }
+          ),
+        ]
+      ),
   },
-  ...recentProjectIds.value.map(projectId => {
-    const badge = projectSwitchBadges.value.get(projectId);
-    return {
-      label:
-        projectStore.projects.find(project => project.id === projectId)?.name?.trim() || projectId,
-      key: projectId,
-      disabled: projectId === props.projectId,
-      icon: badge ? () => renderProjectBadge(badge) : undefined,
-    };
-  }),
+  ...(filteredRecentProjectIds.value.length === 0
+    ? [
+        {
+          type: 'render' as const,
+          key: '__empty__',
+          render: () =>
+            h(
+              'div',
+              {
+                class: 'project-switch-search-empty',
+                style: projectSwitchSearchEmptyStyle,
+              },
+              t('common.noData')
+            ),
+        },
+      ]
+    : filteredRecentProjectIds.value.map(projectId => {
+        const badge = projectSwitchBadges.value.get(projectId);
+        return {
+          label:
+            projectStore.projects.find(project => project.id === projectId)?.name?.trim() ||
+            projectId,
+          key: projectId,
+          disabled: projectId === props.projectId,
+          icon: badge ? () => renderProjectBadge(badge) : undefined,
+        };
+      })),
   {
     type: 'divider',
     key: '__divider__',
@@ -479,6 +573,12 @@ const projectSwitchOptions = computed<DropdownOption[]>(() => [
     icon: () => h(NIcon, null, { default: () => h(GridOutline) }),
   },
 ]);
+
+function handleProjectSwitchMenuShow(show: boolean) {
+  if (!show) {
+    projectSwitchSearch.value = '';
+  }
+}
 
 function renderProjectBadge(badge: ProjectBadge) {
   return h(
@@ -497,7 +597,7 @@ function renderProjectBadge(badge: ProjectBadge) {
         fontSize: '10px',
         fontWeight: '700',
         lineHeight: '1',
-      } as any,
+      } satisfies CSSProperties,
     },
     badge.label
   );

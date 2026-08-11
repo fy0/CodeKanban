@@ -440,6 +440,7 @@ export default {
   terminal: {
     title: 'Terminal',
     switchProject: 'Switch project',
+    projectSearchPlaceholder: 'Search projects',
     openProjectList: 'Open project list',
     sidebarScopeAll: 'All terminals',
     sidebarScopeCurrent: 'Current terminal',

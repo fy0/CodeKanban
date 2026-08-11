@@ -423,6 +423,7 @@ export default {
   terminal: {
     title: '终端',
     switchProject: '切换项目',
+    projectSearchPlaceholder: '搜索项目',
     openProjectList: '打开项目列表',
     sidebarScopeAll: '全部终端',
     sidebarScopeCurrent: '当前终端',
