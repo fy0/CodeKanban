@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   canNavigateWebSessionUserMessage,
   findAdjacentWebSessionUserMessageKey,
+  findViewportAdjacentWebSessionUserMessageKey,
+  resolveWebSessionTimelineStartConfirmation,
   resolveWebSessionUserMessageTarget,
   type WebSessionUserMessageNavigationBlock,
 } from '@/components/web-session/webSessionUserMessageNavigation';
@@ -23,6 +25,37 @@ const blocks: WebSessionUserMessageNavigationBlock[] = [
 ];
 
 describe('webSessionUserMessageNavigation', () => {
+  it('requires two clicks on the same session to jump to the timeline start', () => {
+    const first = resolveWebSessionTimelineStartConfirmation({
+      sessionId: 'session-1',
+      currentState: null,
+      now: 1000,
+      ttlMs: 5000,
+    });
+    expect(first).toEqual({
+      shouldProceed: false,
+      nextState: { sessionId: 'session-1', expiresAt: 6000 },
+    });
+
+    expect(
+      resolveWebSessionTimelineStartConfirmation({
+        sessionId: 'session-1',
+        currentState: first.nextState,
+        now: 1500,
+        ttlMs: 5000,
+      })
+    ).toEqual({ shouldProceed: true, nextState: null });
+
+    expect(
+      resolveWebSessionTimelineStartConfirmation({
+        sessionId: 'session-2',
+        currentState: first.nextState,
+        now: 1500,
+        ttlMs: 5000,
+      }).shouldProceed
+    ).toBe(false);
+  });
+
   it('finds adjacent user messages relative to the clicked message', () => {
     expect(findAdjacentWebSessionUserMessageKey(blocks, 'user-2', 'previous')).toBe('user-1');
     expect(findAdjacentWebSessionUserMessageKey(blocks, 'user-2', 'next')).toBe('user-3');
@@ -47,8 +80,24 @@ describe('webSessionUserMessageNavigation', () => {
         currentKey: 'user-3',
         direction: 'next',
         canLoadEarlier: true,
+        canLoadLater: true,
       })
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it('finds viewport-relative user messages without treating an aligned item as adjacent', () => {
+    const candidates = [
+      { key: 'user-1', top: -500 },
+      { key: 'user-2', top: 0 },
+      { key: 'user-3', top: 420 },
+    ];
+
+    expect(findViewportAdjacentWebSessionUserMessageKey(candidates, 0, 'previous')).toBe('user-1');
+    expect(findViewportAdjacentWebSessionUserMessageKey(candidates, 0, 'next')).toBe('user-3');
+    expect(findViewportAdjacentWebSessionUserMessageKey(candidates, 240, 'previous')).toBe(
+      'user-2'
+    );
+    expect(findViewportAdjacentWebSessionUserMessageKey(candidates, 240, 'next')).toBe('user-3');
   });
 
   it('loads multiple earlier pages until it finds a previous user message', async () => {
@@ -117,6 +166,34 @@ describe('webSessionUserMessageNavigation', () => {
     expect(loadEarlier).not.toHaveBeenCalled();
   });
 
+  it('loads later chronological pages when navigating forward from the start window', async () => {
+    let currentBlocks: WebSessionUserMessageNavigationBlock[] = [
+      { key: 'user-current', kind: 'user' },
+      { key: 'assistant-current', kind: 'assistant' },
+    ];
+    let canLoadLater = true;
+    let loadState = 0;
+    const loadLater = vi.fn(async () => {
+      currentBlocks = [...currentBlocks, { key: 'user-next', kind: 'user' }];
+      canLoadLater = false;
+      loadState += 1;
+    });
+
+    await expect(
+      resolveWebSessionUserMessageTarget({
+        currentKey: 'user-current',
+        direction: 'next',
+        getBlocks: () => currentBlocks,
+        canLoadEarlier: () => false,
+        canLoadLater: () => canLoadLater,
+        getLoadStateKey: () => String(loadState),
+        loadEarlier: vi.fn(async () => undefined),
+        loadLater,
+      })
+    ).resolves.toBe('user-next');
+    expect(loadLater).toHaveBeenCalledOnce();
+  });
+
   it('renders always-visible accessible controls before the user role and timestamp', () => {
     const navigationIndex = webSessionPanelSource.indexOf('class="user-message-navigation"');
     const editIndex = webSessionPanelSource.indexOf('<CreateOutline />', navigationIndex);
@@ -148,6 +225,52 @@ describe('webSessionUserMessageNavigation', () => {
     );
     expect(webSessionPanelSource).toMatch(
       /\.user-message-navigation-button:disabled:not\(\.n-button--loading\)\s*\{[^}]*opacity:\s*0\.18 !important;/s
+    );
+  });
+
+  it('renders floating edge controls and jumps to both edges without smooth scrolling', () => {
+    expect(webSessionPanelSource).toMatch(
+      /v-if="!timelineSearchOpen"\s+class="timeline-navigation-reveal-zone"/
+    );
+    expect(webSessionPanelSource).toContain('v-if="timelineNavigationControlsExpanded"');
+    expect(webSessionPanelSource).toContain('name="timeline-navigation-reveal"');
+    expect(webSessionPanelSource).toContain('class="timeline-navigation-activation-zone"');
+    expect(webSessionPanelSource).toMatch(
+      /\.timeline-navigation-reveal-zone\s*\{[^}]*flex:\s*0 0 118px;[^}]*width:\s*118px;[^}]*min-width:\s*118px;/s
+    );
+    expect(webSessionPanelSource).toMatch(
+      /v-if="!timelineNavigationControlsExpanded"\s+type="button"\s+class="timeline-navigation-activation-zone"/
+    );
+    expect(webSessionPanelSource).toMatch(
+      /\.timeline-navigation-activation-zone\s*\{[^}]*width:\s*100%;[^}]*height:\s*28px;/s
+    );
+    expect(webSessionPanelSource).toContain('@mouseenter="handleTimelineNavigationPointerEnter"');
+    expect(webSessionPanelSource).toContain('@focusout="handleTimelineNavigationFocusOut"');
+    expect(webSessionPanelSource).toContain('@click="handleTimelineNavigationActivation"');
+    expect(webSessionPanelSource).toContain('WEB_SESSION_TIMELINE_NAVIGATION_VISIBLE_MS = 5000');
+    expect(webSessionPanelSource).toContain("t('webSession.timelineJumpToStart')");
+    expect(webSessionPanelSource).toContain("t('webSession.timelineJumpToEnd')");
+    expect(webSessionPanelSource).toContain('@click="void handleTimelineStartClick()"');
+    expect(webSessionPanelSource).toContain(':show="timelineStartConfirmationArmed"');
+
+    const startIndex = webSessionPanelSource.indexOf('async function jumpToTimelineStart()');
+    const endIndex = webSessionPanelSource.indexOf('async function jumpToTimelineEnd()');
+    const searchTimerIndex = webSessionPanelSource.indexOf('function clearTimelineSearchTimer()');
+    const startFunction = webSessionPanelSource.slice(startIndex, endIndex);
+    const endFunction = webSessionPanelSource.slice(endIndex, searchTimerIndex);
+
+    expect(startFunction).toContain("afterCursor: '0'");
+    expect(startFunction).toContain('container.scrollTop = 0');
+    expect(startFunction).not.toContain("behavior: 'smooth'");
+    expect(endFunction).toContain('loadSessionSnapshot');
+    expect(endFunction).toContain('syncScrollToBottom()');
+    expect(endFunction).not.toContain("behavior: 'smooth'");
+    expect(webSessionPanelSource).toContain('!getCurrentTimelineEdgeWindow()');
+    expect(webSessionPanelSource).toMatch(
+      /\.timeline-navigation-button\s*\{[^}]*width:\s*28px !important;[^}]*height:\s*28px !important;/s
+    );
+    expect(webSessionPanelSource).toMatch(
+      /\.timeline-navigation-reveal-enter-from,[\s\S]*?max-width:\s*0;[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*translateX\(8px\);/
     );
   });
 });

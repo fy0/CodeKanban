@@ -273,49 +273,68 @@
               </span>
             </div>
 
-            <button
-              type="button"
-              class="mobile-project-git-status"
-              :class="`state-${mobileGitStatus.state}`"
-              :disabled="!mobileGitStatusCanOpen"
-              :title="mobileGitStatusLabel"
-              :aria-label="mobileGitStatusLabel"
-              @click="handleMobileChangesOpen"
-            >
-              <span v-if="mobileGitStatusHasDetails" class="mobile-project-git-stats">
-                <span
-                  v-if="mobileGitStatus.conflicts > 0"
-                  class="mobile-project-git-stat is-conflict"
+            <div class="mobile-project-context-actions">
+              <n-tooltip
+                v-if="showMobileChangesSummaryBadge"
+                :disabled="!mobileChangesSummaryIncomplete"
+              >
+                <template #trigger>
+                  <span
+                    class="mobile-changes-summary-badge"
+                    :title="mobileChangesSummaryLabel"
+                    :aria-label="mobileChangesSummaryLabel"
+                  >
+                    <span class="changes-summary-count">{{ mobileChangesSummaryDisplay.count }}</span>
+                    <template v-if="mobileChangesSummaryIncomplete">
+                      <n-icon :size="12" class="changes-summary-warning">
+                        <WarningOutline />
+                      </n-icon>
+                    </template>
+                    <template v-else>
+                      <span class="changes-summary-separator">,</span>
+                      <span class="changes-summary-add">{{ mobileChangesSummaryDisplay.additions }}</span>
+                      <span class="changes-summary-separator">,</span>
+                      <span class="changes-summary-del">{{ mobileChangesSummaryDisplay.deletions }}</span>
+                      <n-icon
+                        v-if="mobileChangesSummaryLoading"
+                        :size="11"
+                        class="changes-summary-loading"
+                      >
+                        <SyncOutline />
+                      </n-icon>
+                    </template>
+                  </span>
+                </template>
+                {{ mobileChangesSummaryStatusText }}
+              </n-tooltip>
+
+              <n-dropdown
+                trigger="click"
+                placement="bottom-end"
+                :options="mobileProjectSwitchOptions"
+                @select="handleMobileProjectSwitchSelect"
+                @update:show="handleMobileProjectSwitchMenuShow"
+              >
+                <n-button
+                  text
+                  size="small"
+                  class="mobile-project-switch"
+                  :title="t('webSession.switchProject')"
+                  :aria-label="t('webSession.switchProject')"
                 >
-                  !{{ mobileGitStatus.conflicts }}
-                </span>
-                <span v-if="mobileGitStatus.staged > 0" class="mobile-project-git-stat is-staged">
-                  +{{ mobileGitStatus.staged }}
-                </span>
-                <span
-                  v-if="mobileGitStatus.modified > 0"
-                  class="mobile-project-git-stat is-modified"
-                >
-                  ~{{ mobileGitStatus.modified }}
-                </span>
-                <span
-                  v-if="mobileGitStatus.untracked > 0"
-                  class="mobile-project-git-stat is-untracked"
-                >
-                  ?{{ mobileGitStatus.untracked }}
-                </span>
-                <span
-                  v-if="mobileGitStatus.ahead > 0 || mobileGitStatus.behind > 0"
-                  class="mobile-project-git-stat is-remote"
-                >
-                  ↑{{ mobileGitStatus.ahead }} ↓{{ mobileGitStatus.behind }}
-                </span>
-              </span>
-              <span v-else class="mobile-project-git-state-text">{{ mobileGitStatusText }}</span>
-              <n-icon v-if="mobileGitStatusCanOpen" size="13" aria-hidden="true">
-                <ChevronForwardOutline />
-              </n-icon>
-            </button>
+                  <template #icon>
+                    <span
+                      v-if="currentMobileProjectBadge"
+                      class="mobile-project-switch-badge"
+                      :style="{ background: currentMobileProjectBadge.color }"
+                    >
+                      {{ currentMobileProjectBadge.label }}
+                    </span>
+                  </template>
+                  <n-icon size="14"><ChevronDownOutline /></n-icon>
+                </n-button>
+              </n-dropdown>
+            </div>
           </div>
 
           <div class="panel-header">
@@ -697,6 +716,143 @@
                     </template>
                     {{ t('webSession.subAgentLocate') }}
                   </n-tooltip>
+                  <span
+                    v-if="!timelineSearchOpen"
+                    class="timeline-navigation-reveal-zone"
+                    :class="{
+                      'is-expanded': timelineNavigationControlsExpanded,
+                      'is-mobile': isMobile,
+                    }"
+                    @mouseenter="handleTimelineNavigationPointerEnter"
+                    @mouseleave="handleTimelineNavigationPointerLeave"
+                    @focusin="handleTimelineNavigationFocusIn"
+                    @focusout="handleTimelineNavigationFocusOut"
+                  >
+                    <transition name="timeline-navigation-reveal">
+                      <span
+                        v-if="timelineNavigationControlsExpanded"
+                        class="timeline-navigation-controls"
+                      >
+                        <n-popover
+                          trigger="manual"
+                          placement="bottom"
+                          :show="timelineStartConfirmationArmed"
+                          :show-arrow="true"
+                          :disabled="!timelineStartConfirmationArmed"
+                        >
+                          <template #trigger>
+                            <span class="timeline-navigation-trigger">
+                              <n-tooltip trigger="hover" placement="bottom" :delay="100">
+                                <template #trigger>
+                                  <n-button
+                                    quaternary
+                                    circle
+                                    size="small"
+                                    :class="[
+                                      'timeline-navigation-button',
+                                      { 'is-confirm-armed': timelineStartConfirmationArmed },
+                                    ]"
+                                    :loading="timelineNavigationPending === 'start'"
+                                    :disabled="timelineNavigationBusy || !currentRealSession"
+                                    :title="t('webSession.timelineJumpToStart')"
+                                    :aria-label="t('webSession.timelineJumpToStart')"
+                                    @click="void handleTimelineStartClick()"
+                                  >
+                                    <template #icon>
+                                      <n-icon><ArrowUpOutline /></n-icon>
+                                    </template>
+                                  </n-button>
+                                </template>
+                                {{ t('webSession.timelineJumpToStart') }}
+                              </n-tooltip>
+                            </span>
+                          </template>
+                          <div
+                            class="timeline-start-confirm-popover-card"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            <div class="timeline-start-confirm-title">
+                              {{ t('webSession.timelineJumpToStartConfirmTitle') }}
+                            </div>
+                            <div class="timeline-start-confirm-body">
+                              {{ t('webSession.timelineJumpToStartConfirmBody') }}
+                            </div>
+                          </div>
+                        </n-popover>
+                        <n-tooltip trigger="hover" placement="bottom" :delay="100">
+                          <template #trigger>
+                            <n-button
+                              quaternary
+                              circle
+                              size="small"
+                              class="timeline-navigation-button"
+                              :loading="timelineNavigationPending === 'previous'"
+                              :disabled="
+                                timelineNavigationBusy || !timelineViewportNavigation.previous
+                              "
+                              :title="t('terminal.prevUserMessage')"
+                              :aria-label="t('terminal.prevUserMessage')"
+                              @click="void navigateTimelineViewportUserMessage('previous')"
+                            >
+                              <template #icon>
+                                <n-icon><ChevronUpOutline /></n-icon>
+                              </template>
+                            </n-button>
+                          </template>
+                          {{ t('terminal.prevUserMessage') }}
+                        </n-tooltip>
+                        <n-tooltip trigger="hover" placement="bottom" :delay="100">
+                          <template #trigger>
+                            <n-button
+                              quaternary
+                              circle
+                              size="small"
+                              class="timeline-navigation-button"
+                              :loading="timelineNavigationPending === 'next'"
+                              :disabled="timelineNavigationBusy || !timelineViewportNavigation.next"
+                              :title="t('terminal.nextUserMessage')"
+                              :aria-label="t('terminal.nextUserMessage')"
+                              @click="void navigateTimelineViewportUserMessage('next')"
+                            >
+                              <template #icon>
+                                <n-icon><ChevronDownOutline /></n-icon>
+                              </template>
+                            </n-button>
+                          </template>
+                          {{ t('terminal.nextUserMessage') }}
+                        </n-tooltip>
+                        <n-tooltip trigger="hover" placement="bottom" :delay="100">
+                          <template #trigger>
+                            <n-button
+                              quaternary
+                              circle
+                              size="small"
+                              class="timeline-navigation-button"
+                              :loading="timelineNavigationPending === 'end'"
+                              :disabled="timelineNavigationBusy || !currentRealSession"
+                              :title="t('webSession.timelineJumpToEnd')"
+                              :aria-label="t('webSession.timelineJumpToEnd')"
+                              @click="void jumpToTimelineEnd()"
+                            >
+                              <template #icon>
+                                <n-icon><ArrowDownOutline /></n-icon>
+                              </template>
+                            </n-button>
+                          </template>
+                          {{ t('webSession.timelineJumpToEnd') }}
+                        </n-tooltip>
+                      </span>
+                    </transition>
+                    <button
+                      v-if="!timelineNavigationControlsExpanded"
+                      type="button"
+                      class="timeline-navigation-activation-zone"
+                      :aria-label="t('webSession.timelineNavigationReveal')"
+                      :aria-expanded="timelineNavigationControlsExpanded"
+                      @click="handleTimelineNavigationActivation"
+                    ></button>
+                  </span>
                   <n-tooltip
                     v-if="!timelineSearchOpen"
                     trigger="hover"
@@ -3553,6 +3709,8 @@ import {
 import {
   AddOutline,
   ArchiveOutline,
+  ArrowDownOutline,
+  ArrowUpOutline,
   ChevronDownOutline,
   ChevronForwardOutline,
   ChevronUpOutline,
@@ -3565,6 +3723,7 @@ import {
   FunnelOutline,
   GitNetworkOutline,
   GitBranchOutline,
+  GridOutline,
   ImageOutline,
   LocateOutline,
   RadioOutline,
@@ -3573,8 +3732,10 @@ import {
   SettingsOutline,
   SearchOutline,
   SparklesOutline,
+  SyncOutline,
   TimeOutline,
   TrashOutline,
+  WarningOutline,
 } from '@vicons/ionicons5';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { getPresetById } from '@/constants/themes';
@@ -3583,6 +3744,7 @@ import { useLocale } from '@/composables/useLocale';
 import { useMobileKeyboard } from '@/composables/useMobileKeyboard';
 import { useResponsive } from '@/composables/useResponsive';
 import { projectApi, systemApi } from '@/api/project';
+import { fileManagerApi } from '@/api/fileManager';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import { useDeveloperConfigStore } from '@/stores/developerConfig';
@@ -3590,6 +3752,7 @@ import {
   useWebSessionStore,
   type WebSessionBlock,
   type WebSessionDraftState,
+  type WebSessionHistoryPage,
   type WebSessionHistoryAnswerEntry,
   type WebSessionLiveState,
   type WebSessionPendingInput,
@@ -3682,8 +3845,17 @@ import {
 } from '@/components/web-session/webSessionComposerPaste';
 import {
   resolveWebSessionMobileContextWorktree,
-  summarizeWebSessionMobileGitStatus,
 } from '@/components/web-session/webSessionMobileProjectContext';
+import {
+  chooseGitChangesScope,
+  formatGitChangesBadgeDelta,
+  GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT,
+  GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
+  shouldLoadGitChangesStats,
+  shouldShowGitChangesBadge,
+  type GitChangesBadgeSummary,
+} from '@/components/changes/gitChangesSummary';
+import { createGitChangesLoadController } from '@/components/changes/gitChangesLoadController';
 import {
   insertCodexSkillTokenAtCursor,
   replaceTextSelection,
@@ -3755,7 +3927,10 @@ import {
 } from '@/components/web-session/webSessionTimelinePosition';
 import {
   canNavigateWebSessionUserMessage,
+  findViewportAdjacentWebSessionUserMessageKey,
+  resolveWebSessionTimelineStartConfirmation,
   resolveWebSessionUserMessageTarget,
+  type WebSessionTimelineStartConfirmationState,
   type WebSessionUserMessageNavigationDirection,
 } from '@/components/web-session/webSessionUserMessageNavigation';
 import {
@@ -3890,6 +4065,12 @@ const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
 const WEB_SESSION_TIMELINE_POSITION_DEBOUNCE_MS = 180;
 const WEB_SESSION_TIMELINE_POSITION_MAX_WAIT_MS = 600;
 const WEB_SESSION_TIMELINE_RESTORE_HISTORY_LIMIT = 120;
+const WEB_SESSION_TIMELINE_EDGE_HISTORY_LIMIT = 80;
+const WEB_SESSION_TIMELINE_START_CONFIRM_TTL_MS = 5000;
+const WEB_SESSION_TIMELINE_NAVIGATION_VISIBLE_MS = 5000;
+const MOBILE_CHANGES_SUMMARY_REFRESH_INTERVAL_MS = 10_000;
+const MOBILE_CHANGES_SUMMARY_STATS_TIMEOUT_MS = 5_000;
+const MOBILE_PROJECT_SWITCH_MAX_ITEMS = 10;
 const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
 const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
 const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
@@ -4194,6 +4375,15 @@ const timelineSearchRemoteMatches = ref<SessionConversationSearchMatch[]>([]);
 const timelineSearchCurrentIndex = ref(0);
 const timelineSearchRemoteLoading = ref(false);
 const timelineSearchRemoteError = ref(false);
+type TimelineNavigationAction = 'start' | 'end' | 'previous' | 'next';
+type TimelineEdgeWindow = WebSessionHistoryPage & { sessionId: string };
+const timelineEdgeWindow = shallowRef<TimelineEdgeWindow | null>(null);
+const timelineNavigationPending = ref<TimelineNavigationAction | null>(null);
+const timelineNavigationBusy = computed(() => timelineNavigationPending.value !== null);
+const timelineViewportNavigation = ref({ previous: false, next: false });
+const timelineNavigationControlsExpanded = ref(false);
+const timelineStartConfirmationState = ref<WebSessionTimelineStartConfirmationState | null>(null);
+let timelineNavigationRequestVersion = 0;
 const userMessageNavigationPending = ref<{
   key: string;
   direction: WebSessionUserMessageNavigationDirection;
@@ -4354,6 +4544,8 @@ const webSessionCatchUpScheduler = createWebSessionCatchUpScheduler(reason => {
   void refreshWebSessionCatchUp(reason);
 }, WEB_SESSION_CATCH_UP_DEBOUNCE_MS);
 let sendConfirmationTimer: number | null = null;
+let timelineNavigationControlsTimer: number | null = null;
+let timelineStartConfirmationTimer: number | null = null;
 let lastEmittedMobileComposerChromeHidden = false;
 let mobileTimelineTouchY: number | null = null;
 let scheduledSendLongPressAnchor: HTMLElement | null = null;
@@ -4479,63 +4671,260 @@ const mobileProjectBranch = computed(
     mobileProject.value?.defaultBranch?.trim() ||
     ''
 );
-const mobileGitStatus = computed(() =>
-  summarizeWebSessionMobileGitStatus(mobileContextWorktree.value, {
-    gitAvailable: gitOperationAvailable(
-      projectStore.gitCapabilities,
-      'status',
-      mobileContextWorktree.value?.id
-    ),
-    loading:
-      projectStore.projectDetailLoading || projectStore.currentProject?.id !== props.projectId,
-  })
-);
-const mobileGitStatusCanOpen = computed(
-  () => mobileGitStatus.value.state === 'clean' || mobileGitStatus.value.state === 'dirty'
-);
-const mobileGitStatusHasDetails = computed(
-  () =>
-    mobileGitStatus.value.state === 'dirty' ||
-    mobileGitStatus.value.ahead > 0 ||
-    mobileGitStatus.value.behind > 0
-);
 const mobileProjectContextLabel = computed(() =>
   t('webSession.mobileProjectContext', {
     project: mobileProjectName.value,
     branch: mobileProjectBranch.value || t('webSession.mobileProjectBranchUnknown'),
   })
 );
-const mobileGitStatusText = computed(() => {
-  switch (mobileGitStatus.value.state) {
-    case 'clean':
-      return t('webSession.mobileGitClean');
-    case 'unavailable':
-      return t('webSession.mobileGitUnavailable');
-    case 'loading':
-    default:
-      return t('webSession.mobileGitLoading');
-  }
+const mobileIgnoreUntracked = useStorage<boolean>(
+  GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
+  GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT
+);
+const mobileChangesBadgeSummary = ref<GitChangesBadgeSummary | null>(null);
+const mobileChangesSummaryScopeId = ref('');
+let mobileChangesSummaryTimer: number | null = null;
+const mobileChangesSummaryScopeController = createGitChangesLoadController();
+const mobileChangesSummaryLoadController = createGitChangesLoadController();
+const canLoadMobileChangesSummary = computed(
+  () =>
+    isMobile.value &&
+    props.isActive &&
+    Boolean(props.projectId) &&
+    projectStore.currentProject?.id === props.projectId &&
+    !projectStore.projectDetailLoading &&
+    gitOperationAvailable(
+      projectStore.gitCapabilities,
+      'status',
+      projectStore.selectedWorktreeId
+    )
+);
+const mobileChangesSummaryDisplay = computed(() => {
+  const summary = mobileChangesBadgeSummary.value ?? {
+    count: 0,
+    additions: 0,
+    deletions: 0,
+  };
+  return {
+    count: summary.count,
+    additions: formatGitChangesBadgeDelta('+', summary.additions),
+    deletions: formatGitChangesBadgeDelta('-', summary.deletions),
+  };
 });
-const mobileGitStatusLabel = computed(() => {
-  if (!mobileGitStatusCanOpen.value) {
-    return mobileGitStatusText.value;
-  }
-  return t('webSession.mobileGitStatusSummary', {
-    conflicts: mobileGitStatus.value.conflicts,
-    staged: mobileGitStatus.value.staged,
-    modified: mobileGitStatus.value.modified,
-    untracked: mobileGitStatus.value.untracked,
-    ahead: mobileGitStatus.value.ahead,
-    behind: mobileGitStatus.value.behind,
-  });
+const mobileChangesSummaryLoading = computed(
+  () => mobileChangesBadgeSummary.value?.state === 'loading'
+);
+const mobileChangesSummaryIncomplete = computed(
+  () =>
+    mobileChangesBadgeSummary.value?.state === 'partial' ||
+    mobileChangesBadgeSummary.value?.state === 'timedOut'
+);
+const mobileChangesSummaryStatusText = computed(() =>
+  t(
+    mobileChangesBadgeSummary.value?.state === 'timedOut'
+      ? 'gitChanges.statsTimedOut'
+      : 'gitChanges.statsPartial'
+  )
+);
+const showMobileChangesSummaryBadge = computed(
+  () =>
+    canLoadMobileChangesSummary.value &&
+    shouldShowGitChangesBadge(mobileChangesBadgeSummary.value)
+);
+const mobileChangesSummaryLabel = computed(() => {
+  const display = mobileChangesSummaryDisplay.value;
+  return `${t('nav.changes')} ${display.count},${display.additions},${display.deletions}`;
+});
+const mobileProjectSwitchBadges = computed(() => {
+  const ordered = [
+    ...projectStore.recentProjects.map(project => project.id),
+    props.projectId,
+  ].filter((projectId, index, items) => Boolean(projectId) && items.indexOf(projectId) === index);
+  return buildProjectBadgeMap(ordered, getProjectName);
+});
+const currentMobileProjectBadge = computed<ProjectBadge | null>(
+  () => mobileProjectSwitchBadges.value.get(props.projectId) ?? null
+);
+const mobileProjectSwitchSearch = ref('');
+const filteredMobileProjectSwitchProjects = computed(() => {
+  const query = mobileProjectSwitchSearch.value.trim().toLocaleLowerCase();
+  const projects = query
+    ? projectStore.recentProjects.filter(project =>
+        [project.name, project.path, project.id].some(value =>
+          value?.toLocaleLowerCase().includes(query)
+        )
+      )
+    : projectStore.recentProjects;
+  return projects.slice(0, MOBILE_PROJECT_SWITCH_MAX_ITEMS);
 });
 
-function handleMobileChangesOpen() {
-  if (!mobileGitStatusCanOpen.value) {
+function stopMobileChangesSummaryTimer() {
+  if (mobileChangesSummaryTimer != null && typeof window !== 'undefined') {
+    window.clearInterval(mobileChangesSummaryTimer);
+  }
+  mobileChangesSummaryTimer = null;
+}
+
+function clearMobileChangesSummary() {
+  mobileChangesBadgeSummary.value = null;
+}
+
+async function resolveMobileChangesSummaryScope() {
+  if (mobileChangesSummaryScopeId.value) {
+    return mobileChangesSummaryScopeId.value;
+  }
+  const loadHandle = mobileChangesSummaryScopeController.begin();
+  try {
+    const scopes = await fileManagerApi.listScopes(props.projectId, {
+      signal: loadHandle.signal,
+    });
+    if (!mobileChangesSummaryScopeController.isCurrent(loadHandle)) {
+      return '';
+    }
+    const scope = chooseGitChangesScope(scopes, {
+      preferredWorktreeId: projectStore.selectedWorktreeId,
+    });
+    mobileChangesSummaryScopeId.value = scope?.id ?? '';
+    return mobileChangesSummaryScopeId.value;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return '';
+    }
+    throw error;
+  } finally {
+    mobileChangesSummaryScopeController.release(loadHandle);
+  }
+}
+
+async function loadMobileChangesSummary() {
+  if (
+    !canLoadMobileChangesSummary.value ||
+    (typeof document !== 'undefined' && document.visibilityState === 'hidden')
+  ) {
     return;
   }
-  emit('request-mobile-view', 'changes');
+  const scopeId = await resolveMobileChangesSummaryScope().catch(() => '');
+  if (!scopeId || !canLoadMobileChangesSummary.value) {
+    return;
+  }
+  const loadHandle = mobileChangesSummaryLoadController.begin();
+  const previousSummary = mobileChangesBadgeSummary.value;
+  try {
+    const fastSummary = await fileManagerApi.changesSummary(props.projectId, scopeId, {
+      includeUntracked: !mobileIgnoreUntracked.value,
+      withStats: false,
+      signal: loadHandle.signal,
+    });
+    if (!mobileChangesSummaryLoadController.isCurrent(loadHandle)) {
+      return;
+    }
+    if (fastSummary.count <= 0) {
+      mobileChangesBadgeSummary.value = {
+        count: 0,
+        additions: 0,
+        deletions: 0,
+        state: 'complete',
+        changeToken: fastSummary.changeToken,
+        scopeId,
+      };
+      return;
+    }
+    if (!shouldLoadGitChangesStats(previousSummary, scopeId, fastSummary.changeToken)) {
+      return;
+    }
+    const retainedSummary =
+      previousSummary?.scopeId === scopeId && previousSummary.state === 'complete'
+        ? previousSummary
+        : null;
+    mobileChangesBadgeSummary.value = {
+      count: retainedSummary?.count ?? fastSummary.count,
+      additions: retainedSummary?.additions ?? null,
+      deletions: retainedSummary?.deletions ?? null,
+      state: 'loading',
+      changeToken: fastSummary.changeToken,
+      scopeId,
+    };
+    const statsSummary = await fileManagerApi.changesSummary(props.projectId, scopeId, {
+      includeUntracked: !mobileIgnoreUntracked.value,
+      withStats: true,
+      timeoutMs: MOBILE_CHANGES_SUMMARY_STATS_TIMEOUT_MS,
+      signal: loadHandle.signal,
+    });
+    if (!mobileChangesSummaryLoadController.isCurrent(loadHandle)) {
+      return;
+    }
+    mobileChangesBadgeSummary.value = {
+      count: statsSummary.count > 0 ? statsSummary.count : fastSummary.count,
+      additions: statsSummary.statsComplete ? (statsSummary.additions ?? 0) : null,
+      deletions: statsSummary.statsComplete ? (statsSummary.deletions ?? 0) : null,
+      state: statsSummary.statsComplete
+        ? 'complete'
+        : statsSummary.statsTimedOut
+          ? 'timedOut'
+          : 'partial',
+      changeToken: statsSummary.changeToken,
+      scopeId,
+    };
+  } catch (error) {
+    if (
+      mobileChangesSummaryLoadController.isCurrent(loadHandle) &&
+      !(error instanceof Error && error.name === 'AbortError')
+    ) {
+      mobileChangesBadgeSummary.value = previousSummary;
+    }
+  } finally {
+    mobileChangesSummaryLoadController.release(loadHandle);
+  }
 }
+
+function startMobileChangesSummaryTimer() {
+  stopMobileChangesSummaryTimer();
+  if (typeof window === 'undefined' || !canLoadMobileChangesSummary.value) {
+    return;
+  }
+  mobileChangesSummaryTimer = window.setInterval(() => {
+    void loadMobileChangesSummary();
+  }, MOBILE_CHANGES_SUMMARY_REFRESH_INTERVAL_MS);
+}
+
+async function initializeMobileChangesSummary() {
+  if (!canLoadMobileChangesSummary.value) {
+    return;
+  }
+  await loadMobileChangesSummary();
+  startMobileChangesSummaryTimer();
+}
+
+watch(
+  () =>
+    [
+      props.projectId,
+      props.isActive,
+      isMobile.value,
+      projectStore.currentProject?.id,
+      projectStore.projectDetailLoading,
+      projectStore.selectedWorktreeId,
+      gitOperationAvailable(
+        projectStore.gitCapabilities,
+        'status',
+        projectStore.selectedWorktreeId
+      ),
+    ] as const,
+  () => {
+    stopMobileChangesSummaryTimer();
+    mobileChangesSummaryScopeController.cancel();
+    mobileChangesSummaryLoadController.cancel();
+    mobileChangesSummaryScopeId.value = '';
+    clearMobileChangesSummary();
+    void initializeMobileChangesSummary();
+  },
+  { immediate: true }
+);
+
+watch(mobileIgnoreUntracked, () => {
+  mobileChangesSummaryLoadController.cancel();
+  void loadMobileChangesSummary();
+});
 
 function isCurrentVisibleSession(sessionId: string) {
   return Boolean(sessionId && currentSession.value?.id === sessionId);
@@ -4551,6 +4940,15 @@ const devCyberPolicyWarning = computed({
 const currentRealSession = computed<WebSessionSummary | null>(() => {
   const session = currentSession.value;
   return session && !isDraftSession(session) ? session : null;
+});
+const workTimingSessionBusy = computed(() => {
+  const session = currentRealSession.value;
+  return Boolean(
+    session?.workTiming?.currentRun ||
+      session?.status === 'running' ||
+      session?.status === 'waiting_approval' ||
+      session?.status === 'aborting'
+  );
 });
 watch(
   () => [currentRealSession.value?.id, workTimingSessionBusy.value] as const,
@@ -5027,6 +5425,12 @@ const liveBlocks = computed(() =>
 const blocks = computed(() =>
   webSessionCatchUpActive.value ? (frozenBlocks.value ?? []) : liveBlocks.value
 );
+const timelineBlocks = computed(() => {
+  const edgeWindow = timelineEdgeWindow.value;
+  return edgeWindow && edgeWindow.sessionId === currentRealSession.value?.id
+    ? edgeWindow.items
+    : blocks.value;
+});
 
 function cloneBlockForFreeze(block: WebSessionBlock): WebSessionBlock {
   return {
@@ -5579,7 +5983,7 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) 
 }
 
 const filteredTimelineBlocks = computed(() =>
-  blocks.value.filter((block, index) => {
+  timelineBlocks.value.filter((block, index) => {
     if (
       selectedSubAgentThreadId.value &&
       String(block.sourceThreadId ?? '').trim() !== selectedSubAgentThreadId.value
@@ -5981,6 +6385,250 @@ const historyMeta = computed(() =>
     : { hasMore: false, beforeCursor: '', total: 0, loading: false }
 );
 
+function getCurrentTimelineEdgeWindow() {
+  const edgeWindow = timelineEdgeWindow.value;
+  return edgeWindow?.sessionId === currentRealSession.value?.id ? edgeWindow : null;
+}
+
+const timelineStartConfirmationArmed = computed(
+  () =>
+    Boolean(currentRealSession.value?.id) &&
+    timelineStartConfirmationState.value?.sessionId === currentRealSession.value?.id
+);
+
+function clearTimelineNavigationControlsTimer() {
+  if (timelineNavigationControlsTimer != null) {
+    window.clearTimeout(timelineNavigationControlsTimer);
+    timelineNavigationControlsTimer = null;
+  }
+}
+
+function hideTimelineNavigationControls() {
+  clearTimelineNavigationControlsTimer();
+  timelineNavigationControlsExpanded.value = false;
+  clearTimelineStartConfirmation();
+}
+
+function scheduleTimelineNavigationControlsHide() {
+  clearTimelineNavigationControlsTimer();
+  if (!isMobile.value || !timelineNavigationControlsExpanded.value) {
+    return;
+  }
+  timelineNavigationControlsTimer = window.setTimeout(() => {
+    timelineNavigationControlsTimer = null;
+    if (timelineNavigationBusy.value) {
+      scheduleTimelineNavigationControlsHide();
+      return;
+    }
+    hideTimelineNavigationControls();
+  }, WEB_SESSION_TIMELINE_NAVIGATION_VISIBLE_MS);
+}
+
+function showTimelineNavigationControls() {
+  if (timelineSearchOpen.value) {
+    return;
+  }
+  timelineNavigationControlsExpanded.value = true;
+  scheduleTimelineNavigationControlsHide();
+}
+
+function keepTimelineNavigationControlsVisible() {
+  if (isMobile.value) {
+    showTimelineNavigationControls();
+  }
+}
+
+function handleTimelineNavigationPointerEnter() {
+  if (!isMobile.value) {
+    showTimelineNavigationControls();
+  }
+}
+
+function handleTimelineNavigationPointerLeave() {
+  if (!isMobile.value) {
+    hideTimelineNavigationControls();
+  }
+}
+
+function handleTimelineNavigationFocusIn() {
+  showTimelineNavigationControls();
+}
+
+function handleTimelineNavigationFocusOut(event: FocusEvent) {
+  const container = event.currentTarget as HTMLElement | null;
+  const nextTarget = event.relatedTarget;
+  if (
+    !isMobile.value &&
+    container &&
+    (!(nextTarget instanceof Node) || !container.contains(nextTarget))
+  ) {
+    hideTimelineNavigationControls();
+  }
+}
+
+function handleTimelineNavigationActivation() {
+  showTimelineNavigationControls();
+}
+
+function clearTimelineStartConfirmationTimer() {
+  if (timelineStartConfirmationTimer != null) {
+    window.clearTimeout(timelineStartConfirmationTimer);
+    timelineStartConfirmationTimer = null;
+  }
+}
+
+function setTimelineStartConfirmationState(
+  nextState: WebSessionTimelineStartConfirmationState | null
+) {
+  clearTimelineStartConfirmationTimer();
+  timelineStartConfirmationState.value = nextState;
+  if (!nextState) {
+    return;
+  }
+  const delay = Math.max(0, nextState.expiresAt - Date.now());
+  timelineStartConfirmationTimer = window.setTimeout(() => {
+    timelineStartConfirmationTimer = null;
+    if (timelineStartConfirmationState.value?.sessionId === nextState.sessionId) {
+      timelineStartConfirmationState.value = null;
+    }
+  }, delay);
+}
+
+function clearTimelineStartConfirmation() {
+  setTimelineStartConfirmationState(null);
+}
+
+function resetTimelineEdgeWindow() {
+  timelineNavigationRequestVersion += 1;
+  timelineEdgeWindow.value = null;
+  timelineNavigationPending.value = null;
+  hideTimelineNavigationControls();
+  void nextTick(refreshTimelineViewportNavigation);
+}
+
+function mergeTimelineEdgeWindowItems(
+  current: readonly WebSessionBlock[],
+  incoming: readonly WebSessionBlock[]
+) {
+  const byId = new Map(current.map(item => [item.id, item]));
+  incoming.forEach(item => byId.set(item.id, item));
+  return Array.from(byId.values()).sort((left, right) => left.orderIndex - right.orderIndex);
+}
+
+function isTimelineNavigationRequestCurrent(version: number, sessionId: string) {
+  return version === timelineNavigationRequestVersion && currentRealSession.value?.id === sessionId;
+}
+
+async function handleTimelineStartClick() {
+  const session = currentRealSession.value;
+  if (!session || timelineNavigationBusy.value) {
+    return;
+  }
+  keepTimelineNavigationControlsVisible();
+  const confirmation = resolveWebSessionTimelineStartConfirmation({
+    sessionId: session.id,
+    currentState: timelineStartConfirmationState.value,
+    now: Date.now(),
+    ttlMs: WEB_SESSION_TIMELINE_START_CONFIRM_TTL_MS,
+  });
+  setTimelineStartConfirmationState(confirmation.nextState);
+  if (confirmation.shouldProceed) {
+    await jumpToTimelineStart();
+  }
+}
+
+async function jumpToTimelineStart() {
+  const session = currentRealSession.value;
+  if (!session || timelineNavigationBusy.value) {
+    return;
+  }
+  const requestVersion = ++timelineNavigationRequestVersion;
+  timelineNavigationPending.value = 'start';
+  pendingHistoryAnchor.value = null;
+  cancelTimelinePositionRestore();
+  invalidateTimelineScrollSync();
+  autoFollowBottom.value = false;
+  showJumpToBottom.value = true;
+  try {
+    const page = await webSessionStore.fetchHistoryWindow(session.id, {
+      afterCursor: '0',
+      limit: WEB_SESSION_TIMELINE_EDGE_HISTORY_LIMIT,
+    });
+    if (!isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      return;
+    }
+    timelineEdgeWindow.value = { ...page, sessionId: session.id };
+    forgetTimelinePosition(session.projectId, session.id);
+    await waitForTimelinePositionLayout();
+    if (!isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      return;
+    }
+    const container = timelineScrollRef.value;
+    if (container) {
+      container.scrollTop = 0;
+      lastTimelineScrollTop.value = 0;
+      resetBottomState(container, false);
+      resetMobileComposerScrollState(container);
+    }
+  } catch (error) {
+    if (isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    }
+  } finally {
+    if (isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      timelineNavigationPending.value = null;
+      refreshTimelineViewportNavigation();
+    }
+  }
+}
+
+async function jumpToTimelineEnd() {
+  const session = currentRealSession.value;
+  if (!session || timelineNavigationBusy.value) {
+    return;
+  }
+  keepTimelineNavigationControlsVisible();
+  clearTimelineStartConfirmation();
+  const requestVersion = ++timelineNavigationRequestVersion;
+  timelineNavigationPending.value = 'end';
+  pendingHistoryAnchor.value = null;
+  cancelTimelinePositionRestore();
+  invalidateTimelineScrollSync();
+  try {
+    const snapshot = await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
+      rememberActive: false,
+      preserveArchivedPosition: Boolean(session.archivedAt),
+      limit: WEB_SESSION_TIMELINE_EDGE_HISTORY_LIMIT,
+    });
+    if (!isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      return;
+    }
+    if (isArchivedPreviewSession(currentSession.value) && snapshot?.session) {
+      archivedPreviewSession.value = {
+        ...snapshot.session,
+        isArchivedPreview: true,
+      };
+      syncArchivedPreviewSessionSummary(session.id);
+    }
+    timelineEdgeWindow.value = null;
+    autoFollowBottom.value = true;
+    showJumpToBottom.value = false;
+    await waitForTimelinePositionLayout();
+    if (isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      syncScrollToBottom();
+    }
+  } catch (error) {
+    if (isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    }
+  } finally {
+    if (isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      timelineNavigationPending.value = null;
+      refreshTimelineViewportNavigation();
+    }
+  }
+}
+
 function clearTimelineSearchTimer() {
   if (timelineSearchTimer != null) {
     window.clearTimeout(timelineSearchTimer);
@@ -6002,6 +6650,10 @@ function clearTimelineSearchRemoteState() {
 }
 
 function openTimelineSearch() {
+  hideTimelineNavigationControls();
+  if (getCurrentTimelineEdgeWindow()) {
+    resetTimelineEdgeWindow();
+  }
   timelineSearchOpen.value = true;
   void nextTick().then(() => timelineSearchInputRef.value?.focus?.());
 }
@@ -6306,6 +6958,128 @@ function setTimelineBlockRef(element: unknown, block: WebSessionBlock) {
   timelineUserMessageElements.delete(block.key);
 }
 
+function readTimelineViewportUserMessageCandidates() {
+  const visibleUserKeys = new Set(
+    visibleBlocks.value.filter(block => block.kind === 'user').map(block => block.key)
+  );
+  return Array.from(timelineUserMessageElements.entries()).flatMap(([key, element]) => {
+    if (!visibleUserKeys.has(key) || !element.isConnected) {
+      return [];
+    }
+    return [{ key, top: element.getBoundingClientRect().top }];
+  });
+}
+
+function findTimelineViewportUserMessageTarget(
+  direction: WebSessionUserMessageNavigationDirection
+) {
+  const container = timelineScrollRef.value;
+  if (!container) {
+    return null;
+  }
+  return findViewportAdjacentWebSessionUserMessageKey(
+    readTimelineViewportUserMessageCandidates(),
+    container.getBoundingClientRect().top,
+    direction
+  );
+}
+
+function canLoadLaterTimelineEdgeHistory() {
+  const edgeWindow = getCurrentTimelineEdgeWindow();
+  return Boolean(edgeWindow?.hasLater && edgeWindow.afterCursor);
+}
+
+function refreshTimelineViewportNavigation() {
+  if (!currentRealSession.value || !timelineScrollRef.value) {
+    timelineViewportNavigation.value = { previous: false, next: false };
+    return;
+  }
+  const edgeWindow = getCurrentTimelineEdgeWindow();
+  timelineViewportNavigation.value = {
+    previous: Boolean(
+      findTimelineViewportUserMessageTarget('previous') ||
+        (!edgeWindow && canLoadEarlierUserMessageHistory())
+    ),
+    next: Boolean(
+      findTimelineViewportUserMessageTarget('next') ||
+        (edgeWindow && canLoadLaterTimelineEdgeHistory())
+    ),
+  };
+}
+
+async function loadLaterTimelineEdgeHistory() {
+  const edgeWindow = getCurrentTimelineEdgeWindow();
+  if (!edgeWindow?.hasLater || !edgeWindow.afterCursor) {
+    return;
+  }
+  const cursor = edgeWindow.afterCursor;
+  const page = await webSessionStore.fetchHistoryWindow(edgeWindow.sessionId, {
+    afterCursor: cursor,
+    limit: WEB_SESSION_TIMELINE_EDGE_HISTORY_LIMIT,
+  });
+  const current = getCurrentTimelineEdgeWindow();
+  if (!current || current.sessionId !== edgeWindow.sessionId || current.afterCursor !== cursor) {
+    return;
+  }
+  timelineEdgeWindow.value = {
+    ...page,
+    sessionId: edgeWindow.sessionId,
+    items: mergeTimelineEdgeWindowItems(current.items, page.items),
+  };
+  await nextTick();
+}
+
+async function navigateTimelineViewportUserMessage(
+  direction: WebSessionUserMessageNavigationDirection
+) {
+  const session = currentRealSession.value;
+  if (!session || timelineNavigationBusy.value) {
+    return;
+  }
+  keepTimelineNavigationControlsVisible();
+  clearTimelineStartConfirmation();
+  const requestVersion = ++timelineNavigationRequestVersion;
+  timelineNavigationPending.value = direction;
+  try {
+    while (isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      const targetKey = findTimelineViewportUserMessageTarget(direction);
+      if (targetKey) {
+        scrollToTimelineUserMessage(targetKey);
+        return;
+      }
+
+      const previousState = getUserMessageHistoryLoadStateKey();
+      if (direction === 'previous' && !getCurrentTimelineEdgeWindow()) {
+        if (!canLoadEarlierUserMessageHistory()) {
+          return;
+        }
+        await loadEarlierHistoryForUserMessageNavigation();
+      } else if (direction === 'next' && canLoadLaterTimelineEdgeHistory()) {
+        await loadLaterTimelineEdgeHistory();
+      } else {
+        return;
+      }
+      if (!isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+        return;
+      }
+      if (getUserMessageHistoryLoadStateKey() === previousState) {
+        return;
+      }
+      await nextTick();
+    }
+  } catch (error) {
+    if (isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      pendingHistoryAnchor.value = null;
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    }
+  } finally {
+    if (isTimelineNavigationRequestCurrent(requestVersion, session.id)) {
+      timelineNavigationPending.value = null;
+      refreshTimelineViewportNavigation();
+    }
+  }
+}
+
 function scrollToTimelineBlock(targetKey: string) {
   const container = timelineScrollRef.value;
   const element = timelineBlockElements.get(targetKey);
@@ -6429,6 +7203,7 @@ async function handleConfirmMessageEdit() {
 function canLoadEarlierUserMessageHistory() {
   return Boolean(
     currentRealSession.value &&
+      !getCurrentTimelineEdgeWindow() &&
       historyMeta.value.hasMore &&
       historyMeta.value.beforeCursor &&
       !historyMeta.value.loading &&
@@ -6450,7 +7225,11 @@ function canNavigateTimelineUserMessage(
   block: WebSessionBlock,
   direction: WebSessionUserMessageNavigationDirection
 ) {
-  if (userMessageNavigationPending.value || historyMeta.value.loading) {
+  if (
+    userMessageNavigationPending.value ||
+    timelineNavigationBusy.value ||
+    historyMeta.value.loading
+  ) {
     return false;
   }
   return canNavigateWebSessionUserMessage({
@@ -6458,10 +7237,21 @@ function canNavigateTimelineUserMessage(
     currentKey: block.key,
     direction,
     canLoadEarlier: canLoadEarlierUserMessageHistory(),
+    canLoadLater: canLoadLaterTimelineEdgeHistory(),
   });
 }
 
 function getUserMessageHistoryLoadStateKey() {
+  const edgeWindow = getCurrentTimelineEdgeWindow();
+  if (edgeWindow) {
+    return [
+      'edge',
+      edgeWindow.afterCursor,
+      edgeWindow.hasLater ? 'later' : 'end',
+      edgeWindow.items.length,
+      edgeWindow.items[edgeWindow.items.length - 1]?.key ?? '',
+    ].join(':');
+  }
   const firstBlockKey = blocks.value[0]?.key ?? '';
   return [
     historyMeta.value.beforeCursor,
@@ -6485,6 +7275,10 @@ async function loadEarlierHistoryForUserMessageNavigation() {
   await webSessionStore.loadMoreHistory(session.id);
   await nextTick();
   restoreHistoryAnchor();
+}
+
+async function loadLaterHistoryForUserMessageNavigation() {
+  await loadLaterTimelineEdgeHistory();
 }
 
 function scrollToTimelineUserMessage(targetKey: string) {
@@ -6520,8 +7314,10 @@ async function navigateTimelineUserMessage(
       direction,
       getBlocks: () => visibleBlocks.value,
       canLoadEarlier: canLoadEarlierUserMessageHistory,
+      canLoadLater: canLoadLaterTimelineEdgeHistory,
       getLoadStateKey: getUserMessageHistoryLoadStateKey,
       loadEarlier: loadEarlierHistoryForUserMessageNavigation,
+      loadLater: loadLaterHistoryForUserMessageNavigation,
     });
     if (!targetKey) {
       return;
@@ -7132,16 +7928,6 @@ const currentWorkTimingDurationMs = computed(() => {
     Number(currentRealSession.value?.workTiming?.completedDurationMs ?? 0) || 0
   );
   return completed + (currentWorkRunDurationMs.value ?? 0);
-});
-
-const workTimingSessionBusy = computed(() => {
-  const session = currentRealSession.value;
-  return Boolean(
-    session?.workTiming?.currentRun ||
-      session?.status === 'running' ||
-      session?.status === 'waiting_approval' ||
-      session?.status === 'aborting'
-  );
 });
 
 const workTimingStatusLabel = computed(() => {
@@ -8198,6 +8984,138 @@ function requestMobileViewForBottomNavSelector() {
 
 function renderDropdownIcon(icon: Component) {
   return () => h(NIcon, null, { default: () => h(icon) });
+}
+
+function renderMobileProjectOptionBadge(badge: ProjectBadge) {
+  return () =>
+    h(
+      'span',
+      {
+        class: 'mobile-project-option-badge',
+        style: { background: badge.color },
+      },
+      badge.label
+    );
+}
+
+const mobileProjectSwitchOptions = computed<DropdownOption[]>(() => [
+  {
+    type: 'render',
+    key: '__search__',
+    render: () =>
+      h(
+        'div',
+        {
+          class: 'mobile-project-switch-search',
+          style: {
+            boxSizing: 'border-box',
+            width: '180px',
+            padding: '7px 10px 6px',
+          },
+          onClick: (event: MouseEvent) => event.stopPropagation(),
+          onKeydown: (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') {
+              event.stopPropagation();
+            }
+          },
+        },
+        [
+          h(
+            'div',
+            {
+              style: {
+                margin: '0 2px 6px',
+                color: 'var(--n-text-color-3)',
+                fontSize: '12px',
+                fontWeight: '500',
+                lineHeight: '1.4',
+                userSelect: 'none',
+              },
+            },
+            t('webSession.switchProject')
+          ),
+          h(
+            NInput,
+            {
+              value: mobileProjectSwitchSearch.value,
+              size: 'small',
+              clearable: true,
+              autofocus: true,
+              placeholder: t('terminal.projectSearchPlaceholder'),
+              'aria-label': t('terminal.projectSearchPlaceholder'),
+              'onUpdate:value': (value: string) => {
+                mobileProjectSwitchSearch.value = value;
+              },
+            },
+            {
+              prefix: () =>
+                h(NIcon, { size: 14, 'aria-hidden': true }, { default: () => h(SearchOutline) }),
+            }
+          ),
+        ]
+      ),
+  },
+  ...(filteredMobileProjectSwitchProjects.value.length === 0
+    ? [
+        {
+          type: 'render' as const,
+          key: '__empty__',
+          render: () =>
+            h(
+              'div',
+              {
+                style: {
+                  boxSizing: 'border-box',
+                  width: '180px',
+                  padding: '8px 12px',
+                  color: 'var(--n-text-color-3)',
+                  fontSize: '12px',
+                  textAlign: 'center',
+                },
+              },
+              t('common.noData')
+            ),
+        },
+      ]
+    : filteredMobileProjectSwitchProjects.value.map(project => {
+        const badge = mobileProjectSwitchBadges.value.get(project.id);
+        return {
+          label: project.name?.trim() || project.id,
+          key: project.id,
+          disabled: project.id === props.projectId,
+          icon: badge ? renderMobileProjectOptionBadge(badge) : undefined,
+        } satisfies DropdownOption;
+      })),
+  {
+    type: 'divider',
+    key: '__project_list_divider__',
+  },
+  {
+    label: t('terminal.openProjectList'),
+    key: '__open_project_list__',
+    icon: renderDropdownIcon(GridOutline),
+  },
+]);
+
+function handleMobileProjectSwitchMenuShow(show: boolean) {
+  if (!show) {
+    mobileProjectSwitchSearch.value = '';
+  }
+}
+
+function handleMobileProjectSwitchSelect(key: string | number) {
+  if (typeof key !== 'string') {
+    return;
+  }
+  if (key === '__open_project_list__') {
+    void router.push({ name: 'projects' });
+    return;
+  }
+  if (key.startsWith('__') || key === props.projectId) {
+    return;
+  }
+  projectStore.addRecentProject(key);
+  void router.push(buildProjectRouteLocation(key));
 }
 
 function buildSessionActionOptions(session: SessionTab | null): DropdownOption[] {
@@ -14134,7 +15052,7 @@ function readRenderedTimelineAnchor(container: HTMLDivElement) {
 
 function captureTimelinePosition(projectId: string, sessionId: string, persistImmediately = false) {
   const container = timelineScrollRef.value;
-  if (!projectId || !sessionId || !container) {
+  if (!projectId || !sessionId || !container || getCurrentTimelineEdgeWindow()) {
     return false;
   }
   const metrics = readTimelineScrollMetrics(container);
@@ -14449,6 +15367,9 @@ function scheduleScrollToBottom(force = false) {
 function scrollToBottom(force = false) {
   if (!force && !autoFollowBottom.value) {
     return;
+  }
+  if (force && getCurrentTimelineEdgeWindow()) {
+    resetTimelineEdgeWindow();
   }
   scheduleScrollToBottom(force);
 }
@@ -14769,9 +15690,11 @@ function handleTimelineScroll(event: Event) {
     invalidateTimelineScrollSync();
   }
   handleMobileTimelineScrollForComposer(container);
+  refreshTimelineViewportNavigation();
   void scheduleTimelinePositionCapture();
   if (
     nearTop &&
+    !getCurrentTimelineEdgeWindow() &&
     !pendingHistoryAnchor.value &&
     currentRealSession.value &&
     historyMeta.value.hasMore &&
@@ -14794,6 +15717,7 @@ function ensureTimelineHistoryFilled() {
   if (
     !container ||
     !currentRealSession.value ||
+    getCurrentTimelineEdgeWindow() ||
     pendingHistoryAnchor.value ||
     historyMeta.value.loading ||
     !historyMeta.value.hasMore
@@ -15520,6 +16444,7 @@ watch(
     if (sessionId === previousSessionId) {
       return;
     }
+    resetTimelineEdgeWindow();
     clearPendingEditState();
     clearLocalFileDialog();
     closeScheduledInputPopover();
@@ -15877,6 +16802,7 @@ watch(
 
 watch(timelineContentVersion, async () => {
   await nextTick();
+  refreshTimelineViewportNavigation();
   if (pendingTimelinePositionRestore.value) {
     void restorePendingTimelinePosition();
     return;
@@ -15884,6 +16810,7 @@ watch(timelineContentVersion, async () => {
   if (restoreHistoryAnchor()) {
     markSessionViewed(currentRealSession.value?.id);
     ensureTimelineHistoryFilled();
+    refreshTimelineViewportNavigation();
     return;
   }
   const container = timelineScrollRef.value;
@@ -15897,6 +16824,7 @@ watch(timelineContentVersion, async () => {
   }
   markSessionViewed(currentRealSession.value?.id);
   ensureTimelineHistoryFilled();
+  refreshTimelineViewportNavigation();
 });
 
 watch(
@@ -15935,6 +16863,7 @@ watch(
 watch(
   () => isMobile.value,
   mobile => {
+    hideTimelineNavigationControls();
     isMobileComposerSettingsExpanded.value = false;
     resetMobileComposerScrollState();
     if (!mobile) {
@@ -16063,6 +16992,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  stopMobileChangesSummaryTimer();
+  mobileChangesSummaryScopeController.cancel();
+  mobileChangesSummaryLoadController.cancel();
   if (!pendingTimelinePositionRestore.value) {
     captureTimelinePosition(props.projectId, currentSession.value?.id ?? '', true);
   }
@@ -16071,6 +17003,7 @@ onBeforeUnmount(() => {
   cancelSidebarSearchRequest();
   clearTimelineSearchTimer();
   invalidateTimelineSearchRequest();
+  hideTimelineNavigationControls();
   persistActiveUserInputDraft();
   realSessionSnapshotLoadController.cancel();
   streamingMarkdownController.clear();
@@ -16281,86 +17214,65 @@ defineExpose({
   white-space: nowrap;
 }
 
-.mobile-project-git-status {
+.mobile-project-context-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
   min-width: 0;
-  min-height: 30px;
-  max-width: 58%;
+  flex: 0 1 auto;
+}
+
+.mobile-changes-summary-badge {
+  min-width: 0;
+  height: 18px;
+  padding: 0 7px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 4px 7px;
   flex: 0 1 auto;
-  border: 1px solid var(--n-border-color, rgba(0, 0, 0, 0.1));
-  border-radius: 6px;
-  background: var(
-    --n-color-modal,
-    color-mix(in srgb, var(--n-text-color-1, #1f1f1f) 4%, transparent)
-  );
-  color: var(--n-text-color-2, #555);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1;
-  letter-spacing: 0;
-  cursor: pointer;
-}
-
-.mobile-project-git-status:active:not(:disabled) {
-  background: color-mix(in srgb, var(--n-primary-color, #18a058) 9%, transparent);
-}
-
-.mobile-project-git-status:disabled {
-  cursor: default;
-  opacity: 0.68;
-}
-
-.mobile-project-git-status.state-dirty {
-  border-color: color-mix(in srgb, #d97706 34%, var(--n-border-color, transparent));
-}
-
-.mobile-project-git-status.state-clean {
-  border-color: color-mix(in srgb, #16a34a 28%, var(--n-border-color, transparent));
-}
-
-.mobile-project-git-stats {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
   overflow: hidden;
+  border-radius: 9px;
+  background: rgba(37, 90, 143, 0.12);
+  color: var(--n-text-color);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
   white-space: nowrap;
 }
 
-.mobile-project-git-stat {
-  flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
-  font-weight: 650;
+.mobile-changes-summary-badge .changes-summary-count {
+  color: rgba(43, 59, 81, 0.9);
 }
 
-.mobile-project-git-stat.is-conflict {
+.mobile-changes-summary-badge .changes-summary-separator {
+  color: rgba(43, 59, 81, 0.78);
+}
+
+.mobile-changes-summary-badge .changes-summary-add {
+  color: #15803d;
+}
+
+.mobile-changes-summary-badge .changes-summary-del {
   color: #dc2626;
 }
 
-.mobile-project-git-stat.is-staged {
-  color: #16a34a;
+.mobile-changes-summary-badge .changes-summary-warning {
+  margin-left: 3px;
+  color: #b45309;
 }
 
-.mobile-project-git-stat.is-modified {
-  color: #d97706;
+.mobile-changes-summary-badge .changes-summary-loading {
+  margin-left: 3px;
+  color: var(--n-primary-color);
+  animation: mobile-changes-summary-spin 1s linear infinite;
 }
 
-.mobile-project-git-stat.is-untracked {
-  color: var(--n-text-color-3, #737373);
-}
-
-.mobile-project-git-stat.is-remote {
-  color: #0284c7;
-}
-
-.mobile-project-git-state-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+@keyframes mobile-changes-summary-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .panel-header {
@@ -16699,6 +17611,26 @@ defineExpose({
 .mobile-header-action-menu {
   display: flex;
   align-items: center;
+}
+
+.mobile-project-switch {
+  min-width: 38px;
+  height: 30px;
+  padding: 0 3px !important;
+}
+
+.mobile-project-switch-badge,
+:global(.mobile-project-option-badge) {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .new-session-button {
@@ -17611,7 +18543,7 @@ defineExpose({
   justify-content: flex-end;
   gap: 4px;
   margin: 0 0 14px auto;
-  width: min(320px, 100%);
+  width: min(520px, 100%);
   padding: 4px;
   border: 1px solid var(--n-border-color);
   border-radius: 4px;
@@ -17620,17 +18552,116 @@ defineExpose({
 }
 
 .timeline-agent-toolbar.is-search-open {
-  width: min(520px, 100%);
+  width: min(680px, 100%);
   background: var(--app-surface-color, #fff);
   box-shadow: 0 4px 12px color-mix(in srgb, var(--app-text-color, #111827) 10%, transparent);
 }
 
 .timeline-agent-toolbar:not(.is-search-open):not(.has-sub-agent-filter) {
-  width: 32px;
+  width: auto;
   padding: 0;
   border-color: transparent;
   background: transparent;
   backdrop-filter: none;
+}
+
+.timeline-navigation-reveal-zone {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 118px;
+  align-items: center;
+  justify-content: flex-end;
+  width: 118px;
+  min-width: 118px;
+  height: 28px;
+}
+
+.timeline-navigation-reveal-zone.is-mobile {
+  flex-basis: 118px;
+}
+
+.timeline-navigation-controls {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: 0 1 118px;
+  align-items: center;
+  gap: 2px;
+  width: 118px;
+  max-width: 118px;
+  overflow: hidden;
+}
+
+.timeline-navigation-reveal-enter-active,
+.timeline-navigation-reveal-leave-active {
+  transition:
+    max-width 180ms ease,
+    opacity 140ms ease,
+    transform 180ms ease;
+}
+
+.timeline-navigation-reveal-enter-from,
+.timeline-navigation-reveal-leave-to {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(8px);
+}
+
+.timeline-navigation-activation-zone {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.timeline-navigation-reveal-zone.is-mobile .timeline-navigation-activation-zone {
+  cursor: pointer;
+}
+
+.timeline-navigation-activation-zone:focus-visible {
+  outline: 1px solid var(--n-primary-color);
+  outline-offset: -3px;
+}
+
+.timeline-navigation-trigger {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+}
+
+.timeline-navigation-button {
+  width: 28px !important;
+  height: 28px !important;
+}
+
+.timeline-navigation-button.is-confirm-armed {
+  color: var(--n-warning-color);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--n-warning-color) 70%, transparent);
+}
+
+.timeline-start-confirm-popover-card {
+  display: grid;
+  gap: 4px;
+  max-width: min(280px, 72vw);
+  padding: 2px 0;
+}
+
+.timeline-start-confirm-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 88%, #111827);
+}
+
+.timeline-start-confirm-body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 72%, #1f2937);
 }
 
 .timeline-search-input {

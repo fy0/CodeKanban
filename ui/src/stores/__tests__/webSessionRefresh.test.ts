@@ -694,6 +694,56 @@ describe('webSession loading behavior', () => {
     });
   });
 
+  it('fetches a chronological preview window without replacing the realtime timeline', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-history-start',
+      status: 'done',
+      itemCount: 3,
+      syncState: 'fresh',
+    });
+
+    listMock.mockResolvedValue([session]);
+    historyMock.mockResolvedValue({
+      items: [
+        {
+          id: 'history-1',
+          oi: 1,
+          kd: 'user',
+          tp: 'message',
+          txt: 'first',
+          ts2: Date.parse('2026-04-09T10:01:00.000Z'),
+        },
+        {
+          id: 'history-2',
+          oi: 2,
+          kd: 'assistant',
+          tp: 'message',
+          txt: 'second',
+          ts2: Date.parse('2026-04-09T10:02:00.000Z'),
+        },
+      ],
+      hasMore: false,
+      hasLater: true,
+      afterCursor: '2',
+      total: 3,
+    });
+
+    await store.loadSessions(session.projectId);
+    const page = await store.fetchHistoryWindow(session.id, {
+      afterCursor: '0',
+      limit: 80,
+    });
+
+    expect(historyMock).toHaveBeenCalledWith(session.projectId, session.id, {
+      afterCursor: '0',
+      limit: 80,
+    });
+    expect(page.items.map(item => item.orderIndex)).toEqual([1, 2]);
+    expect(page).toMatchObject({ hasLater: true, afterCursor: '2', total: 3 });
+    expect(store.getBlocks(session.id)).toEqual([]);
+  });
+
   it('restores pending inputs from snapshot responses', async () => {
     const store = useWebSessionStore();
     const session = makeSession({

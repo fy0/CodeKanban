@@ -109,6 +109,44 @@ func (m *Manager) projectedHistoryWindow(
 	}, nil
 }
 
+func (m *Manager) projectedHistoryWindowAfter(
+	session tables.WebSessionTable,
+	limit int,
+	afterSeq int64,
+) (HistoryWindow, error) {
+	if limit <= 0 {
+		limit = DefaultHistoryWindow
+	}
+
+	rawEvents, err := m.store.readEvents(session.ID)
+	if err != nil {
+		return HistoryWindow{}, err
+	}
+	projected := projectHistoryEvents(rawEvents, Agent(session.Agent))
+	filtered := make([]Event, 0, len(projected))
+	for _, event := range projected {
+		if event.Seq > afterSeq {
+			filtered = append(filtered, event)
+		}
+	}
+
+	total := len(projected)
+	hasLater := len(filtered) > limit
+	if hasLater {
+		filtered = filtered[:limit]
+	}
+	afterCursor := ""
+	if hasLater && len(filtered) > 0 {
+		afterCursor = strconv.FormatInt(filtered[len(filtered)-1].Seq, 10)
+	}
+	return HistoryWindow{
+		Events:      filtered,
+		HasLater:    hasLater,
+		AfterCursor: afterCursor,
+		Total:       total,
+	}, nil
+}
+
 func (m *Manager) GetCommandExecutionGroup(
 	ctx context.Context,
 	sessionID string,

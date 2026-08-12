@@ -130,10 +130,18 @@
             type="button"
             class="nav-item"
             :class="{ active: mobileActiveView === 'changes' }"
+            :aria-label="`${t('nav.changes')} · ${mobileTrackedChangesCount}`"
             @click="setMobileView('changes')"
           >
             <span class="nav-icon-shell">
               <n-icon size="20"><GitBranchOutline /></n-icon>
+              <span
+                v-if="mobileTrackedChangesBadge"
+                class="nav-count-badge nav-count-badge--changes"
+                aria-hidden="true"
+              >
+                {{ mobileTrackedChangesBadge }}
+              </span>
             </span>
             <span>{{ t('nav.changes') }}</span>
           </button>
@@ -239,6 +247,7 @@ import {
   formatMobileNavBadge,
   mobileViewToRouteTab,
   normalizeMobileView,
+  resolveMobileTrackedModificationCount,
   resolveMobileProjectSelectionAction,
   resolveMobileProjectSourceViewChange,
   routeTabToMobileView,
@@ -422,8 +431,18 @@ const mobileWebSessionCount = computed(() => {
     webSessionStore.getSessionCount(projectId)
   );
 });
+const mobileTrackedChangesCount = computed(() => {
+  return resolveMobileTrackedModificationCount(
+    projectStore.worktrees,
+    currentProjectId.value,
+    projectStore.selectedWorktreeId
+  );
+});
 const mobileTerminalBadge = computed(() => formatMobileNavBadge(mobileTerminalCount.value));
 const mobileWebSessionBadge = computed(() => formatMobileNavBadge(mobileWebSessionCount.value));
+const mobileTrackedChangesBadge = computed(() =>
+  formatMobileNavBadge(mobileTrackedChangesCount.value)
+);
 const dailyTipCount = computed(() => getDailyTips(locale.value).length);
 const activeDailyTip = computed<DailyTipDefinition | null>(() => {
   const tips = getDailyTips(locale.value);
@@ -1191,6 +1210,10 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
   line-height: 1;
   letter-spacing: 0;
   pointer-events: none;
+}
+
+.mobile-bottom-nav .nav-count-badge--changes {
+  background: #f59e0b;
 }
 
 /* 平板端适配 */

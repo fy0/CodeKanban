@@ -315,6 +315,38 @@ describe('webSessionApi Pi tree', () => {
       '/projects/project-1/web-sessions/session-1/tree/clone',
       { revision: 'rev-1' }
     );
+  });
+});
+
+describe('webSessionApi.history', () => {
+  beforeEach(() => {
+    getMethodMock.mockReset();
+  });
+
+  it('requests the first chronological page with an after cursor at zero', async () => {
+    const sendMock = vi.fn().mockResolvedValue({
+      item: {
+        items: [{ id: 'history-1', orderIndex: 1 }],
+        hasMore: false,
+        hasLater: true,
+        afterCursor: '1',
+        total: 3,
+      },
+    });
+    getMethodMock.mockReturnValue({ send: sendMock });
+
+    const result = await webSessionApi.history('project-1', 'session-1', {
+      afterCursor: '0',
+      limit: 80,
+    });
+
+    expect(getMethodMock).toHaveBeenCalledWith(
+      '/projects/project-1/web-sessions/session-1/history?afterCursor=0&limit=80'
+    );
+    expect(sendMock).toHaveBeenCalledWith(true);
+    expect(result).toMatchObject({ hasLater: true, afterCursor: '1', total: 3 });
+  });
+});
 
 describe('webSessionApi.commandGroupDetail', () => {
   beforeEach(() => {

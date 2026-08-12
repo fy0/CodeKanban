@@ -364,6 +364,15 @@ export interface WebSessionBlock {
   payload?: Record<string, unknown>;
 }
 
+export interface WebSessionHistoryPage {
+  items: WebSessionBlock[];
+  hasMore: boolean;
+  beforeCursor: string;
+  hasLater: boolean;
+  afterCursor: string;
+  total: number;
+}
+
 export interface WebSessionApprovalState {
   id: string;
   itemId: string;
@@ -6173,6 +6182,31 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
+  async function fetchHistoryWindow(
+    sessionId: string,
+    options?: {
+      beforeCursor?: string;
+      afterCursor?: string;
+      limit?: number;
+    }
+  ): Promise<WebSessionHistoryPage> {
+    const session = findSessionById(sessionId);
+    if (!session) {
+      throw new Error('session not found');
+    }
+    const history = await webSessionApi.history(session.projectId, sessionId, options);
+    return {
+      items: Array.isArray(history.items)
+        ? history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+        : [],
+      hasMore: Boolean(history.hasMore),
+      beforeCursor: String(history.beforeCursor ?? ''),
+      hasLater: Boolean(history.hasLater),
+      afterCursor: String(history.afterCursor ?? ''),
+      total: Number(history.total ?? 0),
+    };
+  }
+
   async function updateModel(sessionId: string, model: string) {
     await sendCommand('set_md', sessionId, { md: model });
   }
@@ -6690,6 +6724,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getPendingInputs,
     getScheduledInputs,
     getHistoryMeta,
+    fetchHistoryWindow,
     loadCommandGroupDetail,
     getSubAgents,
     getAppliedRevision,

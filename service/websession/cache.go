@@ -90,6 +90,13 @@ func historyItemCursor(items []HistoryItem, hasMore bool) string {
 	return strconv.FormatInt(items[0].OrderIndex, 10)
 }
 
+func historyItemAfterCursor(items []HistoryItem, hasLater bool) string {
+	if !hasLater || len(items) == 0 {
+		return ""
+	}
+	return strconv.FormatInt(items[len(items)-1].OrderIndex, 10)
+}
+
 func mapHistoryItemRow(row tables.WebSessionItemTable) HistoryItem {
 	var attachments []HistoryAttachment
 	var tool *HistoryTool
@@ -550,6 +557,54 @@ func (m *Manager) loadHistoryWindow(
 		HasMore:      hasMore,
 		BeforeCursor: historyItemCursor(items, hasMore),
 		Total:        int(total),
+	}, nil
+}
+
+func (m *Manager) loadHistoryWindowAfter(
+	ctx context.Context,
+	sessionID string,
+	limit int,
+	afterOrder int64,
+) (HistoryWindow, error) {
+	db := model.GetDB()
+	if db == nil {
+		return HistoryWindow{}, model.ErrDBNotInitialized
+	}
+	if limit <= 0 {
+		limit = DefaultHistoryWindow
+	}
+
+	var total int64
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionItemTable{}).
+		Where("web_session_id = ?", sessionID).
+		Count(&total).Error; err != nil {
+		return HistoryWindow{}, err
+	}
+
+	var rows []tables.WebSessionItemTable
+	if err := db.WithContext(ctx).
+		Where("web_session_id = ? AND order_index > ?", sessionID, afterOrder).
+		Order("order_index ASC").
+		Limit(limit + 1).
+		Find(&rows).Error; err != nil {
+		return HistoryWindow{}, err
+	}
+
+	hasLater := len(rows) > limit
+	if hasLater {
+		rows = rows[:limit]
+	}
+	items := make([]HistoryItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, mapHistoryItemRowWithSession(row, sessionID))
+	}
+
+	return HistoryWindow{
+		Items:       items,
+		HasLater:    hasLater,
+		AfterCursor: historyItemAfterCursor(items, hasLater),
+		Total:       int(total),
 	}, nil
 }
 

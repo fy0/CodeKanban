@@ -5,6 +5,7 @@ import {
   formatMobileNavBadge,
   mobileViewToRouteTab,
   normalizeMobileView,
+  resolveMobileTrackedModificationCount,
   resolveMobileProjectSelectionAction,
   resolveMobileProjectSourceViewChange,
   routeTabToMobileView,
@@ -18,6 +19,33 @@ describe('projectWorkspaceMobileView', () => {
     expect(formatMobileNavBadge(99)).toBe('99');
     expect(formatMobileNavBadge(100)).toBe('99+');
     expect(formatMobileNavBadge('invalid')).toBe('');
+  });
+
+  it('counts only tracked working-tree modifications for the changes badge', () => {
+    const worktrees = [
+      {
+        id: 'main',
+        projectId: 'project-1',
+        isMain: true,
+        statusModified: 3,
+        statusStaged: 8,
+        statusUntracked: 13,
+        statusConflicts: 2,
+      },
+      {
+        id: 'selected',
+        projectId: 'project-1',
+        isMain: false,
+        statusModified: 6,
+        statusStaged: 21,
+        statusUntracked: 34,
+        statusConflicts: 5,
+      },
+    ];
+
+    expect(resolveMobileTrackedModificationCount(worktrees, 'project-1', 'selected')).toBe(6);
+    expect(resolveMobileTrackedModificationCount(worktrees, 'project-1', null)).toBe(3);
+    expect(resolveMobileTrackedModificationCount(worktrees, 'project-2', null)).toBe(0);
   });
 
   it('keeps visible mobile views unchanged', () => {

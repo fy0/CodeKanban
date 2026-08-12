@@ -156,6 +156,8 @@ export type WebSessionHistoryWindow = {
   items: unknown[];
   hasMore: boolean;
   beforeCursor?: string;
+  hasLater?: boolean;
+  afterCursor?: string;
   total: number;
 };
 
@@ -562,12 +564,16 @@ export const webSessionApi = {
     sessionId: string,
     options?: {
       beforeCursor?: string;
+      afterCursor?: string;
       limit?: number;
     }
   ): Promise<WebSessionHistoryWindow> {
     const params = new URLSearchParams();
     if (options?.beforeCursor) {
       params.set('beforeCursor', options.beforeCursor);
+    }
+    if (options?.afterCursor) {
+      params.set('afterCursor', options.afterCursor);
     }
     if (typeof options?.limit === 'number' && Number.isFinite(options.limit)) {
       params.set('limit', String(Math.max(1, Math.trunc(options.limit))));

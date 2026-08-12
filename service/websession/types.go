@@ -432,6 +432,8 @@ type HistoryWindow struct {
 	Items        []HistoryItem `json:"items"`
 	HasMore      bool          `json:"hasMore"`
 	BeforeCursor string        `json:"beforeCursor,omitempty"`
+	HasLater     bool          `json:"hasLater,omitempty"`
+	AfterCursor  string        `json:"afterCursor,omitempty"`
 	Total        int           `json:"total"`
 }
 

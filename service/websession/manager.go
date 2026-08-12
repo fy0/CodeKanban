@@ -2054,6 +2054,25 @@ func (m *Manager) History(ctx context.Context, sessionID string, limit int, befo
 	return window, nil
 }
 
+func (m *Manager) HistoryAfter(ctx context.Context, sessionID string, limit int, afterSeq int64) (HistoryWindow, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return HistoryWindow{}, err
+	}
+	if limit <= 0 || limit > MaxHistoryWindow {
+		limit = DefaultHistoryWindow
+	}
+	window, err := m.loadHistoryWindowAfter(ctx, sessionID, limit, afterSeq)
+	if err != nil {
+		return HistoryWindow{}, err
+	}
+	projected, err := m.projectedHistoryWindowAfter(record, limit, afterSeq)
+	if err == nil {
+		window.Events = projected.Events
+	}
+	return window, nil
+}
+
 func (m *Manager) RenameSession(ctx context.Context, sessionID, title string) (SessionSummary, error) {
 	normalized := strings.TrimSpace(title)
 	if normalized == "" {

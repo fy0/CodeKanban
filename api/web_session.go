@@ -320,6 +320,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			ProjectID    string `path:"projectId"`
 			SessionID    string `path:"sessionId"`
 			BeforeCursor string `query:"beforeCursor"`
+			AfterCursor  string `query:"afterCursor"`
 			Limit        int    `query:"limit" default:"80"`
 		},
 	) (*h.ItemResponse[websession.HistoryWindow], error) {
@@ -327,15 +328,29 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		if err != nil || record.ProjectID != input.ProjectID {
 			return nil, huma.Error404NotFound("session not found")
 		}
+		beforeCursor := strings.TrimSpace(input.BeforeCursor)
+		afterCursor := strings.TrimSpace(input.AfterCursor)
+		if beforeCursor != "" && afterCursor != "" {
+			return nil, huma.Error400BadRequest("history cursors are mutually exclusive")
+		}
 		var beforeSeq *int64
-		if strings.TrimSpace(input.BeforeCursor) != "" {
-			value, parseErr := strconv.ParseInt(strings.TrimSpace(input.BeforeCursor), 10, 64)
+		if beforeCursor != "" {
+			value, parseErr := strconv.ParseInt(beforeCursor, 10, 64)
 			if parseErr != nil {
 				return nil, huma.Error400BadRequest("invalid history cursor")
 			}
 			beforeSeq = &value
 		}
-		item, err := c.manager.History(ctx, input.SessionID, input.Limit, beforeSeq)
+		var item websession.HistoryWindow
+		if afterCursor != "" {
+			afterSeq, parseErr := strconv.ParseInt(afterCursor, 10, 64)
+			if parseErr != nil {
+				return nil, huma.Error400BadRequest("invalid history cursor")
+			}
+			item, err = c.manager.HistoryAfter(ctx, input.SessionID, input.Limit, afterSeq)
+		} else {
+			item, err = c.manager.History(ctx, input.SessionID, input.Limit, beforeSeq)
+		}
 		if err != nil {
 			return nil, huma.Error400BadRequest(err.Error())
 		}

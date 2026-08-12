@@ -10,6 +10,13 @@ export type MobileProjectSelectionAction =
   | { type: 'navigate'; targetView: 'webSession' }
   | { type: 'prompt-return'; sourceView: MobileProjectSourceView };
 
+type MobileGitStatusWorktree = {
+  id: string;
+  projectId: string;
+  isMain: boolean;
+  statusModified: number | null;
+};
+
 export function formatMobileNavBadge(value: unknown): string {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue) || numericValue <= 0) {
@@ -17,6 +24,20 @@ export function formatMobileNavBadge(value: unknown): string {
   }
   const count = Math.trunc(numericValue);
   return count > 99 ? '99+' : String(count);
+}
+
+export function resolveMobileTrackedModificationCount(
+  worktrees: MobileGitStatusWorktree[],
+  projectId: string,
+  selectedWorktreeId?: string | null
+) {
+  const projectWorktrees = worktrees.filter(worktree => worktree.projectId === projectId);
+  const worktree =
+    projectWorktrees.find(worktree => worktree.id === selectedWorktreeId) ??
+    projectWorktrees.find(worktree => worktree.isMain) ??
+    projectWorktrees[0];
+  const count = Number(worktree?.statusModified ?? 0);
+  return Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
 }
 
 export function normalizeMobileView(value: unknown): MobileView {
