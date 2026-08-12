@@ -1,5 +1,5 @@
 .chat-markdown {
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  color: var(--app-text-primary, var(--app-text-color, #111827));
   font-size: 14px;
   line-height: 1.72;
   word-break: break-word;
@@ -8,7 +8,10 @@
 .chat-markdown .markdown-search-highlight {
   padding: 0 0.12em;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--n-warning-color, #f0a020) 48%, transparent);
+  background: var(
+    --app-warning-soft,
+    color-mix(in srgb, var(--n-warning-color, #f0a020) 48%, transparent)
+  );
   color: inherit;
 }
 
@@ -33,7 +36,7 @@
   margin: 1.2em 0 0.55em;
   line-height: 1.3;
   font-weight: 700;
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  color: var(--app-text-primary, var(--app-text-color, #111827));
 }
 
 .chat-markdown h1 {
@@ -101,26 +104,32 @@
 
 .chat-markdown .task-list-item input[type='checkbox'] {
   margin: 0.28em 0.6em 0 0;
-  accent-color: var(--n-primary-color);
+  accent-color: var(--app-accent, var(--n-primary-color));
 }
 
 .chat-markdown blockquote {
   margin: 1em 0;
   padding: 0.2em 0 0.2em 14px;
-  border-left: 3px solid color-mix(in srgb, var(--n-primary-color) 28%, var(--n-border-color));
+  border-left: 3px solid
+    color-mix(
+      in srgb,
+      var(--app-accent, var(--n-primary-color)) 28%,
+      var(--app-border, var(--n-border-color))
+    );
   border-radius: 0 12px 12px 0;
-  color: var(--n-text-color-3);
-  background: color-mix(in srgb, var(--n-primary-color) 7%, transparent);
+  color: var(--app-text-muted, var(--n-text-color-3));
+  background: color-mix(in srgb, var(--app-accent-soft, transparent) 70%, transparent);
 }
 
 .chat-markdown a {
-  color: color-mix(in srgb, var(--n-primary-color) 84%, #0f4ea8);
+  color: var(--app-link, var(--app-info, var(--n-primary-color)));
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 36%, transparent);
   text-underline-offset: 0.16em;
 }
 
 .chat-markdown a:hover {
+  color: var(--app-link-hover, var(--app-link, var(--n-primary-color)));
   text-decoration-color: currentColor;
 }
 
@@ -138,10 +147,19 @@
   justify-content: center;
   min-height: 22px;
   padding: 0 8px;
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 18%, var(--n-border-color));
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--app-accent, var(--n-primary-color)) 18%,
+      var(--app-border, var(--n-border-color))
+    );
   border-radius: 999px;
-  background: color-mix(in srgb, var(--n-primary-color) 9%, var(--app-surface-color, #fff));
-  color: var(--n-text-color-2);
+  background: color-mix(
+    in srgb,
+    var(--app-accent, var(--n-primary-color)) 9%,
+    var(--app-surface-raised, #fff)
+  );
+  color: var(--app-text-secondary, var(--n-text-color-2));
   font-size: 11px;
   font-weight: 600;
   line-height: 1;
@@ -154,24 +172,34 @@
 }
 
 .chat-markdown .message-link-copy-button:hover {
-  border-color: color-mix(in srgb, var(--n-primary-color) 28%, var(--n-border-color));
-  background: color-mix(in srgb, var(--n-primary-color) 16%, var(--app-surface-color, #fff));
-  color: var(--n-primary-color);
+  border-color: color-mix(
+    in srgb,
+    var(--app-accent, var(--n-primary-color)) 28%,
+    var(--app-border, var(--n-border-color))
+  );
+  background: color-mix(
+    in srgb,
+    var(--app-accent, var(--n-primary-color)) 16%,
+    var(--app-surface-raised, #fff)
+  );
+  color: var(--app-focus-ring, var(--n-primary-color));
 }
 
 .chat-markdown .message-link-copy-button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--n-primary-color) 35%, transparent);
+  outline: 2px solid
+    color-mix(in srgb, var(--app-focus-ring, var(--n-primary-color)) 58%, transparent);
   outline-offset: 2px;
 }
 
 .chat-markdown hr {
   margin: 1.2em 0;
   border: none;
-  border-top: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
+  border-top: 1px solid
+    color-mix(in srgb, var(--app-border, var(--n-border-color)) 82%, transparent);
 }
 
 .chat-markdown :not(pre) > code {
-  color: color-mix(in srgb, var(--n-info-color, #2563eb) 86%, #0f4ea8);
+  color: var(--app-info, var(--n-info-color, #2563eb));
   font-family: 'Fira Code', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 0.92em;
 }
@@ -183,14 +211,24 @@
 
 .chat-markdown pre.markdown-code-block {
   position: relative;
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 14%, var(--n-border-color));
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--app-accent, var(--n-primary-color)) 14%,
+      var(--app-border, var(--n-border-color))
+    );
   border-radius: 14px;
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%),
-    color-mix(in srgb, var(--app-surface-color, #fff) 97%, black 3%)
+    color-mix(
+      in srgb,
+      var(--app-surface-raised, #fff) 92%,
+      var(--app-accent, var(--n-primary-color)) 8%
+    ),
+    var(--app-surface-sunken, color-mix(in srgb, var(--app-surface-color, #fff) 97%, black 3%))
   );
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 10px 28px
+    color-mix(in srgb, var(--app-shadow, rgba(15, 23, 42, 0.06)) 62%, transparent);
 }
 
 .chat-markdown .markdown-code-copy-button {
@@ -201,7 +239,7 @@
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--n-text-color-2);
+  color: var(--app-text-secondary, var(--n-text-color-2));
   font-size: 10px;
   line-height: 1;
   font-weight: 600;
@@ -213,7 +251,7 @@
 }
 
 .chat-markdown .markdown-code-copy-button:hover {
-  color: var(--n-primary-color);
+  color: var(--app-focus-ring, var(--n-primary-color));
   opacity: 1;
 }
 
@@ -221,7 +259,7 @@
   content: attr(data-language);
   display: block;
   padding: 10px 14px 0;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -237,7 +275,7 @@
   min-width: max-content;
   padding: 12px 14px 14px;
   background: transparent;
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  color: var(--app-text-primary, var(--app-text-color, #111827));
   font-family: 'Fira Code', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 13px;
   line-height: 1.68;
@@ -256,19 +294,29 @@
   margin: 1em 0;
   border-collapse: separate;
   border-spacing: 0;
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 12%, var(--n-border-color));
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--app-accent, var(--n-primary-color)) 12%,
+      var(--app-border, var(--n-border-color))
+    );
   border-radius: 12px;
   overflow: hidden;
 }
 
 .chat-markdown thead {
-  background: color-mix(in srgb, var(--n-primary-color) 8%, transparent);
+  background: color-mix(in srgb, var(--app-accent-soft, transparent) 74%, transparent);
 }
 
 .chat-markdown th,
 .chat-markdown td {
   padding: 10px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--n-primary-color) 8%, var(--n-border-color));
+  border-bottom: 1px solid
+    color-mix(
+      in srgb,
+      var(--app-accent, var(--n-primary-color)) 8%,
+      var(--app-border, var(--n-border-color))
+    );
   text-align: left;
   vertical-align: top;
 }
@@ -288,7 +336,7 @@
 
 .chat-markdown .hljs-comment,
 .chat-markdown .hljs-quote {
-  color: color-mix(in srgb, var(--n-text-color-3) 92%, transparent);
+  color: var(--app-text-muted, var(--n-text-color-3));
   font-style: italic;
 }
 
@@ -297,7 +345,7 @@
 .chat-markdown .hljs-literal,
 .chat-markdown .hljs-section,
 .chat-markdown .hljs-link {
-  color: color-mix(in srgb, var(--n-primary-color) 82%, #0f4ea8);
+  color: var(--app-link, var(--app-info, var(--n-primary-color)));
 }
 
 .chat-markdown .hljs-string,
@@ -306,7 +354,7 @@
 .chat-markdown .hljs-attr,
 .chat-markdown .hljs-attribute,
 .chat-markdown .hljs-template-tag {
-  color: color-mix(in srgb, var(--n-success-color) 76%, #0f766e);
+  color: var(--app-success, var(--n-success-color));
 }
 
 .chat-markdown .hljs-number,
@@ -315,30 +363,38 @@
 .chat-markdown .hljs-variable,
 .chat-markdown .hljs-built_in,
 .chat-markdown .hljs-builtin-name {
-  color: color-mix(in srgb, var(--n-warning-color) 78%, #b45309);
+  color: var(--app-warning, var(--n-warning-color));
 }
 
 .chat-markdown .hljs-type,
 .chat-markdown .hljs-class,
 .chat-markdown .hljs-function,
 .chat-markdown .hljs-title.function_ {
-  color: color-mix(in srgb, var(--app-text-color, #111827) 72%, var(--n-primary-color) 28%);
+  color: color-mix(
+    in srgb,
+    var(--app-text-primary, #111827) 72%,
+    var(--app-info, var(--n-primary-color)) 28%
+  );
 }
 
 .chat-markdown .hljs-meta,
 .chat-markdown .hljs-regexp,
 .chat-markdown .hljs-operator {
-  color: color-mix(in srgb, var(--n-info-color, #2563eb) 72%, var(--n-text-color-2) 28%);
+  color: color-mix(
+    in srgb,
+    var(--app-info, var(--n-info-color, #2563eb)) 72%,
+    var(--app-text-secondary, var(--n-text-color-2)) 28%
+  );
 }
 
 .chat-markdown .hljs-addition {
-  color: color-mix(in srgb, var(--n-success-color) 84%, #166534);
-  background: color-mix(in srgb, var(--n-success-color) 12%, transparent);
+  color: var(--app-success, var(--n-success-color));
+  background: var(--app-success-soft, color-mix(in srgb, var(--n-success-color) 12%, transparent));
 }
 
 .chat-markdown .hljs-deletion {
-  color: color-mix(in srgb, var(--n-error-color) 84%, #991b1b);
-  background: color-mix(in srgb, var(--n-error-color) 12%, transparent);
+  color: var(--app-error, var(--n-error-color));
+  background: var(--app-error-soft, color-mix(in srgb, var(--n-error-color) 12%, transparent));
 }
 
 .chat-markdown .hljs-emphasis {

@@ -1,7 +1,7 @@
 /**
  * 全局 CSS 变量声明
  * 这个文件定义了项目中使用的所有自定义 CSS 变量
- * 这些变量会被 Vue 的 useCssVars 在运行时动态更新
+ * 这些变量会由 App.vue 在运行时动态更新
  */
 
 :root {
@@ -11,6 +11,40 @@
   --app-body-color: #f7f8fa;
   --app-surface-color: #ffffff;
   --app-text-color: #333333;
+
+  /* 应用语义色。运行时由 App.vue 根据当前主题覆盖。 */
+  --app-canvas: var(--app-body-color);
+  --app-surface: var(--app-surface-color);
+  --app-surface-raised: #ffffff;
+  --app-surface-sunken: #f2f3f5;
+  --app-surface-hover: #f9f9f9;
+  --app-surface-active: #f1f1f1;
+  --app-text-primary: var(--app-text-color);
+  --app-text-secondary: rgba(51, 51, 51, 0.74);
+  --app-text-muted: rgba(51, 51, 51, 0.68);
+  --app-text-inverse: #ffffff;
+  --app-border: #e0e0e0;
+  --app-border-strong: #b8bcc8;
+  --app-control-border: #d0d5dd;
+  --app-control-border-hover: #b8bcc8;
+  --app-focus-ring: #3b69a9;
+  --app-accent: #3b69a9;
+  --app-accent-hover: #4f7dbd;
+  --app-accent-pressed: #1c4a8a;
+  --app-accent-soft: rgba(59, 105, 169, 0.1);
+  --app-accent-contrast: #ffffff;
+  --app-link: #255a8f;
+  --app-link-hover: #1f4c7f;
+  --app-success: #137333;
+  --app-success-soft: rgba(19, 115, 51, 0.1);
+  --app-warning: #8a5d00;
+  --app-warning-soft: rgba(138, 93, 0, 0.1);
+  --app-error: #b42318;
+  --app-error-soft: rgba(180, 35, 24, 0.1);
+  --app-info: #255a8f;
+  --app-info-soft: rgba(37, 90, 143, 0.1);
+  --app-overlay: rgba(15, 23, 42, 0.38);
+  --app-shadow: rgba(24, 35, 51, 0.12);
 
   /* 终端颜色 */
   --kanban-terminal-bg: #0f111a;
@@ -26,54 +60,59 @@
   --terminal-overlay-color: #f6f8ff;
 
   /* 输入框边框颜色 */
-  --app-input-border-color: #d0d5dd;
-  --app-input-border-hover-color: #b8bcc8;
+  --app-input-border-color: var(--app-control-border);
+  --app-input-border-hover-color: var(--app-control-border-hover);
 
   /* 预览面板颜色 */
   --preview-banner-bg: #3b69a9;
   --preview-banner-text: #ffffff;
-  --preview-panel-bg: #ffffff;
-  --preview-content-bg: #ffffff;
-  --preview-content-text: #333333;
+  --preview-panel-bg: var(--app-surface);
+  --preview-content-bg: var(--app-surface-raised);
+  --preview-content-text: var(--app-text-primary);
 
   /* ==================== Naive UI 变量 ==================== */
   /* 这些变量由 Naive UI 的 n-config-provider 和 n-global-style 注入 */
   /* 在这里声明是为了让 IDE 识别，避免警告 */
 
   /* 主色调 */
-  --n-primary-color: #3b69a9;
-  --n-primary-color-hover: #4a7ab8;
-  --n-primary-color-pressed: #2f5689;
-  --n-primary-color-suppl: #4a7ab8;
+  --n-primary-color: var(--app-accent);
+  --n-color-primary: var(--app-accent);
+  --n-primary-color-hover: var(--app-accent-hover);
+  --n-primary-color-pressed: var(--app-accent-pressed);
+  --n-primary-color-suppl: var(--app-accent-hover);
 
   /* 文本颜色 */
-  --n-text-color-base: #333333;
-  --n-text-color-1: #333333;
-  --n-text-color-2: #666666;
-  --n-text-color-3: #999999;
+  --n-text-color-base: var(--app-text-primary);
+  --n-text-color: var(--app-text-primary);
+  --n-text-color-1: var(--app-text-primary);
+  --n-text-color-2: var(--app-text-secondary);
+  --n-text-color-3: var(--app-text-muted);
 
   /* 背景颜色 */
-  --n-body-color: #f7f8fa;
-  --n-color: #ffffff;
-  --n-color-hover: #f5f5f5;
-  --n-card-color: #ffffff;
-  --n-modal-color: #ffffff;
-  --n-popover-color: #ffffff;
+  --n-body-color: var(--app-canvas);
+  --n-color: var(--app-surface);
+  --n-color-hover: var(--app-surface-hover);
+  --n-color-target: var(--app-accent-soft);
+  --n-color-embedded: var(--app-surface-sunken);
+  --n-card-color: var(--app-surface);
+  --n-modal-color: var(--app-surface-raised);
+  --n-popover-color: var(--app-surface-raised);
 
   /* 边框颜色 */
-  --n-border-color: #e0e0e0;
+  --n-border-color: var(--app-border);
+  --n-divider-color: var(--app-border);
 
   /* 阴影颜色 */
-  --n-box-shadow-color: rgba(0, 0, 0, 0.12);
+  --n-box-shadow-color: var(--app-shadow);
 
   /* Tab 颜色 */
-  --n-tab-color: #ffffff;
+  --n-tab-color: var(--app-surface);
 
   /* 功能色 */
-  --n-error-color: #f5222d;
-  --n-warning-color: #fa8c16;
-  --n-success-color: #52c41a;
-  --n-info-color: #3b69a9;
+  --n-error-color: var(--app-error);
+  --n-warning-color: var(--app-warning);
+  --n-success-color: var(--app-success);
+  --n-info-color: var(--app-info);
 }
 
 /* ==================== 暗色主题变量参考 ==================== */
@@ -89,8 +128,8 @@
   --app-text-color: #d4d4d4
   --kanban-terminal-bg: #0f111a
   --kanban-terminal-fg: #f6f8ff
-  --app-input-border-color: #4b4b4b
-  --app-input-border-hover-color: #5a5a5a
+  --app-input-border-color: #686868
+  --app-input-border-hover-color: #878787
 
   Naive UI 暗色主题变量由 darkTheme 自动提供
 */

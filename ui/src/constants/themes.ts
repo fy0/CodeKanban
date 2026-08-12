@@ -5,6 +5,7 @@ export interface ThemePreset {
   name: string;
   nameEn: string;
   isDark: boolean;
+  maintenance: 'supported' | 'preview';
   colors: ThemeSettings;
   terminalThemeId: string;
 }
@@ -15,6 +16,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: '亮色',
     nameEn: 'Light',
     isDark: false,
+    maintenance: 'supported',
     terminalThemeId: 'light',
     colors: {
       primaryColor: '#3B69A9',
@@ -39,6 +41,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: '暗色',
     nameEn: 'Dark',
     isDark: true,
+    maintenance: 'supported',
     terminalThemeId: 'nord',
     colors: {
       primaryColor: '#007ACC',
@@ -61,6 +64,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: '柔和暗色',
     nameEn: 'Dim',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'github-dark',
     colors: {
       primaryColor: '#539BF5',
@@ -83,6 +87,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: '暖色',
     nameEn: 'Warm',
     isDark: false,
+    maintenance: 'preview',
     terminalThemeId: 'warm-light',
     colors: {
       primaryColor: '#D97706',
@@ -105,6 +110,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Material 暗色',
     nameEn: 'Material Dark',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'material-dark',
     colors: {
       primaryColor: '#BB86FC',
@@ -127,6 +133,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Xcode 暗色',
     nameEn: 'Xcode Dark',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'xcode-dark',
     colors: {
       primaryColor: '#0A84FF',
@@ -149,6 +156,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Solarized 亮色',
     nameEn: 'Solarized Light',
     isDark: false,
+    maintenance: 'preview',
     terminalThemeId: 'solarized-light',
     colors: {
       primaryColor: '#268BD2',
@@ -171,6 +179,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Solarized 暗色',
     nameEn: 'Solarized Dark',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'solarized-dark',
     colors: {
       primaryColor: '#859900',
@@ -193,6 +202,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Nord',
     nameEn: 'Nord',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'nord',
     colors: {
       primaryColor: '#88C0D0',
@@ -215,6 +225,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Dracula',
     nameEn: 'Dracula',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'dracula',
     colors: {
       primaryColor: '#BD93F9',
@@ -237,6 +248,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'One Dark',
     nameEn: 'One Dark',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'one-dark',
     colors: {
       primaryColor: '#61AFEF',
@@ -259,6 +271,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Tokyo Night',
     nameEn: 'Tokyo Night',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'tokyo-night',
     colors: {
       primaryColor: '#7AA2F7',
@@ -281,6 +294,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'GitHub 暗色',
     nameEn: 'GitHub Dark',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'github-dark',
     colors: {
       primaryColor: '#58A6FF',
@@ -303,6 +317,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Monokai',
     nameEn: 'Monokai',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'monokai',
     colors: {
       primaryColor: '#A6E22E',
@@ -325,6 +340,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Gruvbox 暗色',
     nameEn: 'Gruvbox Dark',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'gruvbox-dark',
     colors: {
       primaryColor: '#FABD2F',
@@ -347,6 +363,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Catppuccin',
     nameEn: 'Catppuccin Mocha',
     isDark: true,
+    maintenance: 'preview',
     terminalThemeId: 'catppuccin',
     colors: {
       primaryColor: '#CBA6F7',
@@ -369,6 +386,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'GitHub 亮色',
     nameEn: 'GitHub Light',
     isDark: false,
+    maintenance: 'preview',
     terminalThemeId: 'github-light',
     colors: {
       primaryColor: '#0969DA',
@@ -391,6 +409,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     name: 'Gruvbox 亮色',
     nameEn: 'Gruvbox Light',
     isDark: false,
+    maintenance: 'preview',
     terminalThemeId: 'gruvbox-light',
     colors: {
       primaryColor: '#B57614',
@@ -414,6 +433,10 @@ export const DEFAULT_PRESET_ID = 'light';
 
 export function getPresetById(id: string): ThemePreset | undefined {
   return THEME_PRESETS.find(preset => preset.id === id);
+}
+
+export function isSupportedThemePreset(id: string): boolean {
+  return getPresetById(id)?.maintenance === 'supported';
 }
 
 export function getDefaultPreset(): ThemePreset {

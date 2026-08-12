@@ -16,9 +16,10 @@ import { storeToRefs } from 'pinia';
 import { NIcon, useDialog } from 'naive-ui';
 import { MoonOutline, SunnyOutline, CheckmarkOutline } from '@vicons/ionicons5';
 import { useSettingsStore } from '@/stores/settings';
-import { THEME_PRESETS, getPresetById } from '@/constants/themes';
+import { THEME_PRESETS, isSupportedThemePreset } from '@/constants/themes';
 import { useLocale } from '@/composables/useLocale';
 import { useThemeOptions } from '@/composables/useThemeOptions';
+import { isDarkHex } from '@/utils/color';
 import {
   createThemeMaintenanceWarningController,
   createThemeSelectionController,
@@ -39,7 +40,7 @@ const props = withDefaults(
 const { t } = useLocale();
 const dialog = useDialog();
 const settingsStore = useSettingsStore();
-const { currentPresetId, followSystemTheme } = storeToRefs(settingsStore);
+const { activeTheme, currentPresetId, followSystemTheme } = storeToRefs(settingsStore);
 const themeWarningController = createThemeMaintenanceWarningController({
   t,
   warning: options => dialog.warning(options),
@@ -51,13 +52,11 @@ const themeSelectionController = createThemeSelectionController({
   toggleFollowSystemTheme: enabled => settingsStore.toggleFollowSystemTheme(enabled),
   confirmPresetThemeChange: themeWarningController.confirmPresetThemeChange,
   confirmFollowSystemEnable: themeWarningController.confirmFollowSystemEnable,
+  shouldConfirmPresetThemeChange: presetId => !isSupportedThemePreset(presetId),
+  shouldConfirmFollowSystemEnable: () => false,
 });
 
-// 判断当前是否为暗色主题
-const isDarkTheme = computed(() => {
-  const preset = getPresetById(currentPresetId.value);
-  return preset?.isDark ?? false;
-});
+const isDarkTheme = computed(() => isDarkHex(activeTheme.value.bodyColor));
 
 // 渲染颜色圆点
 const renderColorDot = (color: string) =>

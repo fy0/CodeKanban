@@ -1,6 +1,7 @@
 import type { GlobalThemeOverrides } from 'naive-ui';
 import type { ThemeSettings } from '@/stores/settings';
-import { darkenColor, lightenColor, isDarkHex } from './color';
+import { darkenColor, hexToRgba, lightenColor, isDarkHex } from './color';
+import { createThemeSemanticPalette } from './themeSemanticPalette';
 
 /**
  * 根据主题设置创建 Naive UI 全局主题覆盖配置
@@ -23,19 +24,20 @@ export function createThemeOverrides(
   const primaryPressed = darkenColor(primaryColor, 0.12);
 
   const isDark = isDarkHex(bodyColor || '#ffffff');
+  const palette = createThemeSemanticPalette(theme, resolvedTextColor);
 
   // 设置文字颜色（如果主题提供了 textColor 则使用，否则根据暗色/亮色自动设置）
   const primaryTextColor = resolvedTextColor;
-  const secondaryTextColor = isDark ? '#FFFFFFA6' : '#000000A6';
-  const mutedTextColor = isDark ? '#FFFFFF73' : '#00000073';
+  const secondaryTextColor = palette.textSecondary;
+  const mutedTextColor = palette.textMuted;
 
   return {
     common: {
       // 基础颜色
       bodyColor,
       cardColor: surfaceColor,
-      modalColor: surfaceColor,
-      popoverColor: surfaceColor,
+      modalColor: palette.surfaceRaised,
+      popoverColor: palette.surfaceRaised,
       tableColor: surfaceColor,
 
       // 主色调配置
@@ -51,16 +53,16 @@ export function createThemeOverrides(
       textColor3: mutedTextColor,
 
       // 边框颜色
-      borderColor: isDark ? '#3C3C3C' : '#E0E0E0',
+      borderColor: palette.border,
 
       // Tab 配置
-      tabColor: isDark ? '#262626' : '#FFFFFF',
+      tabColor: palette.surface,
 
       // 功能色配置
-      errorColor: '#F5222D',
-      warningColor: '#FA8C16',
-      successColor: '#52C41A',
-      infoColor: primaryColor,
+      errorColor: palette.error,
+      warningColor: palette.warning,
+      successColor: palette.success,
+      infoColor: palette.info,
     },
     Layout: {
       color: surfaceColor,
@@ -70,47 +72,47 @@ export function createThemeOverrides(
       textColor: primaryTextColor,
     },
     Input: {
-      color: isDark ? '#1C1C1C' : '#FFFFFF',
-      colorFocus: isDark ? '#1C1C1C' : '#FFFFFF',
+      color: isDark ? palette.surfaceSunken : palette.surface,
+      colorFocus: isDark ? palette.surfaceSunken : palette.surface,
       textColor: primaryTextColor,
       placeholderColor: mutedTextColor,
       border: `1px solid ${inputBorderColor}`,
       borderHover: `1px solid ${inputBorderHoverColor}`,
-      borderFocus: `1px solid ${primaryColor}`,
+      borderFocus: `1px solid ${palette.focusRing}`,
     },
     InputNumber: {
-      color: isDark ? '#1C1C1C' : '#FFFFFF',
-      colorFocus: isDark ? '#1C1C1C' : '#FFFFFF',
+      color: isDark ? palette.surfaceSunken : palette.surface,
+      colorFocus: isDark ? palette.surfaceSunken : palette.surface,
       textColor: primaryTextColor,
       border: `1px solid ${inputBorderColor}`,
       borderHover: `1px solid ${inputBorderHoverColor}`,
-      borderFocus: `1px solid ${primaryColor}`,
+      borderFocus: `1px solid ${palette.focusRing}`,
     },
     Select: {
       peers: {
         InternalSelection: {
-          color: isDark ? '#1C1C1C' : '#FFFFFF',
-          colorActive: isDark ? '#1C1C1C' : '#FFFFFF',
+          color: isDark ? palette.surfaceSunken : palette.surface,
+          colorActive: isDark ? palette.surfaceSunken : palette.surface,
           textColor: primaryTextColor,
           placeholderColor: mutedTextColor,
           border: `1px solid ${inputBorderColor}`,
           borderHover: `1px solid ${inputBorderHoverColor}`,
-          borderActive: `1px solid ${primaryColor}`,
-          borderFocus: `1px solid ${primaryColor}`,
+          borderActive: `1px solid ${palette.focusRing}`,
+          borderFocus: `1px solid ${palette.focusRing}`,
         },
         InternalSelectMenu: {
-          color: surfaceColor,
+          color: palette.surfaceRaised,
           optionTextColor: primaryTextColor,
           optionTextColorActive: primaryColor,
-          optionColorActive: isDark ? '#2A2A2A' : '#F5F5F5',
+          optionColorActive: palette.surfaceActive,
         },
       },
     },
     Tag: {
       textColor: primaryTextColor,
-      color: isDark ? '#2A2A2A' : '#F5F5F5',
-      colorBordered: isDark ? '#2A2A2A' : '#F5F5F5',
-      border: isDark ? '1px solid #3C3C3C' : '1px solid #E0E0E0',
+      color: palette.surfaceHover,
+      colorBordered: palette.surfaceHover,
+      border: `1px solid ${palette.border}`,
     },
     Button: {
       textColor: primaryTextColor,
@@ -119,6 +121,9 @@ export function createThemeOverrides(
       textColorTextPressed: primaryPressed,
       textColorTextDisabled: mutedTextColor,
       colorPrimary: primaryColor,
+      textColorPrimary: palette.accentContrast,
+      textColorHoverPrimary: palette.accentContrast,
+      textColorPressedPrimary: palette.accentContrast,
       colorHoverPrimary: primaryHover,
       colorPressedPrimary: primaryPressed,
       borderPrimary: `1px solid ${primaryColor}`,
@@ -128,24 +133,24 @@ export function createThemeOverrides(
     Scrollbar: {
       width: '8px',
       height: '8px',
-      color: isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.15)',
-      colorHover: isDark ? 'rgba(255, 255, 255, 0.25)' : 'rgba(0, 0, 0, 0.25)',
+      color: hexToRgba(primaryTextColor, 0.18),
+      colorHover: hexToRgba(primaryTextColor, 0.3),
     },
     Card: {
       color: surfaceColor,
       textColor: primaryTextColor,
       titleTextColor: primaryTextColor,
-      borderColor: isDark ? '#3C3C3C' : '#E0E0E0',
+      borderColor: palette.border,
     },
     Divider: {
-      color: isDark ? '#3C3C3C' : '#E0E0E0',
+      color: palette.border,
     },
     Popover: {
-      color: surfaceColor,
+      color: palette.surfaceRaised,
       textColor: primaryTextColor,
     },
     Modal: {
-      color: surfaceColor,
+      color: palette.surfaceRaised,
       textColor: primaryTextColor,
       titleTextColor: primaryTextColor,
     },

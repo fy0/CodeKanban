@@ -139,9 +139,10 @@ function handleChange(event: any) {
 .kanban-column {
   display: flex;
   flex-direction: column;
-  background-color: var(--kanban-board-bg, var(--app-body-color, #f5f5f5));
+  background-color: var(--kanban-board-bg, var(--app-canvas, var(--app-body-color, #f5f5f5)));
+  color: var(--app-text-primary, var(--app-text-color, #333333));
   border-radius: 8px;
-  border: 1px solid var(--n-border-color, #e0e0e0);
+  border: 1px solid var(--app-border, var(--n-border-color, #e0e0e0));
   height: 100%;
   overflow: hidden;
 }
@@ -151,7 +152,7 @@ function handleChange(event: any) {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: var(--kanban-border, 1px solid var(--n-border-color));
+  border-bottom: var(--kanban-border, 1px solid var(--app-border, #e0e0e0));
   flex-shrink: 0;
 }
 

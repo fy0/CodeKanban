@@ -513,9 +513,9 @@ onMounted(() => {
   top: 80px;
   right: 0;
   bottom: 40px;
-  background: var(--app-body-color, #fafafa);
-  border-left: 1px solid var(--n-border-color, #e0e0e0);
-  box-shadow: -2px 0 8px var(--n-box-shadow-color, rgba(0, 0, 0, 0.08));
+  background: var(--app-canvas);
+  border-left: 1px solid var(--app-border);
+  box-shadow: -2px 0 8px var(--app-shadow);
   transition: transform 0.3s ease;
   display: flex;
   flex-direction: column;
@@ -537,7 +537,7 @@ onMounted(() => {
 }
 
 .resize-handle:hover {
-  background: var(--n-color-target, var(--n-primary-color, #1890ff));
+  background: var(--app-accent);
 }
 
 .notepad-toggle {
@@ -546,8 +546,8 @@ onMounted(() => {
   top: 20px;
   width: 28px;
   height: 56px;
-  background: var(--app-surface-color, #fafafa);
-  border: 1px solid var(--n-border-color, #e0e0e0);
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
   border-right: none;
   border-radius: 6px 0 0 6px;
   display: flex;
@@ -557,7 +557,8 @@ onMounted(() => {
   transition:
     background-color 0.2s,
     top 0.3s ease;
-  box-shadow: -2px 0 4px var(--n-box-shadow-color, rgba(0, 0, 0, 0.05));
+  box-shadow: -2px 0 4px var(--app-shadow);
+  color: var(--app-text-secondary);
 }
 
 .notepad-container.collapsed .notepad-toggle {
@@ -566,7 +567,8 @@ onMounted(() => {
 }
 
 .notepad-toggle:hover {
-  background: var(--app-body-color, #f0f0f0);
+  background: var(--app-surface-hover);
+  color: var(--app-text-primary);
 }
 
 .notepad-panel {
@@ -574,13 +576,13 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--app-surface-color, #ffffff);
+  background: var(--app-surface);
 }
 
 .notepad-header {
   padding: 8px;
-  border-bottom: 1px solid var(--n-border-color, #e0e0e0);
-  background: var(--app-body-color, #fafafa);
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-surface-sunken);
 }
 
 .scope-switcher {
@@ -593,7 +595,7 @@ onMounted(() => {
   flex: 1;
   padding: 8px;
   overflow-y: auto;
-  background: var(--app-surface-color, #ffffff);
+  background: var(--app-surface);
 }
 
 .tab-bar {
@@ -615,11 +617,11 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border: 1px solid var(--n-border-color, #dedede);
+  border: 1px solid var(--app-border);
   border-radius: 4px;
   font-size: 12px;
-  background: var(--app-surface-color, #ffffff);
-  color: var(--n-text-color-2, #333333);
+  background: var(--app-surface);
+  color: var(--app-text-secondary);
   cursor: grab;
   user-select: none;
   transition:
@@ -629,13 +631,9 @@ onMounted(() => {
 }
 
 .tab-item.active {
-  border-color: var(--n-primary-color, #1890ff);
-  color: var(--n-primary-color, #1890ff);
-  background: color-mix(
-    in srgb,
-    var(--n-primary-color, #1890ff) 8%,
-    var(--app-surface-color, #ffffff)
-  );
+  border-color: var(--app-accent);
+  color: var(--app-accent);
+  background: var(--app-accent-soft);
 }
 
 .tab-item:active {
@@ -660,7 +658,7 @@ onMounted(() => {
 }
 
 .tab-close-btn:hover {
-  color: var(--n-color-error, #ff4d4f);
+  color: var(--app-error);
 }
 
 .tab-ghost {
@@ -676,7 +674,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--n-text-color-3, #8c8c8c);
+  color: var(--app-text-muted);
   margin-top: 6px;
 }
 
@@ -684,6 +682,8 @@ onMounted(() => {
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
   font-size: 12px;
   line-height: 1.6;
-  background: var(--app-surface-color, #ffffff);
+  background: var(--app-surface);
+  color: var(--app-text-primary);
+  caret-color: var(--app-accent);
 }
 </style>

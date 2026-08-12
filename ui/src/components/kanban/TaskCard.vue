@@ -173,13 +173,14 @@ const handleStartWorkSelect = (key: string | number) => {
 .task-card {
   cursor: pointer;
   transition: all 0.2s ease;
-  --n-color: var(--kanban-card-bg, var(--app-surface-color, #ffffff));
+  --n-color: var(--kanban-card-bg, var(--app-surface-raised, var(--app-surface-color, #ffffff)));
+  color: var(--app-text-primary, var(--app-text-color, #333333));
   position: relative;
 }
 
 .task-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 16px var(--n-box-shadow-color, rgba(0, 0, 0, 0.12));
+  box-shadow: 0 8px 16px var(--app-shadow, var(--n-box-shadow-color, rgba(0, 0, 0, 0.12)));
 }
 
 .task-card__header {
@@ -238,15 +239,15 @@ const handleStartWorkSelect = (key: string | number) => {
   padding: 4px 10px;
   border-radius: 999px;
   border: none;
-  background-color: var(--kanban-terminal-pill-bg, #eef2ff);
-  color: var(--kanban-terminal-pill-fg, #4c1d95);
+  background-color: var(--kanban-terminal-pill-bg, var(--app-accent-soft, #eef2ff));
+  color: var(--kanban-terminal-pill-fg, var(--app-accent, #4c1d95));
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
 }
 
 .task-card__terminal-status:focus-visible {
-  outline: 2px solid var(--n-color-primary);
+  outline: 2px solid var(--app-focus-ring, var(--n-color-primary));
   outline-offset: 2px;
 }
 
@@ -258,15 +259,15 @@ const handleStartWorkSelect = (key: string | number) => {
 }
 
 .task-card__status-dot.status-linked {
-  background-color: var(--n-primary-color, #4f8ff7);
+  background-color: var(--app-accent, var(--n-primary-color, #4f8ff7));
 }
 
 .task-card__status-dot.status-waiting_input {
-  background-color: #94a3b8;
+  background-color: var(--app-text-muted, #94a3b8);
 }
 
 .task-card__status-dot.status-unknown {
-  background-color: #94a3b8;
+  background-color: var(--app-text-muted, #94a3b8);
 }
 
 .task-card__terminal-text {

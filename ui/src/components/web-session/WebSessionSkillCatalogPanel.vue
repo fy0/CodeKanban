@@ -115,7 +115,7 @@ function sourceLabel(source: CodexSkillSource) {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: inherit;
+  background: var(--app-surface-raised, inherit);
 }
 
 .skill-catalog-panel__list {
@@ -132,8 +132,12 @@ function sourceLabel(source: CodexSkillSource) {
   gap: 6px;
   padding: 10px;
   border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%);
+  border: 1px solid color-mix(in srgb, var(--app-border, var(--n-border-color)) 78%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--app-surface-raised, #fff) 96%,
+    var(--app-accent, var(--n-primary-color)) 4%
+  );
 }
 
 .skill-catalog-panel__item-main,
@@ -153,7 +157,7 @@ function sourceLabel(source: CodexSkillSource) {
 
 .skill-catalog-panel__item-main:hover .skill-catalog-panel__title,
 .skill-catalog-panel__template-btn:hover {
-  color: var(--n-primary-color);
+  color: var(--app-focus-ring, var(--n-primary-color));
 }
 
 .skill-catalog-panel__title-line {
@@ -166,15 +170,15 @@ function sourceLabel(source: CodexSkillSource) {
 .skill-catalog-panel__title {
   font-size: 13px;
   font-weight: 700;
-  color: var(--n-text-color);
+  color: var(--app-text-primary, var(--n-text-color));
 }
 
 .skill-catalog-panel__source {
   flex-shrink: 0;
   padding: 2px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--n-border-color) 82%, transparent);
-  color: var(--n-text-color-2);
+  background: color-mix(in srgb, var(--app-border, var(--n-border-color)) 82%, transparent);
+  color: var(--app-text-secondary, var(--n-text-color-2));
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -183,14 +187,14 @@ function sourceLabel(source: CodexSkillSource) {
 
 .skill-catalog-panel__token {
   font-size: 12px;
-  color: var(--n-primary-color);
+  color: var(--app-focus-ring, var(--n-primary-color));
   word-break: break-all;
 }
 
 .skill-catalog-panel__description {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--n-text-color-2);
+  color: var(--app-text-secondary, var(--n-text-color-2));
 }
 
 .skill-catalog-panel__template-btn {
@@ -198,7 +202,7 @@ function sourceLabel(source: CodexSkillSource) {
   padding: 4px 0 0;
   font-size: 11px;
   font-weight: 600;
-  color: var(--n-text-color-2);
+  color: var(--app-text-secondary, var(--n-text-color-2));
 }
 
 .skill-catalog-panel__empty {
@@ -206,6 +210,6 @@ function sourceLabel(source: CodexSkillSource) {
   text-align: center;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
 }
 </style>

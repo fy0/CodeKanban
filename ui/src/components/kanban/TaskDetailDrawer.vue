@@ -757,12 +757,12 @@ const formatDate = (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm');
   gap: 8px;
   margin-top: 4px;
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
 }
 
 .linked-session-time,
 .linked-session-count {
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
 }
 
 /* 可用 AI Session 列表 */
@@ -781,7 +781,7 @@ const formatDate = (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm');
   gap: 12px;
   padding: 12px;
   margin-bottom: 8px;
-  background: var(--n-color-embedded);
+  background: var(--app-surface-sunken, var(--n-color-embedded));
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -789,12 +789,12 @@ const formatDate = (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm');
 }
 
 .available-session-item:hover {
-  border-color: var(--n-border-color);
+  border-color: var(--app-border, var(--n-border-color));
 }
 
 .available-session-item.selected {
-  border-color: var(--n-primary-color);
-  background: var(--n-color-embedded);
+  border-color: var(--app-accent, var(--n-primary-color));
+  background: var(--app-accent-soft, var(--n-color-embedded));
 }
 
 .available-session-info {
@@ -816,7 +816,7 @@ const formatDate = (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm');
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
 }
 
 /* 移动端样式 */

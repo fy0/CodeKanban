@@ -27,6 +27,8 @@ interface ThemeSelectionControllerOptions {
   toggleFollowSystemTheme: (enabled: boolean) => void;
   confirmPresetThemeChange: () => Promise<boolean>;
   confirmFollowSystemEnable: () => Promise<boolean>;
+  shouldConfirmPresetThemeChange?: (presetId: string) => boolean;
+  shouldConfirmFollowSystemEnable?: () => boolean;
 }
 
 function createThemeMaintenanceWarningPromise(
@@ -86,6 +88,8 @@ export function createThemeSelectionController({
   toggleFollowSystemTheme,
   confirmPresetThemeChange,
   confirmFollowSystemEnable,
+  shouldConfirmPresetThemeChange = presetId => presetId !== DEFAULT_PRESET_ID,
+  shouldConfirmFollowSystemEnable = () => true,
 }: ThemeSelectionControllerOptions) {
   async function selectPresetWithConfirmation(presetId: string) {
     if (!presetId) {
@@ -94,11 +98,7 @@ export function createThemeSelectionController({
     if (presetId === getCurrentPresetId() && !isFollowSystemTheme()) {
       return false;
     }
-    if (presetId === DEFAULT_PRESET_ID) {
-      selectPreset(presetId);
-      return true;
-    }
-    if (!(await confirmPresetThemeChange())) {
+    if (shouldConfirmPresetThemeChange(presetId) && !(await confirmPresetThemeChange())) {
       return false;
     }
     selectPreset(presetId);
@@ -113,7 +113,7 @@ export function createThemeSelectionController({
       toggleFollowSystemTheme(false);
       return true;
     }
-    if (!(await confirmFollowSystemEnable())) {
+    if (shouldConfirmFollowSystemEnable() && !(await confirmFollowSystemEnable())) {
       return false;
     }
     toggleFollowSystemTheme(true);

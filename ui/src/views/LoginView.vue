@@ -89,13 +89,22 @@ async function handleSubmit() {
   place-items: center;
   padding: 32px 20px;
   overflow: hidden;
+  color: var(--app-text-primary);
   background:
-    radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(194, 65, 12, 0.18), transparent 30%),
+    radial-gradient(
+      circle at top left,
+      color-mix(in srgb, var(--app-accent) 14%, transparent),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at bottom right,
+      color-mix(in srgb, var(--app-accent) 10%, transparent),
+      transparent 30%
+    ),
     linear-gradient(
       145deg,
-      color-mix(in srgb, var(--app-body-color, #f3f4f6) 82%, #ffffff) 0%,
-      var(--app-body-color, #f3f4f6) 100%
+      color-mix(in srgb, var(--app-canvas) 82%, var(--app-surface-raised)) 0%,
+      var(--app-canvas) 100%
     );
 }
 
@@ -112,13 +121,13 @@ async function handleSubmit() {
 .login-page__glow--a {
   top: -72px;
   left: -64px;
-  background: rgba(13, 148, 136, 0.24);
+  background: color-mix(in srgb, var(--app-accent) 24%, transparent);
 }
 
 .login-page__glow--b {
   right: -48px;
   bottom: -88px;
-  background: rgba(249, 115, 22, 0.22);
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
 }
 
 .login-card {
@@ -126,8 +135,9 @@ async function handleSubmit() {
   z-index: 1;
   width: min(100%, 440px);
   border-radius: 24px;
-  background: color-mix(in srgb, var(--app-surface-color, #ffffff) 88%, rgba(255, 255, 255, 0.96));
-  box-shadow: 0 24px 72px rgba(15, 23, 42, 0.16);
+  border: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-surface-raised) 92%, var(--app-canvas));
+  box-shadow: 0 24px 72px var(--app-shadow);
 }
 
 .login-card__header {
@@ -140,24 +150,59 @@ async function handleSubmit() {
   font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--n-text-color-3) 78%, #0f766e);
+  color: var(--app-link);
 }
 
 .login-card__title {
   margin: 0;
   font-size: clamp(26px, 5vw, 34px);
   line-height: 1.05;
+  color: var(--app-text-primary);
 }
 
 .login-card__subtitle {
   margin: 0;
-  color: var(--n-text-color-2);
+  color: var(--app-text-secondary);
   line-height: 1.6;
 }
 
 .login-card__hint {
   font-size: 12px;
   line-height: 1.6;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted);
+}
+
+.login-card :deep(.n-form-item-label) {
+  color: var(--app-text-secondary);
+}
+
+.login-card :deep(.n-input) {
+  --n-color: var(--app-surface-sunken) !important;
+  --n-color-disabled: var(--app-surface-hover) !important;
+  --n-text-color: var(--app-text-primary) !important;
+  --n-text-color-disabled: var(--app-text-muted) !important;
+  --n-placeholder-color: var(--app-text-muted) !important;
+  --n-placeholder-color-disabled: var(--app-text-muted) !important;
+  --n-border: 1px solid var(--app-input-border-color) !important;
+  --n-border-hover: 1px solid var(--app-input-border-hover-color) !important;
+  --n-border-focus: 1px solid var(--app-focus-ring) !important;
+  --n-box-shadow-focus: 0 0 0 2px color-mix(in srgb, var(--app-focus-ring) 24%, transparent) !important;
+  --n-caret-color: var(--app-accent) !important;
+}
+
+.login-card :deep(.n-button.n-button--primary-type) {
+  --n-color: var(--app-accent) !important;
+  --n-color-hover: var(--app-accent-hover) !important;
+  --n-color-pressed: var(--app-accent-pressed) !important;
+  --n-color-focus: var(--app-accent-hover) !important;
+  --n-text-color: var(--app-accent-contrast) !important;
+  --n-text-color-hover: var(--app-accent-contrast) !important;
+  --n-text-color-pressed: var(--app-accent-contrast) !important;
+  --n-text-color-focus: var(--app-accent-contrast) !important;
+  --n-border: 1px solid var(--app-accent) !important;
+  --n-border-hover: 1px solid var(--app-accent-hover) !important;
+  --n-border-pressed: 1px solid var(--app-accent-pressed) !important;
+  --n-border-focus: 1px solid var(--app-focus-ring) !important;
+  --n-box-shadow-focus: 0 0 0 2px color-mix(in srgb, var(--app-focus-ring) 24%, transparent) !important;
 }
 </style>

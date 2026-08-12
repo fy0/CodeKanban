@@ -888,6 +888,8 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
+  background-color: var(--app-canvas, var(--app-body-color, #f7f8fa));
+  color: var(--app-text-primary, var(--app-text-color, #333333));
 }
 
 .workspace-desktop-shell {
@@ -902,8 +904,8 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  background-color: var(--app-surface-color, #ffffff);
-  border-right: 1px solid var(--n-border-color, #e0e0e0);
+  background-color: var(--app-surface, var(--app-surface-color, #ffffff));
+  border-right: 1px solid var(--app-border, #e0e0e0);
 }
 
 .project-sidebar {
@@ -938,19 +940,19 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
 }
 
 .project-sidebar-resizer:hover .project-sidebar-resizer-handle {
-  background-color: var(--n-border-color, #d0d0d0);
+  background-color: var(--app-border-strong, #d0d0d0);
   height: 48px;
   opacity: 1;
 }
 
 .project-sidebar-resizer.is-compact .project-sidebar-resizer-handle {
-  background-color: var(--n-border-color, #d0d0d0);
+  background-color: var(--app-border-strong, #d0d0d0);
   height: 40px;
   opacity: 0.72;
 }
 
 .project-sidebar-resizer.is-dragging .project-sidebar-resizer-handle {
-  background-color: var(--n-primary-color, #18a058);
+  background-color: var(--app-accent, #18a058);
   height: 64px;
   opacity: 1;
 }
@@ -966,7 +968,7 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
   height: 100%;
   min-height: 0;
   overflow-y: auto;
-  background-color: var(--app-surface-color, #ffffff);
+  background-color: var(--app-surface, var(--app-surface-color, #ffffff));
 }
 
 /* 移动端布局 */
@@ -1045,8 +1047,8 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
   display: flex;
   align-items: stretch;
   justify-content: space-around;
-  background-color: var(--app-surface-color, #ffffff);
-  border-top: 1px solid var(--n-border-color, #e0e0e0);
+  background-color: var(--app-surface, var(--app-surface-color, #ffffff));
+  border-top: 1px solid var(--app-border, #e0e0e0);
   z-index: 200;
   transition:
     opacity 0.18s ease,
@@ -1070,7 +1072,7 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
   padding: 8px 16px;
   border: none;
   background: transparent;
-  color: var(--n-text-color-3, #999);
+  color: var(--app-text-muted, #999);
   font-size: 12px;
   cursor: pointer;
   transition: color 0.2s;
@@ -1078,7 +1080,12 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
 }
 
 .mobile-bottom-nav .nav-item.active {
-  color: var(--n-primary-color, #18a058);
+  color: var(--app-accent, #18a058);
+}
+
+.mobile-bottom-nav .nav-item:focus-visible {
+  outline: 2px solid var(--app-focus-ring, #2080f0);
+  outline-offset: -3px;
 }
 
 .mobile-bottom-nav .nav-item:active {

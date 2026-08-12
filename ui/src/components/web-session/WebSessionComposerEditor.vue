@@ -565,7 +565,7 @@ defineExpose<WebSessionComposerEditorExposed>({
   outline: none;
   box-sizing: border-box;
   background: transparent;
-  color: var(--n-text-color);
+  color: var(--app-text-primary, var(--n-text-color));
   font: inherit;
   font-size: 14px;
   line-height: 1.68;
@@ -582,7 +582,7 @@ defineExpose<WebSessionComposerEditorExposed>({
   :deep(.web-session-composer-editor__surface p.is-editor-empty::before) {
   height: 0;
   float: left;
-  color: var(--n-text-color-3, #999);
+  color: var(--app-text-muted, var(--n-text-color-3, #999));
   content: attr(data-placeholder);
   pointer-events: none;
   transition: opacity 0.12s ease;
@@ -595,25 +595,21 @@ defineExpose<WebSessionComposerEditorExposed>({
 
 .web-session-composer-editor :deep(.composer-skill-token) {
   border-radius: 8px;
-  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
-  color: color-mix(in srgb, var(--n-primary-color) 86%, #0f172a);
+  background: var(--app-accent-soft, color-mix(in srgb, var(--n-primary-color) 10%, transparent));
+  color: var(--app-focus-ring, var(--n-primary-color));
   padding: 0 1px;
   box-decoration-break: clone;
 }
 
 .web-session-composer-editor :deep(.composer-skill-token--unknown) {
-  background: color-mix(in srgb, var(--n-border-color) 70%, transparent);
-  color: var(--n-text-color-2);
+  background: color-mix(in srgb, var(--app-border, var(--n-border-color)) 70%, transparent);
+  color: var(--app-text-secondary, var(--n-text-color-2));
 }
 
 .web-session-composer-editor :deep(.composer-goal-command) {
   border-radius: 7px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, #f59e0b 28%, transparent) 0%,
-    color-mix(in srgb, #f97316 22%, transparent) 100%
-  );
-  color: color-mix(in srgb, #9a3412 82%, #111827);
+  background: var(--app-warning-soft, color-mix(in srgb, #f59e0b 22%, transparent));
+  color: var(--app-warning, #9a3412);
   font-weight: 700;
   padding: 0 2px;
   box-decoration-break: clone;
@@ -621,8 +617,8 @@ defineExpose<WebSessionComposerEditorExposed>({
 
 .web-session-composer-editor :deep(.composer-compact-command) {
   border-radius: 7px;
-  background: color-mix(in srgb, #0d9488 18%, transparent);
-  color: color-mix(in srgb, #0f766e 86%, #111827);
+  background: var(--app-success-soft, color-mix(in srgb, #0d9488 18%, transparent));
+  color: var(--app-success, #0f766e);
   font-weight: 700;
   padding: 0 2px;
   box-decoration-break: clone;
@@ -637,10 +633,10 @@ defineExpose<WebSessionComposerEditorExposed>({
   max-height: min(40vh, 320px);
   overflow: auto;
   padding: 6px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--app-border, var(--n-border-color)) 82%, transparent);
   border-radius: 8px;
-  background: var(--app-surface-color, #fff);
-  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
+  background: var(--app-surface-raised, var(--app-surface-color, #fff));
+  box-shadow: 0 14px 28px var(--app-shadow, rgba(15, 23, 42, 0.12));
 }
 
 .web-session-composer-editor__completion-option {
@@ -654,7 +650,7 @@ defineExpose<WebSessionComposerEditorExposed>({
   align-items: flex-start;
   gap: 4px 8px;
   background: transparent;
-  color: var(--n-text-color);
+  color: var(--app-text-primary, var(--n-text-color));
   font: inherit;
   font-size: 13px;
   line-height: 1.35;
@@ -664,8 +660,8 @@ defineExpose<WebSessionComposerEditorExposed>({
 
 .web-session-composer-editor__completion-option:hover,
 .web-session-composer-editor__completion-option.is-selected {
-  background: color-mix(in srgb, var(--n-primary-color) 12%, transparent);
-  color: var(--n-primary-color);
+  background: var(--app-accent-soft, color-mix(in srgb, var(--n-primary-color) 12%, transparent));
+  color: var(--app-focus-ring, var(--n-primary-color));
 }
 
 .web-session-composer-editor__completion-label {
@@ -676,7 +672,7 @@ defineExpose<WebSessionComposerEditorExposed>({
 
 .web-session-composer-editor__completion-detail {
   flex: 1 0 100%;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
   font-size: 11px;
   line-height: 1.45;
   word-break: break-word;

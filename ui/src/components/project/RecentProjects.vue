@@ -215,7 +215,11 @@
                         </n-text>
                       </div>
                       <Transition name="project-check">
-                        <n-icon v-if="project.id === currentProjectId" size="18" color="#18a058">
+                        <n-icon
+                          v-if="project.id === currentProjectId"
+                          size="18"
+                          color="var(--app-success, #18a058)"
+                        >
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                             <path
                               fill="currentColor"
@@ -794,7 +798,8 @@ onMounted(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--n-color);
+  background: var(--app-surface, var(--n-color, #ffffff));
+  color: var(--app-text-primary, var(--n-text-color-1, #333333));
   overflow: hidden;
 }
 
@@ -803,7 +808,7 @@ onMounted(() => {
   padding: 16px;
   min-height: var(--recent-projects-header-height);
   box-sizing: border-box;
-  border-bottom: 1px solid var(--n-border-color);
+  border-bottom: 1px solid var(--app-border, var(--n-border-color, #e0e0e0));
 }
 
 .recent-projects-header.is-compact {
@@ -901,12 +906,12 @@ onMounted(() => {
 }
 
 .project-item:hover {
-  background-color: var(--n-item-color-hover, rgba(0, 0, 0, 0.04));
+  background-color: var(--app-surface-hover, rgba(0, 0, 0, 0.04));
 }
 
 .project-item.active {
   background-color: transparent;
-  border-left-color: var(--n-primary-color);
+  border-left-color: var(--app-accent, var(--n-primary-color));
 }
 
 .project-item.is-compact {
@@ -942,9 +947,10 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  border: 1px solid #cfd6df;
-  background: #ffffff;
-  color: #334155;
+  border: 1px solid
+    color-mix(in srgb, var(--app-border, #e0e0e0) 64%, var(--app-border-strong, #b8bcc8) 36%);
+  background: var(--app-surface-raised, #ffffff);
+  color: var(--app-text-secondary, #334155);
   font-size: 17px;
   font-weight: 500;
   letter-spacing: 0;
@@ -953,8 +959,8 @@ onMounted(() => {
 }
 
 .project-item.is-compact.active .project-compact-avatar {
-  border-color: #374151;
-  color: #111827;
+  border-color: var(--app-border-strong, #374151);
+  color: var(--app-text-primary, #111827);
 }
 
 .project-compact-counts {
@@ -977,9 +983,9 @@ onMounted(() => {
   justify-content: center;
   padding: 0 2px;
   border-radius: 3px;
-  background: #e5e7eb;
+  background: color-mix(in srgb, var(--app-border, #e0e0e0) 82%, var(--app-surface, #ffffff) 18%);
   text-align: center;
-  color: #334155;
+  color: var(--app-text-secondary, #334155);
   font-size: 10px;
   font-weight: 700;
   line-height: 1.1;
@@ -988,18 +994,22 @@ onMounted(() => {
 }
 
 .project-item.is-compact.active .project-compact-count {
-  background: #d1d5db;
-  color: #1f2937;
+  background: color-mix(
+    in srgb,
+    var(--app-border-strong, #d1d5db) 55%,
+    var(--app-surface, #ffffff) 45%
+  );
+  color: var(--app-text-primary, #1f2937);
 }
 
 .project-item.is-compact.active .project-compact-count.is-terminal {
-  background: #dcfce7;
-  color: #166534;
+  background: var(--app-success-soft, #dcfce7);
+  color: var(--app-success, #166534);
 }
 
 .project-item.is-compact.active .project-compact-count.is-web-session {
-  background: #dbeafe;
-  color: #1d4ed8;
+  background: var(--app-info-soft, #dbeafe);
+  color: var(--app-info, #1d4ed8);
 }
 
 .project-info {
@@ -1045,18 +1055,19 @@ onMounted(() => {
 }
 
 .terminal-tag--combined {
-  --terminal-tag-terminal-color: #18a058;
-  --terminal-tag-terminal-bg: #eaf8e3;
-  --terminal-tag-web-color: #2080f0;
-  --terminal-tag-web-bg: #e7edf5;
+  --terminal-tag-terminal-color: var(--app-success, #18a058);
+  --terminal-tag-terminal-bg: var(--app-success-soft, #eaf8e3);
+  --terminal-tag-web-color: var(--app-info, #2080f0);
+  --terminal-tag-web-bg: var(--app-info-soft, #e7edf5);
   --n-padding: 0 6px 0 5px;
-  color: rgba(15, 23, 42, 0.92);
+  color: var(--app-text-primary, rgba(15, 23, 42, 0.92));
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--terminal-tag-terminal-bg) 94%, white 6%) 0%,
+    color-mix(in srgb, var(--terminal-tag-terminal-bg) 94%, var(--app-surface-raised, #ffffff) 6%)
+      0%,
     color-mix(in srgb, var(--terminal-tag-terminal-bg) 78%, var(--terminal-tag-web-bg) 22%) 44%,
     color-mix(in srgb, var(--terminal-tag-web-bg) 78%, var(--terminal-tag-terminal-bg) 22%) 56%,
-    color-mix(in srgb, var(--terminal-tag-web-bg) 94%, white 6%) 100%
+    color-mix(in srgb, var(--terminal-tag-web-bg) 94%, var(--app-surface-raised, #ffffff) 6%) 100%
   ) !important;
 }
 
@@ -1100,7 +1111,7 @@ onMounted(() => {
 .terminal-tag-combined-separator {
   display: inline-block;
   margin: 0 1px;
-  color: rgba(15, 23, 42, 0.48);
+  color: var(--app-text-muted, rgba(15, 23, 42, 0.48));
 }
 
 .terminal-tag-combined-count--web {
@@ -1123,7 +1134,7 @@ onMounted(() => {
   z-index: 1;
   pointer-events: auto;
   opacity: 0.85;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.15));
+  filter: drop-shadow(0 1px 2px var(--app-shadow, rgba(0, 0, 0, 0.15)));
   cursor: pointer;
   transition:
     opacity 0.2s,
@@ -1177,8 +1188,8 @@ onMounted(() => {
 .version-info-container {
   flex-shrink: 0;
   padding: 12px 16px;
-  border-top: 1px solid var(--n-border-color);
-  background-color: var(--n-color-target);
+  border-top: 1px solid var(--app-border, var(--n-border-color));
+  background-color: var(--app-accent-soft, var(--n-color-target));
   display: flex;
   align-items: center;
   container-type: inline-size;
@@ -1226,7 +1237,7 @@ onMounted(() => {
 }
 
 .version-info:hover {
-  background-color: var(--n-item-color-hover);
+  background-color: var(--app-surface-hover, var(--n-item-color-hover));
 }
 
 .version-info.is-compact:hover {
@@ -1239,7 +1250,7 @@ onMounted(() => {
 }
 
 .version-info:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--n-primary-color, #2080f0) 45%, transparent 55%);
+  outline: 2px solid var(--app-focus-ring, #2080f0);
   outline-offset: 2px;
 }
 
@@ -1310,11 +1321,15 @@ onMounted(() => {
   justify-content: center;
   font-size: 0;
   gap: 0;
-  color: #ffffff;
-  background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
-  border: 2px solid var(--app-surface-color, #ffffff);
+  color: var(--app-text-inverse, #ffffff);
+  background: linear-gradient(
+    135deg,
+    var(--app-warning, #f59e0b) 0%,
+    color-mix(in srgb, var(--app-warning, #f59e0b) 82%, var(--app-error, #f97316) 18%) 100%
+  );
+  border: 2px solid var(--app-surface, var(--app-surface-color, #ffffff));
   border-radius: 999px;
-  box-shadow: 0 4px 10px rgba(249, 115, 22, 0.28);
+  box-shadow: 0 4px 10px var(--app-warning-soft, rgba(249, 115, 22, 0.28));
 }
 
 .app-logo {

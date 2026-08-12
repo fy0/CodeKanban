@@ -493,8 +493,9 @@ watch(
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--n-border-color);
-  background: var(--app-surface-color, var(--n-card-color, #fff));
+  border-left: 1px solid var(--app-border, var(--n-border-color));
+  background: var(--app-surface, var(--app-surface-color, #fff));
+  color: var(--app-text-primary, var(--n-text-color-1));
 }
 
 .terminal-sidebar-header {
@@ -504,7 +505,8 @@ watch(
   justify-content: space-between;
   gap: 8px;
   padding: 0 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--n-border-color) 70%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--app-border, var(--n-border-color)) 70%, transparent);
 }
 
 .terminal-sidebar-title-wrap {
@@ -559,8 +561,8 @@ watch(
   justify-content: center;
   padding: 0 4px;
   border-radius: 5px;
-  background: color-mix(in srgb, var(--n-primary-color) 12%, transparent);
-  color: var(--n-primary-color);
+  background: var(--app-accent-soft, color-mix(in srgb, var(--n-primary-color) 12%, transparent));
+  color: var(--app-accent, var(--n-primary-color));
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
@@ -569,7 +571,7 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
   animation: terminal-sidebar-spin 0.9s linear infinite;
 }
 
@@ -589,13 +591,13 @@ watch(
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
   cursor: pointer;
 }
 
 .terminal-sidebar-reset:hover {
-  background: color-mix(in srgb, var(--n-border-color) 45%, transparent);
-  color: var(--n-text-color-1);
+  background: var(--app-surface-hover, color-mix(in srgb, var(--n-border-color) 45%, transparent));
+  color: var(--app-text-primary, var(--n-text-color-1));
 }
 
 .terminal-sidebar-list {
@@ -613,7 +615,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--n-text-color-3);
+  color: var(--app-text-muted, var(--n-text-color-3));
   font-size: 12px;
 }
 
@@ -644,13 +646,13 @@ watch(
 
 .terminal-resizer:hover .resizer-handle {
   height: 40px;
-  background: var(--n-border-color, #d0d0d0);
+  background: var(--app-border-strong, #d0d0d0);
   opacity: 1;
 }
 
 .terminal-resizer.is-dragging .resizer-handle {
   height: 60px;
-  background: var(--n-primary-color, #3b82f6);
+  background: var(--app-accent, #3b82f6);
   opacity: 1;
 }
 </style>

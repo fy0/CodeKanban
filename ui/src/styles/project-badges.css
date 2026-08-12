@@ -32,6 +32,25 @@
     0 4px 10px color-mix(in srgb, var(--project-badge-color) 20%, transparent);
 }
 
+[data-color-scheme='dark'] .project-index-badge {
+  background:
+    radial-gradient(
+      circle at 30% 25%,
+      rgba(255, 255, 255, 0.08) 0%,
+      rgba(255, 255, 255, 0.08) 34%,
+      transparent 58%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--project-badge-color) 64%, #111827 36%) 0%,
+      color-mix(in srgb, var(--project-badge-color) 54%, #111827 46%) 100%
+    );
+  border-color: color-mix(in srgb, white 58%, var(--project-badge-color));
+  box-shadow:
+    0 1px 2px var(--app-shadow, rgba(15, 23, 42, 0.16)),
+    0 4px 10px color-mix(in srgb, var(--project-badge-color) 20%, transparent);
+}
+
 .project-index-badge.is-single-project {
   visibility: hidden;
   pointer-events: none;

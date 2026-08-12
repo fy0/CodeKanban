@@ -11,9 +11,10 @@ import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
 import { useResponsive } from '@/composables/useResponsive';
 import { useAiStatusSummary } from '@/composables/useAiStatusSummary';
-import { darkenColor, lightenColor, isDarkHex } from '@/utils/color';
+import { isDarkHex } from '@/utils/color';
 import { formatBrowserTabTitle } from '@/utils/browserTitle';
 import { createThemeOverrides } from '@/utils/themeOverrides';
+import { createThemeSemanticPalette } from '@/utils/themeSemanticPalette';
 import { getPresetById } from '@/constants/themes';
 import { APP_NAME } from '@/constants/app';
 
@@ -89,15 +90,14 @@ const resolvedTextColor = computed(() => {
   if (textColor && textColor.trim().length > 0) {
     return textColor;
   }
-  return isDarkTheme.value ? '#FFFFFFD9' : '#000000E0';
+  return isDarkTheme.value ? '#D9D9D9' : '#333333';
 });
 
-const inputBorderColor = computed(() => (isDarkTheme.value ? '#4B4B4B' : '#D0D5DD'));
-const inputBorderHoverColor = computed(() =>
-  isDarkTheme.value
-    ? lightenColor(inputBorderColor.value, 0.12)
-    : darkenColor(inputBorderColor.value, 0.12)
+const semanticPalette = computed(() =>
+  createThemeSemanticPalette(theme.value, resolvedTextColor.value)
 );
+const inputBorderColor = computed(() => semanticPalette.value.controlBorder);
+const inputBorderHoverColor = computed(() => semanticPalette.value.controlBorderHover);
 
 // 根据当前语言动态切换 Naive UI 的 locale
 const naiveLocale = computed(() => (locale.value === 'zh-CN' ? zhCN : enUS));
@@ -169,6 +169,64 @@ const cssVarsToSet = computed(() => ({
   '--app-text-color': resolvedTextColor.value,
   '--app-input-border-color': inputBorderColor.value,
   '--app-input-border-hover-color': inputBorderHoverColor.value,
+  '--app-canvas': semanticPalette.value.canvas,
+  '--app-surface': semanticPalette.value.surface,
+  '--app-surface-raised': semanticPalette.value.surfaceRaised,
+  '--app-surface-sunken': semanticPalette.value.surfaceSunken,
+  '--app-surface-hover': semanticPalette.value.surfaceHover,
+  '--app-surface-active': semanticPalette.value.surfaceActive,
+  '--app-text-primary': semanticPalette.value.textPrimary,
+  '--app-text-secondary': semanticPalette.value.textSecondary,
+  '--app-text-muted': semanticPalette.value.textMuted,
+  '--app-text-inverse': semanticPalette.value.textInverse,
+  '--app-border': semanticPalette.value.border,
+  '--app-border-strong': semanticPalette.value.borderStrong,
+  '--app-control-border': semanticPalette.value.controlBorder,
+  '--app-control-border-hover': semanticPalette.value.controlBorderHover,
+  '--app-focus-ring': semanticPalette.value.focusRing,
+  '--app-accent': semanticPalette.value.accent,
+  '--app-accent-hover': semanticPalette.value.accentHover,
+  '--app-accent-pressed': semanticPalette.value.accentPressed,
+  '--app-accent-soft': semanticPalette.value.accentSoft,
+  '--app-accent-contrast': semanticPalette.value.accentContrast,
+  '--app-link': semanticPalette.value.link,
+  '--app-link-hover': semanticPalette.value.linkHover,
+  '--app-success': semanticPalette.value.success,
+  '--app-success-soft': semanticPalette.value.successSoft,
+  '--app-warning': semanticPalette.value.warning,
+  '--app-warning-soft': semanticPalette.value.warningSoft,
+  '--app-error': semanticPalette.value.error,
+  '--app-error-soft': semanticPalette.value.errorSoft,
+  '--app-info': semanticPalette.value.info,
+  '--app-info-soft': semanticPalette.value.infoSoft,
+  '--app-overlay': semanticPalette.value.overlay,
+  '--app-shadow': semanticPalette.value.shadow,
+  '--n-primary-color': semanticPalette.value.accent,
+  '--n-color-primary': semanticPalette.value.accent,
+  '--n-primary-color-hover': semanticPalette.value.accentHover,
+  '--n-primary-color-pressed': semanticPalette.value.accentPressed,
+  '--n-primary-color-suppl': semanticPalette.value.accentHover,
+  '--n-text-color-base': semanticPalette.value.textPrimary,
+  '--n-text-color': semanticPalette.value.textPrimary,
+  '--n-text-color-1': semanticPalette.value.textPrimary,
+  '--n-text-color-2': semanticPalette.value.textSecondary,
+  '--n-text-color-3': semanticPalette.value.textMuted,
+  '--n-text-color-disabled': semanticPalette.value.textMuted,
+  '--n-body-color': semanticPalette.value.canvas,
+  '--n-color': semanticPalette.value.surface,
+  '--n-color-hover': semanticPalette.value.surfaceHover,
+  '--n-color-target': semanticPalette.value.accentSoft,
+  '--n-color-embedded': semanticPalette.value.surfaceSunken,
+  '--n-card-color': semanticPalette.value.surface,
+  '--n-modal-color': semanticPalette.value.surfaceRaised,
+  '--n-popover-color': semanticPalette.value.surfaceRaised,
+  '--n-border-color': semanticPalette.value.border,
+  '--n-divider-color': semanticPalette.value.border,
+  '--n-box-shadow-color': semanticPalette.value.shadow,
+  '--n-error-color': semanticPalette.value.error,
+  '--n-warning-color': semanticPalette.value.warning,
+  '--n-success-color': semanticPalette.value.success,
+  '--n-info-color': semanticPalette.value.info,
 }));
 
 watch(
@@ -176,6 +234,9 @@ watch(
   vars => {
     if (typeof document !== 'undefined') {
       const root = document.documentElement;
+      root.dataset.colorScheme = semanticPalette.value.colorScheme;
+      root.style.colorScheme = semanticPalette.value.colorScheme;
+      root.style.backgroundColor = semanticPalette.value.canvas;
       Object.entries(vars).forEach(([key, value]) => {
         root.style.setProperty(key, value ?? '');
       });
