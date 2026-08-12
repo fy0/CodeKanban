@@ -80,9 +80,21 @@
                     <div class="linked-session-meta">
                       <n-tag
                         size="tiny"
-                        :type="session.type === 'claude_code' ? 'info' : 'success'"
+                        :type="
+                          session.type === 'claude_code'
+                            ? 'info'
+                            : session.type === 'pi'
+                              ? 'warning'
+                              : 'success'
+                        "
                       >
-                        {{ session.type === 'claude_code' ? 'Claude' : 'Codex' }}
+                        {{
+                          session.type === 'claude_code'
+                            ? 'Claude'
+                            : session.type === 'pi'
+                              ? 'Pi'
+                              : 'Codex'
+                        }}
                       </n-tag>
                       <span class="linked-session-time">{{
                         formatDate(session.sessionStartedAt)
@@ -240,8 +252,23 @@
                 {{ session.title || t('terminal.untitledSession') }}
               </div>
               <div class="available-session-meta">
-                <n-tag size="tiny" :type="session.type === 'claude_code' ? 'info' : 'success'">
-                  {{ session.type === 'claude_code' ? 'Claude' : 'Codex' }}
+                <n-tag
+                  size="tiny"
+                  :type="
+                    session.type === 'claude_code'
+                      ? 'info'
+                      : session.type === 'pi'
+                        ? 'warning'
+                        : 'success'
+                  "
+                >
+                  {{
+                    session.type === 'claude_code'
+                      ? 'Claude'
+                      : session.type === 'pi'
+                        ? 'Pi'
+                        : 'Codex'
+                  }}
                 </n-tag>
                 <span>{{ session.model || '-' }}</span>
                 <span>{{ formatDate(session.sessionStartedAt) }}</span>
@@ -368,7 +395,11 @@ const {
   loadEarlier: loadEarlierConversationWindow,
   reset: resetConversationWindow,
 } = useAiConversationWindow(
-  options => aiSessionApi.conversationWindowByID(currentConversationSession.value?.aiSessionDbId || '', options),
+  options =>
+    aiSessionApi.conversationWindowByID(
+      currentConversationSession.value?.aiSessionDbId || '',
+      options
+    ),
   null
 );
 
@@ -376,7 +407,7 @@ const currentSessionInfo = computed<SessionInfo | null>(() => {
   if (!currentConversationSession.value) return null;
   return {
     sessionId: currentConversationSession.value.sessionId,
-    type: currentConversationSession.value.type as 'claude_code' | 'codex',
+    type: currentConversationSession.value.type as 'claude_code' | 'codex' | 'pi',
   };
 });
 
@@ -553,11 +584,12 @@ async function openLinkSessionModal() {
       .send();
 
     if (response?.item) {
-      // 合并 Claude 和 Codex sessions，排除已关联的
+      // 合并各 Agent sessions，排除已关联的
       const linkedIds = new Set(linkedAiSessions.value.map(s => s.aiSessionDbId));
       const allSessions = [
         ...(response.item.claudeSessions || []),
         ...(response.item.codexSessions || []),
+        ...(response.item.piSessions || []),
       ].filter(s => !linkedIds.has(s.id));
 
       // 按时间排序，最新的在前

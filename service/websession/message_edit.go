@@ -60,7 +60,12 @@ func (m *Manager) EditUserMessage(
 
 	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
 	dispatchLock.Lock()
-	defer dispatchLock.Unlock()
+	dispatchLocked := true
+	defer func() {
+		if dispatchLocked {
+			dispatchLock.Unlock()
+		}
+	}()
 
 	source, err := m.GetSession(ctx, sessionID)
 	if err != nil {
@@ -134,6 +139,11 @@ func (m *Manager) EditUserMessage(
 	for _, attachment := range attachments {
 		attachmentIDs = append(attachmentIDs, attachment.ID)
 	}
+
+	// The replacement runs on the new branch, so it must not inherit the source
+	// session's striped dispatch lock. The two IDs can hash to the same stripe.
+	dispatchLock.Unlock()
+	dispatchLocked = false
 	if err := m.sendMessageInternal(ctx, branch.ID, text, attachmentIDs, false); err != nil {
 		cleanupBranch()
 		return SessionSnapshot{}, err

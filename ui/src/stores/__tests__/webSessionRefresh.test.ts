@@ -709,6 +709,15 @@ describe('webSession loading behavior', () => {
           paused: true,
           createdAt: '2026-04-09T10:01:00.000Z',
         },
+        {
+          id: 'pi-native-1',
+          mode: 'queue',
+          text: 'Accepted by Pi',
+          attachmentIds: [],
+          paused: false,
+          nativeQueued: true,
+          createdAt: '2026-04-09T10:01:01.000Z',
+        },
       ],
     });
 
@@ -724,6 +733,16 @@ describe('webSession loading behavior', () => {
         readyAt: Date.parse('2026-04-09T10:01:05.000Z'),
         paused: true,
         createdAt: Date.parse('2026-04-09T10:01:00.000Z'),
+      },
+      {
+        id: 'pi-native-1',
+        mode: 'queue',
+        text: 'Accepted by Pi',
+        attachmentIds: [],
+        readyAt: null,
+        paused: false,
+        nativeQueued: true,
+        createdAt: Date.parse('2026-04-09T10:01:01.000Z'),
       },
     ]);
   });
@@ -2124,6 +2143,68 @@ describe('webSession loading behavior', () => {
     );
     expect(store.getBlocks(session.id)).toHaveLength(1);
     expect(store.getBlocks(session.id)[0]?.text).toBe('hello from snapshot');
+  });
+
+  it('keeps native compaction pending until a revisioned event observes the run start', async () => {
+    const store = useWebSessionStore();
+    const idleSession = makeSession({
+      id: 'session-compact-hydration',
+      agent: 'pi',
+      sourceKind: 'pi_rpc',
+      status: 'idle',
+      assistantState: null,
+      updatedAt: '2026-04-09T10:00:00.000Z',
+    });
+    const runningSession = makeSession({
+      ...idleSession,
+      status: 'running',
+      assistantState: 'working',
+      updatedAt: '2026-04-09T10:00:03.000Z',
+    });
+
+    listMock.mockResolvedValue([idleSession]);
+    await store.loadSessions(idleSession.projectId);
+
+    const compactPromise = store.compactSession(idleSession.id);
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      sid: idleSession.id,
+      op: 'compact',
+      p: {},
+    });
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: idleSession.id,
+      ts: Date.now(),
+      op: 'compact',
+      ok: 1,
+    });
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: idleSession.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession(runningSession),
+    });
+
+    await compactPromise;
+    expect(snapshotMock).not.toHaveBeenCalled();
+    expect(store.getLiveState(idleSession.id)).toMatchObject({
+      running: true,
+      phase: 'starting',
+    });
   });
 
   it('keeps abort pending until a revisioned event observes the session stop', async () => {

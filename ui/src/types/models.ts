@@ -148,6 +148,16 @@ export interface TerminalSession {
   taskId?: string;
 }
 
+export interface ProjectAgentTrustStatus {
+  projectId: string;
+  agent: 'pi';
+  projectPath: string;
+  trustedPath?: string | null;
+  trusted: boolean;
+  trustedAt?: string | null;
+  revokedAt?: string | null;
+}
+
 export interface AISessionMessage {
   timestamp: string;
   message: string;
@@ -163,15 +173,18 @@ export interface AISessionMessages {
 }
 
 // AI Session 摘要信息（用于列表显示）
+export type AISessionType = 'claude_code' | 'codex' | 'pi';
+
 export interface AISessionSummary {
   id: string;
   sessionId: string;
-  type: 'claude_code' | 'codex';
+  type: AISessionType;
   model: string;
   title: string;
   sessionStartedAt: string;
   lastMessageAt?: string | null;
   messageCount: number;
+  assistantMessageCount: number;
   filePath: string;
 }
 
@@ -182,10 +195,14 @@ export type ScanPhase = 'recent' | 'extended' | 'complete';
 export interface ProjectAISessions {
   hasClaudeCode: boolean;
   hasCodex: boolean;
+  hasPi: boolean;
   claudeSessions: AISessionSummary[];
   codexSessions: AISessionSummary[];
+  piSessions: AISessionSummary[];
   claudeScanPhase?: ScanPhase; // 扫描阶段：recent=24小时内, extended=1-15天, complete=完成
   codexScanPhase?: ScanPhase;
+  piScanPhase?: ScanPhase;
+  piBeforeCursor?: string;
 }
 
 // 任务关联的 AI Session（包含详情）
@@ -194,7 +211,7 @@ export interface TaskAISessionWithDetails {
   taskId: string;
   sessionId: string;
   aiSessionDbId: string;
-  type: 'claude_code' | 'codex';
+  type: AISessionType;
   model: string;
   title: string;
   sessionStartedAt: string;
@@ -381,15 +398,54 @@ export interface WebSessionGoal {
   updatedAt: string;
 }
 
-export interface WebSessionCodexRuntimeConfig {
+export type WebSessionAgent = 'claude' | 'codex' | 'pi';
+
+export interface WebSessionAgentPermissionModeCapability {
+  id: 'unrestricted' | 'approval' | 'sandbox' | string;
+  available: boolean;
+}
+
+export interface WebSessionAgentCapability {
+  installed: boolean;
+  version?: string | null;
+  supportsWebSession: boolean;
+  supportsTree: boolean;
+  supportsImages: boolean;
+  supportsCompaction: boolean;
+  supportsSteer: boolean;
+  supportsFollowUp: boolean;
+  supportsGoal: boolean;
+  supportsSubAgentRegistry: boolean;
+  permissionModes: WebSessionAgentPermissionModeCapability[];
+}
+
+export interface WebSessionPiModelInfo {
+  provider: string;
+  id: string;
+  name: string;
+  reasoning: boolean;
+  input: string[];
+  contextWindow: number;
+  maxTokens: number;
+}
+
+export interface WebSessionRuntimeConfig {
+  agents?: Partial<Record<WebSessionAgent, WebSessionAgentCapability>>;
   model?: string;
   contextWindowTokens: number;
   compactLimitTokens: number;
   source: WebSessionContextWindowSource;
   models: WebSessionCodexModelInfo[];
+  piModels?: WebSessionPiModelInfo[];
   hasCodex: boolean;
   hasClaudeCode: boolean;
   codexVersion?: string | null;
+  hasPi?: boolean;
+  piVersion?: string | null;
+  supportsPiWebSession?: boolean;
+  piRpcCompatible?: boolean;
+  piMinVersion?: string;
+  piDiagnostics?: string;
   supportsWebSession: boolean;
   webSessionMinCodexVersion: string;
   supportsMultiAgentV2?: boolean;
@@ -397,6 +453,9 @@ export interface WebSessionCodexRuntimeConfig {
   supportsGoalMode: boolean;
   goalModeMinCodexVersion: string;
 }
+
+/** @deprecated Use WebSessionRuntimeConfig. */
+export type WebSessionCodexRuntimeConfig = WebSessionRuntimeConfig;
 
 export type CodexSkillSource = 'user' | 'system' | 'bundled';
 
@@ -414,7 +473,7 @@ export interface WebSessionSummary {
   projectId: string;
   worktreeId?: string | null;
   orderIndex: number;
-  agent: 'claude' | 'codex';
+  agent: WebSessionAgent;
   claudeRuntime?: 'claude' | 'ccr';
   title: string;
   model: string;
@@ -429,6 +488,8 @@ export interface WebSessionSummary {
   autoRetryDispatchPendingOnFailure: boolean;
   cwd: string;
   nativeSessionId?: string | null;
+  nativeLeafId?: string | null;
+  sourceRevision?: string | null;
   cyberPolicyFlagged?: boolean;
   hasScheduledPlanExecution?: boolean;
   status: 'idle' | 'running' | 'waiting_approval' | 'done' | 'err' | 'aborting';

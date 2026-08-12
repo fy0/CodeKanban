@@ -1,18 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { postMethodMock, postSendMock, postAbortMock, fetchMock } = vi.hoisted(() => {
-  const postSendMock = vi.fn();
-  const postAbortMock = vi.fn();
-  return {
-    postMethodMock: vi.fn(() => ({
-      send: postSendMock,
-      abort: postAbortMock,
-    })),
-    postSendMock,
-    postAbortMock,
-    fetchMock: vi.fn(),
-  };
-});
+const { getMethodMock, getSendMock, postMethodMock, postSendMock, postAbortMock, fetchMock } =
+  vi.hoisted(() => {
+    const getSendMock = vi.fn();
+    const postSendMock = vi.fn();
+    const postAbortMock = vi.fn();
+    return {
+      getMethodMock: vi.fn(() => ({ send: getSendMock })),
+      getSendMock,
+      postMethodMock: vi.fn(() => ({
+        send: postSendMock,
+        abort: postAbortMock,
+      })),
+      postSendMock,
+      postAbortMock,
+      fetchMock: vi.fn(),
+    };
+  });
 
 vi.mock('@/api', () => ({
   urlBase: '',
@@ -32,7 +36,7 @@ vi.mock('@/api', () => ({
 
 vi.mock('@/api/http', () => ({
   http: {
-    Get: vi.fn(),
+    Get: getMethodMock,
     Post: postMethodMock,
     Patch: vi.fn(),
     Delete: vi.fn(),
@@ -227,6 +231,90 @@ describe('webSessionApi.searchConversation', () => {
 
     await expect(request).rejects.toMatchObject({ name: 'AbortError' });
     expect(abortMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe('webSessionApi Pi tree', () => {
+  const tree = {
+    sessionId: 'session-1',
+    leafId: 'leaf-1',
+    revision: 'rev-1',
+    nodes: [
+      {
+        id: 'leaf-1',
+        type: 'message',
+        role: 'user',
+        active: true,
+        children: [],
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    getMethodMock.mockClear();
+    getSendMock.mockReset();
+    postMethodMock.mockClear();
+    postSendMock.mockReset();
+  });
+
+  it('loads the encoded project session tree', async () => {
+    getSendMock.mockResolvedValueOnce({ item: tree });
+
+    await expect(webSessionApi.tree('project/1', 'session 2')).resolves.toEqual(tree);
+    expect(getMethodMock).toHaveBeenCalledWith(
+      '/projects/project%2F1/web-sessions/session%202/tree'
+    );
+  });
+
+  it('navigates with a revision and optional summary request', async () => {
+    postSendMock.mockResolvedValueOnce({ item: { tree, editorText: 'rewrite this' } });
+
+    await expect(
+      webSessionApi.navigateTree('project-1', 'session-1', {
+        targetId: 'leaf-1',
+        revision: 'rev-1',
+        summarize: true,
+      })
+    ).resolves.toMatchObject({ tree, editorText: 'rewrite this' });
+    expect(postMethodMock).toHaveBeenCalledWith(
+      '/projects/project-1/web-sessions/session-1/tree/navigate',
+      { targetId: 'leaf-1', revision: 'rev-1', summarize: true }
+    );
+  });
+
+  it('forks and clones into a returned target session', async () => {
+    postSendMock
+      .mockResolvedValueOnce({
+        item: {
+          session: { id: 'forked' },
+          tree: { ...tree, sessionId: 'forked' },
+          editorText: 'u',
+        },
+      })
+      .mockResolvedValueOnce({
+        item: { session: { id: 'cloned' }, tree: { ...tree, sessionId: 'cloned' } },
+      });
+
+    await expect(
+      webSessionApi.forkTree('project-1', 'session-1', {
+        targetId: 'leaf-1',
+        revision: 'rev-1',
+      })
+    ).resolves.toMatchObject({ session: { id: 'forked' }, editorText: 'u' });
+    expect(postMethodMock).toHaveBeenNthCalledWith(
+      1,
+      '/projects/project-1/web-sessions/session-1/tree/fork',
+      { targetId: 'leaf-1', revision: 'rev-1' }
+    );
+
+    await expect(
+      webSessionApi.cloneTree('project-1', 'session-1', { revision: 'rev-1' })
+    ).resolves.toMatchObject({ session: { id: 'cloned' } });
+    expect(postMethodMock).toHaveBeenNthCalledWith(
+      2,
+      '/projects/project-1/web-sessions/session-1/tree/clone',
+      { revision: 'rev-1' }
+    );
   });
 });
 

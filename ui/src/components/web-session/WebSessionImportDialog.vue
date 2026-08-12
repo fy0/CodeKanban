@@ -51,7 +51,7 @@
           <template v-if="filteredSources.length > 0">
             <div
               v-for="source in filteredSources"
-              :key="source.sessionId"
+              :key="`${source.agent}:${source.sessionId}`"
               class="web-session-import__item"
             >
               <div class="web-session-import__copy">
@@ -60,6 +60,9 @@
                     {{ source.title || t('terminal.untitledSession') }}
                   </div>
                   <div class="web-session-import__badges">
+                    <n-tag size="small" :type="source.agent === 'pi' ? 'warning' : 'success'">
+                      {{ source.agent === 'pi' ? 'Pi' : 'Codex' }}
+                    </n-tag>
                     <n-tag v-if="source.duplicate" size="small" type="warning">
                       {{ t('webSession.importCodexSessionDuplicated') }}
                     </n-tag>
@@ -75,7 +78,7 @@
                 </div>
 
                 <div class="web-session-import__meta">
-                  <span>{{ source.model || 'Codex' }}</span>
+                  <span>{{ source.model || (source.agent === 'pi' ? 'Pi' : 'Codex') }}</span>
                   <span>{{ formatSessionTime(source) }}</span>
                   <span>{{ source.sessionId }}</span>
                 </div>
@@ -217,11 +220,15 @@
         <n-button
           v-else
           type="primary"
-          :disabled="!previewSource || previewLoading"
+          :disabled="!previewSource || !previewSource.importable || previewLoading"
           :loading="pendingSessionId === previewSource?.sessionId"
           @click="emitImportFromPreview"
         >
-          {{ t('webSession.importCodexSessionAction') }}
+          {{
+            previewSource?.importable
+              ? t('webSession.importCodexSessionAction')
+              : t('webSession.importPiSessionUnavailable')
+          }}
         </n-button>
       </n-space>
     </template>
@@ -245,6 +252,12 @@ import {
   useAiConversationWindow,
 } from '@/composables/useAiConversationWindow';
 import type { WebSessionSummary } from '@/types/models';
+import {
+  countImportableWebSessionSources,
+  normalizeWebSessionImportSources,
+  type WebSessionImportSourceSummary,
+  type WebSessionImportSourceWire,
+} from '@/components/web-session/webSessionImportSources';
 import ConversationViewer, {
   type ConversationViewerNavState,
   type SessionInfo,
@@ -252,22 +265,8 @@ import ConversationViewer, {
 
 type ScanPhase = 'recent' | 'extended' | 'complete';
 
-type ImportSourceSummary = {
-  aiSessionId: string;
-  sessionId: string;
-  model: string;
-  title: string | null;
-  sessionStartedAt: string;
-  lastMessageAt: string | null;
-  messageCount: number;
-  assistantMessageCount: number;
-  filePath: string;
-  duplicate: boolean;
-  existingSession?: WebSessionSummary | null;
-};
-
 type ImportSourceList = {
-  items?: ImportSourceSummary[];
+  items?: WebSessionImportSourceWire[];
   scanPhase?: ScanPhase;
 };
 
@@ -283,7 +282,7 @@ const props = defineProps<{
 const showModal = defineModel<boolean>('show', { default: false });
 
 const emit = defineEmits<{
-  (e: 'import-session', sessionId: string): void;
+  (e: 'import-session', source: Pick<WebSessionImportSourceSummary, 'agent' | 'sessionId'>): void;
   (e: 'open-existing-session', session: WebSessionSummary): void;
 }>();
 
@@ -293,11 +292,11 @@ const message = useMessage();
 const loading = ref(false);
 const searchQuery = ref('');
 const hideImported = ref(false);
-const importSources = ref<ImportSourceSummary[]>([]);
+const importSources = ref<WebSessionImportSourceSummary[]>([]);
 const scanPhase = ref<ScanPhase>('complete');
 const showPreviewModal = ref(false);
 const previewingSourceId = ref('');
-const previewSource = ref<ImportSourceSummary | null>(null);
+const previewSource = ref<WebSessionImportSourceSummary | null>(null);
 const conversationViewerRef = ref<{
   goToPrevUserMessage: () => void;
   goToNextUserMessage: () => void;
@@ -318,10 +317,13 @@ const {
   load: loadConversationWindow,
   loadEarlier: loadEarlierConversationWindow,
   reset: resetConversationWindow,
-} = useAiConversationWindow(
-  options => aiSessionApi.conversationWindowBySessionID(previewSource.value?.sessionId || '', options),
-  null
-);
+} = useAiConversationWindow(options => {
+  const source = previewSource.value;
+  if (source?.aiSessionId) {
+    return aiSessionApi.conversationWindowByID(source.aiSessionId, options);
+  }
+  return aiSessionApi.conversationWindowBySessionID(source?.sessionId || '', options);
+}, null);
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 const filteredSources = computed(() => {
@@ -346,7 +348,7 @@ const filteredSources = computed(() => {
 const duplicateCount = computed(
   () => importSources.value.filter(source => source.duplicate).length
 );
-const importableCount = computed(() => importSources.value.length - duplicateCount.value);
+const importableCount = computed(() => countImportableWebSessionSources(importSources.value));
 
 const previewSessionTitle = computed(() => {
   return (
@@ -360,7 +362,7 @@ const previewSessionInfo = computed<SessionInfo | null>(() => {
   }
   return {
     sessionId: previewSource.value.sessionId,
-    type: 'codex',
+    type: previewSource.value.agent,
   };
 });
 
@@ -404,7 +406,7 @@ function updateConversationNavState(state: ConversationViewerNavState) {
   conversationNavState.value = state;
 }
 
-function formatSessionTime(source: ImportSourceSummary) {
+function formatSessionTime(source: WebSessionImportSourceSummary) {
   const raw = source.lastMessageAt || source.sessionStartedAt;
   if (!raw) {
     return '-';
@@ -418,20 +420,23 @@ function formatSessionTime(source: ImportSourceSummary) {
 
 function emitImportFromPreview() {
   const sessionId = previewSource.value?.sessionId || '';
-  if (!sessionId || props.pendingSessionId) {
+  if (!sessionId || !previewSource.value?.importable || props.pendingSessionId) {
     return;
   }
-  emit('import-session', sessionId);
+  emit('import-session', {
+    agent: previewSource.value.agent,
+    sessionId,
+  });
 }
 
-function openExistingSession(source: ImportSourceSummary) {
+function openExistingSession(source: WebSessionImportSourceSummary) {
   if (!source.existingSession) {
     return;
   }
   emit('open-existing-session', source.existingSession);
 }
 
-async function openPreview(source: ImportSourceSummary) {
+async function openPreview(source: WebSessionImportSourceSummary) {
   previewSource.value = source;
   previewingSourceId.value = source.sessionId;
   showPreviewModal.value = true;
@@ -480,7 +485,7 @@ async function loadSources(isRefresh = false) {
       return;
     }
 
-    importSources.value = Array.isArray(data.items) ? data.items : [];
+    importSources.value = normalizeWebSessionImportSources(data.items);
     scanPhase.value = data.scanPhase || 'complete';
 
     if (showModal.value && scanPhase.value !== 'complete') {
@@ -489,7 +494,7 @@ async function loadSources(isRefresh = false) {
       }, 2000);
     }
   } catch (error) {
-    console.error('Failed to load codex import sources:', error);
+    console.error('Failed to load AI import sources:', error);
     if (!isRefresh) {
       message.error(t('common.loadFailed'));
     }

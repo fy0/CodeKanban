@@ -34,6 +34,8 @@ type WebSessionTable struct {
 	Cwd                               string `gorm:"type:text;not null" json:"cwd"`
 
 	NativeSessionID         *string    `gorm:"type:text" json:"nativeSessionId"`
+	NativeLeafID            *string    `gorm:"type:text" json:"nativeLeafId"`
+	SourceRevision          *string    `gorm:"type:text" json:"sourceRevision"`
 	CyberPolicyFlagged      bool       `gorm:"type:boolean;not null;default:false" json:"cyberPolicyFlagged"`
 	Status                  string     `gorm:"type:text;not null;index" json:"status"`
 	AssistantState          string     `gorm:"type:text;index" json:"assistantState"`

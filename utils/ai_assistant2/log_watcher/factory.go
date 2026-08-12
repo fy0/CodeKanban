@@ -30,6 +30,20 @@ func CreateWatcherForAssistantWithWorkingDir(
 	callback WatcherCallback,
 ) (*LogWatcher, error) {
 	switch assistantType {
+	case types.AssistantTypePi:
+		searcher, err := NewPiFileSearcherWithWorkingDir(workingDir)
+		if err != nil {
+			return nil, err
+		}
+		watcher := NewLogWatcher(WatcherConfig{
+			ProcessStartTime: processStartTime,
+			Logger:           logger,
+			Callback:         callback,
+			Searcher:         searcher,
+		})
+		watcher.parseLineFn = ParsePiLineWrapper
+		return watcher, nil
+
 	case types.AssistantTypeCodex:
 		searcher, err := NewCodexFileSearcherWithWorkingDir(workingDir)
 		if err != nil {
@@ -84,6 +98,20 @@ func CreateWatcherForAssistantWithWorkingDirAndMode(
 	callback WatcherCallback,
 ) (*LogWatcher, error) {
 	switch assistantType {
+	case types.AssistantTypePi:
+		searcher, err := NewPiFileSearcherWithWorkingDir(workingDir)
+		if err != nil {
+			return nil, err
+		}
+		watcher := NewLogWatcher(WatcherConfig{
+			ProcessStartTime: processStartTime,
+			Logger:           logger,
+			Callback:         callback,
+			Searcher:         searcher,
+		})
+		watcher.parseLineFn = ParsePiLineWrapper
+		return watcher, nil
+
 	case types.AssistantTypeCodex:
 		searcher, err := NewCodexFileSearcherWithWorkingDir(workingDir)
 		if err != nil {
@@ -150,6 +178,8 @@ func CreateWatcherWithFile(
 	switch assistantType {
 	case types.AssistantTypeClaudeCode:
 		watcher.parseLineFn = ParseClaudeCodeLineWrapper
+	case types.AssistantTypePi:
+		watcher.parseLineFn = ParsePiLineWrapper
 	}
 
 	return watcher, nil

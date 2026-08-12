@@ -13,6 +13,7 @@ func GetAllModels() []any {
 		&tables.UserTable{},
 		&tables.UserAccessTokenTable{},
 		&tables.ProjectTable{},
+		&tables.ProjectAgentTrustTable{},
 		&tables.WorktreeTable{},
 		&tables.TaskTable{},
 		&tables.TaskCommentTable{},

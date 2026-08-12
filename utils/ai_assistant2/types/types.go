@@ -7,6 +7,7 @@ const (
 	AssistantTypeUnknown    AssistantType = "unknown"
 	AssistantTypeClaudeCode AssistantType = "claude-code"
 	AssistantTypeCodex      AssistantType = "codex"
+	AssistantTypePi         AssistantType = "pi"
 	AssistantTypeQwenCode   AssistantType = "qwen-code"
 	AssistantTypeGemini     AssistantType = "gemini"
 )
@@ -41,6 +42,8 @@ func (t AssistantType) DisplayName() string {
 		return "Claude Code"
 	case AssistantTypeCodex:
 		return "OpenAI Codex"
+	case AssistantTypePi:
+		return "Pi"
 	case AssistantTypeQwenCode:
 		return "Qwen Code"
 	case AssistantTypeGemini:

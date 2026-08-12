@@ -52,10 +52,13 @@ const (
 
 // scanState tracks the scanning progress for a project
 type scanState struct {
-	phase       string              // Current scan phase
-	sessions    []*AISessionSummary // Accumulated sessions
-	pendingDirs []string            // Directories pending for extended scan
-	mu          sync.RWMutex
+	phase            string              // Current scan phase
+	sessions         []*AISessionSummary // Accumulated sessions
+	pendingDirs      []string            // Directories pending for extended scan
+	cursor           string              // Provider-specific discovery cursor
+	hasMore          bool                // Whether discovery has another batch
+	backgroundActive bool                // Whether a provider background scan is queued or running
+	mu               sync.RWMutex
 }
 
 // Global directory cache (projectDir -> cache entry)
@@ -76,7 +79,7 @@ var (
 // bgScanTask represents a background scan task
 type bgScanTask struct {
 	projectPath string
-	scanType    string // "claude" or "codex"
+	scanType    string // "claude", "codex", or "pi"
 	projectDir  string // For claude: the specific project directory
 }
 
@@ -112,6 +115,12 @@ func startBackgroundScanner() {
 						zap.String("projectPath", task.projectPath),
 						zap.Error(err))
 				}
+			case "pi":
+				if err := service.scanPiExtendedPhase(ctx, task.projectPath, task.projectDir); err != nil {
+					logger.Debug("background Pi scan failed",
+						zap.String("projectPath", task.projectPath),
+						zap.Error(err))
+				}
 			}
 		}
 	}()
@@ -126,10 +135,14 @@ func NewAISessionService() *AISessionService {
 type ProjectAISessions struct {
 	HasClaudeCode   bool                `json:"hasClaudeCode"`
 	HasCodex        bool                `json:"hasCodex"`
+	HasPi           bool                `json:"hasPi"`
 	ClaudeSessions  []*AISessionSummary `json:"claudeSessions,omitempty"`
 	CodexSessions   []*AISessionSummary `json:"codexSessions,omitempty"`
+	PiSessions      []*AISessionSummary `json:"piSessions"`
 	ClaudeScanPhase string              `json:"claudeScanPhase,omitempty"` // "recent", "extended", "complete"
 	CodexScanPhase  string              `json:"codexScanPhase,omitempty"`  // "recent", "extended", "complete"
+	PiScanPhase     string              `json:"piScanPhase"`
+	PiBeforeCursor  string              `json:"piBeforeCursor,omitempty"`
 }
 
 // AISessionSummary contains summary information about an AI session.
@@ -162,8 +175,10 @@ func (s *AISessionService) GetProjectAISessions(ctx context.Context, projectPath
 	result := &ProjectAISessions{
 		ClaudeSessions:  make([]*AISessionSummary, 0),
 		CodexSessions:   make([]*AISessionSummary, 0),
+		PiSessions:      make([]*AISessionSummary, 0),
 		ClaudeScanPhase: ScanPhaseComplete,
 		CodexScanPhase:  ScanPhaseComplete,
+		PiScanPhase:     ScanPhaseComplete,
 	}
 
 	// Normalize the project path
@@ -205,11 +220,28 @@ func (s *AISessionService) GetProjectAISessions(ctx context.Context, projectPath
 			zap.String("phase", codexPhase))
 	}
 
+	piSessions, piPhase, err := s.getPiSessionsPhased(ctx, projectPath)
+	if err != nil {
+		logger.Warn("failed to get Pi sessions", zap.Error(err), zap.String("path", projectPath))
+	} else {
+		if piSessions == nil {
+			piSessions = []*AISessionSummary{}
+		}
+		result.PiSessions = piSessions
+		result.HasPi = len(piSessions) > 0
+		result.PiScanPhase, result.PiBeforeCursor = s.currentPiScanProgress(projectPath, piPhase)
+		logger.Debug("Pi sessions found",
+			zap.Int("count", len(piSessions)),
+			zap.String("phase", piPhase))
+	}
+
 	logger.Info("GetProjectAISessions returning",
 		zap.Bool("hasClaudeCode", result.HasClaudeCode),
 		zap.Bool("hasCodex", result.HasCodex),
+		zap.Bool("hasPi", result.HasPi),
 		zap.Int("claudeCount", len(result.ClaudeSessions)),
-		zap.Int("codexCount", len(result.CodexSessions)))
+		zap.Int("codexCount", len(result.CodexSessions)),
+		zap.Int("piCount", len(result.PiSessions)))
 
 	return result, nil
 }
@@ -1846,24 +1878,36 @@ func (s *AISessionService) GetSessionConversationBySessionID(ctx context.Context
 	var session tables.AISessionTable
 	err := db.WithContext(ctx).Where("session_id = ?", sessionID).First(&session).Error
 	if err == nil {
-		if session.Type == tables.AISessionTypeCodex {
+		switch session.Type {
+		case tables.AISessionTypeCodex:
 			resolved, resolveErr := s.ResolveCodexSessionBySessionID(ctx, sessionID)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}
 			return s.getConversationFromSession(ctx, *resolved)
+		case tables.AISessionTypePi:
+			resolved, resolveErr := s.ResolvePiSessionBySessionID(ctx, sessionID)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			return s.getConversationFromSession(ctx, *resolved)
+		default:
+			return s.getConversationFromSession(ctx, session)
 		}
-		return s.getConversationFromSession(ctx, session)
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
 	resolved, resolveErr := s.ResolveCodexSessionBySessionID(ctx, sessionID)
-	if resolveErr != nil {
-		return nil, resolveErr
+	if resolveErr == nil {
+		return s.getConversationFromSession(ctx, *resolved)
 	}
-	return s.getConversationFromSession(ctx, *resolved)
+	resolvedPi, piErr := s.ResolvePiSessionBySessionID(ctx, sessionID)
+	if piErr == nil {
+		return s.getConversationFromSession(ctx, *resolvedPi)
+	}
+	return nil, resolveErr
 }
 
 func (s *AISessionService) GetSessionConversationWindow(
@@ -1896,24 +1940,36 @@ func (s *AISessionService) GetSessionConversationWindowBySessionID(
 	var session tables.AISessionTable
 	err := db.WithContext(ctx).Where("session_id = ?", sessionID).First(&session).Error
 	if err == nil {
-		if session.Type == tables.AISessionTypeCodex {
+		switch session.Type {
+		case tables.AISessionTypeCodex:
 			resolved, resolveErr := s.ResolveCodexSessionBySessionID(ctx, sessionID)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}
 			return s.getConversationWindowFromSession(ctx, *resolved, beforeCursor, limit)
+		case tables.AISessionTypePi:
+			resolved, resolveErr := s.ResolvePiSessionBySessionID(ctx, sessionID)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			return s.getConversationWindowFromSession(ctx, *resolved, beforeCursor, limit)
+		default:
+			return s.getConversationWindowFromSession(ctx, session, beforeCursor, limit)
 		}
-		return s.getConversationWindowFromSession(ctx, session, beforeCursor, limit)
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
 	resolved, resolveErr := s.ResolveCodexSessionBySessionID(ctx, sessionID)
-	if resolveErr != nil {
-		return nil, resolveErr
+	if resolveErr == nil {
+		return s.getConversationWindowFromSession(ctx, *resolved, beforeCursor, limit)
 	}
-	return s.getConversationWindowFromSession(ctx, *resolved, beforeCursor, limit)
+	resolvedPi, piErr := s.ResolvePiSessionBySessionID(ctx, sessionID)
+	if piErr == nil {
+		return s.getConversationWindowFromSession(ctx, *resolvedPi, beforeCursor, limit)
+	}
+	return nil, resolveErr
 }
 
 // RefreshSessionAndGetConversation clears the cached session data in DB and re-parses the file.
@@ -2007,6 +2063,11 @@ func (s *AISessionService) RefreshSessionAndGetConversation(ctx context.Context,
 					break
 				}
 			}
+		}
+	case tables.AISessionTypePi:
+		messages, err = s.parsePiConversation(filePath)
+		if err == nil {
+			title = conversationTitleFromMessages(messages, "")
 		}
 	default:
 		return nil, errors.New("unknown session type")
@@ -2121,6 +2182,8 @@ func (s *AISessionService) getConversationFromSession(ctx context.Context, sessi
 		messages, err = s.parseClaudeCodeConversation(session.FilePath)
 	case tables.AISessionTypeCodex:
 		messages, err = s.parseCodexConversation(session.FilePath)
+	case tables.AISessionTypePi:
+		messages, err = s.parsePiConversation(session.FilePath)
 	default:
 		return nil, errors.New("unknown session type")
 	}
@@ -2318,6 +2381,8 @@ func (s *AISessionService) getConversationWindowFromSession(
 		messages, err = s.parseClaudeCodeConversation(session.FilePath)
 	case tables.AISessionTypeCodex:
 		messages, err = s.parseCodexConversation(session.FilePath)
+	case tables.AISessionTypePi:
+		messages, err = s.parsePiConversation(session.FilePath)
 	default:
 		return nil, errors.New("unknown session type")
 	}

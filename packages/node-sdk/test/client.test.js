@@ -110,6 +110,72 @@ test('resolveProject creates a project when path is not registered', async () =>
   assert.equal(result.matchedBy, 'created');
 });
 
+test('project Pi trust helpers use server-owned project context', async () => {
+  const requests = [];
+  const status = {
+    projectId: 'p1',
+    agent: 'pi',
+    projectPath: 'D:/repo/demo',
+    trusted: true,
+  };
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1/agent-trust/pi', ({ body }) => {
+      requests.push({ method: 'GET', body });
+      return createJsonResponse({ item: { ...status, trusted: false } });
+    }],
+    ['POST /api/v1/projects/p1/agent-trust/pi', ({ body }) => {
+      requests.push({ method: 'POST', body });
+      return createJsonResponse({ item: status });
+    }],
+    ['DELETE /api/v1/projects/p1/agent-trust/pi', ({ body }) => {
+      requests.push({ method: 'DELETE', body });
+      return createJsonResponse({ item: { ...status, trusted: false } });
+    }],
+  ]);
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  assert.equal((await client.getProjectPiTrust({ projectId: 'p1' })).trusted, false);
+  assert.equal((await client.trustProjectForPi({ projectId: 'p1' })).trusted, true);
+  assert.equal((await client.revokeProjectPiTrust({ projectId: 'p1' })).trusted, false);
+  assert.deepEqual(requests, [
+    { method: 'GET', body: undefined },
+    { method: 'POST', body: undefined },
+    { method: 'DELETE', body: undefined },
+  ]);
+});
+
+test('Pi Web Session import sends agent identity without accepting a native file path', async () => {
+  const requests = [];
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1/web-sessions/import-sources', ({ url }) => {
+      requests.push({ method: 'GET', search: url.search });
+      return createJsonResponse({ item: { items: [{ agent: 'pi', sessionId: 'pi-native' }], scanPhase: 'complete' } });
+    }],
+    ['POST /api/v1/projects/p1/web-sessions/import', ({ body }) => {
+      requests.push({ method: 'POST', body });
+      return createJsonResponse({ item: { created: true, session: { id: 'ws1', agent: 'pi' } } });
+    }],
+  ]);
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const sources = await client.listWebSessionImportSources({ projectId: 'p1', refresh: true });
+  const imported = await client.importWebSession({ projectId: 'p1', agent: 'pi', sessionId: 'pi-native' });
+  assert.equal(sources.items[0].agent, 'pi');
+  assert.equal(imported.session.agent, 'pi');
+  assert.deepEqual(requests, [
+    { method: 'GET', search: '?refresh=true' },
+    { method: 'POST', body: { agent: 'pi', sessionId: 'pi-native' } },
+  ]);
+});
+
 test('startWorkflow creates a terminal and sends command plus prompt', async () => {
   FakeWebSocket.instances.length = 0;
   const handlers = new Map([
@@ -172,7 +238,7 @@ test('listSessions returns terminal and ai summaries', async () => {
   const handlers = new Map([
     ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: 'D:/repo/demo', name: 'demo' } })],
     ['GET /api/v1/projects/p1/terminals', () => createJsonResponse({ items: [{ id: 't1' }] })],
-    ['GET /api/v1/projects/p1/ai-sessions', () => createJsonResponse({ item: { hasCodex: true, hasClaudeCode: false, codexSessions: [{ id: 'a1' }], claudeSessions: [] } })],
+    ['GET /api/v1/projects/p1/ai-sessions', () => createJsonResponse({ item: { hasCodex: true, hasClaudeCode: false, hasPi: true, codexSessions: [{ id: 'a1' }], claudeSessions: [], piSessions: [{ id: 'p1' }] } })],
   ]);
 
   const client = new CodeKanbanClient({
@@ -185,8 +251,58 @@ test('listSessions returns terminal and ai summaries', async () => {
   assert.equal(result.project.id, 'p1');
   assert.equal(result.terminalSessions.length, 1);
   assert.equal(result.aiSessions.codexSessions.length, 1);
+  assert.equal(result.aiSessions.piSessions.length, 1);
 });
 
+
+test('Pi web session tree REST helpers use revisioned contracts', async () => {
+  const tree = {
+    sessionId: 'ws1',
+    leafId: 'a1',
+    revision: 'rev-1',
+    nodes: [
+      { id: 'u1', parentId: null, type: 'message', role: 'user', preview: 'Start', active: true, children: ['a1'] },
+      { id: 'a1', parentId: 'u1', type: 'message', role: 'assistant', preview: 'Answer', active: true, children: [] },
+    ],
+  };
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1/web-sessions/ws1/tree', () => createWrappedJsonResponse({ item: tree })],
+    ['POST /api/v1/projects/p1/web-sessions/ws1/tree/navigate', ({ body }) => {
+      assert.deepEqual(body, { targetId: 'u1', revision: 'rev-1', summarize: true });
+      return createWrappedJsonResponse({ item: { tree, editorText: 'Start' } });
+    }],
+    ['POST /api/v1/projects/p1/web-sessions/ws1/tree/fork', ({ body }) => {
+      assert.deepEqual(body, { targetId: 'u1', revision: 'rev-1' });
+      return createWrappedJsonResponse({ item: { session: { id: 'ws2', agent: 'pi' }, tree: { ...tree, sessionId: 'ws2' }, editorText: 'Start' } }, 201);
+    }],
+    ['POST /api/v1/projects/p1/web-sessions/ws1/tree/clone', ({ body }) => {
+      assert.deepEqual(body, { revision: 'rev-1' });
+      return createWrappedJsonResponse({ item: { session: { id: 'ws3', agent: 'pi' }, tree: { ...tree, sessionId: 'ws3' } } }, 201);
+    }],
+  ]);
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const read = await client.getWebSessionTree({ projectId: 'p1', sessionId: 'ws1' });
+  assert.equal(read.nodes.length, 2);
+  const navigated = await client.navigateWebSessionTree({
+    projectId: 'p1', sessionId: 'ws1', targetId: 'u1', revision: 'rev-1', summarize: true,
+  });
+  assert.equal(navigated.editorText, 'Start');
+  const forked = await client.forkWebSessionTree({
+    projectId: 'p1', sessionId: 'ws1', targetId: 'u1', revision: 'rev-1',
+  });
+  assert.equal(forked.session.id, 'ws2');
+  assert.equal(forked.tree.sessionId, 'ws2');
+  const cloned = await client.cloneWebSessionTree({
+    projectId: 'p1', sessionId: 'ws1', revision: 'rev-1',
+  });
+  assert.equal(cloned.session.id, 'ws3');
+  assert.equal(cloned.editorText, '');
+});
 
 test('project file helpers call the file manager endpoints', async () => {
   const handlers = new Map([

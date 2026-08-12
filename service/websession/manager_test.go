@@ -141,6 +141,73 @@ func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	}
 }
 
+func TestManagerCreateSessionRejectsInvalidAgent(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	for _, agent := range []Agent{"", "unknown"} {
+		if _, err := manager.CreateSession(context.Background(), CreateParams{
+			ProjectID: project.ID,
+			Agent:     agent,
+		}); err == nil || !strings.Contains(err.Error(), "invalid agent") {
+			t.Fatalf("CreateSession agent %q error = %v, want invalid agent", agent, err)
+		}
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentClaude,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if _, err := manager.UpdateAgent(context.Background(), created.ID, "unknown"); err == nil ||
+		!strings.Contains(err.Error(), "invalid agent") {
+		t.Fatalf("UpdateAgent error = %v, want invalid agent", err)
+	}
+}
+
+func TestManagerCreateSessionUsesPiIdentityWithoutStartingAProcess(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentPi,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if created.Agent != AgentPi || created.SourceKind != string(SessionBackendPiRPC) {
+		t.Fatalf("unexpected Pi identity: agent=%q sourceKind=%q", created.Agent, created.SourceKind)
+	}
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if backend := effectiveSessionBackend(record); backend != SessionBackendPiRPC {
+		t.Fatalf("Pi backend = %q, want %q", backend, SessionBackendPiRPC)
+	}
+	manager.piRuntimeMu.Lock()
+	runtimeCount := len(manager.piRuntimes)
+	manager.piRuntimeMu.Unlock()
+	if runtimeCount != 0 || manager.hasActiveRun(created.ID) {
+		t.Fatalf("creating a Pi session started a process: runtimes=%d active=%v", runtimeCount, manager.hasActiveRun(created.ID))
+	}
+}
+
 func TestManagerCreateSessionPersistsAutoRetryMaxAttempts(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -712,6 +779,59 @@ func TestImportCodexSessionRejectsProjectPathMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does not belong") {
 		t.Fatalf("expected project mismatch error, got %v", err)
+	}
+}
+
+func TestListImportSourcesIncludesImportablePiPreview(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	piRoot := filepath.Join(t.TempDir(), "pi-sessions")
+	if err := os.MkdirAll(piRoot, 0o755); err != nil {
+		t.Fatalf("create Pi root: %v", err)
+	}
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", piRoot)
+	startedAt := time.Now().UTC().Add(-time.Hour)
+	piFile := filepath.Join(piRoot, "pi-import-source.jsonl")
+	piContent := fmt.Sprintf(
+		`{"type":"session","version":3,"id":"pi-native-id","timestamp":%q,"cwd":%q}`+"\n"+
+			`{"type":"message","id":"message1","parentId":null,"timestamp":%q,"message":{"role":"user","content":"inspect Pi history","timestamp":%d}}`+"\n"+
+			`{"type":"message","id":"message2","parentId":"message1","timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":"done"}],"provider":"openai","model":"gpt-5","timestamp":%d}}`+"\n",
+		startedAt.Format(time.RFC3339Nano),
+		project.Path,
+		startedAt.Add(time.Second).Format(time.RFC3339Nano),
+		startedAt.Add(time.Second).UnixMilli(),
+		startedAt.Add(2*time.Second).Format(time.RFC3339Nano),
+		startedAt.Add(2*time.Second).UnixMilli(),
+	)
+	if err := os.WriteFile(piFile, []byte(piContent), 0o644); err != nil {
+		t.Fatalf("write Pi source: %v", err)
+	}
+
+	t.Setenv("CODEKANBAN_FAKE_PI_RUNTIME", "1")
+	t.Setenv("CODEKANBAN_FAKE_PI_SESSION", filepath.Join(piRoot, "unused-runtime.jsonl"))
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: filepath.Join(t.TempDir(), "missing-codex"),
+		PiPath:    fmt.Sprintf("%q -test.run=^TestPiRuntimeFakeProcess$ --", os.Args[0]),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	result, err := manager.ListImportSources(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListImportSources returned error: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("import source count = %d, want 1: %#v", len(result.Items), result.Items)
+	}
+	item := result.Items[0]
+	if item.Agent != AgentPi || !item.Importable || item.SessionID != "pi-native-id" {
+		t.Fatalf("unexpected Pi import source: %#v", item)
+	}
+	if item.Title != "inspect Pi history" || item.Model != "openai/gpt-5" {
+		t.Fatalf("unexpected Pi preview metadata: %#v", item)
 	}
 }
 
@@ -2001,6 +2121,33 @@ func TestManagerListSessionsMarksClaudeContextWindowUnavailable(t *testing.T) {
 	}
 }
 
+func TestDecoratePiSessionSummaryPreservesObservedContextWindow(t *testing.T) {
+	manager := &Manager{}
+	observedWindow := int64(32000)
+	summary := SessionSummary{
+		Agent:               AgentPi,
+		ContextWindowTokens: &observedWindow,
+		ContextWindowSource: ContextWindowSourceSessionUsage,
+	}
+
+	manager.decorateSessionSummary(&summary)
+
+	if summary.ContextWindowTokens == nil || *summary.ContextWindowTokens != observedWindow {
+		t.Fatalf("expected observed Pi context window %d, got %#v", observedWindow, summary.ContextWindowTokens)
+	}
+	if summary.ContextWindowSource != ContextWindowSourceSessionUsage {
+		t.Fatalf("expected context window source %q, got %q", ContextWindowSourceSessionUsage, summary.ContextWindowSource)
+	}
+
+	configuredWindow := int64(64000)
+	summary.ContextWindowTokens = &configuredWindow
+	summary.ContextWindowSource = ContextWindowSourceConfig
+	manager.decorateSessionSummary(&summary)
+	if summary.ContextWindowTokens != nil || summary.ContextWindowSource != ContextWindowSourceUnavailable {
+		t.Fatalf("Pi must not inherit a non-session context window: %#v", summary)
+	}
+}
+
 func TestGetCodexRuntimeConfigIncludesBinaryCapabilities(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -2009,6 +2156,7 @@ func TestGetCodexRuntimeConfigIncludesBinaryCapabilities(t *testing.T) {
 		DataDir:    t.TempDir(),
 		CodexPath:  writeFakeCodexVersionCLI(t, "0.146.0"),
 		ClaudePath: writeFakeClaudeStreamCLI(t),
+		PiPath:     filepath.Join(t.TempDir(), "missing-pi"),
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
@@ -2039,6 +2187,15 @@ func TestGetCodexRuntimeConfigIncludesBinaryCapabilities(t *testing.T) {
 	if config.GoalModeMinVersion != "0.133.0" {
 		t.Fatalf("expected goalModeMinVersion 0.133.0, got %q", config.GoalModeMinVersion)
 	}
+	if !config.Agents[AgentClaude].Installed || !config.Agents[AgentClaude].SupportsWebSession {
+		t.Fatalf("unexpected Claude capability: %#v", config.Agents[AgentClaude])
+	}
+	if !config.Agents[AgentCodex].Installed || !config.Agents[AgentCodex].SupportsGoal {
+		t.Fatalf("unexpected Codex capability: %#v", config.Agents[AgentCodex])
+	}
+	if config.Agents[AgentPi].Installed || config.Agents[AgentPi].SupportsWebSession {
+		t.Fatalf("Pi should be unavailable when PiPath is missing: %#v", config.Agents[AgentPi])
+	}
 	raw, err := json.Marshal(config)
 	if err != nil {
 		t.Fatalf("marshal runtime config: %v", err)
@@ -2051,6 +2208,10 @@ func TestGetCodexRuntimeConfigIncludesBinaryCapabilities(t *testing.T) {
 		payload["supportsMultiAgentV2"] != true ||
 		payload["multiAgentV2MinCodexVersion"] != "0.146.0" {
 		t.Fatalf("unexpected web-session capability payload: %#v", payload)
+	}
+	agents, ok := payload["agents"].(map[string]any)
+	if !ok || agents["pi"] == nil {
+		t.Fatalf("runtime payload does not include Pi capability: %#v", payload["agents"])
 	}
 }
 

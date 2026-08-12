@@ -12,6 +12,7 @@ type AISessionType string
 const (
 	AISessionTypeClaudeCode AISessionType = "claude_code"
 	AISessionTypeCodex      AISessionType = "codex"
+	AISessionTypePi         AISessionType = "pi"
 )
 
 // AISessionTable stores cached AI assistant session metadata.
@@ -23,7 +24,7 @@ type AISessionTable struct {
 	// SessionID is the unique identifier from the AI assistant
 	SessionID string `gorm:"type:text;not null;uniqueIndex:idx_session_type" json:"sessionId"`
 
-	// Type identifies which AI assistant (claude_code, codex)
+	// Type identifies which AI assistant (claude_code, codex, pi)
 	Type AISessionType `gorm:"type:text;not null;uniqueIndex:idx_session_type" json:"type"`
 
 	// ProjectPath is the working directory associated with this session

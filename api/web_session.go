@@ -12,6 +12,7 @@ import (
 
 	"code-kanban/api/h"
 	"code-kanban/model"
+	"code-kanban/service"
 	"code-kanban/service/websession"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -42,6 +43,12 @@ type webSessionCountsResponse struct {
 	} `json:"body"`
 }
 
+type piTreeNavigateBody struct {
+	TargetID  string `json:"targetId" minLength:"1"`
+	Revision  string `json:"revision" minLength:"1"`
+	Summarize *bool  `json:"summarize,omitempty"`
+}
+
 func registerWebSessionRoutes(app *fiber.App, group *huma.Group, manager *websession.Manager, logger *zap.Logger) {
 	ctrl := &webSessionController{
 		manager: manager,
@@ -58,6 +65,84 @@ func registerWebSessionRoutes(app *fiber.App, group *huma.Group, manager *webses
 }
 
 func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
+	huma.Get(group, "/projects/{projectId}/agent-trust/pi", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+		},
+	) (*h.ItemResponse[service.ProjectAgentTrustStatus], error) {
+		item, err := c.manager.GetProjectPiTrust(ctx, input.ProjectID)
+		if err != nil {
+			switch {
+			case errors.Is(err, model.ErrProjectNotFound):
+				return nil, huma.Error404NotFound("project not found")
+			case errors.Is(err, model.ErrDBNotInitialized):
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			default:
+				return nil, huma.Error500InternalServerError("failed to load Pi project trust", err)
+			}
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "project-agent-trust-pi-get"
+		op.Summary = "获取项目 Pi 授权状态"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Post(group, "/projects/{projectId}/agent-trust/pi", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+		},
+	) (*h.ItemResponse[service.ProjectAgentTrustStatus], error) {
+		item, err := c.manager.TrustProjectForPi(ctx, input.ProjectID)
+		if err != nil {
+			switch {
+			case errors.Is(err, model.ErrProjectNotFound):
+				return nil, huma.Error404NotFound("project not found")
+			case errors.Is(err, model.ErrDBNotInitialized):
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			default:
+				return nil, huma.Error400BadRequest(err.Error())
+			}
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "project-agent-trust-pi-create"
+		op.Summary = "授权项目加载 Pi 本地资源"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Delete(group, "/projects/{projectId}/agent-trust/pi", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+		},
+	) (*h.ItemResponse[service.ProjectAgentTrustStatus], error) {
+		item, err := c.manager.RevokeProjectPiTrust(ctx, input.ProjectID)
+		if err != nil {
+			switch {
+			case errors.Is(err, model.ErrProjectNotFound):
+				return nil, huma.Error404NotFound("project not found")
+			case errors.Is(err, model.ErrDBNotInitialized):
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			default:
+				return nil, huma.Error500InternalServerError("failed to revoke Pi project trust", err)
+			}
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "project-agent-trust-pi-delete"
+		op.Summary = "撤销项目 Pi 授权"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Get(group, "/projects/{projectId}/web-sessions", func(
 		ctx context.Context,
 		input *struct {
@@ -126,6 +211,104 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-snapshot"
 		op.Summary = "获取会话快照"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Get(group, "/projects/{projectId}/web-sessions/{sessionId}/tree", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+		},
+	) (*h.ItemResponse[websession.PiTreeSnapshot], error) {
+		if err := c.requireProjectSession(ctx, input.ProjectID, input.SessionID); err != nil {
+			return nil, err
+		}
+		item, err := c.manager.GetPiSessionTree(ctx, input.SessionID)
+		if err != nil {
+			return nil, piTreeHTTPError(err)
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-tree-get"
+		op.Summary = "获取 Pi 会话历史树"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/tree/navigate", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+			Body      piTreeNavigateBody
+		},
+	) (*h.ItemResponse[websession.PiTreeNavigateResult], error) {
+		if err := c.requireProjectSession(ctx, input.ProjectID, input.SessionID); err != nil {
+			return nil, err
+		}
+		item, err := c.manager.NavigatePiSessionTree(ctx, input.SessionID, websession.PiTreeNavigateInput{
+			TargetID: input.Body.TargetID, Revision: input.Body.Revision,
+			Summarize: input.Body.Summarize != nil && *input.Body.Summarize,
+		})
+		if err != nil {
+			return nil, piTreeHTTPError(err)
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-tree-navigate"
+		op.Summary = "切换 Pi 会话历史分支"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/tree/fork", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+			Body      websession.PiTreeForkInput
+		},
+	) (*h.ItemResponse[websession.PiTreeCreateResult], error) {
+		if err := c.requireProjectSession(ctx, input.ProjectID, input.SessionID); err != nil {
+			return nil, err
+		}
+		item, err := c.manager.ForkPiSessionTree(ctx, input.SessionID, input.Body)
+		if err != nil {
+			return nil, piTreeHTTPError(err)
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusCreated
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-tree-fork"
+		op.Summary = "从 Pi 历史节点创建新会话"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/tree/clone", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+			Body      websession.PiTreeCloneInput
+		},
+	) (*h.ItemResponse[websession.PiTreeCreateResult], error) {
+		if err := c.requireProjectSession(ctx, input.ProjectID, input.SessionID); err != nil {
+			return nil, err
+		}
+		item, err := c.manager.ClonePiSessionTree(ctx, input.SessionID, input.Body)
+		if err != nil {
+			return nil, piTreeHTTPError(err)
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusCreated
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-tree-clone"
+		op.Summary = "克隆当前 Pi 会话分支"
 		op.Tags = []string{webSessionTag}
 	})
 
@@ -217,13 +400,13 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			ProjectID string `path:"projectId"`
 		},
 	) (*h.ItemResponse[websession.ImportSourceList], error) {
-		item, err := c.manager.ListCodexImportSources(ctx, input.ProjectID)
+		item, err := c.manager.ListImportSources(ctx, input.ProjectID)
 		if err != nil {
 			switch {
 			case errors.Is(err, model.ErrProjectNotFound):
 				return nil, huma.Error404NotFound("project not found")
 			default:
-				return nil, huma.Error500InternalServerError("failed to list codex import sources", err)
+				return nil, huma.Error500InternalServerError("failed to list import sources", err)
 			}
 		}
 		resp := h.NewItemResponse(item)
@@ -231,15 +414,15 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		return resp, nil
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-import-sources"
-		op.Summary = "获取 Codex 导入源列表"
+		op.Summary = "获取 AI 会话导入源列表"
 		op.Tags = []string{webSessionTag}
 	})
 
 	huma.Get(group, "/web-sessions/runtime-config", func(
 		ctx context.Context,
 		_ *struct{},
-	) (*h.ItemResponse[websession.CodexRuntimeConfig], error) {
-		resp := h.NewItemResponse(c.manager.GetCodexRuntimeConfigWithModels())
+	) (*h.ItemResponse[websession.WebSessionRuntimeConfig], error) {
+		resp := h.NewItemResponse(c.manager.GetWebSessionRuntimeConfigWithModels())
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {
@@ -374,6 +557,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		input *struct {
 			ProjectID string `path:"projectId"`
 			Body      struct {
+				Agent       string `json:"agent,omitempty"`
 				AISessionID string `json:"aiSessionId"`
 				SessionID   string `json:"sessionId,omitempty"`
 				Mode        string `json:"mode,omitempty"`
@@ -384,27 +568,36 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			item websession.ImportResult
 			err  error
 		)
-		if strings.TrimSpace(input.Body.SessionID) != "" {
-			item, err = c.manager.ImportCodexSessionBySessionID(
-				ctx,
-				input.ProjectID,
-				input.Body.SessionID,
-				websession.SyncMode(input.Body.Mode),
-			)
-		} else {
-			item, err = c.manager.ImportCodexSession(
-				ctx,
-				input.ProjectID,
-				input.Body.AISessionID,
-				websession.SyncMode(input.Body.Mode),
-			)
+		agent := websession.Agent(strings.ToLower(strings.TrimSpace(input.Body.Agent)))
+		if agent == "" {
+			agent = websession.AgentCodex
+		}
+		switch agent {
+		case websession.AgentPi:
+			if strings.TrimSpace(input.Body.SessionID) != "" {
+				item, err = c.manager.ImportPiSessionBySessionID(ctx, input.ProjectID, input.Body.SessionID)
+			} else {
+				item, err = c.manager.ImportPiSession(ctx, input.ProjectID, input.Body.AISessionID)
+			}
+		case websession.AgentCodex:
+			if strings.TrimSpace(input.Body.SessionID) != "" {
+				item, err = c.manager.ImportCodexSessionBySessionID(
+					ctx, input.ProjectID, input.Body.SessionID, websession.SyncMode(input.Body.Mode),
+				)
+			} else {
+				item, err = c.manager.ImportCodexSession(
+					ctx, input.ProjectID, input.Body.AISessionID, websession.SyncMode(input.Body.Mode),
+				)
+			}
+		default:
+			return nil, huma.Error400BadRequest("unsupported import agent")
 		}
 		if err != nil {
 			switch {
 			case errors.Is(err, model.ErrProjectNotFound):
 				return nil, huma.Error404NotFound("project not found")
 			case errors.Is(err, gorm.ErrRecordNotFound):
-				return nil, huma.Error404NotFound("codex session not found")
+				return nil, huma.Error404NotFound("agent session not found")
 			default:
 				return nil, huma.Error400BadRequest(err.Error())
 			}
@@ -414,7 +607,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		return resp, nil
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-import"
-		op.Summary = "导入 Codex 历史会话"
+		op.Summary = "导入 Agent 历史会话"
 		op.Tags = []string{webSessionTag}
 	})
 
@@ -855,6 +1048,34 @@ func looksLikeWindowsAbsolutePath(value string) bool {
 	}
 	first := value[0]
 	return (first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')
+}
+
+func (c *webSessionController) requireProjectSession(ctx context.Context, projectID, sessionID string) error {
+	record, err := c.manager.GetSession(ctx, sessionID)
+	if err != nil || record.ProjectID != projectID {
+		return huma.Error404NotFound("session not found")
+	}
+	if !c.manager.SupportsPiSessionTree() {
+		return huma.Error403Forbidden("Pi session tree is not supported")
+	}
+	return nil
+}
+
+func piTreeHTTPError(err error) error {
+	if errors.Is(err, model.ErrDBNotInitialized) {
+		return huma.Error503ServiceUnavailable("database is not available")
+	}
+	publicErr := websession.ClassifyPiTreeError(err)
+	switch publicErr.Code {
+	case "conflict", "invalid_state":
+		return huma.Error409Conflict(publicErr.Message)
+	case "bad_req":
+		return huma.Error400BadRequest(publicErr.Message)
+	case "forbidden":
+		return huma.Error403Forbidden(publicErr.Message)
+	default:
+		return huma.Error500InternalServerError(publicErr.Message)
+	}
 }
 
 func (c *webSessionController) registerWebsocket(app *fiber.App) {

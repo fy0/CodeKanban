@@ -148,6 +148,7 @@ describe('webSession import', () => {
 
     expect(result.created).toBe(true);
     expect(importSessionMock).toHaveBeenCalledWith(session.projectId, {
+      agent: 'codex',
       sessionId: 'thread-imported',
       mode: 'fast',
     });

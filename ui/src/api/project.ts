@@ -2,6 +2,7 @@ import type {
   CodexSkillSummary,
   GitCapabilityResult,
   Project,
+  ProjectAgentTrustStatus,
   Worktree,
 } from '@/types/models';
 import { http } from './http';
@@ -72,7 +73,8 @@ export const projectApi = {
   },
 
   async markAccess(id: string): Promise<Project> {
-    const body = (await http.Post<ItemResponse<Project>>(`/projects/${id}/access`, {}).send()) ?? {};
+    const body =
+      (await http.Post<ItemResponse<Project>>(`/projects/${id}/access`, {}).send()) ?? {};
     if (!body.item) {
       throw new Error('failed to record project access');
     }
@@ -84,6 +86,41 @@ export const projectApi = {
       (await http.Post<ItemResponse<Project>>(`/projects/${id}/access/clear`, {}).send()) ?? {};
     if (!body.item) {
       throw new Error('failed to clear project access');
+    }
+    return body.item;
+  },
+
+  async getPiTrust(id: string): Promise<ProjectAgentTrustStatus> {
+    const body =
+      (await http
+        .Get<ItemResponse<ProjectAgentTrustStatus>>(`/projects/${id}/agent-trust/pi`, {
+          cacheFor: 0,
+        })
+        .send(true)) ?? {};
+    if (!body.item) {
+      throw new Error('failed to load Pi project access');
+    }
+    return body.item;
+  },
+
+  async trustForPi(id: string): Promise<ProjectAgentTrustStatus> {
+    const body =
+      (await http
+        .Post<ItemResponse<ProjectAgentTrustStatus>>(`/projects/${id}/agent-trust/pi`, {})
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to authorize Pi project access');
+    }
+    return body.item;
+  },
+
+  async revokePiTrust(id: string): Promise<ProjectAgentTrustStatus> {
+    const body =
+      (await http
+        .Delete<ItemResponse<ProjectAgentTrustStatus>>(`/projects/${id}/agent-trust/pi`)
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to revoke Pi project access');
     }
     return body.item;
   },

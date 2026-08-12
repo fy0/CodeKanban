@@ -37,6 +37,22 @@ describe('webSessionProjectScope', () => {
     });
   });
 
+  it('uses the Pi identity in draft presentation', () => {
+    expect(
+      resolveWebSessionDraftProjectPresentation({
+        projectId: 'project-b',
+        agent: 'pi',
+        currentProject: projectB,
+        projects: [projectA, projectB],
+        worktreesReady: true,
+      })
+    ).toEqual({
+      title: 'Pi · Project B',
+      cwd: 'D:/projects/b',
+      worktreeId: null,
+    });
+  });
+
   it('never accepts a worktree from another project', () => {
     expect(
       resolveWebSessionDraftProjectPresentation({

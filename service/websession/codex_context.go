@@ -66,15 +66,53 @@ type CodexModelInfo struct {
 	SupportedReasoningEfforts []ReasoningEffort `json:"supportedReasoningEfforts"`
 }
 
-type CodexRuntimeConfig struct {
-	Model               string              `json:"model,omitempty"`
-	ContextWindowTokens int64               `json:"contextWindowTokens"`
-	CompactLimitTokens  int64               `json:"compactLimitTokens"`
-	Source              ContextWindowSource `json:"source"`
-	Models              []CodexModelInfo    `json:"models"`
-	HasCodex            bool                `json:"hasCodex"`
-	HasClaudeCode       bool                `json:"hasClaudeCode"`
-	CodexVersion        *string             `json:"codexVersion,omitempty"`
+type AgentPermissionModeCapability struct {
+	ID        string `json:"id"`
+	Available bool   `json:"available"`
+}
+
+type AgentCapability struct {
+	Installed                bool                            `json:"installed"`
+	Version                  *string                         `json:"version,omitempty"`
+	SupportsWebSession       bool                            `json:"supportsWebSession"`
+	SupportsTree             bool                            `json:"supportsTree"`
+	SupportsImages           bool                            `json:"supportsImages"`
+	SupportsCompaction       bool                            `json:"supportsCompaction"`
+	SupportsSteer            bool                            `json:"supportsSteer"`
+	SupportsFollowUp         bool                            `json:"supportsFollowUp"`
+	SupportsGoal             bool                            `json:"supportsGoal"`
+	SupportsSubAgentRegistry bool                            `json:"supportsSubAgentRegistry"`
+	PermissionModes          []AgentPermissionModeCapability `json:"permissionModes"`
+}
+
+type PiModelInfo struct {
+	Provider      string   `json:"provider"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Reasoning     bool     `json:"reasoning"`
+	Input         []string `json:"input"`
+	ContextWindow int64    `json:"contextWindow"`
+	MaxTokens     int64    `json:"maxTokens"`
+}
+
+type WebSessionRuntimeConfig struct {
+	Agents              map[Agent]AgentCapability `json:"agents"`
+	Model               string                    `json:"model,omitempty"`
+	ContextWindowTokens int64                     `json:"contextWindowTokens"`
+	CompactLimitTokens  int64                     `json:"compactLimitTokens"`
+	Source              ContextWindowSource       `json:"source"`
+	Models              []CodexModelInfo          `json:"models"`
+	PiModels            []PiModelInfo             `json:"piModels"`
+	// Legacy top-level fields are retained for one compatibility cycle.
+	HasCodex             bool    `json:"hasCodex"`
+	HasClaudeCode        bool    `json:"hasClaudeCode"`
+	CodexVersion         *string `json:"codexVersion,omitempty"`
+	HasPi                bool    `json:"hasPi"`
+	PiVersion            *string `json:"piVersion,omitempty"`
+	SupportsPiWebSession bool    `json:"supportsPiWebSession"`
+	PiRPCCompatible      bool    `json:"piRpcCompatible"`
+	PiMinVersion         string  `json:"piMinVersion"`
+	PiDiagnostics        string  `json:"piDiagnostics,omitempty"`
 	// SupportsWebSession reports whether ordinary Codex web sessions can run.
 	SupportsWebSession   bool   `json:"supportsWebSession"`
 	WebSessionMinVersion string `json:"webSessionMinCodexVersion"`
@@ -84,6 +122,9 @@ type CodexRuntimeConfig struct {
 	SupportsGoalMode       bool   `json:"supportsGoalMode"`
 	GoalModeMinVersion     string `json:"goalModeMinCodexVersion"`
 }
+
+// CodexRuntimeConfig remains an alias while callers migrate to the provider-neutral name.
+type CodexRuntimeConfig = WebSessionRuntimeConfig
 
 type CodexSkillSource string
 
@@ -116,6 +157,16 @@ func (m *Manager) decorateSessionSummary(summary *SessionSummary) {
 		// Claude reports its authoritative context window on result.modelUsage.
 		// Preserve that observed value; there is no local Claude model catalog
 		// from which to infer an unknown window safely before the first result.
+		if summary.ContextWindowTokens != nil &&
+			*summary.ContextWindowTokens > 0 &&
+			summary.ContextWindowSource == ContextWindowSourceSessionUsage {
+			return
+		}
+		summary.ContextWindowTokens = nil
+		summary.ContextWindowSource = ContextWindowSourceUnavailable
+		return
+	}
+	if normalizeAgent(summary.Agent) == AgentPi {
 		if summary.ContextWindowTokens != nil &&
 			*summary.ContextWindowTokens > 0 &&
 			summary.ContextWindowSource == ContextWindowSourceSessionUsage {
@@ -158,6 +209,7 @@ func (m *Manager) GetCodexRuntimeConfig() CodexRuntimeConfig {
 		SupportsGoalMode:       false,
 		GoalModeMinVersion:     goalModeMinCodexVersion.String(),
 	}
+	defaultConfig.Agents = runtimeAgentCapabilities(defaultConfig)
 	if m == nil {
 		return defaultConfig
 	}
@@ -211,9 +263,78 @@ func (m *Manager) applyCodexRuntimeCapabilities(config CodexRuntimeConfig) Codex
 	if config.Models == nil {
 		config.Models = []CodexModelInfo{}
 	}
+	config.Agents = runtimeAgentCapabilities(config)
 	return config
 }
 
+func availablePermissionModes(unrestricted, approval, sandbox bool) []AgentPermissionModeCapability {
+	return []AgentPermissionModeCapability{
+		{ID: "unrestricted", Available: unrestricted},
+		{ID: "approval", Available: approval},
+		{ID: "sandbox", Available: sandbox},
+	}
+}
+
+func runtimeAgentCapabilities(config WebSessionRuntimeConfig) map[Agent]AgentCapability {
+	return map[Agent]AgentCapability{
+		AgentClaude: {
+			Installed:                config.HasClaudeCode,
+			SupportsWebSession:       config.HasClaudeCode,
+			SupportsImages:           true,
+			SupportsCompaction:       true,
+			SupportsSteer:            true,
+			SupportsFollowUp:         true,
+			SupportsSubAgentRegistry: false,
+			PermissionModes:          availablePermissionModes(true, true, false),
+		},
+		AgentCodex: {
+			Installed:                config.HasCodex,
+			Version:                  config.CodexVersion,
+			SupportsWebSession:       config.SupportsWebSession,
+			SupportsImages:           true,
+			SupportsCompaction:       true,
+			SupportsSteer:            true,
+			SupportsFollowUp:         true,
+			SupportsGoal:             config.SupportsGoalMode,
+			SupportsSubAgentRegistry: config.SupportsMultiAgentV2,
+			PermissionModes:          availablePermissionModes(true, true, true),
+		},
+		AgentPi: {
+			Installed:                config.HasPi,
+			Version:                  config.PiVersion,
+			SupportsWebSession:       config.SupportsPiWebSession,
+			SupportsTree:             config.SupportsPiWebSession,
+			SupportsImages:           true,
+			SupportsCompaction:       config.SupportsPiWebSession,
+			SupportsSteer:            config.SupportsPiWebSession,
+			SupportsFollowUp:         config.SupportsPiWebSession,
+			SupportsGoal:             false,
+			SupportsSubAgentRegistry: false,
+			PermissionModes:          availablePermissionModes(true, false, false),
+		},
+	}
+}
+
+func (m *Manager) GetWebSessionRuntimeConfig() WebSessionRuntimeConfig {
+	return m.applyPiRuntimeCapabilities(m.GetCodexRuntimeConfig())
+}
+
+func (m *Manager) SupportsPiSessionTree() bool {
+	if m == nil {
+		return false
+	}
+	return m.GetWebSessionRuntimeConfig().Agents[AgentPi].SupportsTree
+}
+
+func (m *Manager) GetWebSessionRuntimeConfigWithModels() WebSessionRuntimeConfig {
+	config := m.GetWebSessionRuntimeConfig()
+	if config.HasCodex {
+		config.Models = m.getCodexModelCatalog()
+	}
+	return config
+}
+
+// GetCodexRuntimeConfigWithModels is kept for callers using the previous API name.
 func (m *Manager) GetCodexRuntimeConfigWithModels() CodexRuntimeConfig {
 	config := m.GetCodexRuntimeConfig()
 	if config.HasCodex {
@@ -467,20 +588,41 @@ func splitCommandParts(command string) []string {
 	if trimmed == "" {
 		return nil
 	}
-	if trimmed[0] != '"' && trimmed[0] != '\'' {
-		return strings.Fields(trimmed)
+
+	parts := make([]string, 0, 4)
+	var current strings.Builder
+	var quote byte
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		parts = append(parts, current.String())
+		current.Reset()
 	}
-	quote := trimmed[0]
-	end := strings.IndexByte(trimmed[1:], quote)
-	if end < 0 {
-		return strings.Fields(trimmed)
+	for i := 0; i < len(trimmed); i++ {
+		char := trimmed[i]
+		if quote != 0 {
+			if char == quote {
+				quote = 0
+			} else {
+				current.WriteByte(char)
+			}
+			continue
+		}
+		switch char {
+		case '"', '\'':
+			quote = char
+		case ' ', '\t', '\r', '\n':
+			flush()
+		default:
+			current.WriteByte(char)
+		}
 	}
-	commandPart := trimmed[1 : end+1]
-	remainder := strings.TrimSpace(trimmed[end+2:])
-	if remainder == "" {
-		return []string{commandPart}
+	if quote != 0 {
+		return nil
 	}
-	return append([]string{commandPart}, strings.Fields(remainder)...)
+	flush()
+	return parts
 }
 
 func codexVersionAtLeast(raw string, min *semver.Version) bool {

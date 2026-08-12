@@ -17,4 +17,7 @@ export {
 export { TerminalConnection } from './terminal-connection.js';
 export { WebSessionCommandChannel } from './web-session-command-channel.js';
 export { WebSessionEventStream } from './web-session-event-stream.js';
-export { analyzeWebSession } from './web-session-shared.js';
+export {
+  analyzeWebSession,
+  normalizeWebSessionRuntimeConfig,
+} from './web-session-shared.js';

@@ -122,10 +122,11 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		theLogger.Error("failed to initialize web session manager", zap.Error(err))
 		return err
 	}
+	defer webSessionManager.StopAllPiRuntimes()
 
 	registerAuthRoutes(app, cfg)
 	registerHealthRoutes(app, humaAPI)
-	registerProjectRoutes(v1)
+	registerProjectRoutes(v1, webSessionManager)
 	registerWorktreeRoutes(v1, cfg)
 	registerBranchRoutes(v1)
 	registerTaskRoutes(v1)

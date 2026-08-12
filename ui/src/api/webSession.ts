@@ -1,7 +1,8 @@
 import type {
+  WebSessionAgent,
   WebSessionAttachment,
-  WebSessionCodexRuntimeConfig,
   WebSessionReasoningEffort,
+  WebSessionRuntimeConfig,
   WebSessionSummary,
 } from '@/types/models';
 import { ApiError, urlBase } from '@/api';
@@ -118,6 +119,36 @@ export type WebSessionHistoryWindow = {
   total: number;
 };
 
+export type WebSessionPiTreeNode = {
+  id: string;
+  parentId?: string;
+  type: string;
+  timestamp?: string;
+  role?: string;
+  label?: string;
+  preview?: string;
+  active: boolean;
+  children: string[];
+};
+
+export type WebSessionPiTree = {
+  sessionId: string;
+  leafId?: string;
+  revision: string;
+  nodes: WebSessionPiTreeNode[];
+};
+
+export type WebSessionPiTreeNavigateResult = {
+  tree: WebSessionPiTree;
+  editorText?: string;
+};
+
+export type WebSessionPiTreeMutationResult = {
+  session: WebSessionSummary;
+  tree: WebSessionPiTree;
+  editorText?: string;
+};
+
 export type WebSessionPendingInputRecord = {
   id?: string;
   mode?: 'redirect' | 'queue' | string;
@@ -125,6 +156,7 @@ export type WebSessionPendingInputRecord = {
   attachmentIds?: string[];
   readyAt?: string | number | null;
   paused?: boolean;
+  nativeQueued?: boolean;
   createdAt?: string | number | null;
 };
 
@@ -204,10 +236,10 @@ export type WebSessionImportResult = Omit<
 };
 
 export const webSessionApi = {
-  async runtimeConfig(): Promise<WebSessionCodexRuntimeConfig> {
-    const config = extractItem<WebSessionCodexRuntimeConfig>(
+  async runtimeConfig(): Promise<WebSessionRuntimeConfig> {
+    const config = extractItem<WebSessionRuntimeConfig>(
       await http
-        .Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config', {
+        .Get<ItemResponse<WebSessionRuntimeConfig>>('/web-sessions/runtime-config', {
           cacheFor: 0,
         })
         .send(true)
@@ -235,7 +267,7 @@ export const webSessionApi = {
     projectId: string,
     data: {
       worktreeId?: string;
-      agent: 'claude' | 'codex';
+      agent: WebSessionAgent;
       claudeRuntime?: 'claude' | 'ccr';
       model?: string;
       reasoningEffort?: WebSessionReasoningEffort;
@@ -298,6 +330,7 @@ export const webSessionApi = {
   async importSession(
     projectId: string,
     data: {
+      agent?: 'codex' | 'pi';
       aiSessionId?: string;
       sessionId?: string;
       mode?: 'fast' | 'deep';
@@ -306,6 +339,7 @@ export const webSessionApi = {
     const body =
       (await http
         .Post<ItemResponse<WebSessionImportResult>>(`/projects/${projectId}/web-sessions/import`, {
+          agent: data.agent ?? 'codex',
           aiSessionId: data.aiSessionId ?? '',
           sessionId: data.sessionId ?? '',
           ...(data.mode ? { mode: data.mode } : {}),
@@ -378,6 +412,70 @@ export const webSessionApi = {
     }
     if (!body.item) {
       throw new Error('failed to load AI session snapshot');
+    }
+    return body.item;
+  },
+
+  async tree(projectId: string, sessionId: string): Promise<WebSessionPiTree> {
+    const body =
+      (await http
+        .Get<
+          ItemResponse<WebSessionPiTree>
+        >(`/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/tree`)
+        .send(true)) ?? {};
+    if (!body.item) {
+      throw new Error('failed to load Pi session tree');
+    }
+    return body.item;
+  },
+
+  async navigateTree(
+    projectId: string,
+    sessionId: string,
+    data: { targetId: string; revision: string; summarize?: boolean }
+  ): Promise<WebSessionPiTreeNavigateResult> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionPiTreeNavigateResult>
+        >(`/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/tree/navigate`, data)
+        .send()) ?? {};
+    if (!body.item?.tree) {
+      throw new Error('failed to navigate Pi session tree');
+    }
+    return body.item;
+  },
+
+  async forkTree(
+    projectId: string,
+    sessionId: string,
+    data: { targetId: string; revision: string }
+  ): Promise<WebSessionPiTreeMutationResult> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionPiTreeMutationResult>
+        >(`/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/tree/fork`, data)
+        .send()) ?? {};
+    if (!body.item?.session?.id) {
+      throw new Error('failed to fork Pi session tree');
+    }
+    return body.item;
+  },
+
+  async cloneTree(
+    projectId: string,
+    sessionId: string,
+    data: { revision: string }
+  ): Promise<WebSessionPiTreeMutationResult> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionPiTreeMutationResult>
+        >(`/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/tree/clone`, data)
+        .send()) ?? {};
+    if (!body.item?.session?.id) {
+      throw new Error('failed to clone Pi session tree');
     }
     return body.item;
   },

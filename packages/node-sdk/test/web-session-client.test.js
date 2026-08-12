@@ -5,7 +5,71 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { CodeKanbanClient } from '../src/client.js';
+import { normalizeWebSessionRuntimeConfig } from '../src/web-session-shared.js';
 import { createFetchMock, createJsonResponse, FakeWebSocket } from './helpers.js';
+
+test('runtime config normalizes Pi legacy fields without enabling unsupported sessions', () => {
+  const config = normalizeWebSessionRuntimeConfig({
+    hasCodex: false,
+    hasClaudeCode: false,
+    hasPi: true,
+    piVersion: '0.84.1',
+    piRpcCompatible: true,
+    supportsPiWebSession: false,
+    piModels: [
+      {
+        provider: 'anthropic',
+        id: 'claude-sonnet-4',
+        name: 'Claude Sonnet 4',
+        reasoning: true,
+        input: ['text', 'image'],
+        contextWindow: 200000,
+      },
+    ],
+  });
+  assert.deepEqual(config.piModels, [
+    {
+      provider: 'anthropic',
+      id: 'claude-sonnet-4',
+      name: 'Claude Sonnet 4',
+      reasoning: true,
+      input: ['text', 'image'],
+      contextWindow: 200000,
+    },
+  ]);
+  assert.deepEqual(config.agents.pi, {
+    installed: true,
+    version: '0.84.1',
+    supportsWebSession: false,
+    supportsTree: false,
+    supportsImages: false,
+    supportsCompaction: false,
+    supportsSteer: false,
+    supportsFollowUp: false,
+    supportsGoal: false,
+    supportsSubAgentRegistry: false,
+    permissionModes: [],
+  });
+
+  const enabled = normalizeWebSessionRuntimeConfig({
+    hasPi: true,
+    piVersion: '0.84.1',
+    supportsPiWebSession: true,
+  });
+  assert.deepEqual(enabled.agents.pi, {
+    installed: true,
+    version: '0.84.1',
+    supportsWebSession: true,
+    supportsTree: true,
+    supportsImages: true,
+    supportsCompaction: true,
+    supportsSteer: true,
+    supportsFollowUp: true,
+    supportsGoal: false,
+    supportsSubAgentRegistry: false,
+    permissionModes: [],
+  });
+});
 
 function createWebSessionSnapshot({
   session = {},
@@ -200,12 +264,32 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
           hasCodex: true,
           hasClaudeCode: false,
           codexVersion: '0.146.0',
+          hasPi: true,
+          piVersion: '0.84.1',
+          piRpcCompatible: true,
+          supportsPiWebSession: false,
+          piMinVersion: '0.84.1',
           supportsWebSession: true,
           webSessionMinCodexVersion: '',
           supportsMultiAgentV2: true,
           multiAgentV2MinCodexVersion: '0.146.0',
           supportsGoalMode: true,
           goalModeMinCodexVersion: '0.133.0',
+          agents: {
+            pi: {
+              installed: true,
+              version: '0.84.1',
+              supportsWebSession: false,
+              supportsTree: true,
+              supportsImages: false,
+              supportsCompaction: false,
+              supportsSteer: false,
+              supportsFollowUp: false,
+              supportsGoal: false,
+              supportsSubAgentRegistry: false,
+              permissionModes: [{ id: 'unrestricted', available: true }],
+            },
+          },
         },
       })],
   ]);
@@ -303,6 +387,17 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
   assert.equal(runtimeConfig.supportsMultiAgentV2, true);
   assert.equal(runtimeConfig.multiAgentV2MinCodexVersion, '0.146.0');
   assert.equal(runtimeConfig.supportsGoalMode, true);
+  assert.equal(runtimeConfig.agents.codex.supportsWebSession, true);
+  assert.equal(runtimeConfig.agents.claude.supportsWebSession, false);
+  assert.equal(runtimeConfig.hasPi, true);
+  assert.equal(runtimeConfig.piRpcCompatible, true);
+  assert.equal(runtimeConfig.agents.pi.installed, true);
+  assert.equal(runtimeConfig.agents.pi.version, '0.84.1');
+  assert.equal(runtimeConfig.agents.pi.supportsWebSession, false);
+  assert.equal(runtimeConfig.agents.pi.supportsTree, true);
+  assert.deepEqual(runtimeConfig.agents.pi.permissionModes, [
+    { id: 'unrestricted', available: true },
+  ]);
 });
 
 

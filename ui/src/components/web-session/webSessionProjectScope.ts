@@ -1,3 +1,5 @@
+import type { WebSessionAgent } from '@/types/models';
+
 export type WebSessionProjectScopeProject = {
   id: string;
   name?: string | null;
@@ -42,7 +44,7 @@ export function resolveWebSessionScopedProject(
 
 export function resolveWebSessionDraftProjectPresentation(input: {
   projectId: string;
-  agent: 'claude' | 'codex';
+  agent: WebSessionAgent;
   worktreeId?: string | null;
   currentProject?: WebSessionProjectScopeProject | null;
   projects?: readonly WebSessionProjectScopeProject[];
@@ -57,7 +59,7 @@ export function resolveWebSessionDraftProjectPresentation(input: {
   );
   const projectName = normalizeText(project?.name);
   const projectPath = normalizeText(project?.path);
-  const baseAgent = input.agent === 'claude' ? 'Claude' : 'Codex';
+  const baseAgent = input.agent === 'claude' ? 'Claude' : input.agent === 'pi' ? 'Pi' : 'Codex';
   const requestedWorktreeId = normalizeText(input.worktreeId);
   const worktree = requestedWorktreeId
     ? (input.worktrees ?? []).find(
