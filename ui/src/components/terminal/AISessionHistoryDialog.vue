@@ -214,6 +214,75 @@
               <n-empty v-else :description="t('terminal.noCodexSessions')" />
             </div>
           </n-tab-pane>
+          <n-tab-pane name="pi" :tab="piTabLabel">
+            <div class="session-list">
+              <template v-if="filteredPiSessions.length > 0">
+                <div
+                  v-for="session in filteredPiSessions"
+                  :key="session.id"
+                  class="session-item"
+                  :class="{ expanded: expandedSessionId === session.id }"
+                  @click="toggleSession(session)"
+                >
+                  <div class="session-header">
+                    <div class="session-info">
+                      <span class="session-title" :title="session.title || undefined">
+                        {{ getDisplayTitle(session) }}
+                      </span>
+                      <div class="session-meta-row">
+                        <span class="session-model">{{ session.model || 'Pi' }}</span>
+                        <span class="session-time">
+                          {{ getTimeAgo(session.lastMessageAt || session.sessionStartedAt) }}
+                        </span>
+                      </div>
+                    </div>
+                    <div class="session-meta">
+                      <n-tag
+                        size="small"
+                        type="warning"
+                        class="message-count-tag"
+                        @click.stop="viewConversation(session)"
+                      >
+                        {{
+                          t('terminal.messageCount', {
+                            count: session.messageCount,
+                            replyCount: session.assistantMessageCount,
+                          })
+                        }}
+                      </n-tag>
+                      <n-icon
+                        :size="16"
+                        class="expand-icon"
+                        :class="{ rotated: expandedSessionId === session.id }"
+                      >
+                        <ChevronForwardOutline />
+                      </n-icon>
+                    </div>
+                  </div>
+                  <div v-if="expandedSessionId === session.id" class="session-detail">
+                    <div class="detail-row">
+                      <span class="detail-label">{{ t('terminal.logFile') }}:</span>
+                      <code class="detail-value file-path" :title="session.filePath">
+                        {{ truncatePath(session.filePath) }}
+                      </code>
+                    </div>
+                    <div class="detail-actions">
+                      <n-button size="small" @click.stop="copyPath(session.filePath)">
+                        {{ t('terminal.copyPath') }}
+                      </n-button>
+                      <n-button size="small" type="info" @click.stop="viewConversation(session)">
+                        <template #icon>
+                          <n-icon><ChatboxOutline /></n-icon>
+                        </template>
+                        {{ t('terminal.viewConversation') }}
+                      </n-button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <n-empty v-else :description="t('terminal.noPiSessions')" />
+            </div>
+          </n-tab-pane>
         </n-tabs>
       </div>
     </n-spin>
@@ -332,6 +401,10 @@ import ConversationViewer, {
 } from '@/components/common/ConversationViewer.vue';
 import DirectoryPickerDialog from '@/components/common/DirectoryPickerDialog.vue';
 import { useProjectStore } from '@/stores/project';
+import {
+  isProjectAISessionScanning,
+  resolvePreferredAISessionType,
+} from '@/components/terminal/aiSessionHistory';
 
 type ScanPhase = 'recent' | 'extended' | 'complete';
 
@@ -351,10 +424,14 @@ interface AISessionSummary {
 interface ProjectAISessions {
   hasClaudeCode: boolean;
   hasCodex: boolean;
+  hasPi: boolean;
   claudeSessions: AISessionSummary[];
   codexSessions: AISessionSummary[];
+  piSessions: AISessionSummary[];
   claudeScanPhase?: ScanPhase;
   codexScanPhase?: ScanPhase;
+  piScanPhase?: ScanPhase;
+  piBeforeCursor?: string;
 }
 
 interface ItemResponse<T> {
@@ -384,12 +461,14 @@ const currentProjectPath = computed(() => {
 });
 
 const loading = ref(false);
-const activeType = ref<'claude_code' | 'codex'>('claude_code');
+const activeType = ref<'claude_code' | 'codex' | 'pi'>('claude_code');
 const expandedSessionId = ref<string | null>(null);
 const claudeSessions = ref<AISessionSummary[]>([]);
 const codexSessions = ref<AISessionSummary[]>([]);
+const piSessions = ref<AISessionSummary[]>([]);
 const claudeScanPhase = ref<ScanPhase>('complete');
 const codexScanPhase = ref<ScanPhase>('complete');
+const piScanPhase = ref<ScanPhase>('complete');
 const searchQuery = ref('');
 const customPath = ref('');
 const showDirectoryPicker = ref(false);
@@ -413,6 +492,17 @@ const filteredCodexSessions = computed(() => {
   if (!searchQuery.value.trim()) return codexSessions.value;
   const query = searchQuery.value.toLowerCase();
   return codexSessions.value.filter(
+    s =>
+      (s.title && s.title.toLowerCase().includes(query)) ||
+      s.sessionId.toLowerCase().includes(query) ||
+      s.model?.toLowerCase().includes(query)
+  );
+});
+
+const filteredPiSessions = computed(() => {
+  if (!searchQuery.value.trim()) return piSessions.value;
+  const query = searchQuery.value.toLowerCase();
+  return piSessions.value.filter(
     s =>
       (s.title && s.title.toLowerCase().includes(query)) ||
       s.sessionId.toLowerCase().includes(query) ||
@@ -454,12 +544,16 @@ const currentSessionInfo = computed<SessionInfo | null>(() => {
   if (!currentSession.value) return null;
   return {
     sessionId: currentSession.value.sessionId,
-    type: currentSession.value.type as 'claude_code' | 'codex',
+    type: currentSession.value.type as 'claude_code' | 'codex' | 'pi',
   };
 });
 
-const isScanning = computed(
-  () => claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete'
+const isScanning = computed(() =>
+  isProjectAISessionScanning({
+    claudeScanPhase: claudeScanPhase.value,
+    codexScanPhase: codexScanPhase.value,
+    piScanPhase: piScanPhase.value,
+  })
 );
 
 const claudeCodeTabLabel = computed(() => {
@@ -472,6 +566,12 @@ const codexTabLabel = computed(() => {
   const count = codexSessions.value.length;
   const scanIndicator = codexScanPhase.value !== 'complete' ? ' ...' : '';
   return `Codex${count > 0 ? ` (${count}${scanIndicator})` : scanIndicator}`;
+});
+
+const piTabLabel = computed(() => {
+  const count = piSessions.value.length;
+  const scanIndicator = piScanPhase.value !== 'complete' ? ' ...' : '';
+  return `Pi${count > 0 ? ` (${count}${scanIndicator})` : scanIndicator}`;
 });
 
 watch(showModal, async show => {
@@ -506,23 +606,18 @@ async function loadSessions(isRefresh = false) {
     if (data) {
       claudeSessions.value = data.claudeSessions || [];
       codexSessions.value = data.codexSessions || [];
+      piSessions.value = data.piSessions || [];
       claudeScanPhase.value = data.claudeScanPhase || 'complete';
       codexScanPhase.value = data.codexScanPhase || 'complete';
+      piScanPhase.value = data.piScanPhase || 'complete';
 
       // Auto-select tab with sessions (only on first load)
       if (!isRefresh) {
-        if (data.hasCodex && !data.hasClaudeCode) {
-          activeType.value = 'codex';
-        } else {
-          activeType.value = 'claude_code';
-        }
+        activeType.value = resolvePreferredAISessionType(data);
       }
 
       // Schedule refresh if still scanning
-      if (
-        showModal.value &&
-        (claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete')
-      ) {
+      if (showModal.value && isScanning.value) {
         if (refreshTimer) {
           clearTimeout(refreshTimer);
         }
@@ -623,7 +718,6 @@ function handleDirectorySelected(path: string) {
 
 async function loadSessionsByPath(path?: string) {
   const targetPath = path || customPath.value.trim();
-  console.log('[AISessionHistoryDialog] loadSessionsByPath:', targetPath);
   if (!targetPath) {
     message.warning(t('terminal.pleaseEnterPath'));
     return;
@@ -639,31 +733,21 @@ async function loadSessionsByPath(path?: string) {
       })
       .send();
 
-    console.log('[AISessionHistoryDialog] response:', response);
     const data = response?.item;
-    console.log('[AISessionHistoryDialog] data:', data);
-    console.log('[AISessionHistoryDialog] claudeSessions:', data?.claudeSessions);
-    console.log('[AISessionHistoryDialog] codexSessions:', data?.codexSessions);
     if (data) {
       claudeSessions.value = data.claudeSessions || [];
       codexSessions.value = data.codexSessions || [];
+      piSessions.value = data.piSessions || [];
       claudeScanPhase.value = data.claudeScanPhase || 'complete';
       codexScanPhase.value = data.codexScanPhase || 'complete';
+      piScanPhase.value = data.piScanPhase || 'complete';
       currentViewPath.value = targetPath;
       isCustomPath.value = true;
 
-      // Auto-select tab with sessions
-      if (data.hasCodex && !data.hasClaudeCode) {
-        activeType.value = 'codex';
-      } else {
-        activeType.value = 'claude_code';
-      }
+      activeType.value = resolvePreferredAISessionType(data);
 
       // Schedule refresh if still scanning
-      if (
-        showModal.value &&
-        (claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete')
-      ) {
+      if (showModal.value && isScanning.value) {
         if (refreshTimer) {
           clearTimeout(refreshTimer);
         }

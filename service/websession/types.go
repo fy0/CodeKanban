@@ -7,6 +7,7 @@ type Agent string
 const (
 	AgentClaude Agent = "claude"
 	AgentCodex  Agent = "codex"
+	AgentPi     Agent = "pi"
 )
 
 type ClaudeRuntime string
@@ -21,6 +22,7 @@ type SessionBackend string
 const (
 	SessionBackendLegacyExec     SessionBackend = "legacy_exec"
 	SessionBackendCodexAppServer SessionBackend = "codex_app_server"
+	SessionBackendPiRPC          SessionBackend = "pi_rpc"
 )
 
 type WorkflowMode string
@@ -226,6 +228,8 @@ type SessionSummary struct {
 	AutoRetryDispatchPendingOnFailure bool                       `json:"autoRetryDispatchPendingOnFailure"`
 	Cwd                               string                     `json:"cwd"`
 	NativeSessionID                   *string                    `json:"nativeSessionId,omitempty"`
+	NativeLeafID                      *string                    `json:"nativeLeafId,omitempty"`
+	SourceRevision                    *string                    `json:"sourceRevision,omitempty"`
 	CyberPolicyFlagged                bool                       `json:"cyberPolicyFlagged"`
 	HasScheduledPlanExecution         bool                       `json:"hasScheduledPlanExecution,omitempty"`
 	Status                            Status                     `json:"status"`
@@ -392,6 +396,7 @@ type PendingInput struct {
 	AttachmentIDs []string         `json:"attachmentIds"`
 	ReadyAt       *time.Time       `json:"readyAt,omitempty"`
 	Paused        bool             `json:"paused,omitempty"`
+	NativeQueued  bool             `json:"nativeQueued,omitempty"`
 	CreatedAt     time.Time        `json:"createdAt"`
 }
 
@@ -507,6 +512,8 @@ type ImportResult struct {
 }
 
 type ImportSourceSummary struct {
+	Agent                 Agent           `json:"agent"`
+	Importable            bool            `json:"importable"`
 	AISessionID           string          `json:"aiSessionId"`
 	SessionID             string          `json:"sessionId"`
 	Model                 string          `json:"model,omitempty"`
@@ -521,8 +528,9 @@ type ImportSourceSummary struct {
 }
 
 type ImportSourceList struct {
-	Items     []ImportSourceSummary `json:"items"`
-	ScanPhase string                `json:"scanPhase,omitempty"`
+	Items        []ImportSourceSummary `json:"items"`
+	ScanPhase    string                `json:"scanPhase,omitempty"`
+	BeforeCursor string                `json:"beforeCursor,omitempty"`
 }
 
 type Event struct {

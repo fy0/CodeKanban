@@ -14,6 +14,13 @@
         <n-switch v-model:value="devCyberPolicyWarning" size="small" :disabled="!currentSession" />
       </label>
     </aside>
+    <PiProjectTrustDialog
+      v-if="props.projectId"
+      v-model:show="showPiTrustDialog"
+      :project-id="props.projectId"
+      :project-path="piTrustProjectPath"
+      @trusted="handlePiProjectTrusted"
+    />
     <WebSessionImportDialog
       v-if="props.projectId"
       v-model:show="showImportDialog"
@@ -21,6 +28,15 @@
       :pending-session-id="importingCodexSessionId"
       @import-session="handleImportCodexSession"
       @open-existing-session="handleOpenImportedCodexSession"
+    />
+    <WebSessionTreeDrawer
+      v-if="currentRealSession && canOpenPiTree"
+      v-model:show="showPiTreeDrawer"
+      :project-id="props.projectId"
+      :session-id="currentRealSession.id"
+      :can-mutate="canMutatePiTree"
+      @navigated="handlePiTreeNavigated"
+      @created="handlePiTreeCreated"
     />
 
     <n-drawer
@@ -408,6 +424,28 @@
                 </template>
                 {{ t('webSession.importCodexSession') }}
               </n-tooltip>
+              <n-tooltip
+                v-if="!isMobile && canOpenPiTree"
+                trigger="hover"
+                placement="bottom"
+                :delay="100"
+              >
+                <template #trigger>
+                  <n-button
+                    text
+                    size="small"
+                    class="desktop-header-icon-button"
+                    :title="t('webSession.treeOpen')"
+                    :aria-label="t('webSession.treeOpen')"
+                    @click="showPiTreeDrawer = true"
+                  >
+                    <template #icon>
+                      <n-icon><GitNetworkOutline /></n-icon>
+                    </template>
+                  </n-button>
+                </template>
+                {{ t('webSession.treeOpen') }}
+              </n-tooltip>
             </div>
           </div>
 
@@ -608,7 +646,7 @@
                   class="timeline-intro"
                 >
                   <span class="timeline-intro-badge">
-                    {{ currentSession.agent === 'codex' ? 'Codex' : 'Claude' }}
+                    {{ getAgentDisplayName(currentSession.agent) }}
                   </span>
                   <div class="timeline-intro-title">{{ t('webSession.readyTitle') }}</div>
                   <div class="timeline-intro-text">{{ t('webSession.readyDescription') }}</div>
@@ -1756,7 +1794,7 @@
                     :options="claudeRuntimeOptions"
                   />
                   <n-select
-                    v-if="selectedAgent === 'codex'"
+                    v-if="selectedAgent === 'codex' || selectedAgent === 'pi'"
                     v-model:value="selectedReasoningEffort"
                     class="composer-select reasoning-select"
                     size="small"
@@ -1783,6 +1821,7 @@
                       v-model:value="selectedPermissionLevel"
                       class="composer-select permission-select"
                       size="small"
+                      :disabled="selectedAgent === 'pi'"
                       :options="permissionLevelOptions"
                     />
                   </div>
@@ -2095,7 +2134,10 @@
                           <div class="pending-input-popover-text">
                             {{ pendingInputPreview(item) }}
                           </div>
-                          <div class="pending-input-popover-actions">
+                          <div v-if="item.nativeQueued" class="pending-input-native-status">
+                            {{ t('webSession.pendingNativeQueued') }}
+                          </div>
+                          <div v-else class="pending-input-popover-actions">
                             <button
                               type="button"
                               class="pending-input-action"
@@ -2149,6 +2191,7 @@
                       </div>
                     </n-popover>
                     <button
+                      v-if="!item.nativeQueued"
                       type="button"
                       class="pending-input-remove"
                       :disabled="pendingEditActionId === item.id"
@@ -3213,6 +3256,7 @@ import {
   Flag as FlagIcon,
   FolderOpenOutline,
   FunnelOutline,
+  GitNetworkOutline,
   ImageOutline,
   LocateOutline,
   RadioOutline,
@@ -3230,7 +3274,7 @@ import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
 import { useMobileKeyboard } from '@/composables/useMobileKeyboard';
 import { useResponsive } from '@/composables/useResponsive';
-import { systemApi } from '@/api/project';
+import { projectApi, systemApi } from '@/api/project';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import { useDeveloperConfigStore } from '@/stores/developerConfig';
@@ -3250,8 +3294,10 @@ import {
 import type {
   CodexSkillSummary,
   DeveloperConfig,
-  WebSessionCodexRuntimeConfig,
+  ProjectAgentTrustStatus,
+  WebSessionAgent,
   WebSessionContextWindowSource,
+  WebSessionRuntimeConfig,
   WebSessionReasoningEffort,
   WebSessionSummary,
 } from '@/types/models';
@@ -3295,6 +3341,7 @@ import {
   webSessionApi,
   type SessionConversationSearchMatch,
   type SessionSearchChunkResult,
+  type WebSessionPiTreeMutationResult,
 } from '@/api/webSession';
 import { createLongPressTracker } from '@/utils/longPress';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
@@ -3303,14 +3350,18 @@ import IconGoal from '@/components/icons/IconGoal.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionComposerEditor from '@/components/web-session/WebSessionComposerEditor.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
+import PiProjectTrustDialog from '@/components/project/PiProjectTrustDialog.vue';
+import { isPiProjectTrusted } from '@/components/project/piProjectTrust';
 import WebSessionImportDialog from '@/components/web-session/WebSessionImportDialog.vue';
 import WebSessionSidebarRow from '@/components/web-session/WebSessionSidebarRow.vue';
 import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkillCatalogPanel.vue';
+import WebSessionTreeDrawer from '@/components/web-session/WebSessionTreeDrawer.vue';
 import type { WebSessionComposerEditorExposed } from '@/components/web-session/webSessionComposerEditor';
 import {
   isWebSessionDevMode,
   shouldShowCyberPolicyWarning,
 } from '@/components/web-session/webSessionDevMode';
+import { resolveWebSessionAgentCapability } from '@/components/web-session/webSessionAgentCapabilities';
 import {
   buildWebSessionComposerPastePlan,
   getImageFilesFromTransfer,
@@ -3335,7 +3386,11 @@ import {
   defaultPermissionLevelForAgent as resolveDefaultPermissionLevelForAgent,
   defaultReasoningEffortForAgent as resolveDefaultReasoningEffortForAgent,
   resolveCodexReasoningEfforts,
+  resolvePiModelOptionGroups,
+  resolvePiModelOptions,
+  resolvePiReasoningEfforts,
   type WebSessionClaudeRuntimeOption,
+  type WebSessionModelOptionGroup,
 } from '@/components/web-session/webSessionModelOptions';
 import {
   buildTimelineRawModeKey,
@@ -3420,6 +3475,10 @@ import {
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
 import { shouldShowAutoRetryRateLimitNotice } from '@/components/web-session/webSessionAutoRetryNotice';
+import {
+  canMutateWebSessionPiTree,
+  canOpenWebSessionPiTree,
+} from '@/components/web-session/webSessionTree';
 import {
   formatWebSessionDateTime,
   formatWebSessionSidebarTime,
@@ -3779,11 +3838,8 @@ async function loadComposerDeveloperConfig(force = false) {
 }
 
 function resolveInheritedActiveCallTimeoutEnabled(
-  source:
-    | { agent?: 'claude' | 'codex'; activeCallTimeoutEnabled?: boolean | null }
-    | null
-    | undefined,
-  agent: 'claude' | 'codex'
+  source: { agent?: WebSessionAgent; activeCallTimeoutEnabled?: boolean | null } | null | undefined,
+  agent: WebSessionAgent
 ) {
   if (agent !== 'codex') {
     return false;
@@ -3861,6 +3917,10 @@ const mobileTabSelectorSource = ref<MobileTabSelectorSource>('header');
 const showQuickInputPopover = ref(false);
 const showSkillBrowser = ref(false);
 const showImportDialog = ref(false);
+const showPiTrustDialog = ref(false);
+const showPiTreeDrawer = ref(false);
+const piTrustServerProjectPath = ref('');
+const pendingPiAgentSelection = ref(false);
 const contextMenuSession = ref<SessionTab | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
@@ -3910,7 +3970,8 @@ const activeAttachmentPreview = ref<{
   name: string;
   url: string;
 } | null>(null);
-const codexRuntimeConfig = ref<WebSessionCodexRuntimeConfig | null>(null);
+const runtimeConfig = ref<WebSessionRuntimeConfig | null>(null);
+const codexRuntimeConfig = runtimeConfig;
 const codexRuntimeConfigReady = ref(false);
 const codexSkills = ref<CodexSkillSummary[]>([]);
 const codexSkillsLoading = ref(false);
@@ -4012,7 +4073,7 @@ const projectSessionInitializationGate = createWebSessionProjectInitializationGa
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 
-const draftAgent = ref<'claude' | 'codex'>('codex');
+const draftAgent = ref<WebSessionAgent>('codex');
 const draftClaudeRuntime = ref<WebSessionClaudeRuntimeOption>('claude');
 const draftModel = ref(defaultModelForAgent('codex'));
 const draftReasoningEffort = ref<WebSessionReasoningEffort>(
@@ -4147,8 +4208,41 @@ watch(
   },
   { immediate: true }
 );
-const runtimeHasCodex = computed(() => codexRuntimeConfig.value?.hasCodex === true);
-const runtimeHasClaudeCode = computed(() => codexRuntimeConfig.value?.hasClaudeCode === true);
+const runtimeCapabilityFor = (agent: WebSessionAgent) =>
+  resolveWebSessionAgentCapability(runtimeConfig.value, agent);
+const runtimeCodexCapability = computed(() => runtimeCapabilityFor('codex'));
+const runtimeClaudeCapability = computed(() => runtimeCapabilityFor('claude'));
+const runtimePiCapability = computed(() => runtimeCapabilityFor('pi'));
+const piUnavailableReason = computed(() => {
+  const config = runtimeConfig.value;
+  switch (config?.piDiagnostics) {
+    case 'not_installed':
+      return t('webSession.piNotInstalled');
+    case 'version_unknown':
+      return t('webSession.piVersionUnknown');
+    case 'version_too_old':
+      return t('webSession.piVersionTooOld', {
+        current: config.piVersion || '-',
+        required: config.piMinVersion || '0.84.1',
+      });
+    case 'rpc_start_failed':
+      return t('webSession.piRpcStartFailed');
+    case 'rpc_protocol_incompatible':
+      return t('webSession.piRpcIncompatible');
+    case 'rpc_timeout':
+      return t('webSession.piRpcTimeout');
+    default:
+      return t('webSession.composerHintPiUnavailable');
+  }
+});
+const piUnavailableAgentLabel = computed(() => {
+  const diagnostic = runtimeConfig.value?.piDiagnostics;
+  if (diagnostic === 'not_installed') return t('webSession.piNotInstalledAgentLabel');
+  if (diagnostic === 'version_too_old') return t('webSession.piUpgradeAgentLabel');
+  return t('webSession.piUnavailableAgentLabel');
+});
+const runtimeHasCodex = computed(() => runtimeCodexCapability.value.supportsWebSession);
+const runtimeHasClaudeCode = computed(() => runtimeClaudeCapability.value.supportsWebSession);
 const runtimeCodexVersion = computed(() => codexRuntimeConfig.value?.codexVersion?.trim() || '');
 const runtimeMultiAgentV2MinVersion = computed(
   () =>
@@ -4171,9 +4265,12 @@ const isCodexCompatibilityMode = computed(
 const runtimeGoalModeMinVersion = computed(
   () => codexRuntimeConfig.value?.goalModeMinCodexVersion?.trim() || '0.133.0'
 );
-const runtimeSupportsGoalMode = computed(() => codexRuntimeConfig.value?.supportsGoalMode === true);
+const runtimeSupportsGoalMode = computed(() => runtimeCodexCapability.value.supportsGoal);
 const isMessageCapabilityBlocked = computed(() => {
-  if (!codexRuntimeConfig.value) {
+  if (selectedAgent.value === 'pi') {
+    return !runtimePiCapability.value.supportsWebSession;
+  }
+  if (!runtimeConfig.value) {
     return false;
   }
   if (selectedAgent.value === 'codex') {
@@ -4182,7 +4279,7 @@ const isMessageCapabilityBlocked = computed(() => {
   if (selectedAgent.value === 'claude') {
     return !runtimeHasClaudeCode.value;
   }
-  return false;
+  return !runtimePiCapability.value.supportsWebSession;
 });
 const isCurrentSessionGoalModeBlocked = computed(() => {
   const session = currentSession.value;
@@ -6064,6 +6161,7 @@ function openDraftAttachmentPreview(
 const pendingInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingInputs(currentRealSession.value.id) : []
 );
+const localPendingInputs = computed(() => pendingInputs.value.filter(item => !item.nativeQueued));
 const pendingEditingId = ref('');
 const pendingEditText = ref('');
 const pendingEditActionId = ref('');
@@ -6138,6 +6236,23 @@ const isSubmittingQueuedMessage = computed(
   () => currentSubmitEntry.value?.kind === 'queue_message'
 );
 const isRunActive = computed(() => liveState.value.running);
+const canOpenPiTree = computed(() => {
+  const session = currentRealSession.value;
+  return canOpenWebSessionPiTree({
+    archived: Boolean(session?.archivedAt),
+    agent: session?.agent,
+    supportsTree: runtimePiCapability.value.supportsTree,
+    nativeSessionId: session?.nativeSessionId ?? undefined,
+    threadPath: session?.threadPath ?? undefined,
+  });
+});
+const canMutatePiTree = computed(() =>
+  canMutateWebSessionPiTree({
+    canOpen: canOpenPiTree.value,
+    running: isRunActive.value,
+    pendingCount: pendingInputs.value.length,
+  })
+);
 const hasDraftContent = computed(
   () => composerText.value.trim().length > 0 || draftAttachments.value.length > 0
 );
@@ -6288,6 +6403,9 @@ const composerHint = computed(() => {
   }
   if (codexRuntimeConfig.value && selectedAgent.value === 'claude' && !runtimeHasClaudeCode.value) {
     return t('webSession.composerHintClaudeMissing');
+  }
+  if (selectedAgent.value === 'pi' && !runtimePiCapability.value.supportsWebSession) {
+    return piUnavailableReason.value;
   }
   if (isDraftAttachmentUploading.value) {
     return t('webSession.composerHintUploading');
@@ -7523,6 +7641,13 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
     !isDraftSession(session) &&
     session.agent === 'codex' &&
     Boolean(session.nativeSessionId);
+  const canPiTree =
+    !!session &&
+    !isDraftSession(session) &&
+    !session.archivedAt &&
+    session.agent === 'pi' &&
+    runtimePiCapability.value.supportsTree &&
+    Boolean(session.nativeSessionId && session.threadPath);
 
   const options: DropdownOption[] = [
     {
@@ -7558,6 +7683,14 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
       disabled: !session,
     },
   ];
+
+  if (canPiTree) {
+    options.splice(2, 0, {
+      label: t('webSession.treeOpen'),
+      key: 'tree',
+      icon: renderDropdownIcon(GitNetworkOutline),
+    });
+  }
 
   if (canClaudeSync || canCodexSync) {
     options.splice(2, 0, {
@@ -7635,6 +7768,10 @@ async function handleSessionActionSelect(action: string, session: SessionTab | n
   if (!session) {
     return;
   }
+  if (action === 'tree') {
+    showPiTreeDrawer.value = true;
+    return;
+  }
   if (action === 'rename') {
     await handleRenameSession(session.id);
     return;
@@ -7664,6 +7801,72 @@ async function handleSessionActionSelect(action: string, session: SessionTab | n
 
 async function handleMobileActionMenuSelect(key: string | number) {
   await handleSessionActionSelect(String(key), currentSession.value);
+}
+
+async function handlePiTreeNavigated(result: {
+  projectId: string;
+  sessionId: string;
+  editorText: string;
+}) {
+  const sourceProjectId = result.projectId;
+  const sourceSessionId = result.sessionId;
+  if (!sourceProjectId || !sourceSessionId) {
+    return;
+  }
+  webSessionStore.setDraftText(sourceProjectId, sourceSessionId, result.editorText);
+  const sourceStillActive = () =>
+    props.projectId === sourceProjectId && currentRealSession.value?.id === sourceSessionId;
+  try {
+    await webSessionStore.loadSessionSnapshot(sourceProjectId, sourceSessionId, {
+      rememberActive: sourceStillActive(),
+    });
+    if (sourceStillActive()) {
+      composerEditorResetVersion.value += 1;
+    }
+  } catch (error) {
+    if (sourceStillActive()) {
+      message.error(error instanceof Error ? error.message : t('webSession.treeReloadFailed'));
+    }
+  }
+}
+
+async function handlePiTreeCreated(event: {
+  projectId: string;
+  sessionId: string;
+  result: WebSessionPiTreeMutationResult;
+  activate: boolean;
+}) {
+  const { projectId: sourceProjectId, sessionId: sourceSessionId, result, activate } = event;
+  const target = result.session;
+  if (!target?.id || target.projectId !== sourceProjectId) {
+    if (props.projectId === sourceProjectId && currentRealSession.value?.id === sourceSessionId) {
+      message.error(t('webSession.treeCreateInvalid'));
+    }
+    return;
+  }
+  const targetSessionId = target.id;
+  const sourceStillActive = () =>
+    props.projectId === sourceProjectId && currentRealSession.value?.id === sourceSessionId;
+  webSessionStore.setDraftText(sourceProjectId, targetSessionId, result.editorText ?? '');
+  if (!activate || !sourceStillActive()) {
+    return;
+  }
+  try {
+    await webSessionStore.loadSessions(sourceProjectId, true);
+    if (!sourceStillActive()) {
+      return;
+    }
+    const activated = await activateTabById(targetSessionId);
+    if (!activated) {
+      throw new Error(t('webSession.treeCreateInvalid'));
+    }
+    composerEditorResetVersion.value += 1;
+    scrollToBottom(true);
+  } catch (error) {
+    if (sourceStillActive()) {
+      message.error(error instanceof Error ? error.message : t('webSession.treeCreateInvalid'));
+    }
+  }
 }
 
 const tabsThemeOverrides = computed(() => {
@@ -7776,6 +7979,15 @@ const sidebarProjectIdsToLoad = computed(() => {
   });
   return Array.from(ids);
 });
+const piTrustProjectPath = computed(() => {
+  if (piTrustServerProjectPath.value) {
+    return piTrustServerProjectPath.value;
+  }
+  if (projectStore.currentProject?.id === props.projectId) {
+    return projectStore.currentProject.path || '';
+  }
+  return projectStore.projects.find(project => project.id === props.projectId)?.path || '';
+});
 const sidebarVisibleProjectIds = computed(() =>
   resolveWebSessionSidebarProjectIds({
     scope: sidebarScope.value,
@@ -7793,7 +8005,7 @@ function parseTimestamp(value?: string | null) {
 }
 
 function resolveDraftProjectPresentation(
-  agent: 'claude' | 'codex',
+  agent: WebSessionAgent,
   worktreeId?: string | null,
   projectId = props.projectId
 ) {
@@ -7809,7 +8021,7 @@ function resolveDraftProjectPresentation(
   });
 }
 
-function fallbackDraftTitle(agent: 'claude' | 'codex', projectId = props.projectId) {
+function fallbackDraftTitle(agent: WebSessionAgent, projectId = props.projectId) {
   return resolveDraftProjectPresentation(agent, null, projectId).title;
 }
 
@@ -7822,7 +8034,8 @@ function normalizeDraftSession(
   if (!id) {
     return null;
   }
-  const agent = session.agent === 'claude' ? 'claude' : 'codex';
+  const agent: WebSessionAgent =
+    session.agent === 'claude' || session.agent === 'pi' ? session.agent : 'codex';
   const requestedWorktreeId =
     typeof session.worktreeId === 'string' ? session.worktreeId || null : null;
   const presentation = resolveDraftProjectPresentation(agent, requestedWorktreeId, projectId);
@@ -8282,7 +8495,7 @@ function resolveDraftContext(worktreeId?: string | null) {
   };
 }
 
-function buildDraftTitle(agent: 'claude' | 'codex') {
+function buildDraftTitle(agent: WebSessionAgent) {
   const baseTitle = fallbackDraftTitle(agent);
   const samePrefixCount = draftSessions.value.filter(
     session => session.title === baseTitle || session.title.startsWith(`${baseTitle} `)
@@ -8304,7 +8517,7 @@ function updateActiveDraftSession(updater: (draft: DraftSessionTab) => DraftSess
   updateDraftSession(activeDraftSessionId.value, updater);
 }
 
-function createDraftSession(forceAgent?: 'claude' | 'codex') {
+function createDraftSession(forceAgent?: WebSessionAgent) {
   const anchorId = underlyingTabSessionId.value;
   const source = currentSession.value;
   const nextAgent = forceAgent ?? source?.agent ?? draftAgent.value;
@@ -8347,7 +8560,12 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
     archivedAt: null,
     activityAt: nowIso,
     lastMessageAt: null,
-    sourceKind: 'codex_app_server',
+    sourceKind:
+      nextAgent === 'codex'
+        ? 'codex_app_server'
+        : nextAgent === 'pi'
+          ? 'pi_rpc'
+          : 'claude_stream_json',
     syncState: 'missing',
     sourceCreatedAt: null,
     sourceUpdatedAt: null,
@@ -9181,9 +9399,10 @@ const sidebarVirtualItems = computed<WebSessionSidebarVirtualItem<CrossProjectSe
   })
 );
 
-const agentOptions = [
+const agentOptions: Array<{ label: string; value: WebSessionAgent }> = [
   { label: 'Codex', value: 'codex' },
   { label: 'Claude', value: 'claude' },
+  { label: 'Pi', value: 'pi' },
 ];
 const showAdditionalCodexModels = ref(false);
 const showModelSelector = ref(false);
@@ -9207,7 +9426,7 @@ function renderAgentDropdownLabel(option: DropdownOption) {
   return h('span', { class: 'composer-agent-option' }, [
     h('span', {
       class: 'composer-agent-option-icon',
-      innerHTML: getAgentIcon(value === 'claude' ? 'claude' : 'codex'),
+      innerHTML: getAgentIcon(value),
     }),
     h('span', { class: 'composer-agent-option-label' }, label),
   ]);
@@ -9218,18 +9437,29 @@ const agentDropdownOptions = computed<DropdownOption[]>(() =>
     label:
       option.value === 'codex' && isCodexCompatibilityMode.value
         ? t('webSession.codexCompatibilityAgentLabel')
-        : option.label,
+        : option.value === 'pi' && !runtimePiCapability.value.supportsWebSession
+          ? piUnavailableAgentLabel.value
+          : option.label,
     key: option.value,
     value: option.value,
     disabled:
-      option.value === 'codex' && codexRuntimeConfig.value !== null && !runtimeHasCodex.value,
+      option.value === 'pi'
+        ? !runtimePiCapability.value.supportsWebSession
+        : runtimeConfig.value !== null && !runtimeCapabilityFor(option.value).supportsWebSession,
   }))
 );
 
 const agentSwitchDisabled = computed(() => Boolean(currentSession.value?.nativeSessionId));
 
-function getAgentIcon(agent: 'claude' | 'codex' | string) {
-  return getAssistantIconByType(agent === 'claude' ? 'claude-code' : 'codex');
+function getAgentIcon(agent: WebSessionAgent | string) {
+  if (agent === 'claude') {
+    return getAssistantIconByType('claude-code');
+  }
+  return getAssistantIconByType(agent === 'pi' ? 'pi' : 'codex');
+}
+
+function getAgentDisplayName(agent: WebSessionAgent) {
+  return agent === 'claude' ? 'Claude Code' : agent === 'pi' ? 'Pi' : 'Codex';
 }
 
 const selectedAgentTitle = computed(() =>
@@ -9237,15 +9467,54 @@ const selectedAgentTitle = computed(() =>
 );
 const selectedAgentIcon = computed(() => getAgentIcon(selectedAgent.value));
 
-function handleAgentDropdownSelect(key: string | number) {
+async function handleAgentDropdownSelect(key: string | number) {
   if (agentSwitchDisabled.value) {
     return;
   }
   const next = String(key);
-  if (next !== 'claude' && next !== 'codex') {
+  if (next !== 'claude' && next !== 'codex' && next !== 'pi') {
+    return;
+  }
+  if (next === 'pi' && !(await ensurePiProjectTrust(true))) {
     return;
   }
   selectedAgent.value = next;
+}
+
+async function ensurePiProjectTrust(forAgentSelection = false) {
+  const projectId = props.projectId;
+  if (!projectId) {
+    return false;
+  }
+  try {
+    const status = await projectApi.getPiTrust(projectId);
+    if (projectId !== props.projectId) {
+      return false;
+    }
+    piTrustServerProjectPath.value = status.projectPath || '';
+    if (isPiProjectTrusted(status, projectId)) {
+      return true;
+    }
+    pendingPiAgentSelection.value = forAgentSelection;
+    showPiTrustDialog.value = true;
+    return false;
+  } catch (error) {
+    console.error('Failed to load Pi project access:', error);
+    message.error(t('project.piTrustLoadFailed'));
+    return false;
+  }
+}
+
+function handlePiProjectTrusted(status: ProjectAgentTrustStatus) {
+  if (!isPiProjectTrusted(status, props.projectId)) {
+    pendingPiAgentSelection.value = false;
+    return;
+  }
+  piTrustServerProjectPath.value = status.projectPath || '';
+  if (pendingPiAgentSelection.value && !agentSwitchDisabled.value) {
+    selectedAgent.value = 'pi';
+  }
+  pendingPiAgentSelection.value = false;
 }
 
 function getKnownModelLabel(value?: string | null) {
@@ -9254,17 +9523,22 @@ function getKnownModelLabel(value?: string | null) {
     return '';
   }
   return (
-    [...CLAUDE_MODEL_OPTIONS, ...CODEX_MODEL_OPTIONS].find(
-      option => option.value === normalizedModel
-    )?.label ?? normalizedModel
+    [
+      ...CLAUDE_MODEL_OPTIONS,
+      ...CODEX_MODEL_OPTIONS,
+      ...resolvePiModelOptions(runtimeConfig.value?.piModels ?? []),
+    ].find(option => option.value === normalizedModel)?.label ?? normalizedModel
   );
 }
 
 function renderModelOption(info: {
   node: VNode;
-  option: { label?: unknown; menuLabel?: unknown };
+  option: { type?: unknown; label?: unknown; menuLabel?: unknown };
   selected: boolean;
 }) {
+  if (info.option.type === 'group') {
+    return info.node;
+  }
   return h('div', info.node.props ?? {}, [
     h(
       'div',
@@ -9305,6 +9579,40 @@ function withCurrentModelOption(
   ];
 }
 
+function withCurrentPiModelOption(
+  groups: WebSessionModelOptionGroup[],
+  currentModel?: string | null
+): WebSessionModelOptionGroup[] {
+  const normalizedModel = String(currentModel || '').trim();
+  if (
+    !normalizedModel ||
+    groups.some(group => group.children.some(option => option.value === normalizedModel))
+  ) {
+    return groups;
+  }
+  const separator = normalizedModel.indexOf('/');
+  const provider = separator > 0 ? normalizedModel.slice(0, separator) : t('common.current');
+  const currentOption = {
+    label: getKnownModelLabel(normalizedModel),
+    value: normalizedModel,
+  };
+  const matchingGroup = groups.find(group => group.label === provider);
+  if (!matchingGroup) {
+    return [
+      ...groups,
+      {
+        type: 'group',
+        key: `pi-provider-current-${provider}`,
+        label: provider,
+        children: [currentOption],
+      },
+    ];
+  }
+  return groups.map(group =>
+    group === matchingGroup ? { ...group, children: [...group.children, currentOption] } : group
+  );
+}
+
 function getModelLabelVisualLength(label: string) {
   return Array.from(label).reduce(
     (total, char) => (/[\u4e00-\u9fff]/.test(char) ? total + 2 : total + 1),
@@ -9318,20 +9626,18 @@ function resolveModelSelectWidth(label: string) {
   return clamp(MODEL_SELECT_MIN_WIDTH, width, MODEL_SELECT_MAX_WIDTH);
 }
 
-function defaultModelForAgent(agent: 'claude' | 'codex') {
+function defaultModelForAgent(agent: WebSessionAgent) {
   return resolveDefaultModelForAgent(agent, developerConfig.value.webSessionCodexDefaultModel);
 }
 
-function defaultReasoningEffortForAgent(agent: 'claude' | 'codex'): WebSessionReasoningEffort {
+function defaultReasoningEffortForAgent(agent: WebSessionAgent): WebSessionReasoningEffort {
   return resolveDefaultReasoningEffortForAgent(
     agent,
     developerConfig.value.webSessionCodexDefaultReasoningEffort
   );
 }
 
-function defaultPermissionLevelForAgent(
-  agent: 'claude' | 'codex'
-): 'default' | 'elevated' | 'yolo' {
+function defaultPermissionLevelForAgent(agent: WebSessionAgent): 'default' | 'elevated' | 'yolo' {
   return resolveDefaultPermissionLevelForAgent(
     agent,
     developerConfig.value.webSessionCodexDefaultPermissionLevel
@@ -9419,6 +9725,10 @@ const claudeRuntimeOptions = computed(() =>
   }))
 );
 
+const piModelOptionGroups = computed(() =>
+  resolvePiModelOptionGroups(runtimeConfig.value?.piModels ?? [])
+);
+
 const modelOptions = computed(() => {
   const activeModel = currentSession.value?.model ?? draftModel.value;
   if (selectedAgent.value === 'claude') {
@@ -9426,6 +9736,9 @@ const modelOptions = computed(() => {
       ...withCurrentModelOption(CLAUDE_MODEL_OPTIONS, activeModel),
       { label: t('webSession.customModel'), value: CUSTOM_MODEL_VALUE },
     ];
+  }
+  if (selectedAgent.value === 'pi') {
+    return withCurrentPiModelOption(piModelOptionGroups.value, activeModel);
   }
   if (!showAdditionalCodexModels.value) {
     return [
@@ -9446,6 +9759,13 @@ const modelOptions = computed(() => {
 });
 
 const reasoningEffortOptions = computed(() => {
+  if (selectedAgent.value === 'pi') {
+    const values = resolvePiReasoningEfforts(
+      runtimeConfig.value?.piModels ?? [],
+      selectedModel.value
+    );
+    return values.map(value => ({ label: reasoningEffortLabel(value), value }));
+  }
   const supported =
     selectedAgent.value === 'codex' ? supportedCodexReasoningEfforts(selectedModel.value) : null;
   if (supported) {
@@ -9472,8 +9792,12 @@ const reasoningEffortOptions = computed(() => {
 const selectedAgent = computed({
   get: () => currentSession.value?.agent ?? draftAgent.value,
   set: value => {
-    const next = value as 'claude' | 'codex';
-    const nextModel = defaultModelForAgent(next);
+    const next = value as WebSessionAgent;
+    const firstPiModel = runtimeConfig.value?.piModels?.[0];
+    const nextModel =
+      next === 'pi' && firstPiModel
+        ? `${firstPiModel.provider}/${firstPiModel.id}`
+        : defaultModelForAgent(next);
     const nextReasoningEffort = defaultReasoningEffortForAgent(next);
     const nextPermissionLevel = defaultPermissionLevelForAgent(next);
     draftAgent.value = next;
@@ -9607,13 +9931,18 @@ const selectedReasoningEffort = computed<WebSessionReasoningEffort>({
   },
 });
 
-const permissionLevelOptions = computed(() => [
-  ...(selectedAgent.value === 'claude'
-    ? []
-    : [{ label: t('webSession.permissionDefault'), value: 'default' }]),
-  { label: t('webSession.permissionElevated'), value: 'elevated' },
-  { label: t('webSession.permissionYolo'), value: 'yolo' },
-]);
+const permissionLevelOptions = computed(() => {
+  if (selectedAgent.value === 'pi') {
+    return [{ label: t('webSession.permissionUnrestricted'), value: 'elevated' }];
+  }
+  return [
+    ...(selectedAgent.value === 'claude'
+      ? []
+      : [{ label: t('webSession.permissionDefault'), value: 'default' }]),
+    { label: t('webSession.permissionElevated'), value: 'elevated' },
+    { label: t('webSession.permissionYolo'), value: 'yolo' },
+  ];
+});
 
 const selectedWorkflowMode = computed<'default' | 'plan'>({
   get: () => currentSession.value?.workflowMode ?? draftWorkflowMode.value,
@@ -11076,20 +11405,26 @@ async function handleOpenImportedCodexSession(session: WebSessionSummary) {
 
     await activateTabById(target.id);
     scrollToBottom(true);
-    promptSyncExistingImportedSession(target);
+    if (target.agent === 'codex') {
+      promptSyncExistingImportedSession(target);
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
 }
 
-async function handleImportCodexSession(sessionId: string) {
+async function handleImportCodexSession(source: { agent: 'codex' | 'pi'; sessionId: string }) {
+  const { agent, sessionId } = source;
   if (!props.projectId || !sessionId || importingCodexSessionId.value) {
+    return;
+  }
+  if (agent === 'pi' && !(await ensurePiProjectTrust())) {
     return;
   }
 
   importingCodexSessionId.value = sessionId;
   try {
-    const result = await webSessionStore.importSession(props.projectId, sessionId, 'fast');
+    const result = await webSessionStore.importSession(props.projectId, sessionId, 'fast', agent);
 
     if (result.reused) {
       await refreshArchivedSidebar();
@@ -11104,7 +11439,7 @@ async function handleImportCodexSession(sessionId: string) {
     scrollToBottom(true);
     message.success(t('webSession.importCodexSessionSuccess'));
 
-    if (result.reused && !result.synced) {
+    if (result.reused && !result.synced && result.session.agent === 'codex') {
       promptSyncExistingImportedSession(result.session);
     }
   } catch (error) {
@@ -11117,7 +11452,7 @@ async function handleImportCodexSession(sessionId: string) {
 }
 
 async function handleCreateSession(
-  forceAgent?: 'claude' | 'codex',
+  forceAgent?: WebSessionAgent,
   options: { onCreated?: (session: WebSessionSummary) => void } = {}
 ) {
   try {
@@ -11206,7 +11541,7 @@ async function handleCreateSession(
   }
 }
 
-async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
+async function handleStartDraftSession(forceAgent?: WebSessionAgent) {
   await loadComposerDeveloperConfig();
   const anchorId = underlyingTabSessionId.value;
   const decision = resolveStartDraftSessionDecision(draftSessions.value, {
@@ -11994,6 +12329,7 @@ async function handleSubmit() {
   ) {
     return;
   }
+  const submitAgent = initialRealSession?.agent ?? selectedAgent.value;
   const submitKind = resolveComposerSubmitKind();
   if (submitKind === 'execute_send') {
     if (!ensureSendConflictConfirmed(sendConfirmationSignature.value)) {
@@ -12008,6 +12344,26 @@ async function handleSubmit() {
   beginSessionSubmit(submitOwnerId, submitKind);
   clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
   try {
+    if (submitAgent === 'pi' && !(await ensurePiProjectTrust())) {
+      return;
+    }
+    const isPiCompactCommand = submitAgent === 'pi' && draftText.trim() === '/compact';
+    if (isPiCompactCommand) {
+      if (!initialRealSession || isDraftSession(initialSession)) {
+        throw new Error(t('webSession.piCompactRequiresSession'));
+      }
+      if (attachments.length > 0) {
+        throw new Error(t('webSession.compactAttachmentsUnsupported'));
+      }
+      if (!runtimeCapabilityFor('pi').supportsCompaction) {
+        throw new Error(t('webSession.piCompactUnavailable'));
+      }
+      await webSessionStore.compactSession(initialRealSession.id);
+      submissionSucceeded = true;
+      settingsStore.recordWebSessionRecentInput(draftText);
+      void settingsStore.syncWebSessionQuickInputToServer();
+      return;
+    }
     let session = initialRealSession;
     if (!session || isDraftSession(initialSession)) {
       const created = await handleCreateSession(undefined, {
@@ -12114,6 +12470,8 @@ async function handleConfirmScheduledSend() {
   const requiresScheduledTime = scheduledScheduleKind.value === 'at_time';
   const scheduleKind = scheduledScheduleKind.value;
   const sendMode = scheduledSendMode.value;
+  const submitAgent =
+    initialSession && !isDraftSession(initialSession) ? initialSession.agent : selectedAgent.value;
   if (
     !initialSubmitOwnerId ||
     scheduledSendSubmitting.value ||
@@ -12121,6 +12479,9 @@ async function handleConfirmScheduledSend() {
     (draftText.trim().length === 0 && attachments.length === 0) ||
     (requiresScheduledTime && (!Number.isFinite(executeAt) || executeAt <= Date.now()))
   ) {
+    return;
+  }
+  if (submitAgent === 'pi' && !(await ensurePiProjectTrust())) {
     return;
   }
   scheduledSendSubmitting.value = true;
@@ -12489,7 +12850,7 @@ function isEditingPendingInput(pendingId: string) {
 
 async function startPendingEdit(item: WebSessionPendingInput) {
   const session = currentRealSession.value;
-  if (!session || pendingEditActionId.value) {
+  if (!session || item.nativeQueued || pendingEditActionId.value) {
     return;
   }
   pendingEditActionId.value = item.id;
@@ -12576,7 +12937,7 @@ async function handleMovePendingInput(
   mode: WebSessionPendingInput['mode'],
   index: number
 ) {
-  if (!currentRealSession.value) {
+  if (!currentRealSession.value || item.nativeQueued) {
     return;
   }
   try {
@@ -12590,7 +12951,7 @@ async function handleMovePendingInputToAbsoluteIndex(
   item: WebSessionPendingInput,
   absoluteIndex: number
 ) {
-  const currentItems = pendingInputs.value;
+  const currentItems = localPendingInputs.value;
   const clampedIndex = Math.max(0, Math.min(absoluteIndex, currentItems.length - 1));
   const targetItem = currentItems[clampedIndex];
   if (!targetItem) {
@@ -12605,11 +12966,11 @@ async function handleMovePendingInputToAbsoluteIndex(
 }
 
 async function handleTogglePendingPriority(item: WebSessionPendingInput) {
-  if (!currentRealSession.value) {
+  if (!currentRealSession.value || item.nativeQueued) {
     return;
   }
   const targetMode = item.mode === 'redirect' ? 'queue' : 'redirect';
-  const targetIndex = pendingInputs.value.filter(entry => entry.mode === targetMode).length;
+  const targetIndex = localPendingInputs.value.filter(entry => entry.mode === targetMode).length;
   try {
     await webSessionStore.reorderPendingInput(
       currentRealSession.value.id,
@@ -12778,7 +13139,10 @@ function handleDispatchScheduledInputNow(item: WebSessionScheduledInput) {
 }
 
 async function handleRemovePendingInput(pendingId: string) {
-  if (!currentRealSession.value) {
+  if (
+    !currentRealSession.value ||
+    pendingInputs.value.some(item => item.id === pendingId && item.nativeQueued)
+  ) {
     return;
   }
   try {
@@ -12792,7 +13156,7 @@ async function handleRemovePendingInput(pendingId: string) {
 }
 
 async function handleClearPendingInputs() {
-  if (!currentRealSession.value || pendingInputs.value.length === 0) {
+  if (!currentRealSession.value || localPendingInputs.value.length === 0) {
     return;
   }
   try {
@@ -12897,22 +13261,29 @@ function maybeNotifyCodexCompatibilityMode() {
   message.warning(codexCompatibilityModeMessage());
 }
 
-async function ensureMessageCapabilityAvailable(agent: 'codex' | 'claude') {
+async function ensureMessageCapabilityAvailable(agent: WebSessionAgent) {
   const config = await refreshRuntimeCapabilities();
   if (!config) {
-    return true;
-  }
-  if (agent === 'codex') {
-    if (config.hasCodex !== true) {
-      message.warning(t('webSession.codexNotInstalled'));
+    if (agent === 'pi') {
+      message.warning(piUnavailableReason.value);
       return false;
     }
     return true;
   }
-  if (config.hasClaudeCode === true) {
+  const capability = resolveWebSessionAgentCapability(config, agent);
+  if (capability.supportsWebSession) {
+    if (agent === 'pi') {
+      return ensurePiProjectTrust(false);
+    }
     return true;
   }
-  message.warning(t('webSession.claudeCodeNotInstalled'));
+  if (agent === 'codex') {
+    message.warning(t('webSession.codexNotInstalled'));
+  } else if (agent === 'claude') {
+    message.warning(t('webSession.claudeCodeNotInstalled'));
+  } else {
+    message.warning(piUnavailableReason.value);
+  }
   return false;
 }
 
@@ -14019,12 +14390,12 @@ function getSessionStatusEmoji(session: (typeof sessions.value)[number]) {
 }
 
 function getSessionAssistantIcon(session: (typeof sessions.value)[number]) {
-  return getAssistantIconByType(session.agent === 'claude' ? 'claude-code' : 'codex');
+  return getAgentIcon(session.agent);
 }
 
 function getSessionStatusTooltip(session: (typeof sessions.value)[number]) {
   const label = getSessionStatusLabel(session);
-  const agentName = session.agent === 'claude' ? 'Claude Code' : 'Codex';
+  const agentName = getAgentDisplayName(session.agent);
   if (isDraftSession(session)) {
     return agentName;
   }
@@ -14124,7 +14495,7 @@ function buildSidebarSessionRow(
     sessionId: session.id,
     title: session.title,
     searchMatchLabel: searchMatchLabels.length > 0 ? `[${searchMatchLabels.join(',')}]` : '',
-    iconHtml: getAssistantIconByType(session.agent === 'claude' ? 'claude-code' : 'codex'),
+    iconHtml: getAgentIcon(session.agent),
     subtitle,
     tooltip: joinSessionHoverParts([
       item.projectName,
@@ -14427,7 +14798,7 @@ async function loadCodexRuntimeConfig() {
     codexRuntimeConfig.value = await webSessionApi.runtimeConfig();
   } catch (error) {
     codexRuntimeConfig.value = null;
-    console.warn('[Web Session] Failed to load Codex runtime config', error);
+    console.warn('[Web Session] Failed to load runtime config', error);
   } finally {
     codexRuntimeConfigReady.value = true;
   }
@@ -14437,6 +14808,9 @@ watch(
   () => props.projectId,
   projectId => {
     clearSendConflictConfirmation();
+    piTrustServerProjectPath.value = '';
+    pendingPiAgentSelection.value = false;
+    showPiTrustDialog.value = false;
     if (projectId) {
       void initializeProjectSessions(projectId);
     } else {
@@ -14973,6 +15347,7 @@ watch(currentDraftSessionId, () => {
 watch(
   () => currentSession.value?.id,
   (sessionId, previousSessionId) => {
+    showPiTreeDrawer.value = false;
     showQuickInputPopover.value = false;
     resetMobileComposerScrollState();
     if (isMobile.value) {
@@ -19377,6 +19752,12 @@ defineExpose({
   line-height: 1.45;
   color: var(--n-text-color-2);
   word-break: break-word;
+}
+
+.pending-input-native-status {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--n-text-color-3);
 }
 
 .pending-input-position,

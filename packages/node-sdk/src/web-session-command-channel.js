@@ -9,6 +9,9 @@ import {
   buildWebSessionHeartbeatFrame,
   decodeWebSessionSocketMessage,
   isWebSessionHeartbeatFrame,
+  normalizePiTreeCreateResult,
+  normalizePiTreeNavigateResult,
+  normalizePiTreeSnapshot,
   normalizeWebSessionFrame,
 } from "./web-session-shared.js";
 import {
@@ -205,6 +208,51 @@ export class WebSessionCommandChannel {
 
   async abort(sessionId) {
     return await this._executeCommand({ operation: "abort", sessionId });
+  }
+
+  async compact(sessionId) {
+    return await this._executeCommand({ operation: "compact", sessionId });
+  }
+
+  async getTree(sessionId) {
+    const ack = await this._executeCommand({ operation: "tree_get", sessionId });
+    return normalizePiTreeSnapshot(ack.payload);
+  }
+
+  async navigateTree(sessionId, input = {}) {
+    const ack = await this._executeCommand({
+      operation: "tree_nav",
+      sessionId,
+      payload: {
+        tid: ensureString(input.targetId, "targetId"),
+        rev: ensureString(input.revision, "revision"),
+        sum: input.summarize === true,
+      },
+    });
+    return normalizePiTreeNavigateResult(ack.payload);
+  }
+
+  async forkTree(sessionId, input = {}) {
+    const ack = await this._executeCommand({
+      operation: "tree_fork",
+      sessionId,
+      payload: {
+        tid: ensureString(input.targetId, "targetId"),
+        rev: ensureString(input.revision, "revision"),
+      },
+    });
+    return normalizePiTreeCreateResult(ack.payload);
+  }
+
+  async cloneTree(sessionId, input = {}) {
+    const ack = await this._executeCommand({
+      operation: "tree_clone",
+      sessionId,
+      payload: {
+        rev: ensureString(input.revision, "revision"),
+      },
+    });
+    return normalizePiTreeCreateResult(ack.payload);
   }
 
   async approve(sessionId) {

@@ -1,0 +1,36 @@
+package websession
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+)
+
+func TestPendingWireMarksPiNativeQueueReadOnly(t *testing.T) {
+	createdAt := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	encoded, err := json.Marshal(newPendingFrame("session_1", []PendingInput{
+		{
+			ID:           "pi-native-1",
+			Mode:         PendingInputModeQueue,
+			Text:         "Accepted by Pi",
+			NativeQueued: true,
+			CreatedAt:    createdAt,
+		},
+	}))
+	if err != nil {
+		t.Fatalf("marshal pending frame: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("decode pending frame: %v", err)
+	}
+	items, ok := payload["pi"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected one pending item, got %s", encoded)
+	}
+	item, _ := items[0].(map[string]any)
+	if item["nq"] != true || item["id"] != "pi-native-1" || item["m"] != string(PendingInputModeQueue) {
+		t.Fatalf("expected compact native queue marker, got %#v", item)
+	}
+}

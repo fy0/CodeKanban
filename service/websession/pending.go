@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -51,6 +52,7 @@ func clonePendingInput(item PendingInput) PendingInput {
 		AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
 		ReadyAt:       readyAt,
 		Paused:        item.Paused,
+		NativeQueued:  item.NativeQueued,
 		CreatedAt:     item.CreatedAt,
 	}
 }
@@ -99,6 +101,11 @@ func isCodexSteerSession(record tables.WebSessionTable) bool {
 		effectiveSessionBackend(record) == SessionBackendCodexAppServer
 }
 
+func isPiNativePendingSession(record tables.WebSessionTable) bool {
+	return normalizeAgent(Agent(record.Agent)) == AgentPi &&
+		effectiveSessionBackend(record) == SessionBackendPiRPC
+}
+
 func (m *Manager) nextPendingSteerReadyAt() time.Time {
 	delay := m.pendingSteerDelay
 	if delay <= 0 {
@@ -134,6 +141,56 @@ func (m *Manager) pendingInputsSnapshot(sessionID string) []PendingInput {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return clonePendingInputs(m.pendingInputs[sessionID])
+}
+
+func (m *Manager) pendingInputsDisplaySnapshot(sessionID string) []PendingInput {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	local := clonePendingInputs(m.pendingInputs[sessionID])
+	native := clonePendingInputs(m.piNativeQueuedInputs[sessionID])
+	return append(local, native...)
+}
+
+func (m *Manager) replacePiNativeQueuedInputs(sessionID string, steering, followUp []string) {
+	now := time.Now()
+	items := make([]PendingInput, 0, len(steering)+len(followUp))
+	appendItems := func(mode PendingInputMode, values []string) {
+		for index, value := range values {
+			text := strings.TrimSpace(value)
+			if text == "" {
+				continue
+			}
+			digest := sha256.Sum256([]byte(text))
+			items = append(items, PendingInput{
+				ID:           fmt.Sprintf("pi-native:%s:%d:%x", mode, index, digest[:8]),
+				Mode:         mode,
+				Text:         text,
+				NativeQueued: true,
+				CreatedAt:    now,
+			})
+		}
+	}
+	appendItems(PendingInputModeRedirect, steering)
+	appendItems(PendingInputModeQueue, followUp)
+
+	m.mu.Lock()
+	if len(items) == 0 {
+		delete(m.piNativeQueuedInputs, sessionID)
+	} else {
+		m.piNativeQueuedInputs[sessionID] = items
+	}
+	m.mu.Unlock()
+	m.broadcastPendingInputs(sessionID)
+}
+
+func (m *Manager) clearPiNativeQueuedInputs(sessionID string) {
+	m.mu.Lock()
+	hadItems := len(m.piNativeQueuedInputs[sessionID]) > 0
+	delete(m.piNativeQueuedInputs, sessionID)
+	m.mu.Unlock()
+	if hadItems {
+		m.broadcastPendingInputs(sessionID)
+	}
 }
 
 func (m *Manager) queuePendingInput(
@@ -681,7 +738,7 @@ func (m *Manager) broadcastPendingInputs(sessionID string) {
 		return
 	}
 	_ = m.broadcastNextRevision(context.Background(), sessionID, func() (wireFrame, bool) {
-		return newPendingFrame(sessionID, m.pendingInputsSnapshot(sessionID)), true
+		return newPendingFrame(sessionID, m.pendingInputsDisplaySnapshot(sessionID)), true
 	})
 }
 
@@ -733,13 +790,37 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 		}
 
 		if m.hasActiveRun(sessionID) {
-			if next.Mode != PendingInputModeRedirect ||
-				!isCodexSteerSession(record) {
-				return
-			}
 			m.mu.RLock()
 			run := m.runs[sessionID]
 			m.mu.RUnlock()
+			if isPiNativePendingSession(record) {
+				if run == nil || run.blocksPiPendingInput() {
+					return
+				}
+				pending, claimed := m.claimPendingInput(sessionID, next.ID, next.Mode, time.Now())
+				if !claimed {
+					continue
+				}
+				m.cancelPendingInputTimer(sessionID)
+				m.broadcastPendingInputs(sessionID)
+				handled, sendErr := m.sendActivePiPendingInput(ctx, record, pending)
+				if sendErr != nil || !handled {
+					m.prependPendingInput(sessionID, pending)
+					m.broadcastPendingInputs(sessionID)
+					if sendErr != nil && m.logger != nil {
+						m.logger.Debug("failed to send pending Pi input",
+							zap.String("sessionId", sessionID),
+							zap.String("pendingId", pending.ID),
+							zap.Error(sendErr),
+						)
+					}
+					return
+				}
+				continue
+			}
+			if next.Mode != PendingInputModeRedirect || !isCodexSteerSession(record) {
+				return
+			}
 			if run != nil && run.blocksCodexSteerForUserInput() {
 				return
 			}
@@ -754,18 +835,13 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 				m.setPendingInputTimer(sessionID, readyAt)
 				return
 			}
-			steerInput, ok := m.claimPendingInput(sessionID, next.ID, next.Mode, time.Now())
-			if !ok {
+			steerInput, claimed := m.claimPendingInput(sessionID, next.ID, next.Mode, time.Now())
+			if !claimed {
 				continue
 			}
 			m.cancelPendingInputTimer(sessionID)
 			m.broadcastPendingInputs(sessionID)
-			handled, steerErr := m.steerActiveCodexTurn(
-				ctx,
-				record,
-				steerInput.Text,
-				steerInput.AttachmentIDs,
-			)
+			handled, steerErr := m.steerActiveCodexTurn(ctx, record, steerInput.Text, steerInput.AttachmentIDs)
 			if steerErr != nil || !handled {
 				m.prependPendingInput(sessionID, steerInput)
 				m.broadcastPendingInputs(sessionID)
@@ -822,7 +898,7 @@ func (m *Manager) maybeInterruptForRedirect(sessionID string) {
 		return
 	}
 	record, err := m.GetSession(context.Background(), sessionID)
-	if err == nil && isCodexSteerSession(record) {
+	if err == nil && (isCodexSteerSession(record) || isPiNativePendingSession(record)) {
 		m.triggerPendingProcessing(sessionID)
 		return
 	}

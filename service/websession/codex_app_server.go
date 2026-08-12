@@ -99,17 +99,21 @@ type pendingServerRequest struct {
 	RawID json.RawMessage
 	// Claude's stream-json control protocol has its own request id in addition
 	// to the tool_use id stored in ItemID. Codex continues to use RawID.
-	ControlRequestID string
-	Kind             pendingServerRequestKind
-	ThreadID         string
-	TurnID           string
-	ItemID           string
-	Prompt           string
-	Command          string
-	Input            any
-	RequestedAt      *time.Time
-	Questions        []toolRequestQuestion
-	Permissions      map[string]any
+	ControlRequestID     string
+	Kind                 pendingServerRequestKind
+	ThreadID             string
+	TurnID               string
+	ItemID               string
+	Prompt               string
+	Command              string
+	Input                any
+	RequestedAt          *time.Time
+	Questions            []toolRequestQuestion
+	Permissions          map[string]any
+	PiRuntime            *piSessionRuntime
+	PiRequestID          string
+	PiMethod             string
+	PiResponseGeneration uint64
 }
 
 func (r *pendingServerRequest) clone() *pendingServerRequest {
@@ -117,16 +121,20 @@ func (r *pendingServerRequest) clone() *pendingServerRequest {
 		return nil
 	}
 	clone := &pendingServerRequest{
-		RawID:            append(json.RawMessage(nil), r.RawID...),
-		ControlRequestID: r.ControlRequestID,
-		Kind:             r.Kind,
-		ThreadID:         r.ThreadID,
-		TurnID:           r.TurnID,
-		ItemID:           r.ItemID,
-		Prompt:           r.Prompt,
-		Command:          r.Command,
-		Input:            r.Input,
-		Permissions:      nil,
+		RawID:                append(json.RawMessage(nil), r.RawID...),
+		ControlRequestID:     r.ControlRequestID,
+		Kind:                 r.Kind,
+		ThreadID:             r.ThreadID,
+		TurnID:               r.TurnID,
+		ItemID:               r.ItemID,
+		Prompt:               r.Prompt,
+		Command:              r.Command,
+		Input:                r.Input,
+		Permissions:          nil,
+		PiRuntime:            r.PiRuntime,
+		PiRequestID:          r.PiRequestID,
+		PiMethod:             r.PiMethod,
+		PiResponseGeneration: r.PiResponseGeneration,
 	}
 	if r.RequestedAt != nil {
 		requestedAt := *r.RequestedAt

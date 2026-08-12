@@ -86,6 +86,7 @@ test('WebSessionCommandChannel connect returns a normalized snapshot', async () 
         txt: 'adjust course',
         ra: 1710000005000,
         ps: true,
+        nq: true,
         ca: 1710000000004,
       },
     ],
@@ -103,6 +104,7 @@ test('WebSessionCommandChannel connect returns a normalized snapshot', async () 
     attachmentIds: [],
     readyAt: '2024-03-09T16:00:05.000Z',
     paused: true,
+    nativeQueued: true,
     createdAt: '2024-03-09T16:00:00.004Z',
   });
   channel.close();
@@ -204,6 +206,39 @@ test('WebSessionCommandChannel history sends the compact history payload and nor
   channel.close();
 });
 
+test('WebSessionCommandChannel sends native compact without a message payload', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const channel = new WebSessionCommandChannel({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/ws',
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  await channel.waitForOpen();
+  const promise = channel.compact('ws1');
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const socket = FakeWebSocket.instances[0];
+  assert.equal(socket.sent[0].op, 'compact');
+  assert.equal(socket.sent[0].sid, 'ws1');
+  assert.deepEqual(socket.sent[0].p, {});
+  socket.emitJson({
+    v: 1,
+    k: 'ack',
+    rid: socket.sent[0].rid,
+    sid: 'ws1',
+    ts: 1710000000015,
+    op: 'compact',
+    ok: 1,
+  });
+
+  await promise;
+  channel.close();
+});
+
 test('WebSessionCommandChannel rejects sendMessage when the server follows the ack with an error frame', async () => {
   FakeWebSocket.reset();
   FakeWebSocket.setFactory(socket => {
@@ -298,6 +333,83 @@ test('WebSessionCommandChannel replies to heartbeat ping without disturbing pend
 
   const snapshot = await promise;
   assert.equal(snapshot.session.id, 'ws1');
+  channel.close();
+});
+
+test('WebSessionCommandChannel supports Pi tree read and mutations', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const channel = new WebSessionCommandChannel({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/ws',
+    WebSocketImpl: FakeWebSocket,
+  });
+  await channel.waitForOpen();
+  const socket = FakeWebSocket.instances[0];
+  const tree = {
+    sessionId: 'ws1',
+    leafId: 'a1',
+    revision: 'rev-1',
+    nodes: [
+      { id: 'u1', parentId: null, type: 'message', role: 'user', preview: 'Start', active: true, children: ['a1'] },
+      { id: 'a1', parentId: 'u1', type: 'message', role: 'assistant', preview: 'Answer', active: true, children: [] },
+    ],
+  };
+  const resolveAck = async (promise, operation, payload) => {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const frame = socket.sent.at(-1);
+    assert.equal(frame.op, operation);
+    socket.emitJson({
+      v: 1,
+      k: 'ack',
+      rid: frame.rid,
+      sid: 'ws1',
+      ts: 1710000000040,
+      op: operation,
+      ok: 1,
+      p: payload,
+    });
+    return await promise;
+  };
+
+  const readPromise = channel.getTree('ws1');
+  const read = await resolveAck(readPromise, 'tree_get', tree);
+  assert.equal(read.leafId, 'a1');
+  assert.equal(read.nodes[1].preview, 'Answer');
+
+  const navigatePromise = channel.navigateTree('ws1', {
+    targetId: 'u1',
+    revision: 'rev-1',
+    summarize: true,
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(socket.sent.at(-1).p, { tid: 'u1', rev: 'rev-1', sum: true });
+  const navigated = await resolveAck(navigatePromise, 'tree_nav', { tree, editorText: 'Start' });
+  assert.equal(navigated.editorText, 'Start');
+
+  const forkPromise = channel.forkTree('ws1', { targetId: 'u1', revision: 'rev-1' });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(socket.sent.at(-1).p, { tid: 'u1', rev: 'rev-1' });
+  const forked = await resolveAck(forkPromise, 'tree_fork', {
+    s: sampleWireSession({ id: 'ws2', ag: 'pi', nsid: 'pi-fork' }),
+    tree: { ...tree, sessionId: 'ws2' },
+    editorText: 'Start',
+  });
+  assert.equal(forked.session.id, 'ws2');
+  assert.equal(forked.session.nativeSessionId, 'pi-fork');
+  assert.equal(forked.tree.sessionId, 'ws2');
+
+  const clonePromise = channel.cloneTree('ws1', { revision: 'rev-1' });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(socket.sent.at(-1).p, { rev: 'rev-1' });
+  const cloned = await resolveAck(clonePromise, 'tree_clone', {
+    s: sampleWireSession({ id: 'ws3', ag: 'pi', nsid: 'pi-clone' }),
+    tree: { ...tree, sessionId: 'ws3' },
+  });
+  assert.equal(cloned.session.id, 'ws3');
+  assert.equal(cloned.editorText, '');
   channel.close();
 });
 

@@ -73,6 +73,8 @@ type wireSess struct {
 	Title                             string      `json:"ttl"`
 	Cwd                               string      `json:"cwd"`
 	NativeSessionID                   *string     `json:"nsid,omitempty"`
+	NativeLeafID                      *string     `json:"nlid,omitempty"`
+	SourceRevision                    *string     `json:"srev,omitempty"`
 	CyberPolicyFlagged                bool        `json:"cpf,omitempty"`
 	HasScheduledPlanExecution         bool        `json:"spe,omitempty"`
 	Status                            string      `json:"st"`
@@ -218,6 +220,7 @@ type wirePendingInput struct {
 	AttachmentIDs []string `json:"atts,omitempty"`
 	ReadyAt       *int64   `json:"ra,omitempty"`
 	Paused        bool     `json:"ps,omitempty"`
+	NativeQueued  bool     `json:"nq,omitempty"`
 	CreatedAt     int64    `json:"ca"`
 }
 
@@ -468,6 +471,8 @@ func mapWireSession(session SessionSummary) *wireSess {
 		Title:                             session.Title,
 		Cwd:                               session.Cwd,
 		NativeSessionID:                   session.NativeSessionID,
+		NativeLeafID:                      session.NativeLeafID,
+		SourceRevision:                    session.SourceRevision,
 		CyberPolicyFlagged:                session.CyberPolicyFlagged,
 		HasScheduledPlanExecution:         session.HasScheduledPlanExecution,
 		Status:                            string(session.Status),
@@ -557,6 +562,7 @@ func mapWirePendingInputs(items []PendingInput) []wirePendingInput {
 			AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
 			ReadyAt:       readyAt,
 			Paused:        item.Paused,
+			NativeQueued:  item.NativeQueued,
 			CreatedAt:     item.CreatedAt.UnixMilli(),
 		})
 	}

@@ -404,11 +404,15 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			next.SourceTurnID = sourceTurnID
 			next.Kind = "assistant"
 			next.ItemType = "agent_message"
+			if text, authoritative := payload["txt"].(string); authoritative {
+				next.Text = text
+			}
 			next.ObservedAt = ptr(event.Timestamp)
 			if next.Timestamp == nil {
 				next.Timestamp = ptr(event.Timestamp)
 			}
 			next.Done = true
+			next.Payload = payload
 		})
 		if err != nil {
 			return nil, err

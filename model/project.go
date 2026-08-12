@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"code-kanban/model/tables"
 	"code-kanban/utils"
 	"code-kanban/utils/git"
 
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 var (
@@ -212,25 +214,30 @@ func (s *ProjectService) DeleteProject(ctx context.Context, id string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	q, err := resolveQueries(nil)
-	if err != nil {
-		return err
+	if db == nil {
+		return ErrDBNotInitialized
 	}
 
-	now := time.Now()
-	affected, err := q.ProjectSoftDelete(ctx, &ProjectSoftDeleteParams{
-		DeletedAt: &now,
-		UpdatedAt: now,
-		Id:        id,
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var project tables.ProjectTable
+		if err := tx.Where("id = ?", id).First(&project).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrProjectNotFound
+			}
+			return err
+		}
+
+		now := time.Now()
+		if err := tx.Model(&project).Updates(map[string]any{
+			"deleted_at": now,
+			"updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Unscoped().
+			Where("project_id = ?", id).
+			Delete(&tables.ProjectAgentTrustTable{}).Error
 	})
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrProjectNotFound
-	}
-	return nil
 }
 
 // UpdateProject modifies project metadata such as name and description.

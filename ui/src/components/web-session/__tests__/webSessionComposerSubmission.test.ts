@@ -75,6 +75,50 @@ describe('web session composer submission', () => {
     );
   });
 
+  it('routes exact Pi compact commands before session creation and rejects attachments', () => {
+    const handlerSource = sourceBetween(
+      'async function handleSubmit()',
+      'async function handleConfirmScheduledSend()'
+    );
+    const compactIndex = handlerSource.indexOf("const isPiCompactCommand = submitAgent === 'pi'");
+    const createIndex = handlerSource.indexOf('await handleCreateSession(');
+
+    expect(compactIndex).toBeGreaterThanOrEqual(0);
+    expect(compactIndex).toBeLessThan(createIndex);
+    expect(handlerSource).toContain("draftText.trim() === '/compact'");
+    expect(handlerSource).toContain('if (!initialRealSession || isDraftSession(initialSession))');
+    expect(handlerSource).toContain(
+      "throw new Error(t('webSession.compactAttachmentsUnsupported'))"
+    );
+    expect(handlerSource).toContain('await webSessionStore.compactSession(initialRealSession.id);');
+  });
+
+  it('renders Pi native queued inputs as read-only and keeps local queue controls separate', () => {
+    const pendingTemplateSource = sourceBetween(
+      '<div v-if="pendingInputs.length > 0" class="pending-inputs">',
+      '<div v-if="scheduledInputs.length > 0" class="scheduled-inputs">'
+    );
+    const pendingHandlerSource = sourceBetween(
+      'async function startPendingEdit(item: WebSessionPendingInput)',
+      'function scheduledModeLabel('
+    );
+    const clearHandlerSource = sourceBetween(
+      'async function handleRemovePendingInput(pendingId: string)',
+      'async function handleRemoveScheduledInput('
+    );
+
+    expect(webSessionPanelSource).toContain(
+      'const localPendingInputs = computed(() => pendingInputs.value.filter(item => !item.nativeQueued))'
+    );
+    expect(pendingTemplateSource).toContain('v-if="item.nativeQueued"');
+    expect(pendingTemplateSource).toContain("t('webSession.pendingNativeQueued')");
+    expect(pendingTemplateSource).toContain('v-else class="pending-input-popover-actions"');
+    expect(pendingTemplateSource).toContain('v-if="!item.nativeQueued"');
+    expect(pendingHandlerSource).toContain('item.nativeQueued');
+    expect(pendingHandlerSource).toContain('const currentItems = localPendingInputs.value;');
+    expect(clearHandlerSource).toContain('localPendingInputs.value.length === 0');
+  });
+
   it('does not reactivate a session after creation or catch-up becomes stale', () => {
     const createSource = sourceBetween(
       'async function handleCreateSession(',

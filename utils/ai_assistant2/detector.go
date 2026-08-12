@@ -9,10 +9,11 @@ import (
 
 // DetectionRule defines how to detect a specific AI assistant from command
 type DetectionRule struct {
-	Type            types.AssistantType
-	Patterns        []string // Command line patterns to match (case-insensitive)
-	ExecutableNames []string // Executable names to match exactly (case-insensitive)
-	Description     string
+	Type                  types.AssistantType
+	Patterns              []string // Command line patterns to match (case-insensitive)
+	ExecutableNames       []string // Executable names to match exactly (case-insensitive)
+	PatternsInExecutables bool     // Restrict patterns to executable/script tokens
+	Description           string
 }
 
 var defaultRules = []DetectionRule{
@@ -47,6 +48,22 @@ var defaultRules = []DetectionRule{
 		Description: "Detects OpenAI Codex CLI",
 	},
 	{
+		Type: types.AssistantTypePi,
+		Patterns: []string{
+			"@earendil-works/pi-coding-agent",
+			"@mariozechner/pi-coding-agent",
+			"pi-coding-agent/dist/cli.js",
+		},
+		ExecutableNames: []string{
+			"pi",
+			"pi.exe",
+			"pi.cmd",
+			"pi.ps1",
+		},
+		PatternsInExecutables: true,
+		Description:           "Detects Pi coding agent CLI",
+	},
+	{
 		Type: types.AssistantTypeQwenCode,
 		Patterns: []string{
 			"@qwen-code/qwen-code",
@@ -74,18 +91,24 @@ func (r *DetectionRule) Match(command string) bool {
 
 	normalizedCmd := normalizeCommand(command)
 
+	candidates := candidateExecutables(normalizedCmd)
 	for _, pattern := range r.Patterns {
 		normalizedPattern := strings.ToLower(pattern)
-		if strings.Contains(normalizedCmd, normalizedPattern) {
+		if !r.PatternsInExecutables && strings.Contains(normalizedCmd, normalizedPattern) {
 			return true
+		}
+		if r.PatternsInExecutables {
+			for _, candidate := range candidates {
+				if strings.Contains(candidate, normalizedPattern) {
+					return true
+				}
+			}
 		}
 	}
 
 	if len(r.ExecutableNames) == 0 {
 		return false
 	}
-
-	candidates := candidateExecutables(normalizedCmd)
 	for _, candidate := range candidates {
 		if r.matchesExecutable(candidate) {
 			return true
@@ -101,21 +124,56 @@ func normalizeCommand(command string) string {
 }
 
 func splitCommandTokens(command string) []string {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
+	command = strings.TrimSpace(command)
+	if command == "" {
 		return nil
 	}
 
-	tokens := make([]string, 0, len(fields))
-	for _, field := range fields {
-		token := strings.Trim(field, `"'`)
-		if token == "" {
+	tokens := make([]string, 0, 8)
+	var current strings.Builder
+	var quote rune
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, current.String())
+		current.Reset()
+	}
+	chars := []rune(command)
+	for index, char := range chars {
+		if quote != 0 {
+			if char == quote {
+				// cmd.exe wraps /c payloads as ""executable" args". The
+				// second opening quote is a wrapper delimiter, not an empty arg.
+				if current.Len() == 0 && index+1 < len(chars) && !isCommandSpace(chars[index+1]) {
+					continue
+				}
+				quote = 0
+			} else {
+				current.WriteRune(char)
+			}
 			continue
 		}
-		tokens = append(tokens, token)
+		switch char {
+		case '"', '\'':
+			quote = char
+		case ' ', '\t', '\r', '\n':
+			flush()
+		default:
+			current.WriteRune(char)
+		}
 	}
-
+	flush()
 	return tokens
+}
+
+func isCommandSpace(char rune) bool {
+	switch char {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
 }
 
 func candidateExecutables(command string) []string {
@@ -158,12 +216,19 @@ func extractShellCommandTokens(tokens []string) []string {
 	}
 
 	for idx := 1; idx < len(tokens); idx++ {
-		token := tokens[idx]
-		if token == "-c" || token == "-lc" || token == "-cl" {
+		token := strings.ToLower(tokens[idx])
+		if token == "-c" || token == "-lc" || token == "-cl" || token == "/c" || token == "-command" {
 			if idx+1 >= len(tokens) {
 				return nil
 			}
-			return splitCommandTokens(strings.Join(tokens[idx+1:], " "))
+			scriptTokens := append([]string(nil), tokens[idx+1:]...)
+			if len(scriptTokens) == 1 {
+				scriptTokens = splitCommandTokens(scriptTokens[0])
+			}
+			if len(scriptTokens) > 0 && scriptTokens[0] == "&" {
+				scriptTokens = scriptTokens[1:]
+			}
+			return scriptTokens
 		}
 	}
 
@@ -183,7 +248,8 @@ func isNodeRuntime(token string) bool {
 func isShellExecutable(token string) bool {
 	base := path.Base(token)
 	switch base {
-	case "bash", "bash.exe", "sh", "sh.exe", "zsh", "zsh.exe", "fish", "fish.exe":
+	case "bash", "bash.exe", "sh", "sh.exe", "zsh", "zsh.exe", "fish", "fish.exe",
+		"cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe":
 		return true
 	default:
 		return false

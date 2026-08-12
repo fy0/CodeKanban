@@ -10,6 +10,7 @@ import {
   type WebSessionSubAgentRecord,
 } from '@/api/webSession';
 import type {
+  WebSessionAgent,
   WebSessionAttachment,
   WebSessionContextWindowSource,
   WebSessionGoal,
@@ -49,7 +50,7 @@ type WireSession = {
   pid: string;
   wid?: string | null;
   oi?: number;
-  ag: 'claude' | 'codex';
+  ag: WebSessionAgent;
   cr?: 'claude' | 'ccr';
   md: string;
   re?: WebSessionReasoningEffort;
@@ -128,6 +129,7 @@ type WirePendingInput = {
   atts?: string[];
   ra?: number | null;
   ps?: boolean;
+  nq?: boolean;
   ca?: number | null;
 };
 
@@ -509,10 +511,11 @@ export interface WebSessionPendingInput {
   attachmentIds: string[];
   readyAt: number | null;
   paused: boolean;
+  nativeQueued?: boolean;
   createdAt: number;
 }
 
-export const WEB_SESSION_CODEX_STEER_UNDO_WINDOW_MS = 5_000;
+export const WEB_SESSION_NATIVE_STEER_UNDO_WINDOW_MS = 5_000;
 
 type WebSessionPendingInputMode = WebSessionPendingInput['mode'];
 
@@ -2761,6 +2764,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     attachmentIds?: string[];
     readyAt?: string | number | null;
     paused?: boolean;
+    nativeQueued?: boolean;
     createdAt?: string | number | null;
   }): WebSessionPendingInput | null {
     const id = typeof item.id === 'string' ? item.id.trim() : '';
@@ -2788,6 +2792,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         : [],
       readyAt: Number.isFinite(parsedReadyAt) ? parsedReadyAt : null,
       paused: item.paused === true,
+      ...(item.nativeQueued === true ? { nativeQueued: true } : {}),
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
     };
   }
@@ -4473,6 +4478,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
                   attachmentIds: item.atts,
                   readyAt: item.ra,
                   paused: item.ps,
+                  nativeQueued: item.nq,
                   createdAt: item.ca,
                 })
               )
@@ -4545,6 +4551,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
                     attachmentIds: item.atts,
                     readyAt: item.ra,
                     paused: item.ps,
+                    nativeQueued: item.nq,
                     createdAt: item.ca,
                   })
                 )
@@ -5286,9 +5293,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
   async function importSession(
     projectId: string,
     sessionId: string,
-    mode?: 'fast' | 'deep'
+    mode?: 'fast' | 'deep',
+    agent: 'codex' | 'pi' = 'codex'
   ): Promise<WebSessionImportResult> {
     const result = await webSessionApi.importSession(projectId, {
+      agent,
       sessionId,
       mode,
     });
@@ -5470,8 +5479,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
           text,
           attachmentIds: [...attachmentIds],
           readyAt:
-            mode === 'redirect' && session.agent === 'codex'
-              ? Date.now() + WEB_SESSION_CODEX_STEER_UNDO_WINDOW_MS
+            mode === 'redirect' && (session.agent === 'codex' || session.agent === 'pi')
+              ? Date.now() + WEB_SESSION_NATIVE_STEER_UNDO_WINDOW_MS
               : null,
           paused: false,
           createdAt: Date.now(),
@@ -5861,6 +5870,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
     );
   }
 
+  async function compactSession(sessionId: string) {
+    await runRuntimeMutationCommand(
+      sessionId,
+      'compact',
+      {},
+      {
+        label: 'compact',
+        predicate: () => getLiveState(sessionId).running,
+      }
+    );
+  }
+
   async function approveSession(sessionId: string) {
     const beforeState = snapshotRuntimeMutationState(sessionId);
     await runRuntimeMutationCommand(
@@ -6138,7 +6159,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await sendCommand('set_pl', sessionId, { pl: permissionLevel });
   }
 
-  async function updateAgent(sessionId: string, agent: 'claude' | 'codex') {
+  async function updateAgent(sessionId: string, agent: WebSessionAgent) {
     await sendCommand('set_ag', sessionId, { ag: agent });
   }
 
@@ -6378,7 +6399,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     projectId: string,
     payload: {
       worktreeId?: string;
-      agent: 'claude' | 'codex';
+      agent: WebSessionAgent;
       claudeRuntime?: 'claude' | 'ccr';
       model?: string;
       reasoningEffort?: WebSessionReasoningEffort;
@@ -6456,6 +6477,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updateScheduledInput,
     dispatchScheduledInputNow,
     abortSession,
+    compactSession,
     approveSession,
     rejectSession,
     answerUserInput,

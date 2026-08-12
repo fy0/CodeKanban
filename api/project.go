@@ -9,6 +9,7 @@ import (
 
 	"code-kanban/api/h"
 	"code-kanban/model"
+	"code-kanban/service/websession"
 )
 
 const projectTag = "project-项目管理"
@@ -43,7 +44,7 @@ type projectAccessInput struct {
 	ID string `path:"id"`
 }
 
-func registerProjectRoutes(group *huma.Group) {
+func registerProjectRoutes(group *huma.Group, webSessionManager *websession.Manager) {
 	service := model.NewProjectService()
 
 	huma.Post(group, "/projects/create", func(ctx context.Context, input *createProjectInput) (*h.ItemResponse[model.Project], error) {
@@ -227,6 +228,9 @@ func registerProjectRoutes(group *huma.Group) {
 	huma.Post(group, "/projects/{id}/delete", func(ctx context.Context, input *struct {
 		ID string `path:"id"`
 	}) (*h.MessageResponse, error) {
+		if webSessionManager != nil {
+			webSessionManager.StopProjectPiRuntimes(input.ID)
+		}
 		if err := service.DeleteProject(ctx, input.ID); err != nil {
 			if errors.Is(err, model.ErrDBNotInitialized) {
 				return nil, huma.Error503ServiceUnavailable("database is not initialized")

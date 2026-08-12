@@ -64,6 +64,119 @@ function booleanValue(value) {
   return value === true;
 }
 
+function unavailableAgentCapability() {
+  return {
+    installed: false,
+    version: null,
+    supportsWebSession: false,
+    supportsTree: false,
+    supportsImages: false,
+    supportsCompaction: false,
+    supportsSteer: false,
+    supportsFollowUp: false,
+    supportsGoal: false,
+    supportsSubAgentRegistry: false,
+    permissionModes: [],
+  };
+}
+
+function normalizeAgentCapability(value, fallback = unavailableAgentCapability()) {
+  if (!value || typeof value !== "object") {
+    return { ...fallback };
+  }
+  return {
+    ...fallback,
+    installed: booleanValue(value.installed),
+    version: trimmedString(value.version) || null,
+    supportsWebSession: booleanValue(value.supportsWebSession),
+    supportsTree: booleanValue(value.supportsTree),
+    supportsImages: booleanValue(value.supportsImages),
+    supportsCompaction: booleanValue(value.supportsCompaction),
+    supportsSteer: booleanValue(value.supportsSteer),
+    supportsFollowUp: booleanValue(value.supportsFollowUp),
+    supportsGoal: booleanValue(value.supportsGoal),
+    supportsSubAgentRegistry: booleanValue(value.supportsSubAgentRegistry),
+    permissionModes: Array.isArray(value.permissionModes)
+      ? value.permissionModes
+          .map((mode) => ({
+            id: trimmedString(mode?.id),
+            available: booleanValue(mode?.available),
+          }))
+          .filter((mode) => mode.id)
+      : [],
+  };
+}
+
+export function normalizeWebSessionRuntimeConfig(value) {
+  const config = value && typeof value === "object" ? value : {};
+  const hasCodex = booleanValue(config.hasCodex);
+  const hasClaudeCode = booleanValue(config.hasClaudeCode);
+  const hasPi = booleanValue(config.hasPi);
+  const supportsCodexWebSession = hasCodex && config.supportsWebSession !== false;
+  const legacyCapabilities = {
+    claude: {
+      ...unavailableAgentCapability(),
+      installed: hasClaudeCode,
+      supportsWebSession: hasClaudeCode,
+      supportsImages: true,
+      supportsCompaction: true,
+      supportsSteer: true,
+      supportsFollowUp: true,
+    },
+    codex: {
+      ...unavailableAgentCapability(),
+      installed: hasCodex,
+      version: trimmedString(config.codexVersion) || null,
+      supportsWebSession: supportsCodexWebSession,
+      supportsImages: true,
+      supportsCompaction: true,
+      supportsSteer: true,
+      supportsFollowUp: true,
+      supportsGoal: booleanValue(config.supportsGoalMode),
+      supportsSubAgentRegistry: booleanValue(config.supportsMultiAgentV2),
+    },
+    pi: {
+      ...unavailableAgentCapability(),
+      installed: hasPi,
+      version: trimmedString(config.piVersion) || null,
+      supportsWebSession: hasPi && booleanValue(config.supportsPiWebSession),
+      supportsTree: booleanValue(config.supportsPiWebSession),
+      supportsImages: booleanValue(config.supportsPiWebSession),
+      supportsCompaction: booleanValue(config.supportsPiWebSession),
+      supportsSteer: booleanValue(config.supportsPiWebSession),
+      supportsFollowUp: booleanValue(config.supportsPiWebSession),
+    },
+  };
+  const explicitAgents =
+    config.agents && typeof config.agents === "object" ? config.agents : {};
+  const piModels = Array.isArray(config.piModels)
+    ? config.piModels
+        .map((model) => ({
+          provider: trimmedString(model?.provider),
+          id: trimmedString(model?.id),
+          name: trimmedString(model?.name),
+          reasoning: booleanValue(model?.reasoning),
+          input: Array.isArray(model?.input)
+            ? model.input.map(trimmedString).filter(Boolean)
+            : [],
+          contextWindow: numberValue(model?.contextWindow, 0),
+          ...(nullableNumberValue(model?.maxTokens) == null
+            ? {}
+            : { maxTokens: numberValue(model.maxTokens, 0) }),
+        }))
+        .filter((model) => model.provider && model.id)
+    : [];
+  return {
+    ...config,
+    piModels,
+    agents: {
+      claude: normalizeAgentCapability(explicitAgents.claude, legacyCapabilities.claude),
+      codex: normalizeAgentCapability(explicitAgents.codex, legacyCapabilities.codex),
+      pi: normalizeAgentCapability(explicitAgents.pi, legacyCapabilities.pi),
+    },
+  };
+}
+
 function normalizeUsage(value) {
   return {
     inputTokens: numberValue(value?.in, 0),
@@ -246,6 +359,9 @@ function normalizePendingInput(value) {
         ? trimmedString(value.readyAt) || null
         : null),
     paused: value?.ps === true || value?.paused === true,
+    ...(value?.nq === true || value?.nativeQueued === true
+      ? { nativeQueued: true }
+      : {}),
     createdAt:
       isoFromUnixMilli(value?.ca) ||
       (typeof value?.createdAt === "string"
@@ -360,6 +476,8 @@ export function normalizeWebSessionSummaryFromWire(value) {
     permissionLevel: trimmedString(value?.pl) || "elevated",
     cwd: trimmedString(value?.cwd),
     nativeSessionId: trimmedString(value?.nsid) || null,
+    nativeLeafId: trimmedString(value?.nlid) || null,
+    sourceRevision: trimmedString(value?.srev) || null,
     status: trimmedString(value?.st) || "idle",
     assistantState: trimmedString(value?.ast) || null,
     hasUnread: booleanValue(value?.unr),
@@ -408,6 +526,59 @@ export function normalizeWebSessionSnapshotFromWire(frame) {
     subAgents: Array.isArray(frame?.ags)
       ? frame.ags.map(normalizeWebSessionSubAgent).filter(Boolean)
       : [],
+  };
+}
+
+function normalizePiTreeNode(value) {
+  const id = trimmedString(value?.id);
+  const type = trimmedString(value?.type);
+  if (!id || !type) {
+    return null;
+  }
+  return {
+    id,
+    parentId: trimmedString(value?.parentId) || null,
+    type,
+    role: trimmedString(value?.role),
+    preview: trimmedString(value?.preview),
+    timestamp: trimmedString(value?.timestamp),
+    label: trimmedString(value?.label),
+    active: booleanValue(value?.active),
+    children: Array.isArray(value?.children)
+      ? value.children.map(trimmedString).filter(Boolean)
+      : [],
+  };
+}
+
+export function normalizePiTreeSnapshot(value) {
+  const nodes = Array.isArray(value?.nodes)
+    ? value.nodes.map(normalizePiTreeNode).filter(Boolean)
+    : [];
+  const nodeIds = new Set(nodes.map(node => node.id));
+  return {
+    sessionId: trimmedString(value?.sessionId),
+    leafId: nodeIds.has(trimmedString(value?.leafId))
+      ? trimmedString(value?.leafId)
+      : null,
+    revision: trimmedString(value?.revision),
+    nodes,
+  };
+}
+
+export function normalizePiTreeNavigateResult(value) {
+  return {
+    tree: normalizePiTreeSnapshot(value?.tree),
+    editorText: stringValue(value?.editorText),
+  };
+}
+
+export function normalizePiTreeCreateResult(value) {
+  return {
+    session: value?.s
+      ? normalizeWebSessionSummaryFromWire(value.s)
+      : value?.session || null,
+    tree: normalizePiTreeSnapshot(value?.tree),
+    editorText: stringValue(value?.editorText),
   };
 }
 

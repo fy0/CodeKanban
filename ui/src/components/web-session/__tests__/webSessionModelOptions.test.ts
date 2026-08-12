@@ -12,6 +12,9 @@ import {
   defaultPermissionLevelForAgent,
   defaultReasoningEffortForAgent,
   resolveCodexReasoningEfforts,
+  resolvePiModelOptionGroups,
+  resolvePiModelOptions,
+  resolvePiReasoningEfforts,
 } from '@/components/web-session/webSessionModelOptions';
 
 describe('webSessionModelOptions', () => {
@@ -84,7 +87,7 @@ describe('webSessionModelOptions', () => {
     expect(MORE_MODELS_VALUE).toBe('__more_models__');
   });
 
-  it('uses configurable Codex defaults without changing Claude defaults', () => {
+  it('uses configurable Codex defaults without changing Claude or Pi defaults', () => {
     expect(defaultModelForAgent('codex')).toBe('gpt-5.6-sol');
     expect(defaultModelForAgent('codex', 'custom-codex-model')).toBe('custom-codex-model');
     expect(defaultModelForAgent('claude')).toBe('opus');
@@ -96,6 +99,9 @@ describe('webSessionModelOptions', () => {
     expect(defaultPermissionLevelForAgent('codex', 'standard')).toBe('default');
     expect(defaultPermissionLevelForAgent('codex', 'yolo')).toBe('yolo');
     expect(defaultPermissionLevelForAgent('claude', 'standard')).toBe('elevated');
+    expect(defaultModelForAgent('pi')).toBe('');
+    expect(defaultReasoningEffortForAgent('pi', 'high')).toBe('default');
+    expect(defaultPermissionLevelForAgent('pi', 'standard')).toBe('elevated');
   });
 
   it('uses model-specific reasoning efforts from the Codex catalog', () => {
@@ -125,6 +131,58 @@ describe('webSessionModelOptions', () => {
       'xhigh',
       'max',
     ]);
+  });
+
+  it('maps the Pi catalog to stable provider/model values and supported thinking levels', () => {
+    const catalog = [
+      {
+        provider: 'anthropic',
+        id: 'claude-sonnet-4',
+        name: 'Claude Sonnet 4',
+        reasoning: true,
+        input: ['text', 'image'],
+        contextWindow: 200000,
+      },
+      {
+        provider: 'openai',
+        id: 'gpt-4.1',
+        name: 'GPT-4.1',
+        reasoning: false,
+        input: ['text'],
+        contextWindow: 1000000,
+      },
+    ];
+
+    expect(resolvePiModelOptions(catalog)).toEqual([
+      {
+        label: 'Claude Sonnet 4',
+        value: 'anthropic/claude-sonnet-4',
+        menuLabel: 'Claude Sonnet 4',
+      },
+      { label: 'GPT-4.1', value: 'openai/gpt-4.1', menuLabel: 'GPT-4.1' },
+    ]);
+    expect(resolvePiModelOptionGroups(catalog)).toEqual([
+      {
+        type: 'group',
+        key: 'pi-provider-anthropic',
+        label: 'anthropic',
+        children: [
+          {
+            label: 'Claude Sonnet 4',
+            value: 'anthropic/claude-sonnet-4',
+            menuLabel: 'Claude Sonnet 4',
+          },
+        ],
+      },
+      {
+        type: 'group',
+        key: 'pi-provider-openai',
+        label: 'openai',
+        children: [{ label: 'GPT-4.1', value: 'openai/gpt-4.1', menuLabel: 'GPT-4.1' }],
+      },
+    ]);
+    expect(resolvePiReasoningEfforts(catalog, 'anthropic/claude-sonnet-4')).toContain('max');
+    expect(resolvePiReasoningEfforts(catalog, 'openai/gpt-4.1')).toEqual(['default', 'none']);
   });
 
   it('falls back per 5.6 model without exposing none or Luna ultra', () => {

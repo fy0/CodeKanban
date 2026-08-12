@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { buildAgentLaunchSpec } from "./command-builder.js";
+import { AGENTS, buildAgentLaunchSpec } from "./command-builder.js";
 import {
   CodeKanbanConfigError,
   CodeKanbanHttpError,
@@ -14,7 +14,11 @@ import {
   WEB_SESSION_EVENTS_WS_PATH,
   analyzeWebSession,
   ensureImageMimeType,
+  normalizePiTreeCreateResult,
+  normalizePiTreeNavigateResult,
+  normalizePiTreeSnapshot,
   normalizeWebSessionAttachment,
+  normalizeWebSessionRuntimeConfig,
 } from "./web-session-shared.js";
 import {
   ensureArrayOfStrings,
@@ -603,6 +607,50 @@ export class CodeKanbanClient {
     return extractPayloadItem(response);
   }
 
+  async getProjectPiTrust(input = {}) {
+    const projectId = await this.resolveProjectId({
+      projectId: input.projectId,
+      projectName: input.projectName,
+      projectIndex: input.projectIndex,
+      path: input.path,
+      ensureProject: input.ensureProject !== false,
+    });
+    const response = await this.requestJson(
+      `/api/v1/projects/${projectId}/agent-trust/pi`,
+    );
+    return extractPayloadItem(response);
+  }
+
+  async trustProjectForPi(input = {}) {
+    const projectId = await this.resolveProjectId({
+      projectId: input.projectId,
+      projectName: input.projectName,
+      projectIndex: input.projectIndex,
+      path: input.path,
+      ensureProject: input.ensureProject !== false,
+    });
+    const response = await this.requestJson(
+      `/api/v1/projects/${projectId}/agent-trust/pi`,
+      { method: "POST" },
+    );
+    return extractPayloadItem(response);
+  }
+
+  async revokeProjectPiTrust(input = {}) {
+    const projectId = await this.resolveProjectId({
+      projectId: input.projectId,
+      projectName: input.projectName,
+      projectIndex: input.projectIndex,
+      path: input.path,
+      ensureProject: input.ensureProject !== false,
+    });
+    const response = await this.requestJson(
+      `/api/v1/projects/${projectId}/agent-trust/pi`,
+      { method: "DELETE" },
+    );
+    return extractPayloadItem(response);
+  }
+
   async listWorktrees(projectId) {
     ensureString(projectId, "projectId");
     const response = await this.requestJson(
@@ -856,8 +904,10 @@ export class CodeKanbanClient {
         : Promise.resolve({
             hasClaudeCode: false,
             hasCodex: false,
+            hasPi: false,
             claudeSessions: [],
             codexSessions: [],
+            piSessions: [],
           }),
     ]);
 
@@ -966,6 +1016,57 @@ export class CodeKanbanClient {
     return extractPayloadItems(response);
   }
 
+  async listWebSessionImportSources({ projectId, projectName, projectIndex, path, refresh = false } = {}) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      projectName,
+      projectIndex,
+      path,
+      ensureProject: true,
+    });
+    const query = refresh === true ? "?refresh=true" : "";
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/import-sources${query}`,
+    );
+    return extractPayloadItem(response) || { items: [], scanPhase: "complete" };
+  }
+
+  async importWebSession(input = {}) {
+    const projectId = await this.resolveProjectId({
+      projectId: input.projectId,
+      projectName: input.projectName,
+      projectIndex: input.projectIndex,
+      path: input.path,
+      ensureProject: true,
+    });
+    const agent = ensureOptionalString(input.agent) || "codex";
+    if (agent !== "codex" && agent !== "pi") {
+      throw new CodeKanbanValidationError("agent must be codex or pi");
+    }
+    const sessionId = ensureOptionalString(input.sessionId);
+    const aiSessionId = ensureOptionalString(input.aiSessionId);
+    if (!sessionId && !aiSessionId) {
+      throw new CodeKanbanValidationError("sessionId or aiSessionId is required");
+    }
+    const mode = ensureOptionalString(input.mode);
+    if (mode && mode !== "fast" && mode !== "deep") {
+      throw new CodeKanbanValidationError("mode must be fast or deep");
+    }
+    const response = await this.requestJson(
+      `/api/v1/projects/${projectId}/web-sessions/import`,
+      {
+        method: "POST",
+        body: {
+          agent,
+          ...(sessionId ? { sessionId } : {}),
+          ...(aiSessionId ? { aiSessionId } : {}),
+          ...(mode ? { mode } : {}),
+        },
+      },
+    );
+    return extractPayloadItem(response);
+  }
+
   async createWebSession(input = {}) {
     const projectId = await this.resolveProjectId({
       projectId: input.projectId,
@@ -976,6 +1077,9 @@ export class CodeKanbanClient {
     });
 
     const agent = ensureString(input.agent, "agent");
+    if (!AGENTS.includes(agent)) {
+      throw new CodeKanbanValidationError(`agent must be one of: ${AGENTS.join(", ")}`);
+    }
     const permissionMode = ensureOptionalString(
       input.permissionMode,
     ).toLowerCase();
@@ -1034,6 +1138,111 @@ export class CodeKanbanClient {
       `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/snapshot?limit=${normalizedLimit}`,
     );
     return extractPayloadItem(response);
+  }
+
+  async getWebSessionTree({ projectId, projectName, projectIndex, path, sessionId }) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      projectName,
+      projectIndex,
+      path,
+      ensureProject: true,
+    });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/tree`,
+    );
+    return normalizePiTreeSnapshot(extractPayloadItem(response));
+  }
+
+  async navigateWebSessionTree({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    sessionId,
+    targetId,
+    revision,
+    summarize = false,
+  }) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      projectName,
+      projectIndex,
+      path,
+      ensureProject: true,
+    });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/tree/navigate`,
+      {
+        method: "POST",
+        body: {
+          targetId: ensureString(targetId, "targetId"),
+          revision: ensureString(revision, "revision"),
+          summarize: summarize === true,
+        },
+      },
+    );
+    return normalizePiTreeNavigateResult(extractPayloadItem(response));
+  }
+
+  async forkWebSessionTree({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    sessionId,
+    targetId,
+    revision,
+  }) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      projectName,
+      projectIndex,
+      path,
+      ensureProject: true,
+    });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/tree/fork`,
+      {
+        method: "POST",
+        body: {
+          targetId: ensureString(targetId, "targetId"),
+          revision: ensureString(revision, "revision"),
+        },
+      },
+    );
+    return normalizePiTreeCreateResult(extractPayloadItem(response));
+  }
+
+  async cloneWebSessionTree({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    sessionId,
+    revision,
+  }) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      projectName,
+      projectIndex,
+      path,
+      ensureProject: true,
+    });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/tree/clone`,
+      {
+        method: "POST",
+        body: {
+          revision: ensureString(revision, "revision"),
+        },
+      },
+    );
+    return normalizePiTreeCreateResult(extractPayloadItem(response));
   }
 
   async getWebSessionHistory({
@@ -1265,7 +1474,7 @@ export class CodeKanbanClient {
     const response = await this.requestJson(
       "/api/v1/web-sessions/runtime-config",
     );
-    return extractPayloadItem(response);
+    return normalizeWebSessionRuntimeConfig(extractPayloadItem(response));
   }
 
   async uploadWebSessionAttachment({
@@ -1348,6 +1557,12 @@ export class CodeKanbanClient {
         attachmentIds,
         mode: ensureOptionalString(mode),
       }),
+    );
+  }
+
+  async compactWebSession({ sessionId }) {
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.compact(sessionId),
     );
   }
 

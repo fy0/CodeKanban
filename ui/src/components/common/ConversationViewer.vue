@@ -171,26 +171,11 @@
 
     <div class="conversation-toolbar">
       <div v-if="sessionInfo" class="session-info">
-        <n-tag
-          v-if="sessionInfo.type"
-          size="small"
-          :type="sessionInfo.type === 'claude_code' ? 'info' : 'success'"
-        >
+        <n-tag v-if="sessionInfo.type" size="small" :type="sessionAssistantTagType">
           <template #icon>
-            <n-icon size="12">
-              <svg
-                v-if="sessionInfo.type === 'claude_code'"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path
-                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
-                />
-              </svg>
-              <LogoGithub v-else />
-            </n-icon>
+            <span class="session-assistant-icon" v-html="sessionAssistantIcon" />
           </template>
-          {{ sessionInfo.type === 'claude_code' ? 'Claude Code' : 'Codex' }}
+          {{ sessionAssistantLabel }}
         </n-tag>
         <code class="session-id-code">{{ sessionInfo.sessionId }}</code>
         <n-button size="tiny" quaternary @click="copySessionId">
@@ -282,11 +267,12 @@
 import { computed, h, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useTimeAgo } from '@vueuse/core';
 import { useDialog, useMessage } from 'naive-ui';
-import { CopyOutline, ImageOutline, LogoGithub, RefreshOutline } from '@vicons/ionicons5';
+import { CopyOutline, ImageOutline, RefreshOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useConversationVirtualizer } from '@/composables/useConversationVirtualizer';
 import { renderMarkdown } from '@/utils/markdown';
+import { getAssistantIconByType } from '@/utils/assistantIcon';
 import {
   getClickedMarkdownCodeCopyText,
   getClickedMarkdownLink,
@@ -402,6 +388,22 @@ const emit = defineEmits<{
 const { t } = useLocale();
 const dialog = useDialog();
 const message = useMessage();
+const sessionAssistantType = computed(() => {
+  if (props.sessionInfo?.type === 'claude_code') return 'claude-code';
+  if (props.sessionInfo?.type === 'pi') return 'pi';
+  return 'codex';
+});
+const sessionAssistantIcon = computed(() => getAssistantIconByType(sessionAssistantType.value));
+const sessionAssistantLabel = computed(() => {
+  if (props.sessionInfo?.type === 'claude_code') return 'Claude Code';
+  if (props.sessionInfo?.type === 'pi') return 'Pi';
+  return 'Codex';
+});
+const sessionAssistantTagType = computed(() => {
+  if (props.sessionInfo?.type === 'claude_code') return 'info';
+  if (props.sessionInfo?.type === 'pi') return 'warning';
+  return 'success';
+});
 const { copyText } = useAppClipboard();
 
 const showUserOnly = ref(false);
@@ -1479,6 +1481,14 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.session-assistant-icon {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+  align-items: center;
+  justify-content: center;
 }
 
 .session-id-code {

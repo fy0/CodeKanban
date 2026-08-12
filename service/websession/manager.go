@@ -42,6 +42,7 @@ const (
 	recoveryMessageProcessRestart = "Session runtime was interrupted because the app restarted. Send a new message to continue."
 	errCodexNotInstalled          = "Codex is not installed. Install Codex before sending messages in this session."
 	errClaudeCodeNotInstalled     = "Claude Code is not installed. Install Claude Code before sending messages in this session."
+	errPiWebSessionUnavailable    = "Pi Web Sessions require a compatible Pi RPC runtime."
 )
 
 var (
@@ -109,6 +110,8 @@ type Config struct {
 	CCRPath                     string
 	CCRConfigPath               string
 	CodexPath                   string
+	PiPath                      string
+	PiRuntimeIdleTTL            time.Duration
 	DefaultCodexModel           func() string
 	DefaultCodexReasoningEffort func() ReasoningEffort
 	DefaultCodexPermissionLevel func() string
@@ -117,12 +120,13 @@ type Config struct {
 }
 
 type Manager struct {
-	cfg          Config
-	logger       *zap.Logger
-	store        *store
-	projectSvc   *model.ProjectService
-	worktreeSvc  *service.WorktreeService
-	aiSessionSvc *service.AISessionService
+	cfg           Config
+	logger        *zap.Logger
+	store         *store
+	projectSvc    *model.ProjectService
+	worktreeSvc   *service.WorktreeService
+	aiSessionSvc  *service.AISessionService
+	agentTrustSvc *service.ProjectAgentTrustService
 
 	eventStatesMu        sync.Mutex
 	eventStates          map[string]*sessionEventState
@@ -145,9 +149,15 @@ type Manager struct {
 	sessionDispatchLocks        [64]sync.Mutex
 	revisionBroadcastLocks      [64]sync.Mutex
 	pendingInputs               map[string][]PendingInput
+	piNativeQueuedInputs        map[string][]PendingInput
 	pendingProcessing           map[string]bool
 	pendingDirty                map[string]bool
 	codexContextWindow          codexContextWindowResolver
+	piProbeMu                   sync.Mutex
+	piProbe                     piRuntimeProbeCache
+	piRuntimeMu                 sync.Mutex
+	piRuntimeTerminators        map[string]piRuntimeTerminator
+	piRuntimes                  map[string]*piSessionRuntime
 	claudeHookOnce              sync.Once
 	claudeHookBaseURL           string
 	claudeHookToken             string
@@ -189,61 +199,68 @@ type wsConn interface {
 }
 
 type activeRun struct {
-	sessionID               string
-	agent                   Agent
-	backend                 SessionBackend
-	runID                   string
-	fromAutoRetry           bool
-	hiddenBootstrap         bool
-	bootstrapGoalObjective  string
-	bootstrapGoalState      GoalStatus
-	bootstrapResult         chan error
-	bootstrapOnce           sync.Once
-	assistantMessageID      string
-	currentToolMessage      string
-	lastError               string
-	lastErrorCode           string
-	transportRetrySeen      bool
-	transportRemoteURL      string
-	cmd                     *exec.Cmd
-	cancel                  context.CancelFunc
-	done                    chan struct{}
-	mu                      sync.Mutex
-	stdin                   io.WriteCloser
-	recentRuntimeLines      []string
-	pendingApproval         string
-	pendingServerReq        *pendingServerRequest
-	inputResponsePending    bool
-	app                     *codexAppServerClient
-	codexThreadID           string
-	codexTurnID             string
-	assistantDeltaSeen      map[string]bool
-	assistantMessagePhases  map[string]string
-	assistantMessageText    map[string]bool
-	completedReply          bool
-	claudeResumeOnly        bool
-	claudeStdioControl      bool
-	claudeNativeSessionID   string
-	claudeResolvedModel     string
-	claudeCwd               string
-	deferredUserInput       bool
-	completedPlanTool       bool
-	claudeCompactionToolID  string
-	claudeCompactionStarted time.Time
-	commandGroupID          string
-	commandGroupKind        string
-	commandGroupKey         string
-	commandGroupFirst       int64
-	commandGroupCount       int
-	commandGroupTools       map[string]struct{}
-	abortPayload            map[string]any
-	activeCalls             map[string]trackedActiveCall
-	activeCallPausedAt      *time.Time
-	activeCallTimer         *time.Timer
-	activeCallInFlight      bool
-	codexCollaboration      codexCollaborationTracker
-	codexRolloutMonitor     *codexRolloutMonitor
-	syncSourceAfterRun      bool
+	sessionID                 string
+	agent                     Agent
+	backend                   SessionBackend
+	runID                     string
+	fromAutoRetry             bool
+	hiddenBootstrap           bool
+	bootstrapGoalObjective    string
+	bootstrapGoalState        GoalStatus
+	bootstrapResult           chan error
+	bootstrapOnce             sync.Once
+	assistantMessageID        string
+	currentToolMessage        string
+	lastError                 string
+	lastErrorCode             string
+	transportRetrySeen        bool
+	transportRemoteURL        string
+	cmd                       *exec.Cmd
+	cancel                    context.CancelFunc
+	done                      chan struct{}
+	mu                        sync.Mutex
+	stdin                     io.WriteCloser
+	recentRuntimeLines        []string
+	pendingApproval           string
+	pendingServerReq          *pendingServerRequest
+	inputResponsePending      bool
+	piResponseGeneration      uint64
+	piResponsePending         uint64
+	piResponseHistoryDone     chan struct{}
+	piResponseHistoryComplete uint64
+	piResponseHistoryErr      error
+	piResponseRequest         *pendingServerRequest
+	app                       *codexAppServerClient
+	codexThreadID             string
+	codexTurnID               string
+	assistantDeltaSeen        map[string]bool
+	assistantMessagePhases    map[string]string
+	assistantMessageText      map[string]bool
+	completedReply            bool
+	claudeResumeOnly          bool
+	claudeStdioControl        bool
+	claudeNativeSessionID     string
+	claudeResolvedModel       string
+	claudeCwd                 string
+	deferredUserInput         bool
+	completedPlanTool         bool
+	claudeCompactionToolID    string
+	claudeCompactionStarted   time.Time
+	commandGroupID            string
+	commandGroupKind          string
+	commandGroupKey           string
+	commandGroupFirst         int64
+	commandGroupCount         int
+	commandGroupTools         map[string]struct{}
+	abortPayload              map[string]any
+	activeCalls               map[string]trackedActiveCall
+	activeCallPausedAt        *time.Time
+	activeCallTimer           *time.Timer
+	activeCallInFlight        bool
+	codexCollaboration        codexCollaborationTracker
+	codexRolloutMonitor       *codexRolloutMonitor
+	syncSourceAfterRun        bool
+	piCompaction              bool
 }
 
 type attachmentMeta struct {
@@ -399,6 +416,12 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	if cfg.CodexPath == "" {
 		cfg.CodexPath = getenvDefault("CODEX_PATH", "codex")
 	}
+	if cfg.PiPath == "" {
+		cfg.PiPath = getenvDefault("PI_PATH", "pi")
+	}
+	if cfg.PiRuntimeIdleTTL <= 0 {
+		cfg.PiRuntimeIdleTTL = 2 * time.Minute
+	}
 	if logger == nil {
 		logger = utils.Logger()
 	}
@@ -415,6 +438,9 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		projectSvc:                  model.NewProjectService(),
 		worktreeSvc:                 service.NewWorktreeService(),
 		aiSessionSvc:                service.NewAISessionService(),
+		agentTrustSvc:               service.NewProjectAgentTrustService(),
+		piRuntimeTerminators:        make(map[string]piRuntimeTerminator),
+		piRuntimes:                  make(map[string]*piSessionRuntime),
 		runs:                        make(map[string]*activeRun),
 		clients:                     make(map[*client]struct{}),
 		autoRetryTimers:             make(map[string]*time.Timer),
@@ -424,6 +450,7 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		pendingInputTimerDeadlines:  make(map[string]time.Time),
 		pendingSteerDelay:           defaultPendingSteerDelay,
 		pendingInputs:               make(map[string][]PendingInput),
+		piNativeQueuedInputs:        make(map[string][]PendingInput),
 		pendingProcessing:           make(map[string]bool),
 		pendingDirty:                make(map[string]bool),
 		eventStates:                 make(map[string]*sessionEventState),
@@ -843,7 +870,10 @@ func (m *Manager) ListArchivedSessions(
 }
 
 func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (SessionSummary, error) {
-	agent := normalizeAgent(params.Agent)
+	agent, err := validateAgent(params.Agent)
+	if err != nil {
+		return SessionSummary{}, err
+	}
 	permissionLevel := m.resolveSessionPermissionLevel(agent, params.PermissionLevel)
 	if err := validateWebSessionPermissionLevel(agent, permissionLevel); err != nil {
 		return SessionSummary{}, err
@@ -855,7 +885,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 
 	title := strings.TrimSpace(params.Title)
 	if title == "" {
-		title = defaultTitle(params.Agent, project.Name)
+		title = defaultTitle(agent, project.Name)
 	}
 
 	orderIndex, err := m.getNextSessionOrderIndex(ctx, project.Id)
@@ -865,6 +895,16 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 
 	modelName := m.resolveSessionModel(agent, params.Model)
 	reasoningEffort := m.resolveSessionReasoningEffort(agent, modelName, params.ReasoningEffort)
+	if agent == AgentPi {
+		if modelName != "" {
+			if _, _, err := splitPiModel(modelName); err != nil {
+				return SessionSummary{}, err
+			}
+		}
+		if err := validatePiReasoningEffort(reasoningEffort); err != nil {
+			return SessionSummary{}, err
+		}
+	}
 	now := time.Now()
 	record := tables.WebSessionTable{
 		ProjectID:                         project.Id,
@@ -893,7 +933,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		ActivityAt:                        now,
 		StatusUpdatedAt:                   &now,
 		AssistantStateUpdatedAt:           nil,
-		SourceKind:                        defaultSourceKind(normalizeAgent(params.Agent)),
+		SourceKind:                        defaultSourceKind(agent),
 		SyncState:                         string(SyncStateMissing),
 		LastSyncMode:                      "",
 		SourceCreatedAt:                   nil,
@@ -1085,9 +1125,10 @@ func preferImportedCodexSession(current, candidate tables.WebSessionTable) table
 	return current
 }
 
-func (m *Manager) existingImportedCodexSessionsByNativeID(
+func (m *Manager) existingImportedSessionsByNativeID(
 	ctx context.Context,
 	projectID string,
+	agent Agent,
 	sessionIDs []string,
 ) (map[string]tables.WebSessionTable, error) {
 	normalized := make([]string, 0, len(sessionIDs))
@@ -1114,7 +1155,7 @@ func (m *Manager) existingImportedCodexSessionsByNativeID(
 		Where(
 			"project_id = ? AND agent = ? AND native_session_id IN ?",
 			projectID,
-			string(AgentCodex),
+			string(agent),
 			normalized,
 		).
 		Find(&existing).Error; err != nil {
@@ -1132,6 +1173,14 @@ func (m *Manager) existingImportedCodexSessionsByNativeID(
 		result[nativeID] = preferImportedCodexSession(result[nativeID], record)
 	}
 	return result, nil
+}
+
+func (m *Manager) existingImportedCodexSessionsByNativeID(
+	ctx context.Context,
+	projectID string,
+	sessionIDs []string,
+) (map[string]tables.WebSessionTable, error) {
+	return m.existingImportedSessionsByNativeID(ctx, projectID, AgentCodex, sessionIDs)
 }
 
 func sortImportSourceItems(items []ImportSourceSummary) {
@@ -1200,6 +1249,8 @@ func (m *Manager) buildImportSourceItemFromThread(
 	}
 
 	item := ImportSourceSummary{
+		Agent:                 AgentCodex,
+		Importable:            true,
 		AISessionID:           aiSessionID,
 		SessionID:             strings.TrimSpace(thread.ID),
 		Model:                 model,
@@ -1220,9 +1271,13 @@ func (m *Manager) buildImportSourceItemFromThread(
 
 func (m *Manager) buildImportSourceItemFromAISession(
 	source *service.AISessionSummary,
+	agent Agent,
+	importable bool,
 	existingByNativeID map[string]tables.WebSessionTable,
 ) ImportSourceSummary {
 	item := ImportSourceSummary{
+		Agent:                 agent,
+		Importable:            importable,
 		AISessionID:           strings.TrimSpace(source.ID),
 		SessionID:             strings.TrimSpace(source.SessionID),
 		Model:                 strings.TrimSpace(source.Model),
@@ -1355,13 +1410,75 @@ func (m *Manager) ListCodexImportSources(
 		if source == nil {
 			continue
 		}
-		items = append(items, m.buildImportSourceItemFromAISession(source, existingByNativeID))
+		items = append(items, m.buildImportSourceItemFromAISession(source, AgentCodex, true, existingByNativeID))
 	}
 	sortImportSourceItems(items)
 	return ImportSourceList{
 		Items:     items,
 		ScanPhase: strings.TrimSpace(aiSessions.CodexScanPhase),
 	}, nil
+}
+
+func (m *Manager) ListImportSources(
+	ctx context.Context,
+	projectID string,
+) (ImportSourceList, error) {
+	codexList, err := m.ListCodexImportSources(ctx, projectID)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+	if m.aiSessionSvc == nil {
+		return codexList, nil
+	}
+	project, err := m.projectSvc.GetProject(ctx, projectID)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+	aiSessions, err := m.aiSessionSvc.GetProjectAISessions(ctx, project.Path)
+	if err != nil {
+		// Codex thread/list is independent of the filesystem index. Preserve the
+		// existing result when optional Pi discovery cannot read its session root.
+		return codexList, nil
+	}
+
+	piSessionIDs := make([]string, 0, len(aiSessions.PiSessions))
+	for _, source := range aiSessions.PiSessions {
+		if source != nil && strings.TrimSpace(source.SessionID) != "" {
+			piSessionIDs = append(piSessionIDs, strings.TrimSpace(source.SessionID))
+		}
+	}
+	existingPi, err := m.existingImportedSessionsByNativeID(ctx, project.Id, AgentPi, piSessionIDs)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+	items := append([]ImportSourceSummary(nil), codexList.Items...)
+	piImportable := m.GetWebSessionRuntimeConfig().SupportsPiWebSession
+	for _, source := range aiSessions.PiSessions {
+		if source == nil {
+			continue
+		}
+		items = append(items, m.buildImportSourceItemFromAISession(source, AgentPi, piImportable, existingPi))
+	}
+	sortImportSourceItems(items)
+
+	return ImportSourceList{
+		Items:        items,
+		ScanPhase:    aggregateImportScanPhase(codexList.ScanPhase, aiSessions.PiScanPhase),
+		BeforeCursor: strings.TrimSpace(aiSessions.PiBeforeCursor),
+	}, nil
+}
+
+func aggregateImportScanPhase(phases ...string) string {
+	result := "complete"
+	for _, phase := range phases {
+		switch strings.ToLower(strings.TrimSpace(phase)) {
+		case "extended":
+			return "extended"
+		case "recent":
+			result = "recent"
+		}
+	}
+	return result
 }
 
 func (m *Manager) importCodexSessionResolved(
@@ -1475,6 +1592,152 @@ func (m *Manager) ImportCodexSessionBySessionID(
 		return ImportResult{}, err
 	}
 	return m.importCodexSessionResolved(ctx, project, source, mode)
+}
+
+func (m *Manager) importPiSessionResolved(
+	ctx context.Context,
+	project *model.Project,
+	source *tables.AISessionTable,
+) (ImportResult, error) {
+	if !m.GetWebSessionRuntimeConfig().SupportsPiWebSession {
+		return ImportResult{}, errors.New(errPiWebSessionUnavailable)
+	}
+	if source == nil {
+		return ImportResult{}, gorm.ErrRecordNotFound
+	}
+	nativeID := strings.TrimSpace(source.SessionID)
+	threadPath := strings.TrimSpace(source.FilePath)
+	if nativeID == "" || threadPath == "" {
+		return ImportResult{}, errors.New("Pi session identity is incomplete")
+	}
+	if model.NormalizePathCase(source.ProjectPath) != model.NormalizePathCase(project.Path) {
+		return ImportResult{}, errors.New("Pi session does not belong to the current project")
+	}
+	if err := m.EnsureProjectPiTrust(ctx, project.Id, project.Path); err != nil {
+		return ImportResult{}, err
+	}
+	identity := tables.WebSessionTable{
+		Cwd:             project.Path,
+		NativeSessionID: &nativeID,
+		ThreadPath:      &threadPath,
+	}
+	if err := validatePiRuntimeState(identity, piRPCState{SessionID: nativeID, SessionFile: threadPath}); err != nil {
+		return ImportResult{}, err
+	}
+
+	var records []tables.WebSessionTable
+	if err := model.GetDB().WithContext(ctx).
+		Where("project_id = ? AND agent = ? AND native_session_id = ?", project.Id, string(AgentPi), nativeID).
+		Order("updated_at DESC").
+		Find(&records).Error; err != nil {
+		return ImportResult{}, err
+	}
+	if len(records) > 0 {
+		record := records[0]
+		for _, candidate := range records[1:] {
+			record = preferImportedCodexSession(record, candidate)
+		}
+		updates := map[string]any{
+			"cwd":               filepath.Clean(project.Path),
+			"thread_path":       filepath.Clean(threadPath),
+			"native_session_id": nativeID,
+			"source_kind":       defaultSourceKind(AgentPi),
+			"source_created_at": importedCodexSourceCreatedAt(*source),
+			"source_updated_at": importedCodexSourceUpdatedAt(*source),
+			"last_message_at":   source.LastMessageAt,
+			"source_revision":   piSourceRevision(threadPath, pointerString(record.NativeLeafID)),
+			"updated_at":        time.Now(),
+		}
+		if err := m.updateRuntimeState(ctx, record.ID, updates); err != nil {
+			return ImportResult{}, err
+		}
+		if record.ArchivedAt != nil {
+			if _, err := m.UnarchiveSession(ctx, record.ID); err != nil {
+				return ImportResult{}, err
+			}
+		}
+		refreshed, err := m.GetSession(ctx, record.ID)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		snapshot, err := m.syncImportedPiSession(ctx, refreshed)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		return ImportResult{Session: snapshot.Session, History: snapshot.History,
+			PendingInputs: snapshot.PendingInputs, ScheduledInputs: snapshot.ScheduledInputs,
+			SubAgents: snapshot.SubAgents, Reused: true, Synced: true}, nil
+	}
+
+	orderIndex, err := m.getNextSessionOrderIndex(ctx, project.Id)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	title := strings.TrimSpace(source.Title)
+	titleAuto := title == ""
+	if titleAuto {
+		title = defaultTitle(AgentPi, project.Name)
+	}
+	modelName := strings.TrimSpace(source.Model)
+	if _, _, err := splitPiModel(modelName); err != nil {
+		modelName = ""
+	}
+	now := time.Now()
+	record := tables.WebSessionTable{
+		ProjectID: project.Id, OrderIndex: orderIndex, Agent: string(AgentPi),
+		Backend: string(SessionBackendPiRPC), Title: title, TitleAuto: titleAuto,
+		Model: modelName, ReasoningEffort: string(ReasoningEffortDefault),
+		WorkflowMode: string(WorkflowModeDefault), PermissionLevel: string(PermissionLevelElevated),
+		LegacyPermissionMode: "default", Cwd: filepath.Clean(project.Path), NativeSessionID: &nativeID,
+		Status: string(StatusIdle), ActivityAt: now, StatusUpdatedAt: &now,
+		SourceKind: defaultSourceKind(AgentPi), SyncState: string(SyncStateMissing),
+		SourceCreatedAt: importedCodexSourceCreatedAt(*source), SourceUpdatedAt: importedCodexSourceUpdatedAt(*source),
+		ThreadPath: &threadPath, ThreadPreview: nilIfEmpty(source.Title), LastMessageAt: source.LastMessageAt,
+		SourceRevision: nilIfEmpty(piSourceRevision(threadPath, "")),
+		AutoRetryScope: string(AutoRetryScopeNetworkOnly), AutoRetryPreset: string(AutoRetryPresetGentleStop),
+	}
+	record.Init()
+	if err := model.GetDB().WithContext(ctx).Create(&record).Error; err != nil {
+		return ImportResult{}, err
+	}
+	snapshot, err := m.syncImportedPiSession(ctx, record)
+	if err != nil {
+		_ = m.DeleteSession(ctx, record.ID)
+		return ImportResult{}, err
+	}
+	return ImportResult{Session: snapshot.Session, History: snapshot.History,
+		PendingInputs: snapshot.PendingInputs, ScheduledInputs: snapshot.ScheduledInputs,
+		SubAgents: snapshot.SubAgents, Created: true, Synced: true}, nil
+}
+
+func (m *Manager) ImportPiSessionBySessionID(ctx context.Context, projectID, sessionID string) (ImportResult, error) {
+	project, err := m.projectSvc.GetProject(ctx, projectID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if m.aiSessionSvc == nil {
+		return ImportResult{}, errors.New("ai session service is not configured")
+	}
+	source, err := m.aiSessionSvc.ResolvePiSessionBySessionID(ctx, sessionID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return m.importPiSessionResolved(ctx, project, source)
+}
+
+func (m *Manager) ImportPiSession(ctx context.Context, projectID, aiSessionID string) (ImportResult, error) {
+	project, err := m.projectSvc.GetProject(ctx, projectID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if m.aiSessionSvc == nil {
+		return ImportResult{}, errors.New("ai session service is not configured")
+	}
+	source, err := m.aiSessionSvc.ResolvePiSessionByID(ctx, aiSessionID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return m.importPiSessionResolved(ctx, project, source)
 }
 
 func (m *Manager) GetSession(ctx context.Context, sessionID string) (tables.WebSessionTable, error) {
@@ -1607,7 +1870,7 @@ func (m *Manager) loadSnapshotLocal(
 		Revision:         summary.Revision,
 		Session:          summary,
 		History:          history,
-		PendingInputs:    m.pendingInputsSnapshot(record.ID),
+		PendingInputs:    m.pendingInputsDisplaySnapshot(record.ID),
 		ScheduledInputs:  scheduledInputs,
 		PendingApproval:  m.pendingApprovalSnapshot(record),
 		PendingUserInput: pendingUserInputFromHistory(history.Items),
@@ -1622,12 +1885,19 @@ func (m *Manager) pendingApprovalSnapshot(record tables.WebSessionTable) *Pendin
 	m.mu.RLock()
 	run := m.runs[record.ID]
 	m.mu.RUnlock()
-	if run == nil || run.codexAppServer() == nil {
+	if run == nil {
 		return nil
 	}
 	request, ok := run.pendingApprovalRequest()
 	if !ok || request.Kind == pendingServerRequestPlanApproval {
 		return nil
+	}
+	if request.PiRuntime == nil && run.codexAppServer() == nil {
+		return nil
+	}
+	actionable := len(request.RawID) > 0
+	if request.PiRuntime != nil {
+		actionable = strings.TrimSpace(request.PiRequestID) != ""
 	}
 	return &PendingApproval{
 		ItemID:      request.ItemID,
@@ -1635,7 +1905,7 @@ func (m *Manager) pendingApprovalSnapshot(record tables.WebSessionTable) *Pendin
 		Prompt:      firstNonEmpty(request.Prompt, approvalPromptFallback(request.Kind)),
 		Command:     request.Command,
 		RequestedAt: request.RequestedAt,
-		Actionable:  len(request.RawID) > 0,
+		Actionable:  actionable,
 	}
 }
 
@@ -1685,6 +1955,11 @@ func (m *Manager) UpdateModel(ctx context.Context, sessionID, modelName string) 
 	if err != nil {
 		return SessionSummary{}, err
 	}
+	if normalizeAgent(Agent(record.Agent)) == AgentPi && normalized != "" {
+		if _, _, err := splitPiModel(normalized); err != nil {
+			return SessionSummary{}, err
+		}
+	}
 	updates := map[string]any{
 		"model":      normalized,
 		"updated_at": time.Now(),
@@ -1719,8 +1994,18 @@ func (m *Manager) UpdateReasoningEffort(
 	sessionID string,
 	effort ReasoningEffort,
 ) (SessionSummary, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	normalized := normalizeReasoningEffort(effort)
+	if normalizeAgent(Agent(record.Agent)) == AgentPi {
+		if err := validatePiReasoningEffort(normalized); err != nil {
+			return SessionSummary{}, err
+		}
+	}
 	return m.updateFields(ctx, sessionID, map[string]any{
-		"reasoning_effort": string(normalizeReasoningEffort(effort)),
+		"reasoning_effort": string(normalized),
 		"updated_at":       time.Now(),
 	})
 }
@@ -2048,7 +2333,10 @@ func (m *Manager) UpdateAutoRetryDispatchPendingOnFailure(
 }
 
 func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent) (SessionSummary, error) {
-	normalized := normalizeAgent(agent)
+	normalized, err := validateAgent(agent)
+	if err != nil {
+		return SessionSummary{}, err
+	}
 	permissionLevel := m.resolveSessionPermissionLevel(normalized, "")
 	modelName := m.resolveSessionModel(normalized, "")
 	return m.updateFields(ctx, sessionID, map[string]any{
@@ -2155,6 +2443,7 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
 		return SessionSummary{}, err
 	}
+	m.StopSessionPiRuntime(sessionID)
 
 	now := time.Now()
 	updates := map[string]any{
@@ -2235,6 +2524,7 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
 		return err
 	}
+	m.StopSessionPiRuntime(sessionID)
 
 	eventState := m.sessionEventState(sessionID)
 	eventState.mu.Lock()
@@ -2491,6 +2781,16 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleConnectCommand(ctx, client, frame)
 	case "send":
 		return m.handleSendCommand(ctx, client, frame)
+	case "compact":
+		return m.handleCompactCommand(ctx, client, frame)
+	case "tree_get":
+		return m.handlePiTreeGetCommand(ctx, client, frame)
+	case "tree_nav":
+		return m.handlePiTreeNavigateCommand(ctx, client, frame)
+	case "tree_fork":
+		return m.handlePiTreeForkCommand(ctx, client, frame)
+	case "tree_clone":
+		return m.handlePiTreeCloneCommand(ctx, client, frame)
 	case "hist":
 		return m.handleHistoryCommand(ctx, client, frame)
 	case "abort":
@@ -3230,6 +3530,99 @@ func (m *Manager) handleListCommand(ctx context.Context, client *client, frame w
 	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, map[string]any{"items": result}))
 }
 
+func (m *Manager) handleCompactCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	if len(bytes.TrimSpace(frame.Payload)) > 0 && string(bytes.TrimSpace(frame.Payload)) != "{}" {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "compact takes no payload", false))
+	}
+	if err := m.CompactSession(ctx, frame.SessionID); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
+	}
+	return m.sendMutationAck(ctx, client, frame, nil)
+}
+
+func (m *Manager) handlePiTreeGetCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	if !m.SupportsPiSessionTree() {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "unsupported", "Pi session tree is not supported", false))
+	}
+	if len(bytes.TrimSpace(frame.Payload)) > 0 && string(bytes.TrimSpace(frame.Payload)) != "{}" {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "tree_get takes no payload", false))
+	}
+	tree, err := m.GetPiSessionTree(ctx, frame.SessionID)
+	if err != nil {
+		return client.send(newPiTreeErrorFrame(frame, err))
+	}
+	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, tree, m.currentSessionRevision(ctx, frame.SessionID)))
+}
+
+func (m *Manager) handlePiTreeNavigateCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	if !m.SupportsPiSessionTree() {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "unsupported", "Pi session tree is not supported", false))
+	}
+	var payload struct {
+		TargetID  string `json:"tid"`
+		Revision  string `json:"rev"`
+		Summarize bool   `json:"sum"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid tree navigation payload", false))
+	}
+	result, err := m.NavigatePiSessionTree(ctx, frame.SessionID, PiTreeNavigateInput{
+		TargetID: payload.TargetID, Revision: payload.Revision, Summarize: payload.Summarize,
+	})
+	if err != nil {
+		return client.send(newPiTreeErrorFrame(frame, err))
+	}
+	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, result, m.currentSessionRevision(ctx, frame.SessionID)))
+}
+
+func (m *Manager) handlePiTreeForkCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	if !m.SupportsPiSessionTree() {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "unsupported", "Pi session tree is not supported", false))
+	}
+	var payload struct {
+		TargetID string `json:"tid"`
+		Revision string `json:"rev"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid tree fork payload", false))
+	}
+	result, err := m.ForkPiSessionTree(ctx, frame.SessionID, PiTreeForkInput{TargetID: payload.TargetID, Revision: payload.Revision})
+	if err != nil {
+		return client.send(newPiTreeErrorFrame(frame, err))
+	}
+	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, mapPiTreeCreateWireResult(result)))
+}
+
+func (m *Manager) handlePiTreeCloneCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	if !m.SupportsPiSessionTree() {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "unsupported", "Pi session tree is not supported", false))
+	}
+	var payload struct {
+		Revision string `json:"rev"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid tree clone payload", false))
+	}
+	result, err := m.ClonePiSessionTree(ctx, frame.SessionID, PiTreeCloneInput{Revision: payload.Revision})
+	if err != nil {
+		return client.send(newPiTreeErrorFrame(frame, err))
+	}
+	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, mapPiTreeCreateWireResult(result)))
+}
+
+func newPiTreeErrorFrame(frame wireCommandFrame, err error) wireFrame {
+	publicErr := ClassifyPiTreeError(err)
+	return newErrorFrame(frame.RequestID, frame.SessionID, publicErr.Code, publicErr.Message, false)
+}
+
+func mapPiTreeCreateWireResult(result PiTreeCreateResult) map[string]any {
+	return map[string]any{
+		"s":          mapWireSession(result.Session),
+		"tree":       result.Tree,
+		"editorText": result.EditorText,
+	}
+}
+
 func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
 		Text        string   `json:"txt"`
@@ -3255,6 +3648,65 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attachmentIDs []string) error {
 	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+}
+
+func (m *Manager) CompactSession(ctx context.Context, sessionID string) error {
+	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
+	dispatchLock.Lock()
+	defer dispatchLock.Unlock()
+
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if record.ArchivedAt != nil {
+		return errors.New("session is archived")
+	}
+	if normalizeAgent(Agent(record.Agent)) != AgentPi || effectiveSessionBackend(record) != SessionBackendPiRPC {
+		return errors.New("manual compaction is only supported for Pi RPC sessions")
+	}
+	if err := m.ensureSessionMessagingAvailable(record); err != nil {
+		return err
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" ||
+		record.ThreadPath == nil || strings.TrimSpace(*record.ThreadPath) == "" {
+		return errors.New("Pi session has no native history to compact")
+	}
+	m.cancelAutoRetryTimer(sessionID)
+	if m.hasActiveRun(sessionID) {
+		return errors.New("session is already running")
+	}
+
+	runID := utils.NewID()
+	now := time.Now()
+	if _, err := m.appendAndBroadcast(ctx, sessionID, record, Event{
+		ID: utils.NewID(), Type: "run_st", RunID: runID, Timestamp: now,
+		Payload: map[string]any{
+			"ag": string(AgentPi), "md": record.Model, "re": record.ReasoningEffort,
+			"wm": effectiveWorkflowMode(record), "pl": effectivePermissionLevel(record), "src": "compact",
+		},
+	}); err != nil {
+		return err
+	}
+	if err := m.updateRuntimeState(ctx, sessionID, applyAssistantStateUpdates(map[string]any{
+		"status": string(StatusRunning), "has_unread": false, "last_error": nil,
+		"auto_retry_attempt": 0, "auto_retry_next_at": nil, "auto_retry_last_error_code": nil,
+		"updated_at": now,
+	}, AssistantStateWorking, now)); err != nil {
+		return err
+	}
+	m.broadcastSessionSummary(ctx, sessionID)
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	run := &activeRun{
+		sessionID: sessionID, agent: AgentPi, backend: SessionBackendPiRPC,
+		runID: runID, cancel: cancel, done: make(chan struct{}), piCompaction: true,
+	}
+	m.mu.Lock()
+	m.runs[sessionID] = run
+	m.mu.Unlock()
+	go m.runSession(runCtx, run, record, "", nil)
+	return nil
 }
 
 func (m *Manager) ensureCodexThread(ctx context.Context, session tables.WebSessionTable) (string, error) {
@@ -3552,15 +4004,26 @@ func (m *Manager) sendMessageInternal(
 }
 
 func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable) error {
-	config := m.GetCodexRuntimeConfig()
-	switch normalizeAgent(Agent(record.Agent)) {
+	agent, err := validateAgent(Agent(record.Agent))
+	if err != nil {
+		return err
+	}
+	config := m.GetWebSessionRuntimeConfig()
+	switch agent {
 	case AgentCodex:
 		if !config.HasCodex {
-			return fmt.Errorf(errCodexNotInstalled)
+			return fmt.Errorf("%s", errCodexNotInstalled)
 		}
 	case AgentClaude:
 		if !config.HasClaudeCode {
-			return fmt.Errorf(errClaudeCodeNotInstalled)
+			return fmt.Errorf("%s", errClaudeCodeNotInstalled)
+		}
+	case AgentPi:
+		if !config.SupportsPiWebSession {
+			return fmt.Errorf("%s", errPiWebSessionUnavailable)
+		}
+		if err := m.EnsureProjectPiTrust(context.Background(), record.ProjectID, record.Cwd); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -3635,6 +4098,14 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 
 	if run.backend == SessionBackendCodexAppServer && normalizeAgent(Agent(session.Agent)) == AgentCodex {
 		m.runCodexAppServerSession(ctx, run, session, text, attachments)
+		return
+	}
+	if run.backend == SessionBackendPiRPC && normalizeAgent(Agent(session.Agent)) == AgentPi {
+		if run.piCompaction {
+			m.runPiRPCCompaction(ctx, run, session)
+		} else {
+			m.runPiRPCSession(ctx, run, session, text, attachments)
+		}
 		return
 	}
 	if run.claudeResumeOnly && normalizeAgent(Agent(session.Agent)) == AgentClaude {
@@ -3935,6 +4406,9 @@ func (m *Manager) handleRunFailureWithCode(
 ) {
 	if run != nil {
 		run.resetActiveCallTracking()
+		if normalizeAgent(Agent(session.Agent)) == AgentPi {
+			_ = m.closePendingPiDialog(session, run, "Pi extension input ended because the runtime failed")
+		}
 	}
 	message := strings.TrimSpace(err.Error())
 	if message == "" {
@@ -5355,15 +5829,37 @@ func upsertEnv(env []string, key, value string) []string {
 func (m *Manager) respondToApproval(sessionID, action string) error {
 	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
 	dispatchLock.Lock()
-	defer dispatchLock.Unlock()
 
 	m.mu.RLock()
 	run, ok := m.runs[sessionID]
 	m.mu.RUnlock()
 	record, err := m.GetSession(context.Background(), sessionID)
 	if err != nil {
+		dispatchLock.Unlock()
 		return err
 	}
+	if normalizeAgent(Agent(record.Agent)) == AgentPi {
+		if !ok || run == nil {
+			dispatchLock.Unlock()
+			return fmt.Errorf("no pending Pi approval")
+		}
+		pending, hasPending := run.pendingApprovalRequest()
+		if !hasPending || pending.PiRuntime == nil {
+			dispatchLock.Unlock()
+			return fmt.Errorf("no pending Pi approval")
+		}
+		request, taken := run.takePendingPiRequestForResponse(pending.PiRequestID, true)
+		if !taken {
+			dispatchLock.Unlock()
+			return fmt.Errorf("Pi approval is no longer pending")
+		}
+		dispatchLock.Unlock()
+		confirmed := action != "reject" && action != "cancel"
+		return m.respondPiExtensionRequest(record, run, request, map[string]any{"confirmed": confirmed}, "approval_res", map[string]any{
+			"act": action, "prompt": request.Prompt,
+		})
+	}
+	defer dispatchLock.Unlock()
 	if normalizeAgent(Agent(record.Agent)) == AgentClaude {
 		var pending *pendingServerRequest
 		if ok && run != nil {
@@ -5497,15 +5993,45 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[string][]string) error {
 	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
 	dispatchLock.Lock()
-	defer dispatchLock.Unlock()
 
 	m.mu.RLock()
 	run, ok := m.runs[sessionID]
 	m.mu.RUnlock()
 	record, err := m.GetSession(context.Background(), sessionID)
 	if err != nil {
+		dispatchLock.Unlock()
 		return err
 	}
+	if normalizeAgent(Agent(record.Agent)) == AgentPi {
+		if !ok || run == nil {
+			dispatchLock.Unlock()
+			return fmt.Errorf("no pending Pi user input request")
+		}
+		pending, hasPending := run.pendingUserInputRequest()
+		if !hasPending || pending.PiRuntime == nil {
+			dispatchLock.Unlock()
+			return fmt.Errorf("no pending Pi user input request")
+		}
+		if strings.TrimSpace(itemID) == "" || strings.TrimSpace(itemID) != strings.TrimSpace(pending.ItemID) {
+			dispatchLock.Unlock()
+			return fmt.Errorf("user input request does not match the active Pi prompt")
+		}
+		value := firstPiUserInputAnswer(answers)
+		if value == "" {
+			dispatchLock.Unlock()
+			return fmt.Errorf("no answers were provided")
+		}
+		request, taken := run.takePendingPiRequestForResponse(pending.PiRequestID, true)
+		if !taken {
+			dispatchLock.Unlock()
+			return fmt.Errorf("Pi user input is no longer pending")
+		}
+		dispatchLock.Unlock()
+		return m.respondPiExtensionRequest(record, run, request, map[string]any{"value": value}, "user_input_res", map[string]any{
+			"iid": request.ItemID, "ans": answers,
+		})
+	}
+	defer dispatchLock.Unlock()
 	if normalizeAgent(Agent(record.Agent)) == AgentClaude {
 		if ok && run != nil {
 			if pending, hasPending := run.pendingUserInputRequest(); hasPending &&
@@ -5837,6 +6363,8 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		AutoRetryDispatchPendingOnFailure: record.AutoRetryDispatchPendingOnFailure,
 		Cwd:                               record.Cwd,
 		NativeSessionID:                   record.NativeSessionID,
+		NativeLeafID:                      record.NativeLeafID,
+		SourceRevision:                    record.SourceRevision,
 		CyberPolicyFlagged:                record.CyberPolicyFlagged,
 		Status:                            effectiveStatus(record, assistantState),
 		AssistantState:                    assistantState,
@@ -6133,10 +6661,13 @@ func attachmentPayloads(items []Attachment) []map[string]any {
 
 func defaultTitle(agent Agent, projectName string) string {
 	prefix := "Chat"
-	if normalizeAgent(agent) == AgentCodex {
+	switch normalizeAgent(agent) {
+	case AgentCodex:
 		prefix = "Codex"
-	} else if normalizeAgent(agent) == AgentClaude {
+	case AgentClaude:
 		prefix = "Claude"
+	case AgentPi:
+		prefix = "Pi"
 	}
 	if strings.TrimSpace(projectName) == "" {
 		return prefix
@@ -6148,10 +6679,14 @@ func defaultModel(agent Agent, provided string) string {
 	if strings.TrimSpace(provided) != "" {
 		return strings.TrimSpace(provided)
 	}
-	if normalizeAgent(agent) == AgentCodex {
+	switch normalizeAgent(agent) {
+	case AgentCodex:
 		return utils.DefaultWebSessionCodexModel
+	case AgentClaude:
+		return "opus"
+	default:
+		return ""
 	}
-	return "opus"
 }
 
 func defaultReasoningEffort(agent Agent, provided ReasoningEffort) ReasoningEffort {
@@ -6238,32 +6773,46 @@ func (m *Manager) resolveSessionPermissionLevel(
 }
 
 func defaultSessionBackend(agent Agent) SessionBackend {
-	if normalizeAgent(agent) == AgentCodex {
+	switch normalizeAgent(agent) {
+	case AgentCodex:
 		return SessionBackendCodexAppServer
+	case AgentPi:
+		return SessionBackendPiRPC
+	default:
+		return SessionBackendLegacyExec
 	}
-	return SessionBackendLegacyExec
 }
 
 func normalizeSessionBackend(backend SessionBackend, agent Agent) SessionBackend {
+	normalizedAgent := normalizeAgent(agent)
 	switch strings.ToLower(strings.TrimSpace(string(backend))) {
 	case string(SessionBackendCodexAppServer):
-		if normalizeAgent(agent) == AgentCodex {
+		if normalizedAgent == AgentCodex {
 			return SessionBackendCodexAppServer
 		}
-		return SessionBackendLegacyExec
+	case string(SessionBackendPiRPC):
+		if normalizedAgent == AgentPi {
+			return SessionBackendPiRPC
+		}
 	case string(SessionBackendLegacyExec):
-		return SessionBackendLegacyExec
-	default:
-		return defaultSessionBackend(agent)
+		if normalizedAgent != AgentPi {
+			return SessionBackendLegacyExec
+		}
 	}
+	return defaultSessionBackend(normalizedAgent)
 }
 
 func normalizeAgent(agent Agent) Agent {
-	switch agent {
-	case AgentCodex:
-		return AgentCodex
+	return Agent(strings.ToLower(strings.TrimSpace(string(agent))))
+}
+
+func validateAgent(agent Agent) (Agent, error) {
+	normalized := normalizeAgent(agent)
+	switch normalized {
+	case AgentClaude, AgentCodex, AgentPi:
+		return normalized, nil
 	default:
-		return AgentClaude
+		return "", fmt.Errorf("invalid agent %q: expected claude, codex, or pi", strings.TrimSpace(string(agent)))
 	}
 }
 
@@ -6365,8 +6914,16 @@ func normalizePermissionLevel(level PermissionLevel) PermissionLevel {
 }
 
 func validateWebSessionPermissionLevel(agent Agent, level PermissionLevel) error {
-	if normalizeAgent(agent) == AgentClaude && normalizePermissionLevel(level) == PermissionLevelDefault {
+	normalizedAgent, err := validateAgent(agent)
+	if err != nil {
+		return err
+	}
+	normalizedLevel := normalizePermissionLevel(level)
+	if normalizedAgent == AgentClaude && normalizedLevel == PermissionLevelDefault {
 		return fmt.Errorf("claude web sessions do not support the default permission level in claude_stream_json mode")
+	}
+	if normalizedAgent == AgentPi && normalizedLevel != PermissionLevelElevated {
+		return fmt.Errorf("pi web sessions currently support only unrestricted access")
 	}
 	return nil
 }
@@ -6420,23 +6977,29 @@ func effectivePermissionLevel(record tables.WebSessionTable) PermissionLevel {
 }
 
 func effectiveSessionBackend(record tables.WebSessionTable) SessionBackend {
+	agent := normalizeAgent(Agent(record.Agent))
 	normalized := strings.ToLower(strings.TrimSpace(record.Backend))
 	switch normalized {
 	case string(SessionBackendLegacyExec):
-		return SessionBackendLegacyExec
+		if agent != AgentPi {
+			return SessionBackendLegacyExec
+		}
 	case string(SessionBackendCodexAppServer):
-		if normalizeAgent(Agent(record.Agent)) == AgentCodex {
+		if agent == AgentCodex {
 			return SessionBackendCodexAppServer
 		}
-		return SessionBackendLegacyExec
+	case string(SessionBackendPiRPC):
+		if agent == AgentPi {
+			return SessionBackendPiRPC
+		}
 	default:
-		if normalizeAgent(Agent(record.Agent)) == AgentCodex {
+		if agent == AgentCodex {
 			// Existing Codex sessions predate backend persistence and must continue
 			// using the legacy exec transport unless explicitly migrated.
 			return SessionBackendLegacyExec
 		}
-		return SessionBackendLegacyExec
 	}
+	return defaultSessionBackend(agent)
 }
 
 func preparePromptText(text string, workflowMode WorkflowMode) string {
@@ -6880,6 +7443,79 @@ func (r *activeRun) blocksCodexSteerForUserInput() bool {
 		(r.pendingServerReq != nil && r.pendingServerReq.Kind == pendingServerRequestUserInput)
 }
 
+func (r *activeRun) blocksPiPendingInput() bool {
+	if r == nil {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.piResponsePending != 0 || r.pendingServerReq != nil
+}
+
+func (r *activeRun) finishPiResponseBarrier(generation uint64) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if generation == 0 || r.piResponsePending != generation {
+		return false
+	}
+	r.piResponsePending = 0
+	return r.pendingServerReq == nil
+}
+
+func (r *activeRun) finishPiResponseHistory(generation uint64, persisted bool, err error) {
+	if r == nil || generation == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.piResponseGeneration != generation || r.piResponseHistoryComplete == generation {
+		return
+	}
+	if persisted {
+		r.piResponseRequest = nil
+	}
+	r.piResponseHistoryErr = err
+	r.piResponseHistoryComplete = generation
+	if r.piResponseHistoryDone != nil {
+		close(r.piResponseHistoryDone)
+		r.piResponseHistoryDone = nil
+	}
+}
+
+func (r *activeRun) waitForPiResponseHistory(ctx context.Context) (*pendingServerRequest, error) {
+	if r == nil {
+		return nil, nil
+	}
+	for {
+		r.mu.Lock()
+		generation := r.piResponsePending
+		if generation == 0 {
+			r.mu.Unlock()
+			return nil, nil
+		}
+		if r.piResponseHistoryComplete == generation {
+			request := r.piResponseRequest.clone()
+			err := r.piResponseHistoryErr
+			r.piResponseRequest = nil
+			r.mu.Unlock()
+			return request, err
+		}
+		done := r.piResponseHistoryDone
+		r.mu.Unlock()
+		if done == nil {
+			return nil, errors.New("Pi extension response completion state is unavailable")
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for Pi extension response history: %w", ctx.Err())
+		}
+	}
+}
+
 func (r *activeRun) clearPendingServerRequest() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -6897,6 +7533,39 @@ func (r *activeRun) clearPendingControlRequest(requestID string) bool {
 	}
 	r.pendingServerReq = nil
 	return true
+}
+
+func (r *activeRun) takePendingPiRequest(requestID string) (*pendingServerRequest, bool) {
+	return r.takePendingPiRequestForResponse(requestID, false)
+}
+
+func (r *activeRun) takePendingPiRequestForResponse(requestID string, markResponsePending bool) (*pendingServerRequest, bool) {
+	if r == nil {
+		return nil, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	normalizedID := strings.TrimSpace(requestID)
+	if r.pendingServerReq == nil || normalizedID == "" ||
+		strings.TrimSpace(r.pendingServerReq.PiRequestID) != normalizedID {
+		return nil, false
+	}
+	request := r.pendingServerReq.clone()
+	r.pendingServerReq = nil
+	if markResponsePending {
+		r.piResponseGeneration++
+		if r.piResponseGeneration == 0 {
+			r.piResponseGeneration++
+		}
+		r.piResponsePending = r.piResponseGeneration
+		r.piResponseHistoryDone = make(chan struct{})
+		r.piResponseHistoryComplete = 0
+		r.piResponseHistoryErr = nil
+		r.piResponseRequest = request.clone()
+		request.PiResponseGeneration = r.piResponseGeneration
+		r.piResponseRequest.PiResponseGeneration = r.piResponseGeneration
+	}
+	return request, true
 }
 
 func (r *activeRun) markCompletedPlanTool() {

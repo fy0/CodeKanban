@@ -78,7 +78,7 @@ func main() {
 		case "watch":
 			// watch <type> <workingDir> [mode] - directly start watching with specified type and path
 			if len(parts) < 3 {
-				fmt.Println("Usage: watch <codex|claude> <workingDir> [mode]")
+				fmt.Println("Usage: watch <codex|claude|pi> <workingDir> [mode]")
 				fmt.Println("       mode: both (default), ctime, mtime")
 				fmt.Println("Example: watch claude D:\\codes\\2025\\aicode-kanban")
 				fmt.Println("Example: watch claude D:\\codes\\2025\\aicode-kanban mtime")
@@ -91,8 +91,10 @@ func main() {
 				aType = types.AssistantTypeCodex
 			case "claude", "claudecode":
 				aType = types.AssistantTypeClaudeCode
+			case "pi":
+				aType = types.AssistantTypePi
 			default:
-				fmt.Printf("Unknown type: %s (use 'codex' or 'claude')\n", parts[1])
+				fmt.Printf("Unknown type: %s (use 'codex', 'claude', or 'pi')\n", parts[1])
 				continue
 			}
 
@@ -126,7 +128,7 @@ func main() {
 		case "session":
 			// session <type> <path> <id> - Watch a specific session by ID
 			if len(parts) < 4 {
-				fmt.Println("Usage: session <codex|claude> <workingDir> <sessionID>")
+				fmt.Println("Usage: session <codex|claude|pi> <workingDir> <sessionID>")
 				fmt.Println("Example: session claude D:\\codes\\2025\\aicode-kanban 8a874861-cbd9-4c66-964d-0b9311c68598")
 				continue
 			}
@@ -137,8 +139,10 @@ func main() {
 				aType = types.AssistantTypeCodex
 			case "claude", "claudecode":
 				aType = types.AssistantTypeClaudeCode
+			case "pi":
+				aType = types.AssistantTypePi
 			default:
-				fmt.Printf("Unknown type: %s (use 'codex' or 'claude')\n", parts[1])
+				fmt.Printf("Unknown type: %s (use 'codex', 'claude', or 'pi')\n", parts[1])
 				continue
 			}
 
@@ -314,7 +318,7 @@ func main() {
 func printHelp() {
 	fmt.Println(`Available commands:
   watch <type> <path> [mode] - Start watching with specified type and working directory
-                               type: codex, claude
+                               type: codex, claude, pi
                                mode: both (default), ctime, mtime
                                Example: watch claude D:\codes\2025\aicode-kanban
                                Example: watch claude D:\codes\2025\aicode-kanban mtime
@@ -552,7 +556,8 @@ func startWatcherBySessionID(aType types.AssistantType, workingDir string, sessi
 
 	// Find the session file by ID
 	var filePath string
-	if aType == types.AssistantTypeClaudeCode {
+	switch aType {
+	case types.AssistantTypeClaudeCode:
 		searcher, err := log_watcher.NewClaudeCodeFileSearcher(workingDir)
 		if err != nil {
 			fmt.Printf("Failed to create searcher: %v\n", err)
@@ -563,8 +568,19 @@ func startWatcherBySessionID(aType types.AssistantType, workingDir string, sessi
 			fmt.Printf("Error finding session file: %v\n", err)
 			return nil, nil, nil
 		}
-	} else {
-		fmt.Println("Session ID lookup is only supported for Claude Code currently.")
+	case types.AssistantTypePi:
+		searcher, err := log_watcher.NewPiFileSearcherWithWorkingDir(workingDir)
+		if err != nil {
+			fmt.Printf("Failed to create searcher: %v\n", err)
+			return nil, nil, nil
+		}
+		filePath, err = searcher.FindBySessionID(context.Background(), sessionID)
+		if err != nil {
+			fmt.Printf("Error finding session file: %v\n", err)
+			return nil, nil, nil
+		}
+	default:
+		fmt.Println("Session ID lookup is supported for Claude Code and Pi.")
 		return nil, nil, nil
 	}
 

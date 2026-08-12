@@ -1,6 +1,8 @@
 import type {
+  WebSessionAgent,
   WebSessionCodexDefaultPermissionLevel,
   WebSessionCodexDefaultReasoningEffort,
+  WebSessionPiModelInfo,
   WebSessionReasoningEffort,
 } from '@/types/models';
 import {
@@ -12,7 +14,7 @@ import {
   EFFECTIVE_DEFAULT_WEB_SESSION_CODEX_REASONING_EFFORT,
 } from '@/constants/webSessionDefaults';
 
-export type WebSessionAgentOption = 'claude' | 'codex';
+export type WebSessionAgentOption = WebSessionAgent;
 export type WebSessionClaudeRuntimeOption = 'claude' | 'ccr';
 export type { WebSessionReasoningEffort } from '@/types/models';
 
@@ -22,8 +24,58 @@ export type WebSessionModelOption = {
   menuLabel?: string;
 };
 
+export type WebSessionModelOptionGroup = {
+  type: 'group';
+  key: string;
+  label: string;
+  children: WebSessionModelOption[];
+};
+
 export const CUSTOM_MODEL_VALUE = '__custom_model__';
 export const MORE_MODELS_VALUE = '__more_models__';
+
+export function resolvePiModelOptions(models: WebSessionPiModelInfo[]): WebSessionModelOption[] {
+  return models.map(model => ({
+    label: model.name || model.id,
+    value: `${model.provider}/${model.id}`,
+    menuLabel: model.name || model.id,
+  }));
+}
+
+export function resolvePiModelOptionGroups(
+  models: WebSessionPiModelInfo[]
+): WebSessionModelOptionGroup[] {
+  const groups = new Map<string, WebSessionModelOption[]>();
+  for (const model of models) {
+    const provider = model.provider.trim();
+    if (!provider || !model.id.trim()) {
+      continue;
+    }
+    const options = groups.get(provider) ?? [];
+    options.push({
+      label: model.name || model.id,
+      value: `${provider}/${model.id}`,
+      menuLabel: model.name || model.id,
+    });
+    groups.set(provider, options);
+  }
+  return [...groups.entries()].map(([provider, children]) => ({
+    type: 'group',
+    key: `pi-provider-${provider}`,
+    label: provider,
+    children,
+  }));
+}
+
+export function resolvePiReasoningEfforts(
+  models: WebSessionPiModelInfo[],
+  selectedModel: string
+): WebSessionReasoningEffort[] {
+  const selected = models.find(model => `${model.provider}/${model.id}` === selectedModel);
+  return selected?.reasoning
+    ? ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+    : ['default', 'none'];
+}
 
 export const CLAUDE_MODEL_OPTIONS: WebSessionModelOption[] = [
   { label: 'Opus', value: 'opus' },
@@ -88,6 +140,9 @@ export function defaultModelForAgent(
   if (agent === 'claude') {
     return 'opus';
   }
+  if (agent === 'pi') {
+    return '';
+  }
   const configured = configuredCodexModel.trim();
   return !configured || configured.toLowerCase() === DEFAULT_WEB_SESSION_CODEX_MODEL
     ? EFFECTIVE_DEFAULT_WEB_SESSION_CODEX_MODEL
@@ -98,7 +153,7 @@ export function defaultReasoningEffortForAgent(
   agent: WebSessionAgentOption,
   configuredCodexEffort: WebSessionCodexDefaultReasoningEffort = DEFAULT_WEB_SESSION_CODEX_REASONING_EFFORT
 ): WebSessionReasoningEffort {
-  if (agent === 'claude' || configuredCodexEffort === 'model_default') {
+  if (agent !== 'codex' || configuredCodexEffort === 'model_default') {
     return 'default';
   }
   return configuredCodexEffort === 'default'
@@ -110,7 +165,7 @@ export function defaultPermissionLevelForAgent(
   agent: WebSessionAgentOption,
   configuredCodexPermission: WebSessionCodexDefaultPermissionLevel = DEFAULT_WEB_SESSION_CODEX_PERMISSION_LEVEL
 ): 'default' | 'elevated' | 'yolo' {
-  if (agent === 'claude') {
+  if (agent !== 'codex') {
     return 'elevated';
   }
   if (configuredCodexPermission === 'standard') {

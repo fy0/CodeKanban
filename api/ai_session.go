@@ -72,7 +72,7 @@ func registerAISessionRoutes(app *fiber.App, group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "ai-session-list-by-project"
 		op.Summary = "获取项目的AI助手会话列表"
-		op.Description = "返回指定项目目录下的 Claude Code 和 Codex 会话信息"
+		op.Description = "返回指定项目目录下的 Claude Code、Codex 和 Pi 会话信息"
 		op.Tags = []string{aiSessionTag}
 	})
 
@@ -96,7 +96,7 @@ func registerAISessionRoutes(app *fiber.App, group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "ai-session-list-by-path"
 		op.Summary = "通过路径获取AI助手会话列表"
-		op.Description = "根据目录路径返回 Claude Code 和 Codex 会话信息"
+		op.Description = "根据目录路径返回 Claude Code、Codex 和 Pi 会话信息"
 		op.Tags = []string{aiSessionTag}
 	})
 

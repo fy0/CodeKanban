@@ -4,7 +4,7 @@ import { ensureArrayOfStrings, ensureOptionalString, toCommandString } from './u
 export const SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-access'];
 export const APPROVAL_POLICIES = ['untrusted', 'on-request', 'never'];
 export const WORKFLOW_PROFILES = ['plan', 'standard', 'yolo'];
-export const AGENTS = ['codex', 'claude'];
+export const AGENTS = ['codex', 'claude', 'pi'];
 export const CLAUDE_RUNTIMES = ['claude', 'ccr'];
 
 const KNOWN_STRUCTURED_FLAGS = new Set([
@@ -73,6 +73,20 @@ export function buildAgentLaunchSpec(options = {}) {
     return {
       agent,
       claudeRuntime,
+      profile,
+      argv,
+      command: toCommandString(argv),
+      prompt: composeWorkflowPrompt({ profile, prompt: options.prompt }),
+    };
+  }
+
+  if (agent === 'pi') {
+    if (options.permissions) {
+      throw new CodeKanbanValidationError('structured permissions are not supported for pi');
+    }
+    const argv = ['pi', ...extraArgs];
+    return {
+      agent,
       profile,
       argv,
       command: toCommandString(argv),
