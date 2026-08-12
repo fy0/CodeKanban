@@ -1,10 +1,56 @@
 package websession
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 )
+
+func TestRequestCodexThreadAfterActiveWriter(t *testing.T) {
+	t.Run("retries active writer", func(t *testing.T) {
+		attempts := 0
+		response, err := requestCodexThreadAfterActiveWriter(context.Background(), func() (codexAppServerIncoming, error) {
+			attempts++
+			if attempts < 3 {
+				return codexAppServerIncoming{}, errors.New("thread thread_test already has an active writer")
+			}
+			return codexAppServerIncoming{Result: json.RawMessage(`{"thread":{"id":"thread_test"}}`)}, nil
+		})
+		if err != nil {
+			t.Fatalf("requestCodexThreadAfterActiveWriter returned error: %v", err)
+		}
+		if attempts != 3 || parseCodexThreadID(response.Result) != "thread_test" {
+			t.Fatalf("unexpected retry result: attempts=%d response=%#v", attempts, response)
+		}
+	})
+
+	t.Run("does not retry unrelated error", func(t *testing.T) {
+		attempts := 0
+		wantErr := errors.New("thread resume failed")
+		_, err := requestCodexThreadAfterActiveWriter(context.Background(), func() (codexAppServerIncoming, error) {
+			attempts++
+			return codexAppServerIncoming{}, wantErr
+		})
+		if !errors.Is(err, wantErr) || attempts != 1 {
+			t.Fatalf("unexpected unrelated error result: attempts=%d err=%v", attempts, err)
+		}
+	})
+
+	t.Run("stops when context is canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		attempts := 0
+		_, err := requestCodexThreadAfterActiveWriter(ctx, func() (codexAppServerIncoming, error) {
+			attempts++
+			cancel()
+			return codexAppServerIncoming{}, errors.New("thread thread_test already has an active writer")
+		})
+		if !errors.Is(err, context.Canceled) || attempts != 1 {
+			t.Fatalf("unexpected cancellation result: attempts=%d err=%v", attempts, err)
+		}
+	})
+}
 
 func TestCodexErrorInfoSupportsRolloutAndAppServerShapes(t *testing.T) {
 	tests := []struct {

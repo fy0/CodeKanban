@@ -3599,6 +3599,72 @@ func TestSendMessageCodexAppServerFallsBackWhenV2ThreadStartFails(t *testing.T) 
 	requireCodexCompatibilityFallback(t, manager, created.ID, "thread_bootstrap")
 }
 
+func TestSendMessageCodexAppServerRetriesResumeWhileThreadHasActiveWriter(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "resume_active_writer_then_success")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", created.ID).
+		Update("native_session_id", "thread_active_writer").Error; err != nil {
+		t.Fatalf("set native_session_id failed: %v", err)
+	}
+
+	if _, err := manager.queuePendingInput(
+		created.ID,
+		"queued after writer",
+		nil,
+		PendingInputModeQueue,
+		"pending-active-writer",
+	); err != nil {
+		t.Fatalf("queuePendingInput returned error: %v", err)
+	}
+	waitForUserMessageCount(t, manager, created.ID, 1)
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected resumed turn to finish after writer released, got status=%q error=%v", record.Status, record.LastError)
+	}
+	resumeAttempts, err := os.ReadFile(codexPath + ".state.resume-attempts")
+	if err != nil {
+		t.Fatalf("read resume attempts: %v", err)
+	}
+	if strings.TrimSpace(string(resumeAttempts)) != "3" {
+		t.Fatalf("expected three V2 resume attempts, got %q", resumeAttempts)
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected the queued input to be consumed after resume, got %#v", pending)
+	}
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); len(got) != 1 || got[0] != "queued after writer" {
+		t.Fatalf("expected the queued message to be sent exactly once, got %#v", got)
+	}
+	requireNoCodexCompatibilityFallback(t, manager, created.ID)
+}
+
 func TestSendMessageCodexAppServerContinuesWhenFreshRolloutAttachmentFails(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -9091,6 +9157,31 @@ rl.on('line', line => {
   }
 
 	if (message.method === 'thread/start' || message.method === 'thread/resume') {
+	  if (mode === 'resume_active_writer_then_success') {
+	    if (message.method !== 'thread/resume') {
+	      send({ id: message.id, error: { message: 'expected thread/resume for existing session' } });
+	      return;
+	    }
+	    if (!message.params || message.params.config === undefined) {
+	      send({ id: message.id, error: { message: 'active writer retry must preserve multi-agent V2 params' } });
+	      return;
+	    }
+	    let resumeAttempts = 0;
+	    try {
+	      resumeAttempts = Number(fs.readFileSync(stateFile + '.resume-attempts', 'utf8').trim()) || 0;
+	    } catch (error) {
+	      // The first resume attempt has no state file yet.
+	    }
+	    resumeAttempts += 1;
+	    fs.writeFileSync(stateFile + '.resume-attempts', String(resumeAttempts));
+	    if (resumeAttempts < 3) {
+	      send({
+	        id: message.id,
+	        error: { message: 'thread thread_active_writer already has an active writer' },
+	      });
+	      return;
+	    }
+	  }
 	  if (
 	    mode === 'verify_compatibility' &&
 	    (!message.params ||
@@ -9340,7 +9431,8 @@ rl.on('line', line => {
 	  mode === 'verify_compatibility' ||
 	  mode === 'rollout_after_turn_start' ||
 	  mode === 'v2_thread_start_fallback' ||
-	  mode === 'rollout_attach_failure'
+	  mode === 'rollout_attach_failure' ||
+	  mode === 'resume_active_writer_then_success'
 	) {
       finishTurn('done');
       return;

@@ -205,6 +205,8 @@ const (
 	codexIncompleteTurnMaxRetries    = 1
 	codexSteerTargetWait             = 10 * time.Second
 	codexRolloutAttachTimeout        = 3 * time.Second
+	codexActiveWriterRetryTimeout    = 5 * time.Second
+	codexActiveWriterRetryInterval   = 100 * time.Millisecond
 )
 
 var codexReconnectProgressPattern = regexp.MustCompile(`(?i)reconnecting\.\.\.\s*(\d+)\s*/\s*(\d+)`)
@@ -801,19 +803,25 @@ func (m *Manager) startOrResumeCodexThread(
 		method = "thread/resume"
 	}
 	request := func(useMultiAgentV2 bool) (codexAppServerIncoming, error) {
-		if resumedThread {
+		requestThread := func() (codexAppServerIncoming, error) {
+			if !resumedThread {
+				return client.request(ctx, method, codexThreadStartParams(session, useMultiAgentV2))
+			}
 			return client.request(
 				ctx,
 				method,
 				codexThreadResumeParams(session, existingThreadID, useMultiAgentV2),
 			)
 		}
-		return client.request(ctx, method, codexThreadStartParams(session, useMultiAgentV2))
+		if !resumedThread {
+			return requestThread()
+		}
+		return requestCodexThreadAfterActiveWriter(ctx, requestThread)
 	}
 
 	activeMultiAgentV2 := supportsMultiAgentV2
 	response, err := request(activeMultiAgentV2)
-	if err != nil && activeMultiAgentV2 {
+	if err != nil && activeMultiAgentV2 && !isCodexActiveWriterError(err) {
 		multiAgentV2Err := err
 		response, err = request(false)
 		if err != nil {
@@ -852,6 +860,40 @@ func (m *Manager) startOrResumeCodexThread(
 	}
 	run.currentToolMessage = threadID
 	return threadID, strings.TrimSpace(stringValue(responsePayload["modelProvider"])), threadPath, resumedThread, activeMultiAgentV2, nil
+}
+
+func requestCodexThreadAfterActiveWriter(
+	ctx context.Context,
+	request func() (codexAppServerIncoming, error),
+) (codexAppServerIncoming, error) {
+	deadline := time.Now().Add(codexActiveWriterRetryTimeout)
+	for {
+		response, err := request()
+		if err == nil || !isCodexActiveWriterError(err) {
+			return response, err
+		}
+
+		wait := min(codexActiveWriterRetryInterval, time.Until(deadline))
+		if wait <= 0 {
+			return codexAppServerIncoming{}, err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return codexAppServerIncoming{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func isCodexActiveWriterError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "already has an active writer")
 }
 
 func readCodexRemoteURL(
