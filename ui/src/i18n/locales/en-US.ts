@@ -358,6 +358,7 @@ export default {
     globalBaseDirOverride: 'Global base dir (optional, one-time)',
     globalBaseDirOverridePlaceholder: 'Leave empty to use the global settings',
     branches: 'Branches',
+    resizeSidebar: 'Resize Worktree sidebar',
     refresh: 'Refresh',
     refreshStatus: 'Refresh Status',
     noWorktrees: 'No Worktrees',

@@ -348,6 +348,7 @@ export default {
     globalBaseDirOverride: '全局目录（可选，仅本次）',
     globalBaseDirOverridePlaceholder: '留空使用“总设置”中的全局目录配置',
     branches: '分支',
+    resizeSidebar: '调整 Worktree 侧栏宽度',
     refresh: '刷新',
     refreshStatus: '刷新状态',
     noWorktrees: '暂无 Worktree',

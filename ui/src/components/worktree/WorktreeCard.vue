@@ -6,16 +6,16 @@
     @click="handleSelect"
   >
     <template #header>
-      <n-space justify="space-between" align="center">
-        <n-space align="center" size="small">
-          <n-ellipsis style="max-width: 160px">
+      <div class="worktree-card__header">
+        <div class="worktree-card__branch">
+          <n-ellipsis class="worktree-card__branch-name">
             {{ worktree.branchName }}
           </n-ellipsis>
           <n-tag v-if="worktree.isMain" size="small" round type="info">{{
             t('worktree.default')
           }}</n-tag>
-        </n-space>
-        <n-space align="center" :size="0" class="worktree-card__actions-header">
+        </div>
+        <div class="worktree-card__actions-header">
           <n-button-group size="tiny">
             <n-tooltip trigger="hover" placement="bottom">
               <template #trigger>
@@ -82,8 +82,8 @@
               <n-icon :size="14"><EllipsisHorizontalOutline /></n-icon>
             </n-button>
           </n-dropdown>
-        </n-space>
-      </n-space>
+        </div>
+      </div>
     </template>
 
     <n-space vertical size="small">
@@ -356,6 +356,27 @@ function handleSelect() {
   box-shadow: 0 0 0 1px var(--n-color-primary);
 }
 
+.worktree-card__header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px 8px;
+}
+
+.worktree-card__branch {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+}
+
+.worktree-card__branch-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 160px;
+}
+
 .meta-text {
   font-size: 12px;
 }
@@ -401,14 +422,9 @@ function handleSelect() {
 .worktree-card__actions-header {
   display: flex;
   align-items: center;
-}
-
-.worktree-card__actions-header :deep(.n-space-item) {
-  margin-left: -4px !important;
-}
-
-.worktree-card__actions-header :deep(.n-space-item:first-child) {
-  margin-left: 0 !important;
+  justify-content: flex-start;
+  flex: 0 0 auto;
+  width: 100%;
 }
 
 .worktree-card__actions-header :deep(.action-button) {

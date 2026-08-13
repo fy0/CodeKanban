@@ -1,9 +1,9 @@
 <template>
   <div class="worktree-list">
     <div class="list-header">
-      <n-space justify="space-between" align="center">
-        <h3>{{ t('worktree.title') }}</h3>
-        <n-space align="center">
+      <div class="list-header__row">
+        <h3 class="list-header__title">{{ t('worktree.title') }}</h3>
+        <div class="list-header__actions">
           <n-button
             text
             size="small"
@@ -36,8 +36,8 @@
             </template>
             {{ t('worktree.new') }}
           </n-button>
-        </n-space>
-      </n-space>
+        </div>
+      </div>
     </div>
 
     <n-alert v-if="showGitWarning" type="warning" class="git-warning" :show-icon="false">
@@ -759,11 +759,39 @@ async function performMerge(
   display: flex;
   flex-direction: column;
   min-height: 0;
+  container-type: inline-size;
 }
 
 .list-header {
   padding: 16px;
   border-bottom: 1px solid var(--n-border-color);
+}
+
+.list-header__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 8px 12px;
+}
+
+.list-header__title {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.list-header__actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+@container (max-width: 270px) {
+  .list-header__title {
+    display: none;
+  }
 }
 
 .worktree-scrollbar {

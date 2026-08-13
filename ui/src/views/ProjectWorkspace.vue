@@ -36,13 +36,32 @@
           <!-- 右侧工作树侧边栏 -->
           <n-layout-sider
             v-model:collapsed="worktreeSiderCollapsed"
+            class="workspace-worktree-sider"
+            :class="{ 'is-resizing': isWorktreeSidebarResizing }"
             bordered
-            :width="320"
+            :width="effectiveWorktreeSidebarWidth"
             :collapsed-width="0"
             show-trigger="arrow-circle"
           >
             <WorktreeList @open-terminal="handleOpenTerminal" />
           </n-layout-sider>
+          <div
+            v-if="!worktreeSiderCollapsed"
+            class="worktree-sidebar-resizer"
+            :class="{ 'is-dragging': isWorktreeSidebarResizing }"
+            role="separator"
+            tabindex="0"
+            aria-orientation="vertical"
+            :aria-label="t('worktree.resizeSidebar')"
+            :aria-valuemin="WORKTREE_SIDEBAR_MIN_WIDTH"
+            :aria-valuemax="WORKTREE_SIDEBAR_MAX_WIDTH"
+            :aria-valuenow="effectiveWorktreeSidebarWidth"
+            @mousedown="startWorktreeSidebarResize"
+            @keydown="handleWorktreeSidebarResizeKeydown"
+            @dblclick="resetWorktreeSidebarWidth"
+          >
+            <div class="worktree-sidebar-resizer-handle"></div>
+          </div>
 
           <n-layout-content content-style="height: 100%;">
             <WorkspaceTabView :project-id="currentProjectId" />
@@ -269,6 +288,10 @@ import {
   PROJECT_SIDEBAR_COMPACT_WIDTH,
   resolveProjectSidebarDragWidth,
   resolveProjectSidebarMaxWidth,
+  normalizeWorktreeSidebarWidth,
+  WORKTREE_SIDEBAR_DEFAULT_WIDTH,
+  WORKTREE_SIDEBAR_MAX_WIDTH,
+  WORKTREE_SIDEBAR_MIN_WIDTH,
 } from '@/views/projectWorkspaceSidebar';
 import {
   formatLocalDateKey,
@@ -283,6 +306,7 @@ import {
 
 const WORKSPACE_MOBILE_MAX_WIDTH = 900;
 const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
+const WORKTREE_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-worktree-sidebar-width';
 const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project';
 const MOBILE_GIT_STATUS_REFRESH_INTERVAL_MS = 10_000;
 
@@ -330,6 +354,26 @@ watch(worktreeSiderCollapsed, collapsed => {
   localStorage.setItem(WORKTREE_SIDER_COLLAPSED_KEY, JSON.stringify(collapsed));
 });
 
+const worktreeSidebarWidth = useStorage<number>(
+  WORKTREE_SIDEBAR_WIDTH_STORAGE_KEY,
+  WORKTREE_SIDEBAR_DEFAULT_WIDTH
+);
+const effectiveWorktreeSidebarWidth = computed(() =>
+  normalizeWorktreeSidebarWidth(worktreeSidebarWidth.value)
+);
+const isWorktreeSidebarResizing = ref(false);
+
+watch(
+  worktreeSidebarWidth,
+  value => {
+    const normalized = normalizeWorktreeSidebarWidth(value);
+    if (value !== normalized) {
+      worktreeSidebarWidth.value = normalized;
+    }
+  },
+  { immediate: true }
+);
+
 const leftProjectSidebarWidth = useStorage<number>(
   PROJECT_SIDEBAR_WIDTH_STORAGE_KEY,
   PROJECT_SIDEBAR_DEFAULT_WIDTH
@@ -340,6 +384,7 @@ const maxLeftProjectSidebarWidth = computed(() => {
   return resolveProjectSidebarMaxWidth({
     windowWidth: windowWidth.value,
     worktreeCollapsed: worktreeSiderCollapsed.value,
+    worktreeWidth: effectiveWorktreeSidebarWidth.value,
   });
 });
 
@@ -351,7 +396,7 @@ const isProjectSidebarCompact = computed(() =>
 );
 
 watch(
-  [windowWidth, worktreeSiderCollapsed],
+  maxLeftProjectSidebarWidth,
   () => {
     leftProjectSidebarWidth.value = resolveProjectSidebarDragWidth(
       leftProjectSidebarWidth.value,
@@ -362,10 +407,16 @@ watch(
 );
 
 let cleanupProjectSidebarResize: (() => void) | null = null;
+let cleanupWorktreeSidebarResize: (() => void) | null = null;
 
 function stopProjectSidebarResize() {
   cleanupProjectSidebarResize?.();
   cleanupProjectSidebarResize = null;
+}
+
+function stopWorktreeSidebarResize() {
+  cleanupWorktreeSidebarResize?.();
+  cleanupWorktreeSidebarResize = null;
 }
 
 function startProjectSidebarResize(event: MouseEvent) {
@@ -373,6 +424,7 @@ function startProjectSidebarResize(event: MouseEvent) {
     return;
   }
   event.preventDefault();
+  stopWorktreeSidebarResize();
   stopProjectSidebarResize();
 
   isProjectSidebarResizing.value = true;
@@ -396,6 +448,70 @@ function startProjectSidebarResize(event: MouseEvent) {
 
   cleanupProjectSidebarResize = () => {
     isProjectSidebarResizing.value = false;
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
+
+function setWorktreeSidebarWidth(width: number) {
+  worktreeSidebarWidth.value = normalizeWorktreeSidebarWidth(width);
+}
+
+function resetWorktreeSidebarWidth() {
+  setWorktreeSidebarWidth(WORKTREE_SIDEBAR_DEFAULT_WIDTH);
+}
+
+function handleWorktreeSidebarResizeKeydown(event: KeyboardEvent) {
+  let nextWidth: number | null = null;
+  switch (event.key) {
+    case 'ArrowLeft':
+      nextWidth = effectiveWorktreeSidebarWidth.value - 8;
+      break;
+    case 'ArrowRight':
+      nextWidth = effectiveWorktreeSidebarWidth.value + 8;
+      break;
+    case 'Home':
+      nextWidth = WORKTREE_SIDEBAR_MIN_WIDTH;
+      break;
+    case 'End':
+      nextWidth = WORKTREE_SIDEBAR_MAX_WIDTH;
+      break;
+    default:
+      return;
+  }
+  event.preventDefault();
+  setWorktreeSidebarWidth(nextWidth);
+}
+
+function startWorktreeSidebarResize(event: MouseEvent) {
+  if (isMobileLayout.value || worktreeSiderCollapsed.value) {
+    return;
+  }
+  event.preventDefault();
+  stopProjectSidebarResize();
+  stopWorktreeSidebarResize();
+
+  isWorktreeSidebarResizing.value = true;
+  const startX = event.clientX;
+  const startWidth = effectiveWorktreeSidebarWidth.value;
+
+  const onMouseMove = (moveEvent: MouseEvent) => {
+    setWorktreeSidebarWidth(startWidth + moveEvent.clientX - startX);
+  };
+
+  const onMouseUp = () => {
+    stopWorktreeSidebarResize();
+  };
+
+  cleanupWorktreeSidebarResize = () => {
+    isWorktreeSidebarResizing.value = false;
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
     document.body.style.cursor = '';
@@ -643,6 +759,7 @@ onBeforeUnmount(() => {
   mobileWebSessionLongPress.pointerCancel();
   stopMobileGitStatusRefresh();
   stopProjectSidebarResize();
+  stopWorktreeSidebarResize();
 });
 
 watch(
@@ -1040,6 +1157,53 @@ function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) 
   flex: 1;
   min-width: 0;
   height: 100%;
+}
+
+.workspace-worktree-sider {
+  z-index: 3;
+}
+
+.workspace-worktree-sider.is-resizing {
+  transition: none !important;
+}
+
+.worktree-sidebar-resizer {
+  flex: 0 0 6px;
+  width: 6px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 2;
+  outline: none;
+}
+
+.worktree-sidebar-resizer-handle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 32px;
+  border-radius: 999px;
+  background-color: transparent;
+  opacity: 0;
+  transition:
+    background-color 0.15s ease,
+    height 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.worktree-sidebar-resizer:hover .worktree-sidebar-resizer-handle,
+.worktree-sidebar-resizer:focus-visible .worktree-sidebar-resizer-handle {
+  background-color: var(--app-border-strong, #d0d0d0);
+  height: 48px;
+  opacity: 1;
+}
+
+.worktree-sidebar-resizer.is-dragging .worktree-sidebar-resizer-handle {
+  background-color: var(--app-accent, #18a058);
+  height: 64px;
+  opacity: 1;
 }
 
 .workspace-content {
