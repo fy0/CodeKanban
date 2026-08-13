@@ -1989,17 +1989,15 @@
               >
                 <div class="composer-config-row">
                   <n-dropdown
-                    trigger="click"
+                    :trigger="isMobile ? 'click' : 'hover'"
                     placement="top-start"
                     :options="agentDropdownOptions"
                     :render-label="renderAgentDropdownLabel"
-                    :disabled="agentSwitchDisabled"
                     @select="handleAgentDropdownSelect"
                   >
                     <button
                       type="button"
                       class="composer-agent-trigger"
-                      :disabled="agentSwitchDisabled"
                       :title="selectedAgentTitle"
                       :aria-label="selectedAgentTitle"
                     >
@@ -2013,6 +2011,8 @@
                     :show="showModelSelector"
                     v-model:value="selectedModel"
                     @update:show="handleModelSelectorShowChange"
+                    @mouseenter="handleComposerSelectorPointerEnter('model')"
+                    @mouseleave="handleComposerSelectorPointerLeave('model')"
                     class="composer-select model-select"
                     :style="modelSelectStyle"
                     :menu-props="modelSelectMenuProps"
@@ -2031,9 +2031,14 @@
                   />
                   <n-select
                     v-if="selectedAgent === 'codex' || selectedAgent === 'pi'"
+                    :show="isMobile ? undefined : showReasoningSelector"
                     v-model:value="selectedReasoningEffort"
+                    @update:show="handleReasoningSelectorShowChange"
+                    @mouseenter="handleComposerSelectorPointerEnter('reasoning')"
+                    @mouseleave="handleComposerSelectorPointerLeave('reasoning')"
                     class="composer-select reasoning-select"
                     size="small"
+                    :menu-props="reasoningSelectMenuProps"
                     :options="reasoningEffortOptions"
                   />
                   <div class="composer-mode-row">
@@ -10901,7 +10906,14 @@ const agentOptions: Array<{ label: string; value: WebSessionAgent }> = [
 ];
 const showAdditionalCodexModels = ref(false);
 const showModelSelector = ref(false);
+const showReasoningSelector = ref(false);
 const keepAdditionalCodexModelsForNextOpen = ref(false);
+type ComposerHoverSelector = 'model' | 'reasoning';
+const COMPOSER_SELECTOR_HOVER_CLOSE_DELAY = 120;
+const composerSelectorHoverCloseTimers: Record<ComposerHoverSelector, number | null> = {
+  model: null,
+  reasoning: null,
+};
 const MODEL_SELECT_MIN_WIDTH = 66;
 const MODEL_SELECT_MAX_WIDTH = 112;
 const MODEL_SELECT_BASE_WIDTH = 46;
@@ -10909,6 +10921,13 @@ const MODEL_SELECT_CHAR_WIDTH = 6.5;
 const modelSelectMenuProps = {
   class: 'web-session-model-select-menu',
   style: { minWidth: '132px', maxWidth: '180px' },
+  onMouseenter: () => handleComposerSelectorPointerEnter('model'),
+  onMouseleave: () => handleComposerSelectorPointerLeave('model'),
+};
+const reasoningSelectMenuProps = {
+  class: 'web-session-reasoning-select-menu',
+  onMouseenter: () => handleComposerSelectorPointerEnter('reasoning'),
+  onMouseleave: () => handleComposerSelectorPointerLeave('reasoning'),
 };
 const claudeRuntimeSelectMenuProps = {
   class: 'web-session-claude-runtime-select-menu',
@@ -10938,9 +10957,10 @@ const agentDropdownOptions = computed<DropdownOption[]>(() =>
     key: option.value,
     value: option.value,
     disabled:
-      option.value === 'pi'
+      agentSwitchDisabled.value ||
+      (option.value === 'pi'
         ? !runtimePiCapability.value.supportsWebSession
-        : runtimeConfig.value !== null && !runtimeCapabilityFor(option.value).supportsWebSession,
+        : runtimeConfig.value !== null && !runtimeCapabilityFor(option.value).supportsWebSession),
   }))
 );
 
@@ -11207,6 +11227,47 @@ function handleModelSelectorShowChange(show: boolean) {
     keepAdditionalCodexModelsForNextOpen.value = false;
   }
   showModelSelector.value = show;
+}
+
+function handleReasoningSelectorShowChange(show: boolean) {
+  if (!isMobile.value) {
+    showReasoningSelector.value = show;
+  }
+}
+
+function clearComposerSelectorHoverCloseTimer(selector: ComposerHoverSelector) {
+  const timer = composerSelectorHoverCloseTimers[selector];
+  if (timer !== null) {
+    window.clearTimeout(timer);
+    composerSelectorHoverCloseTimers[selector] = null;
+  }
+}
+
+function setComposerSelectorShow(selector: ComposerHoverSelector, show: boolean) {
+  if (selector === 'model') {
+    handleModelSelectorShowChange(show);
+    return;
+  }
+  showReasoningSelector.value = show;
+}
+
+function handleComposerSelectorPointerEnter(selector: ComposerHoverSelector) {
+  if (isMobile.value) {
+    return;
+  }
+  clearComposerSelectorHoverCloseTimer(selector);
+  setComposerSelectorShow(selector, true);
+}
+
+function handleComposerSelectorPointerLeave(selector: ComposerHoverSelector) {
+  if (isMobile.value) {
+    return;
+  }
+  clearComposerSelectorHoverCloseTimer(selector);
+  composerSelectorHoverCloseTimers[selector] = window.setTimeout(() => {
+    composerSelectorHoverCloseTimers[selector] = null;
+    setComposerSelectorShow(selector, false);
+  }, COMPOSER_SELECTOR_HOVER_CLOSE_DELAY);
 }
 
 const selectedModelDisplayLabel = computed(() => getKnownModelLabel(selectedModel.value));
@@ -16999,6 +17060,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearComposerSelectorHoverCloseTimer('model');
+  clearComposerSelectorHoverCloseTimer('reasoning');
   stopMobileChangesSummaryTimer();
   mobileChangesSummaryScopeController.cancel();
   mobileChangesSummaryLoadController.cancel();

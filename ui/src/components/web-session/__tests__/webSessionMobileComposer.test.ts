@@ -57,6 +57,32 @@ describe('webSession mobile composer', () => {
     );
   });
 
+  it('opens the agent menu on hover while keeping click interaction on mobile', () => {
+    expect(webSessionPanelSource).toContain(":trigger=\"isMobile ? 'click' : 'hover'\"");
+  });
+
+  it('opens model and reasoning menus on desktop hover without changing mobile triggers', () => {
+    expect(webSessionPanelSource).toContain(
+      '@mouseenter="handleComposerSelectorPointerEnter(\'model\')"'
+    );
+    expect(webSessionPanelSource).toContain(
+      '@mouseenter="handleComposerSelectorPointerEnter(\'reasoning\')"'
+    );
+    expect(webSessionPanelSource).toContain(':show="isMobile ? undefined : showReasoningSelector"');
+    expect(webSessionPanelSource).toMatch(
+      /function handleComposerSelectorPointerEnter[\s\S]*?if \(isMobile\.value\) \{\s*return;/
+    );
+  });
+
+  it('keeps a locked agent menu inspectable while disabling every agent option', () => {
+    const agentDropdownSource = webSessionPanelSource.match(
+      /<n-dropdown\s+:trigger="isMobile \? 'click' : 'hover'"[\s\S]*?<\/n-dropdown>/
+    )?.[0];
+
+    expect(agentDropdownSource).not.toContain(':disabled="agentSwitchDisabled"');
+    expect(webSessionPanelSource).toMatch(/disabled:\s*agentSwitchDisabled\.value \|\|/);
+  });
+
   it('moves session toggles behind a settings gear', () => {
     expect(webSessionPanelSource).toContain('<SettingsOutline />');
     expect(webSessionPanelSource).toContain('composer-settings-popover-card');
