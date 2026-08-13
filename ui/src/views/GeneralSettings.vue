@@ -1514,77 +1514,54 @@
 
                 <n-divider style="margin: 16px 0">{{ t('theme.customTheme') }}</n-divider>
 
-                <n-alert
-                  v-if="hasCustomTheme"
-                  type="info"
-                  style="margin-bottom: 16px"
-                  :bordered="false"
-                >
+                <n-alert v-if="hasCustomTheme" type="info" :bordered="false">
                   {{ t('theme.customThemeHint') }}
                 </n-alert>
 
-                <n-form-item :label="t('settings.primaryColor')" data-search-key="primaryColor">
-                  <n-color-picker
-                    v-model:value="primaryColor"
-                    :modes="['hex']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-                <n-form-item :label="t('settings.bodyColor')" data-search-key="bodyColor">
-                  <n-color-picker
-                    v-model:value="bodyColor"
-                    :modes="['hex']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-                <n-form-item :label="t('settings.surfaceColor')" data-search-key="surfaceColor">
-                  <n-color-picker
-                    v-model:value="surfaceColor"
-                    :modes="['hex']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-                <n-form-item :label="t('settings.textColor')" data-search-key="textColor">
-                  <n-color-picker
-                    v-model:value="textColor"
-                    :modes="['hex']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
+                <div class="theme-color-sections">
+                  <section
+                    v-for="group in themeColorGroups"
+                    :key="group.id"
+                    class="theme-color-section"
+                  >
+                    <h3>{{ group.title }}</h3>
+                    <div class="theme-color-grid">
+                      <label
+                        v-for="field in group.fields"
+                        :key="field.key"
+                        class="theme-color-field"
+                        :data-search-key="field.key"
+                      >
+                        <span>{{ field.label }}</span>
+                        <n-color-picker
+                          :value="themeColorValue(field)"
+                          :modes="['hex']"
+                          :actions="['confirm']"
+                          @update:value="updateThemeColor(field, $event)"
+                        />
+                      </label>
+                    </div>
+                  </section>
+                </div>
 
-                <n-divider style="margin: 16px 0">{{ t('theme.terminalColors') }}</n-divider>
-
-                <n-form-item :label="t('settings.terminalBg')" data-search-key="terminalBg">
-                  <n-color-picker
-                    v-model:value="terminalBg"
-                    :modes="['hex']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-                <n-form-item :label="t('settings.terminalFg')" data-search-key="terminalFg">
-                  <n-color-picker
-                    v-model:value="terminalFg"
-                    :modes="['hex']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-                <n-form-item :label="t('settings.terminalTabBg')" data-search-key="terminalTabBg">
-                  <n-color-picker
-                    v-model:value="terminalTabBg"
-                    :modes="['hex']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
-                <n-form-item
-                  :label="t('settings.terminalTabActiveBg')"
-                  data-search-key="terminalTabActiveBg"
-                >
-                  <n-color-picker
-                    v-model:value="terminalTabActiveBg"
-                    :modes="['hex']"
-                    :actions="['confirm']"
-                  />
-                </n-form-item>
+                <n-divider style="margin: 20px 0 16px">{{ t('theme.xtermColors') }}</n-divider>
+                <p class="form-tip theme-color-tip">{{ t('theme.xtermColorsHint') }}</p>
+                <div class="theme-color-grid theme-color-grid--xterm">
+                  <label
+                    v-for="key in TERMINAL_THEME_COLOR_KEYS"
+                    :key="key"
+                    class="theme-color-field"
+                    :data-search-key="key"
+                  >
+                    <span>{{ terminalThemeColorLabels[key] }}</span>
+                    <n-color-picker
+                      :value="activeTerminalTheme[key]"
+                      :modes="['hex', 'rgb']"
+                      :actions="['confirm']"
+                      @update:value="updateTerminalThemeColor(key, $event)"
+                    />
+                  </label>
+                </div>
               </n-form>
             </n-card>
 
@@ -1985,10 +1962,12 @@ import {
   type WebSessionStreamingMarkdownThrottleMode,
   DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
   type FollowSystemThemeSetting,
+  type ThemeSettings,
 } from '@/stores/settings';
 import type { WebSessionActivityDisplayMode } from '@/constants/webSessionActivityDisplayMode';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
 import { isSupportedThemePreset } from '@/constants/themes';
+import { TERMINAL_THEME_COLOR_KEYS, type TerminalThemeColorKey } from '@/constants/terminalThemes';
 import {
   DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
   TERMINAL_SNAPSHOT_INTERVAL_OPTIONS,
@@ -2007,6 +1986,7 @@ import {
   isDarkHex,
   getReadableTextColor,
 } from '@/utils/color';
+import { createThemeSemanticPalette } from '@/utils/themeSemanticPalette';
 import {
   createThemeMaintenanceWarningController,
   createThemeSelectionController,
@@ -2113,7 +2093,7 @@ const {
   pageTitle,
   pageTitleSettingsLoaded,
   pageTitleSettingsSaving,
-  theme,
+  activeTheme: theme,
   currentPresetId,
   followSystemThemeSetting,
   followSystemTheme,
@@ -2134,6 +2114,7 @@ const {
   webSessionStreamingMarkdownThrottleMode,
   webSessionStreamingMarkdownThrottleCustomMs,
   terminalThemeId,
+  activeTerminalTheme,
   terminalFont,
   terminalWebGLRenderer,
   defaultTerminalRenderMode,
@@ -2317,6 +2298,279 @@ const followSystemModeValue = computed(() => followSystemThemeSetting.value);
 
 // 是否有自定义主题
 const hasCustomTheme = computed(() => customTheme.value !== null);
+type ThemeColorField = {
+  key: keyof ThemeSettings;
+  label: string;
+  fallback: string;
+};
+
+const semanticThemePalette = computed(() =>
+  createThemeSemanticPalette(theme.value, theme.value.textColor || '#333333')
+);
+const themeColorGroups = computed(() => [
+  {
+    id: 'base',
+    title: t('theme.baseColors'),
+    fields: [
+      { key: 'primaryColor', label: t('settings.primaryColor'), fallback: '#3B69A9' },
+      { key: 'bodyColor', label: t('settings.bodyColor'), fallback: '#F7F8FA' },
+      { key: 'surfaceColor', label: t('settings.surfaceColor'), fallback: '#FFFFFF' },
+      {
+        key: 'sidebarFooterColor',
+        label: t('theme.sidebarFooterColor'),
+        fallback: semanticThemePalette.value.sidebarFooter,
+      },
+      {
+        key: 'surfaceRaisedColor',
+        label: t('theme.surfaceRaisedColor'),
+        fallback: semanticThemePalette.value.surfaceRaised,
+      },
+      {
+        key: 'surfaceSunkenColor',
+        label: t('theme.surfaceSunkenColor'),
+        fallback: semanticThemePalette.value.surfaceSunken,
+      },
+      {
+        key: 'surfaceHoverColor',
+        label: t('theme.surfaceHoverColor'),
+        fallback: semanticThemePalette.value.surfaceHover,
+      },
+    ] satisfies ThemeColorField[],
+  },
+  {
+    id: 'text-border',
+    title: t('theme.textBorderColors'),
+    fields: [
+      { key: 'textColor', label: t('settings.textColor'), fallback: '#333333' },
+      {
+        key: 'secondaryTextColor',
+        label: t('theme.secondaryTextColor'),
+        fallback: semanticThemePalette.value.textSecondary,
+      },
+      {
+        key: 'mutedTextColor',
+        label: t('theme.mutedTextColor'),
+        fallback: semanticThemePalette.value.textMuted,
+      },
+      {
+        key: 'borderColor',
+        label: t('theme.borderColor'),
+        fallback: semanticThemePalette.value.border,
+      },
+      {
+        key: 'borderStrongColor',
+        label: t('theme.borderStrongColor'),
+        fallback: semanticThemePalette.value.borderStrong,
+      },
+      { key: 'linkColor', label: t('theme.linkColor'), fallback: semanticThemePalette.value.link },
+      {
+        key: 'controlBorderColor',
+        label: t('theme.controlBorderColor'),
+        fallback: semanticThemePalette.value.controlBorder,
+      },
+      {
+        key: 'controlBorderHoverColor',
+        label: t('theme.controlBorderHoverColor'),
+        fallback: semanticThemePalette.value.controlBorderHover,
+      },
+      {
+        key: 'focusRingColor',
+        label: t('theme.focusRingColor'),
+        fallback: semanticThemePalette.value.focusRing,
+      },
+    ] satisfies ThemeColorField[],
+  },
+  {
+    id: 'status',
+    title: t('theme.statusFlowColors'),
+    fields: [
+      { key: 'planColor', label: t('theme.planColor'), fallback: semanticThemePalette.value.plan },
+      {
+        key: 'workingColor',
+        label: t('theme.workingColor'),
+        fallback: semanticThemePalette.value.working,
+      },
+      {
+        key: 'completionColor',
+        label: t('theme.completionColor'),
+        fallback: semanticThemePalette.value.completion,
+      },
+      {
+        key: 'approvalColor',
+        label: t('theme.approvalColor'),
+        fallback: semanticThemePalette.value.approval,
+      },
+      {
+        key: 'planApprovalColor',
+        label: t('theme.planApprovalColor'),
+        fallback: semanticThemePalette.value.planApproval,
+      },
+      {
+        key: 'redirectColor',
+        label: t('theme.redirectColor'),
+        fallback: semanticThemePalette.value.redirect,
+      },
+      {
+        key: 'queueColor',
+        label: t('theme.queueColor'),
+        fallback: semanticThemePalette.value.queue,
+      },
+      {
+        key: 'successColor',
+        label: t('theme.successColor'),
+        fallback: semanticThemePalette.value.success,
+      },
+      {
+        key: 'warningColor',
+        label: t('theme.warningColor'),
+        fallback: semanticThemePalette.value.warning,
+      },
+      {
+        key: 'errorColor',
+        label: t('theme.errorColor'),
+        fallback: semanticThemePalette.value.error,
+      },
+      { key: 'infoColor', label: t('theme.infoColor'), fallback: semanticThemePalette.value.info },
+      {
+        key: 'projectTerminalColor',
+        label: t('theme.projectTerminalColor'),
+        fallback: semanticThemePalette.value.projectTerminal,
+      },
+      {
+        key: 'projectTerminalSoftColor',
+        label: t('theme.projectTerminalSoftColor'),
+        fallback: semanticThemePalette.value.projectTerminalSoft,
+      },
+      {
+        key: 'projectWebSessionColor',
+        label: t('theme.projectWebSessionColor'),
+        fallback: semanticThemePalette.value.projectWebSession,
+      },
+      {
+        key: 'projectWebSessionSoftColor',
+        label: t('theme.projectWebSessionSoftColor'),
+        fallback: semanticThemePalette.value.projectWebSessionSoft,
+      },
+      {
+        key: 'changeAdditionColor',
+        label: t('theme.changeAdditionColor'),
+        fallback: semanticThemePalette.value.changeAddition,
+      },
+      {
+        key: 'changeDeletionColor',
+        label: t('theme.changeDeletionColor'),
+        fallback: semanticThemePalette.value.changeDeletion,
+      },
+      {
+        key: 'changeWarningColor',
+        label: t('theme.changeWarningColor'),
+        fallback: semanticThemePalette.value.changeWarning,
+      },
+      {
+        key: 'warningContrastColor',
+        label: t('theme.warningContrastColor'),
+        fallback: semanticThemePalette.value.warningContrast,
+      },
+    ] satisfies ThemeColorField[],
+  },
+  {
+    id: 'terminal-shell',
+    title: t('theme.terminalShellColors'),
+    fields: [
+      {
+        key: 'terminalTabBg',
+        label: t('settings.terminalTabBg'),
+        fallback: theme.value.surfaceColor,
+      },
+      {
+        key: 'terminalTabActiveBg',
+        label: t('settings.terminalTabActiveBg'),
+        fallback: theme.value.surfaceColor,
+      },
+      {
+        key: 'terminalTabTextColor',
+        label: t('theme.terminalTabTextColor'),
+        fallback: semanticThemePalette.value.textSecondary,
+      },
+      {
+        key: 'terminalTabActiveTextColor',
+        label: t('theme.terminalTabActiveTextColor'),
+        fallback: semanticThemePalette.value.textPrimary,
+      },
+      {
+        key: 'terminalHeaderBorderColor',
+        label: t('theme.terminalHeaderBorderColor'),
+        fallback: semanticThemePalette.value.border,
+      },
+      {
+        key: 'terminalEmptyGuideFg',
+        label: t('theme.terminalEmptyGuideColor'),
+        fallback: semanticThemePalette.value.textSecondary,
+      },
+      {
+        key: 'terminalStatusReadyColor',
+        label: t('theme.terminalStatusReadyColor'),
+        fallback: '#12b76a',
+      },
+      {
+        key: 'terminalStatusConnectingColor',
+        label: t('theme.terminalStatusConnectingColor'),
+        fallback: '#f79009',
+      },
+      {
+        key: 'terminalStatusErrorColor',
+        label: t('theme.terminalStatusErrorColor'),
+        fallback: '#f04438',
+      },
+    ] satisfies ThemeColorField[],
+  },
+  {
+    id: 'effects',
+    title: t('theme.effectColors'),
+    fields: [
+      {
+        key: 'shadowColor',
+        label: t('theme.shadowColor'),
+        fallback: semanticThemePalette.value.shadow,
+      },
+      {
+        key: 'shadowSubtleColor',
+        label: t('theme.shadowSubtleColor'),
+        fallback: semanticThemePalette.value.shadowSubtle,
+      },
+      { key: 'workspaceTopColor', label: t('theme.workspaceTopColor'), fallback: '#f6f1e8' },
+      {
+        key: 'workspaceBottomColor',
+        label: t('theme.workspaceBottomColor'),
+        fallback: theme.value.surfaceColor,
+      },
+    ] satisfies ThemeColorField[],
+  },
+]);
+
+const terminalThemeColorLabels = computed<Record<TerminalThemeColorKey, string>>(() => ({
+  background: t('theme.xtermBackground'),
+  foreground: t('theme.xtermForeground'),
+  cursor: t('theme.xtermCursor'),
+  cursorAccent: t('theme.xtermCursorAccent'),
+  selectionBackground: t('theme.xtermSelection'),
+  black: t('theme.ansiBlack'),
+  red: t('theme.ansiRed'),
+  green: t('theme.ansiGreen'),
+  yellow: t('theme.ansiYellow'),
+  blue: t('theme.ansiBlue'),
+  magenta: t('theme.ansiMagenta'),
+  cyan: t('theme.ansiCyan'),
+  white: t('theme.ansiWhite'),
+  brightBlack: t('theme.ansiBrightBlack'),
+  brightRed: t('theme.ansiBrightRed'),
+  brightGreen: t('theme.ansiBrightGreen'),
+  brightYellow: t('theme.ansiBrightYellow'),
+  brightBlue: t('theme.ansiBrightBlue'),
+  brightMagenta: t('theme.ansiBrightMagenta'),
+  brightCyan: t('theme.ansiBrightCyan'),
+  brightWhite: t('theme.ansiBrightWhite'),
+}));
 const standardFormLabelPlacement = computed<'left' | 'top'>(() =>
   isMobile.value ? 'top' : 'left'
 );
@@ -3321,6 +3575,23 @@ async function handleConfirmSettingsBackupImport() {
   }
 }
 
+function themeColorValue(field: ThemeColorField): string {
+  const value = theme.value[field.key];
+  return typeof value === 'string' && value.trim() ? value : field.fallback;
+}
+
+function updateThemeColor(field: ThemeColorField, value: string | null) {
+  settingsStore.applyCustomTheme({
+    [field.key]: value || field.fallback,
+  } as Partial<ThemeSettings>);
+}
+
+function updateTerminalThemeColor(key: TerminalThemeColorKey, value: string | null) {
+  settingsStore.updateCustomTerminalTheme({
+    [key]: value || activeTerminalTheme.value[key],
+  });
+}
+
 const primaryColor = computed({
   get: () => theme.value.primaryColor,
   set: value => {
@@ -3354,34 +3625,6 @@ const textColor = computed({
   get: () => theme.value.textColor || fallbackTextColor.value,
   set: value => {
     settingsStore.applyCustomTheme({ textColor: value || '#333333' });
-  },
-});
-
-const terminalBg = computed({
-  get: () => theme.value.terminalBg,
-  set: value => {
-    settingsStore.applyCustomTheme({ terminalBg: value || '#0c0c0c' });
-  },
-});
-
-const terminalFg = computed({
-  get: () => theme.value.terminalFg,
-  set: value => {
-    settingsStore.applyCustomTheme({ terminalFg: value || '#cccccc' });
-  },
-});
-
-const terminalTabBg = computed({
-  get: () => theme.value.terminalTabBg || theme.value.surfaceColor,
-  set: value => {
-    settingsStore.applyCustomTheme({ terminalTabBg: value || '#F1F1F1' });
-  },
-});
-
-const terminalTabActiveBg = computed({
-  get: () => theme.value.terminalTabActiveBg || theme.value.terminalBg,
-  set: value => {
-    settingsStore.applyCustomTheme({ terminalTabActiveBg: value || '#FFFFFF' });
   },
 });
 
@@ -4048,14 +4291,12 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
         t('settings.terminalLineHeight'),
         t('settings.terminalLetterSpacing'),
         t('settings.terminalWebGLRenderer'),
-        t('settings.primaryColor'),
-        t('settings.bodyColor'),
-        t('settings.surfaceColor'),
-        t('settings.textColor'),
-        t('settings.terminalBg'),
-        t('settings.terminalFg'),
-        t('settings.terminalTabBg'),
-        t('settings.terminalTabActiveBg'),
+        ...themeColorGroups.value.flatMap(group => [
+          group.title,
+          ...group.fields.map(field => field.label),
+        ]),
+        t('theme.xtermColors'),
+        ...Object.values(terminalThemeColorLabels.value),
         t('settings.realtimePreview'),
         t('settings.previewTheme'),
         t('settings.sampleCard'),
@@ -4543,6 +4784,53 @@ function formatShortcutLabel(event: KeyboardEvent) {
   line-height: 1.5;
 }
 
+.theme-color-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-top: 20px;
+}
+
+.theme-color-section h3 {
+  margin: 0 0 10px;
+  color: var(--app-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.theme-color-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+
+.theme-color-grid--xterm {
+  margin-top: 12px;
+}
+
+.theme-color-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--app-text-secondary);
+  font-size: 13px;
+}
+
+.theme-color-field > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.theme-color-field :deep(.n-color-picker) {
+  width: 104px;
+}
+
+.theme-color-tip {
+  margin: 0;
+}
+
 :deep(.n-form-item) {
   margin-bottom: 24px;
   align-items: flex-start;
@@ -4618,7 +4906,7 @@ function formatShortcutLabel(event: KeyboardEvent) {
 
 .preview-banner {
   background-color: var(--preview-banner-bg, var(--app-accent));
-  color: var(--preview-banner-text, var(--kanban-terminal-fg));
+  color: var(--preview-banner-text, var(--app-text-inverse));
   padding: 12px;
   font-size: 14px;
   font-weight: 600;
@@ -4627,7 +4915,7 @@ function formatShortcutLabel(event: KeyboardEvent) {
 .preview-content {
   padding: 16px;
   background-color: var(--preview-content-bg, var(--app-surface));
-  color: var(--preview-content-text, var(--kanban-terminal-fg));
+  color: var(--preview-content-text, var(--app-text-primary));
 }
 
 /* 工具类 */
@@ -5015,6 +5303,18 @@ function formatShortcutLabel(event: KeyboardEvent) {
   .general-settings-page :deep(.n-slider) {
     width: 100% !important;
     min-width: 0;
+  }
+
+  .theme-color-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .theme-color-field {
+    grid-template-columns: minmax(0, 1fr) minmax(104px, 42%);
+  }
+
+  .theme-color-field :deep(.n-color-picker) {
+    width: 100%;
   }
 
   /* 卡片内容紧凑 */

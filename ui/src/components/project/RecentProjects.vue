@@ -1055,10 +1055,10 @@ onMounted(() => {
 }
 
 .terminal-tag--combined {
-  --terminal-tag-terminal-color: var(--app-success, #18a058);
-  --terminal-tag-terminal-bg: var(--app-success-soft, #eaf8e3);
-  --terminal-tag-web-color: var(--app-info, #2080f0);
-  --terminal-tag-web-bg: var(--app-info-soft, #e7edf5);
+  --terminal-tag-terminal-color: var(--app-project-terminal, #18a058);
+  --terminal-tag-terminal-bg: var(--app-project-terminal-soft, #eaf8e3);
+  --terminal-tag-web-color: var(--app-project-web-session, #2080f0);
+  --terminal-tag-web-bg: var(--app-project-web-session-soft, #e7edf5);
   --n-padding: 0 6px 0 5px;
   color: var(--app-text-primary, rgba(15, 23, 42, 0.92));
   background: linear-gradient(
@@ -1189,7 +1189,7 @@ onMounted(() => {
   flex-shrink: 0;
   padding: 12px 16px;
   border-top: 1px solid var(--app-border, var(--n-border-color));
-  background-color: var(--app-accent-soft, var(--n-color-target));
+  background-color: var(--app-sidebar-footer, var(--app-surface, #ffffff));
   display: flex;
   align-items: center;
   container-type: inline-size;

@@ -206,7 +206,7 @@ onBeforeUnmount(clearLongPressTimer);
   border: 1px solid color-mix(in srgb, var(--app-border, var(--n-border-color)) 48%, transparent);
   border-radius: 6px;
   background: var(--app-surface, var(--app-surface-color, #fff));
-  box-shadow: 0 1px 3px var(--app-shadow, rgba(15, 23, 42, 0.06));
+  box-shadow: 0 1px 3px var(--app-shadow-subtle, rgba(15, 23, 42, 0.06));
   text-align: left;
   position: relative;
   cursor: pointer;
@@ -225,23 +225,23 @@ onBeforeUnmount(clearLongPressTimer);
   border-color: color-mix(
     in srgb,
     var(--session-sidebar-outline) 72%,
-    var(--app-focus-ring, #ffffff)
+    var(--app-active-outline-mix, #ffffff)
   );
   background: color-mix(in srgb, var(--session-sidebar-outline) 8%, var(--app-surface, #fff));
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--session-sidebar-outline) 22%, transparent),
-    0 1px 3px var(--app-shadow, rgba(15, 23, 42, 0.06));
+    0 1px 3px var(--app-shadow-subtle, rgba(15, 23, 42, 0.06));
 }
 
 .session-sidebar-item:focus-within {
   border-color: color-mix(
     in srgb,
     var(--session-sidebar-outline) 72%,
-    var(--app-focus-ring, #ffffff)
+    var(--app-active-outline-mix, #ffffff)
   );
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--session-sidebar-outline) 22%, transparent),
-    0 1px 3px var(--app-shadow, rgba(15, 23, 42, 0.06));
+    0 1px 3px var(--app-shadow-subtle, rgba(15, 23, 42, 0.06));
 }
 
 .session-sidebar-item.is-archived {
@@ -257,7 +257,7 @@ onBeforeUnmount(clearLongPressTimer);
   z-index: 2;
   top: -7px;
   left: -6px;
-  color: var(--app-link, #6366f1);
+  color: var(--app-plan, #6366f1);
   pointer-events: none;
 }
 
@@ -456,22 +456,22 @@ onBeforeUnmount(clearLongPressTimer);
 }
 
 .session-sidebar-working {
-  --session-sidebar-outline: var(--app-accent, #8b5cf6);
-  background: var(--app-accent-soft, color-mix(in srgb, #8b5cf6 9%, var(--app-surface, #fff)));
+  --session-sidebar-outline: var(--app-working, #8b5cf6);
+  background: color-mix(in srgb, var(--app-working, #8b5cf6) 9%, var(--app-surface, #fff));
 }
 
 .session-sidebar-approval {
-  --session-sidebar-outline: var(--app-warning, #f79009);
-  background: var(--app-warning-soft, rgba(247, 144, 9, 0.12));
+  --session-sidebar-outline: var(--app-approval, #f79009);
+  background: var(--app-approval-soft, rgba(247, 144, 9, 0.12));
 }
 
 .session-sidebar-item.session-sidebar-approval.is-active,
 .session-sidebar-item.session-sidebar-approval.is-active:hover {
-  background: color-mix(in srgb, var(--app-warning, #f79009) 18%, transparent);
+  background: color-mix(in srgb, var(--app-approval, #f79009) 18%, transparent);
 }
 
 .session-sidebar-plan-approval {
-  --session-sidebar-outline: var(--session-sidebar-accent, #0891b2);
+  --session-sidebar-outline: var(--session-sidebar-accent, var(--app-plan-approval, #0891b2));
   background: color-mix(
     in srgb,
     var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 82%,
@@ -489,8 +489,8 @@ onBeforeUnmount(clearLongPressTimer);
 }
 
 .session-sidebar-completion {
-  --session-sidebar-outline: var(--app-success, #10b981);
-  background: var(--app-success-soft, color-mix(in srgb, #10b981 10%, var(--app-surface, #fff)));
+  --session-sidebar-outline: var(--app-completion, #10b981);
+  background: color-mix(in srgb, var(--app-completion, #10b981) 10%, var(--app-surface, #fff));
 }
 
 .session-sidebar-idle {

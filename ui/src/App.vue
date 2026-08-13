@@ -15,7 +15,6 @@ import { isDarkHex } from '@/utils/color';
 import { formatBrowserTabTitle } from '@/utils/browserTitle';
 import { createThemeOverrides } from '@/utils/themeOverrides';
 import { createThemeSemanticPalette } from '@/utils/themeSemanticPalette';
-import { getPresetById } from '@/constants/themes';
 import { APP_NAME } from '@/constants/app';
 
 const settingsStore = useSettingsStore();
@@ -24,7 +23,7 @@ const projectStore = useProjectStore();
 const {
   activeTheme: theme,
   followSystemTheme,
-  currentPresetId,
+  activeTerminalTheme,
   pageTitle,
 } = storeToRefs(settingsStore);
 const { totalSummary } = useAiStatusSummary();
@@ -64,22 +63,6 @@ const shouldShowGlobalNotepad = computed(() => {
   return true;
 });
 
-// 获取预设主题中的终端标签颜色（用于 fallback）
-// 当 followSystemTheme 为 true 时，根据系统主题选择预设
-const presetTerminalTabColors = computed(() => {
-  let presetId = currentPresetId.value;
-  if (followSystemTheme.value && typeof window !== 'undefined') {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    presetId = prefersDark ? 'dark' : 'light';
-  }
-  const preset = getPresetById(presetId);
-  return {
-    tabBg: preset?.colors.terminalTabBg,
-    tabActiveBg: preset?.colors.terminalTabActiveBg,
-    headerBorder: preset?.colors.terminalHeaderBorder,
-  };
-});
-
 const { locale } = useI18n();
 
 const resolvedTextColor = computed(() => {
@@ -117,13 +100,12 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
 // （useCssVars 只设置在组件根元素上，无法被 :deep() 选择器访问）
 // 解析终端头部边框值：支持 boolean | string
 const resolvedTerminalHeaderBorder = computed(() => {
-  const borderValue =
-    theme.value.terminalHeaderBorder ?? presetTerminalTabColors.value.headerBorder;
+  const borderValue = theme.value.terminalHeaderBorder;
 
   if (borderValue === false) {
     return 'none';
   } else if (borderValue === true) {
-    return '1px solid rgba(255, 255, 255, 0.09)';
+    return `1px solid ${theme.value.terminalHeaderBorderColor || semanticPalette.value.border}`;
   } else if (typeof borderValue === 'string') {
     // 处理 'transparent' 字符串，将其转换为完整的边框声明或 none
     if (borderValue === 'transparent') {
@@ -139,17 +121,21 @@ const resolvedTerminalHeaderBorder = computed(() => {
 const cssVarsToSet = computed(() => ({
   '--app-body-color': theme.value.bodyColor,
   '--app-surface-color': theme.value.surfaceColor,
-  '--kanban-terminal-bg': theme.value.terminalBg,
-  '--kanban-terminal-fg': theme.value.terminalFg,
-  '--kanban-terminal-tab-bg':
-    theme.value.terminalTabBg || presetTerminalTabColors.value.tabBg || theme.value.bodyColor,
-  '--kanban-terminal-tab-active-bg':
-    theme.value.terminalTabActiveBg ||
-    presetTerminalTabColors.value.tabActiveBg ||
-    theme.value.surfaceColor,
+  '--kanban-terminal-bg': activeTerminalTheme.value.background,
+  '--kanban-terminal-fg': activeTerminalTheme.value.foreground,
+  '--kanban-terminal-tab-bg': theme.value.terminalTabBg || theme.value.bodyColor,
+  '--kanban-terminal-tab-active-bg': theme.value.terminalTabActiveBg || theme.value.surfaceColor,
+  '--kanban-terminal-tab-text':
+    theme.value.terminalTabTextColor || semanticPalette.value.textSecondary,
+  '--kanban-terminal-tab-active-text':
+    theme.value.terminalTabActiveTextColor || semanticPalette.value.textPrimary,
   '--kanban-terminal-header-border': resolvedTerminalHeaderBorder.value,
   // 空终端引导文字颜色
-  '--kanban-terminal-empty-guide-fg': theme.value.terminalEmptyGuideFg || theme.value.terminalFg,
+  '--kanban-terminal-empty-guide-fg':
+    theme.value.terminalEmptyGuideFg || semanticPalette.value.textSecondary,
+  '--kanban-terminal-status-ready': theme.value.terminalStatusReadyColor || '#12b76a',
+  '--kanban-terminal-status-connecting': theme.value.terminalStatusConnectingColor || '#f79009',
+  '--kanban-terminal-status-error': theme.value.terminalStatusErrorColor || '#f04438',
   '--app-text-color': resolvedTextColor.value,
   '--app-input-border-color': inputBorderColor.value,
   '--app-input-border-hover-color': inputBorderHoverColor.value,
@@ -175,16 +161,42 @@ const cssVarsToSet = computed(() => ({
   '--app-accent-contrast': semanticPalette.value.accentContrast,
   '--app-link': semanticPalette.value.link,
   '--app-link-hover': semanticPalette.value.linkHover,
+  '--app-plan': semanticPalette.value.plan,
+  '--app-plan-soft': semanticPalette.value.planSoft,
+  '--app-working': semanticPalette.value.working,
+  '--app-working-soft': semanticPalette.value.workingSoft,
+  '--app-completion': semanticPalette.value.completion,
+  '--app-completion-soft': semanticPalette.value.completionSoft,
+  '--app-approval': semanticPalette.value.approval,
+  '--app-approval-soft': semanticPalette.value.approvalSoft,
+  '--app-plan-approval': semanticPalette.value.planApproval,
+  '--app-plan-approval-soft': semanticPalette.value.planApprovalSoft,
+  '--app-redirect': semanticPalette.value.redirect,
+  '--app-redirect-soft': semanticPalette.value.redirectSoft,
+  '--app-queue': semanticPalette.value.queue,
+  '--app-queue-soft': semanticPalette.value.queueSoft,
   '--app-success': semanticPalette.value.success,
   '--app-success-soft': semanticPalette.value.successSoft,
   '--app-warning': semanticPalette.value.warning,
   '--app-warning-soft': semanticPalette.value.warningSoft,
+  '--app-warning-contrast': semanticPalette.value.warningContrast,
   '--app-error': semanticPalette.value.error,
   '--app-error-soft': semanticPalette.value.errorSoft,
   '--app-info': semanticPalette.value.info,
   '--app-info-soft': semanticPalette.value.infoSoft,
+  '--app-project-terminal': semanticPalette.value.projectTerminal,
+  '--app-project-terminal-soft': semanticPalette.value.projectTerminalSoft,
+  '--app-project-web-session': semanticPalette.value.projectWebSession,
+  '--app-project-web-session-soft': semanticPalette.value.projectWebSessionSoft,
+  '--app-change-addition': semanticPalette.value.changeAddition,
+  '--app-change-deletion': semanticPalette.value.changeDeletion,
+  '--app-change-warning': semanticPalette.value.changeWarning,
   '--app-overlay': semanticPalette.value.overlay,
   '--app-shadow': semanticPalette.value.shadow,
+  '--app-shadow-subtle': semanticPalette.value.shadowSubtle,
+  '--app-active-outline-mix': semanticPalette.value.activeOutlineMix,
+  '--app-web-workspace-background': semanticPalette.value.workspaceBackground,
+  '--app-sidebar-footer': semanticPalette.value.sidebarFooter,
   '--n-primary-color': semanticPalette.value.accent,
   '--n-color-primary': semanticPalette.value.accent,
   '--n-primary-color-hover': semanticPalette.value.accentHover,

@@ -17,11 +17,11 @@
   --app-surface: var(--app-surface-color);
   --app-surface-raised: #ffffff;
   --app-surface-sunken: #f2f3f5;
-  --app-surface-hover: #f9f9f9;
+  --app-surface-hover: #f5f5f5;
   --app-surface-active: #f1f1f1;
   --app-text-primary: var(--app-text-color);
-  --app-text-secondary: rgba(51, 51, 51, 0.74);
-  --app-text-muted: rgba(51, 51, 51, 0.68);
+  --app-text-secondary: rgba(0, 0, 0, 0.65);
+  --app-text-muted: rgba(0, 0, 0, 0.45);
   --app-text-inverse: #ffffff;
   --app-border: #e0e0e0;
   --app-border-strong: #b8bcc8;
@@ -35,20 +35,52 @@
   --app-accent-contrast: #ffffff;
   --app-link: #255a8f;
   --app-link-hover: #1f4c7f;
-  --app-success: #137333;
-  --app-success-soft: rgba(19, 115, 51, 0.1);
-  --app-warning: #8a5d00;
-  --app-warning-soft: rgba(138, 93, 0, 0.1);
-  --app-error: #b42318;
-  --app-error-soft: rgba(180, 35, 24, 0.1);
-  --app-info: #255a8f;
-  --app-info-soft: rgba(37, 90, 143, 0.1);
+  --app-plan: #6366f1;
+  --app-plan-soft: rgba(99, 102, 241, 0.12);
+  --app-working: #8b5cf6;
+  --app-working-soft: rgba(139, 92, 246, 0.12);
+  --app-completion: #10b981;
+  --app-completion-soft: rgba(16, 185, 129, 0.12);
+  --app-approval: #f79009;
+  --app-approval-soft: rgba(247, 144, 9, 0.12);
+  --app-plan-approval: #0891b2;
+  --app-plan-approval-soft: rgba(8, 145, 178, 0.14);
+  --app-redirect: #2563eb;
+  --app-redirect-soft: rgba(37, 99, 235, 0.12);
+  --app-queue: #4f46e5;
+  --app-queue-soft: rgba(79, 70, 229, 0.12);
+  --app-success: #52c41a;
+  --app-success-soft: rgba(82, 196, 26, 0.12);
+  --app-warning: #fa8c16;
+  --app-warning-soft: rgba(250, 140, 22, 0.12);
+  --app-warning-contrast: #1f2328;
+  --app-error: #f5222d;
+  --app-error-soft: rgba(245, 34, 45, 0.12);
+  --app-info: #3b69a9;
+  --app-info-soft: rgba(59, 105, 169, 0.12);
+  --app-project-terminal: #18a058;
+  --app-project-terminal-soft: #eaf8e3;
+  --app-project-web-session: #2080f0;
+  --app-project-web-session-soft: #e7edf5;
+  --app-change-addition: #15803d;
+  --app-change-deletion: #dc2626;
+  --app-change-warning: #b45309;
   --app-overlay: rgba(15, 23, 42, 0.38);
-  --app-shadow: rgba(24, 35, 51, 0.12);
+  --app-shadow: rgba(0, 0, 0, 0.12);
+  --app-shadow-subtle: rgba(15, 23, 42, 0.06);
+  --app-active-outline-mix: #ffffff;
+  --app-web-workspace-background: linear-gradient(
+    180deg,
+    rgba(246, 241, 232, 0.78),
+    rgba(255, 255, 255, 0.94)
+  );
+  --app-sidebar-footer: #ffffff;
 
   /* 终端颜色 */
   --kanban-terminal-bg: #0f111a;
   --kanban-terminal-fg: #f6f8ff;
+  --kanban-terminal-tab-text: rgba(0, 0, 0, 0.65);
+  --kanban-terminal-tab-active-text: #333333;
 
   /* 终端状态指示器颜色 */
   --kanban-terminal-status-ready: #12b76a;

@@ -36,7 +36,6 @@ import type {
 } from '@/composables/useTerminalClient';
 import { useSettingsStore, DEFAULT_TERMINAL_FONT_FAMILY } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
-import { getTerminalThemeById, getDefaultTerminalTheme } from '@/constants/terminalThemes';
 import { hexToRgba } from '@/utils/color';
 import {
   formatTerminalPathInput,
@@ -75,15 +74,10 @@ const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
 const message = useMessage();
 const { t } = useLocale();
-const { effectiveTerminalThemeId, terminalFont, terminalWebGLRenderer } =
-  storeToRefs(settingsStore);
-
-const activeTerminalTheme = computed(() => {
-  return getTerminalThemeById(effectiveTerminalThemeId.value) || getDefaultTerminalTheme();
-});
+const { activeTerminalTheme, terminalFont, terminalWebGLRenderer } = storeToRefs(settingsStore);
 
 const terminalOverlayStyle = computed(() => {
-  const theme = activeTerminalTheme.value.theme;
+  const theme = activeTerminalTheme.value;
   return {
     '--terminal-overlay-bg': hexToRgba(theme.background || '#0f111a', 0.7),
     '--terminal-overlay-color': theme.foreground ?? '#f6f8ff',
@@ -91,7 +85,7 @@ const terminalOverlayStyle = computed(() => {
 });
 
 const transferCardStyle = computed(() => {
-  const theme = activeTerminalTheme.value.theme;
+  const theme = activeTerminalTheme.value;
   const background = theme.background || '#0f111a';
   const foreground = theme.foreground || '#f6f8ff';
 
@@ -467,7 +461,7 @@ const visitedTerminals = new Set<string>();
 // 监听终端主题变化，动态更新终端主题
 watch(activeTerminalTheme, newTheme => {
   if (terminal) {
-    terminal.options.theme = newTheme.theme;
+    terminal.options.theme = newTheme;
   }
 });
 
@@ -1442,7 +1436,7 @@ onMounted(() => {
     fontWeightBold: fontSettings.fontWeightBold,
     lineHeight: fontSettings.lineHeight,
     letterSpacing: fontSettings.letterSpacing,
-    theme: selectedTheme.theme,
+    theme: selectedTheme,
   });
 
   const container = containerRef.value;

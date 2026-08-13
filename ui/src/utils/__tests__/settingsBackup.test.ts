@@ -84,15 +84,7 @@ describe('settingsBackup helpers', () => {
       clientPayload: {
         locale: 'zh-CN',
         settings: {
-          version: 7,
-          theme: {
-            primaryColor: '#123456',
-            surfaceColor: '#ffffff',
-            bodyColor: '#eeeeee',
-            textColor: '#111111',
-            terminalBg: '#000000',
-            terminalFg: '#ffffff',
-          },
+          version: 8,
           currentPresetId: 'light',
           followSystemTheme: 0,
           customTheme: null,
@@ -111,6 +103,7 @@ describe('settingsBackup helpers', () => {
           webSessionStreamingMarkdownThrottleMode: 'default',
           webSessionStreamingMarkdownThrottleCustomMs: 100,
           terminalThemeId: 'follow-theme',
+          customTerminalTheme: null,
           terminalFont: {
             fontFamily: 'Menlo',
             fontSize: 14,
@@ -190,14 +183,6 @@ describe('settingsBackup helpers', () => {
             locale: 'zh-CN',
             settings: {
               version: 6,
-              theme: {
-                primaryColor: '#123456',
-                surfaceColor: '#ffffff',
-                bodyColor: '#eeeeee',
-                textColor: '#111111',
-                terminalBg: '#000000',
-                terminalFg: '#ffffff',
-              },
               currentPresetId: 'light',
               followSystemTheme: 0,
               customTheme: null,
@@ -221,6 +206,7 @@ describe('settingsBackup helpers', () => {
               webSessionStreamingMarkdownThrottleMode: 'default',
               webSessionStreamingMarkdownThrottleCustomMs: 100,
               terminalThemeId: 'follow-theme',
+              customTerminalTheme: null,
               terminalFont: {
                 fontFamily: 'Menlo',
                 fontSize: 14,

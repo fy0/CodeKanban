@@ -11,6 +11,7 @@ import type {
   WebSessionStreamingMarkdownThrottleMode,
   FollowSystemThemeSetting,
 } from '@/stores/settings';
+import type { TerminalThemeSettings } from '@/constants/terminalThemes';
 import type { AuthAccessConfig } from '@/stores/auth';
 import type { TerminalRenderMode } from '@/constants/terminalRenderMode';
 import type { TerminalConnectionPolicy } from '@/constants/terminalConnectionPolicy';
@@ -55,7 +56,6 @@ export interface SettingsBackupServerPayload {
 
 export interface SettingsBackupClientSettings {
   version: number;
-  theme: ThemeSettings;
   currentPresetId: string;
   followSystemTheme: FollowSystemThemeSetting;
   customTheme: ThemeSettings | null;
@@ -72,6 +72,7 @@ export interface SettingsBackupClientSettings {
   webSessionStreamingMarkdownThrottleMode: WebSessionStreamingMarkdownThrottleMode;
   webSessionStreamingMarkdownThrottleCustomMs: number;
   terminalThemeId: string;
+  customTerminalTheme: TerminalThemeSettings | null;
   terminalFont: TerminalFontSettings;
   terminalWebGLRenderer: 'auto' | 'force' | 'disable';
   defaultTerminalRenderMode: TerminalRenderMode;

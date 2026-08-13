@@ -3705,7 +3705,6 @@ import {
   WarningOutline,
 } from '@vicons/ionicons5';
 import Sortable, { type SortableEvent } from 'sortablejs';
-import { getPresetById } from '@/constants/themes';
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
 import { useMobileKeyboard } from '@/composables/useMobileKeyboard';
@@ -3744,7 +3743,6 @@ import {
   ensureActiveCardTabVisible,
   hiddenCardTabIndicatorStyle,
 } from '@/utils/cardTabIndicator';
-import { getDefaultTerminalTheme, getTerminalThemeById } from '@/constants/terminalThemes';
 import {
   isWebSessionActivityDisplayToolKind,
   normalizeWebSessionActivityToolKind,
@@ -3752,7 +3750,7 @@ import {
   shouldUseWebSessionActivityDisplayMode,
 } from '@/constants/webSessionActivityDisplayMode';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
-import { hexToRgba, isDarkHex } from '@/utils/color';
+import { isDarkHex } from '@/utils/color';
 import { renderHighlightedPlainText, renderMarkdown } from '@/utils/markdown';
 import {
   getClickedMarkdownCodeCopyText,
@@ -4220,12 +4218,10 @@ const effectiveWebSessionActivityDisplayMode = computed(() =>
 
 const {
   activeTheme,
-  currentPresetId,
   confirmBeforeTerminalClose,
   showWebSessionReasoning,
   webSessionActivityDisplayMode,
   webSessionStreamingMarkdownThrottleMs,
-  effectiveTerminalThemeId,
   webSessionQuickInput,
   webSessionQuickInputDirectSend,
 } = storeToRefs(settingsStore);
@@ -7292,9 +7288,6 @@ const isComposerPastePending = computed(
 const isDraftAttachmentUploading = computed(
   () => Boolean(draftAttachmentUpload.value) || isComposerPastePending.value
 );
-const activeTerminalTheme = computed(() => {
-  return getTerminalThemeById(effectiveTerminalThemeId.value) || getDefaultTerminalTheme();
-});
 const composerTransferCard = computed(() => {
   if (draftAttachmentUpload.value) {
     const upload = draftAttachmentUpload.value;
@@ -7330,15 +7323,11 @@ const composerTransferCard = computed(() => {
   return null;
 });
 const composerTransferDialogStyle = computed(() => {
-  const theme = activeTerminalTheme.value.theme;
-  const background = theme.background || '#0f111a';
-  const foreground = theme.foreground || '#f6f8ff';
-
   return {
-    '--terminal-transfer-card-bg': hexToRgba(background, 0.94),
-    '--terminal-transfer-card-fg': foreground,
-    '--terminal-transfer-card-border': hexToRgba(foreground, 0.18),
-    '--terminal-transfer-card-track': hexToRgba(foreground, 0.14),
+    '--terminal-transfer-card-bg': 'var(--app-surface-raised, #fff)',
+    '--terminal-transfer-card-fg': 'var(--app-text-primary, #333)',
+    '--terminal-transfer-card-border': 'var(--app-border, #e0e0e0)',
+    '--terminal-transfer-card-track': 'var(--app-surface-sunken, #f2f3f5)',
   } as CSSProperties;
 });
 function draftAttachmentDisplayName(attachment: { name: string }, index: number) {
@@ -9292,10 +9281,8 @@ async function handlePiTreeCreated(event: {
 
 const tabsThemeOverrides = computed(() => {
   const theme = activeTheme.value;
-  const preset = getPresetById(currentPresetId.value);
-  const tabBg = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
-  const tabActiveBg =
-    theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+  const tabBg = theme.terminalTabBg || theme.bodyColor;
+  const tabActiveBg = theme.terminalTabActiveBg || theme.surfaceColor;
   return {
     tabColor: tabBg,
     tabColorSegment: tabActiveBg,
@@ -9304,12 +9291,13 @@ const tabsThemeOverrides = computed(() => {
 const approvalColors = computed(() => {
   const theme = activeTheme.value;
   const isDarkTheme = isDarkHex(theme.bodyColor || '#ffffff');
+  const accent = theme.approvalColor || (isDarkTheme ? '#cca700' : '#f79009');
   return {
-    bg: isDarkTheme ? 'rgba(251, 146, 60, 0.18)' : 'rgba(249, 115, 22, 0.14)',
-    border: isDarkTheme ? 'rgba(251, 146, 60, 0.4)' : 'rgba(249, 115, 22, 0.3)',
-    accent: isDarkTheme ? '#fb923c' : '#f97316',
-    accentStrong: isDarkTheme ? '#f97316' : '#ea580c',
-    glow: isDarkTheme ? 'rgba(251, 146, 60, 0.24)' : 'rgba(249, 115, 22, 0.16)',
+    bg: `color-mix(in srgb, ${accent} ${isDarkTheme ? 18 : 14}%, transparent)`,
+    border: `color-mix(in srgb, ${accent} ${isDarkTheme ? 40 : 30}%, transparent)`,
+    accent,
+    accentStrong: accent,
+    glow: `color-mix(in srgb, ${accent} ${isDarkTheme ? 24 : 16}%, transparent)`,
   };
 });
 const approvalTabColors = computed(() => {
@@ -9335,12 +9323,13 @@ const approvalTabColors = computed(() => {
 const planApprovalColors = computed(() => {
   const theme = activeTheme.value;
   const isDarkTheme = isDarkHex(theme.bodyColor || '#ffffff');
+  const accent = theme.planApprovalColor || (isDarkTheme ? '#4ec9b0' : '#0891b2');
   return {
-    bg: isDarkTheme ? 'rgba(34, 211, 238, 0.18)' : 'rgba(6, 182, 212, 0.14)',
-    border: isDarkTheme ? 'rgba(34, 211, 238, 0.4)' : 'rgba(6, 182, 212, 0.3)',
-    accent: isDarkTheme ? '#22d3ee' : '#0891b2',
-    accentStrong: isDarkTheme ? '#06b6d4' : '#0e7490',
-    glow: isDarkTheme ? 'rgba(34, 211, 238, 0.24)' : 'rgba(6, 182, 212, 0.16)',
+    bg: `color-mix(in srgb, ${accent} ${isDarkTheme ? 18 : 14}%, transparent)`,
+    border: `color-mix(in srgb, ${accent} ${isDarkTheme ? 40 : 30}%, transparent)`,
+    accent,
+    accentStrong: accent,
+    glow: `color-mix(in srgb, ${accent} ${isDarkTheme ? 24 : 16}%, transparent)`,
   };
 });
 const webSessionStyleVars = computed(
@@ -15750,7 +15739,6 @@ function hasScheduledPlanExecution(
 function createTabProps(session: (typeof sessions.value)[number]): HTMLAttributes {
   const isActive = activeTabSessionId.value === session.id;
   const theme = activeTheme.value;
-  const preset = getPresetById(currentPresetId.value);
   const hideHeaderBorder = theme.terminalHeaderBorder === false;
   const props: HTMLAttributes = {
     onContextmenu: (event: MouseEvent) => handleTabContextMenu(event, session),
@@ -15787,13 +15775,12 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
     }
   } else if (isActive) {
     props.style = {
-      backgroundColor:
-        theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor,
+      backgroundColor: theme.terminalTabActiveBg || theme.surfaceColor,
       ...(hideHeaderBorder ? { borderBottom: 'none' } : {}),
     };
   } else {
     props.style = {
-      backgroundColor: theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor,
+      backgroundColor: theme.terminalTabBg || theme.bodyColor,
     };
   }
 
@@ -17019,7 +17006,7 @@ defineExpose({
   padding: 2px 5px;
   border-radius: 3px;
   background: var(--app-warning, var(--n-warning-color, #f0a020));
-  color: var(--app-text-inverse, #1f2328);
+  color: var(--app-warning-contrast, #1f2328);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 10px;
   font-weight: 700;
@@ -17183,16 +17170,16 @@ defineExpose({
 }
 
 .mobile-changes-summary-badge .changes-summary-add {
-  color: #15803d;
+  color: var(--app-change-addition, #15803d);
 }
 
 .mobile-changes-summary-badge .changes-summary-del {
-  color: #dc2626;
+  color: var(--app-change-deletion, #dc2626);
 }
 
 .mobile-changes-summary-badge .changes-summary-warning {
   margin-left: 3px;
-  color: #b45309;
+  color: var(--app-change-warning, #b45309);
 }
 
 .mobile-changes-summary-badge .changes-summary-loading {
@@ -17297,7 +17284,7 @@ defineExpose({
   top: 1px;
   left: 0;
   z-index: 2;
-  color: var(--app-link, #6366f1);
+  color: var(--app-plan, #6366f1);
   pointer-events: none;
 }
 
@@ -17386,8 +17373,8 @@ defineExpose({
   border-radius: 999px;
   font-size: 10px;
   line-height: 16px;
-  background-color: var(--app-accent-soft, #eef2ff);
-  color: var(--app-link, #6366f1);
+  background-color: var(--app-plan-soft, #eef2ff);
+  color: var(--app-plan, #6366f1);
   transition: all 0.2s ease;
 }
 
@@ -17415,25 +17402,25 @@ defineExpose({
 }
 
 .ai-status-pill.state-working {
-  background-color: var(--app-accent-soft, #eadffc);
-  color: var(--app-link, #7c3aed);
+  background-color: var(--app-working-soft, #eadffc);
+  color: var(--app-working, #7c3aed);
 }
 
 .ai-status-pill.state-approval,
 .ai-status-pill.state-waiting_approval {
-  background-color: var(--app-warning-soft, #fed7aa);
-  color: var(--app-warning, #f79009);
+  background-color: var(--app-approval-soft, #fed7aa);
+  color: var(--app-approval, #f79009);
 }
 
 .ai-status-pill.state-waiting_plan_approval {
-  background-color: var(--app-info-soft, rgba(34, 211, 238, 0.14));
-  color: var(--app-info, #0891b2);
+  background-color: var(--app-plan-approval-soft, rgba(34, 211, 238, 0.14));
+  color: var(--app-plan-approval, #0891b2);
 }
 
 .ai-status-pill.state-completion {
-  background-color: var(--app-success-soft, rgba(16, 185, 129, 0.12));
-  color: var(--app-success, #475467);
-  border: 1px solid color-mix(in srgb, var(--app-success, #10b981) 34%, transparent);
+  background-color: color-mix(in srgb, var(--app-surface-raised, #fff) 84%, transparent);
+  color: var(--app-text-secondary, #475467);
+  border: 1px solid color-mix(in srgb, var(--app-completion, #10b981) 20%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--app-border-strong, #fff) 26%, transparent);
 }
 
@@ -17647,7 +17634,7 @@ defineExpose({
 
 .mobile-tab-trigger-plan-badge {
   flex-shrink: 0;
-  color: var(--app-link, #6366f1);
+  color: var(--app-plan, #6366f1);
 }
 
 .mobile-tab-trigger-plan-badge.is-scheduled {
@@ -17820,8 +17807,8 @@ defineExpose({
 }
 
 .mobile-session-drawer-item.is-completion {
-  border-color: color-mix(in srgb, #10b981 22%, transparent);
-  background: color-mix(in srgb, #10b981 7%, var(--app-surface-color, #fff));
+  border-color: color-mix(in srgb, var(--app-completion, #10b981) 22%, transparent);
+  background: color-mix(in srgb, var(--app-completion, #10b981) 7%, var(--app-surface-color, #fff));
 }
 
 .mobile-session-drawer-agent-shell {
@@ -17843,26 +17830,26 @@ defineExpose({
 }
 
 .mobile-session-drawer-agent-badge.state-working {
-  background: var(--app-accent-soft, #eadffc);
-  color: var(--app-link, #7c3aed);
+  background: var(--app-working-soft, #eadffc);
+  color: var(--app-working, #7c3aed);
 }
 
 .mobile-session-drawer-agent-badge.state-approval,
 .mobile-session-drawer-agent-badge.state-waiting_approval {
-  background: var(--app-warning-soft, #fed7aa);
-  color: var(--app-warning, #f79009);
+  background: var(--app-approval-soft, #fed7aa);
+  color: var(--app-approval, #f79009);
 }
 
 .mobile-session-drawer-agent-badge.state-waiting_plan_approval {
-  border-color: color-mix(in srgb, var(--app-info, #06b6d4) 32%, transparent);
-  background: var(--app-info-soft, rgba(34, 211, 238, 0.14));
-  color: var(--app-info, #0891b2);
+  border-color: color-mix(in srgb, var(--app-plan-approval, #06b6d4) 32%, transparent);
+  background: var(--app-plan-approval-soft, rgba(34, 211, 238, 0.14));
+  color: var(--app-plan-approval, #0891b2);
 }
 
 .mobile-session-drawer-agent-badge.state-completion {
-  border-color: color-mix(in srgb, var(--app-success, #10b981) 30%, transparent);
-  background: var(--app-success-soft, rgba(16, 185, 129, 0.12));
-  color: var(--app-success, #059669);
+  border-color: color-mix(in srgb, var(--app-completion, #10b981) 30%, transparent);
+  background: var(--app-completion-soft, rgba(16, 185, 129, 0.12));
+  color: var(--app-completion, #059669);
 }
 
 .mobile-session-drawer-agent-badge.state-waiting_input {
@@ -17902,7 +17889,7 @@ defineExpose({
   left: -4px;
   bottom: -3px;
   z-index: 2;
-  color: var(--app-link, #6366f1);
+  color: var(--app-plan, #6366f1);
   pointer-events: none;
 }
 
@@ -19482,13 +19469,13 @@ defineExpose({
 }
 
 .tool-state-badge.state-running {
-  background: var(--app-accent-soft, rgba(139, 92, 246, 0.12));
-  color: var(--app-link, #7c3aed);
+  background: var(--app-working-soft, rgba(139, 92, 246, 0.12));
+  color: var(--app-working, #7c3aed);
 }
 
 .tool-state-badge.state-done {
-  background: var(--app-success-soft, rgba(16, 185, 129, 0.12));
-  color: var(--app-success, #059669);
+  background: var(--app-completion-soft, rgba(16, 185, 129, 0.12));
+  color: var(--app-completion, #059669);
 }
 
 .tool-state-badge.state-error {
@@ -19918,17 +19905,16 @@ defineExpose({
 .live-card.phase-starting,
 .live-card.phase-thinking,
 .live-card.phase-tool {
-  border-color: color-mix(in srgb, var(--app-accent, #8b5cf6) 34%, transparent);
+  border-color: color-mix(in srgb, var(--app-working, #8b5cf6) 24%, transparent);
   background:
     linear-gradient(
       135deg,
-      rgba(139, 92, 246, 0.11) 0%,
-      rgba(139, 92, 246, 0.03) 52%,
+      color-mix(in srgb, var(--app-working, #8b5cf6) 11%, transparent) 0%,
+      color-mix(in srgb, var(--app-working, #8b5cf6) 3%, transparent) 52%,
       transparent 100%
     ),
     var(--app-surface-raised, var(--app-surface-color, #fff));
-  box-shadow: 0 8px 20px
-    color-mix(in srgb, var(--app-shadow, rgba(139, 92, 246, 0.08)) 54%, transparent);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--app-working, #8b5cf6) 8%, transparent);
 }
 
 .live-card.phase-starting::before,
@@ -20024,17 +20010,16 @@ defineExpose({
 }
 
 .live-card.phase-done {
-  border-color: color-mix(in srgb, var(--app-success, #10b981) 34%, transparent);
+  border-color: color-mix(in srgb, var(--app-completion, #10b981) 24%, transparent);
   background:
     linear-gradient(
       135deg,
-      rgba(16, 185, 129, 0.12) 0%,
-      rgba(16, 185, 129, 0.035) 48%,
+      color-mix(in srgb, var(--app-completion, #10b981) 12%, transparent) 0%,
+      color-mix(in srgb, var(--app-completion, #10b981) 3.5%, transparent) 48%,
       transparent 100%
     ),
     var(--app-surface-raised, var(--app-surface-color, #fff));
-  box-shadow: 0 8px 20px
-    color-mix(in srgb, var(--app-shadow, rgba(16, 185, 129, 0.08)) 54%, transparent);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--app-completion, #10b981) 8%, transparent);
 }
 
 .live-card.phase-done::before {
@@ -20105,8 +20090,8 @@ defineExpose({
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: var(--app-accent, #8b5cf6);
-  box-shadow: 0 0 0 5px var(--app-accent-soft, rgba(139, 92, 246, 0.16));
+  background: var(--app-working, #8b5cf6);
+  box-shadow: 0 0 0 5px var(--app-working-soft, rgba(139, 92, 246, 0.16));
   animation: livePulse 1.05s ease-in-out infinite;
   flex-shrink: 0;
 }
@@ -20116,7 +20101,7 @@ defineExpose({
   position: absolute;
   inset: -9px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--app-accent, #8b5cf6) 22%, transparent);
+  background: color-mix(in srgb, var(--app-working, #8b5cf6) 22%, transparent);
   opacity: 0;
   animation: liveRipple 1.35s ease-out infinite;
 }
@@ -20167,13 +20152,13 @@ defineExpose({
 }
 
 .live-card.phase-done .live-orb {
-  background: var(--app-success, #10b981);
-  box-shadow: 0 0 0 4px var(--app-success-soft, rgba(16, 185, 129, 0.12));
+  background: var(--app-completion, #10b981);
+  box-shadow: 0 0 0 4px var(--app-completion-soft, rgba(16, 185, 129, 0.12));
   animation: livePulse 2.8s ease-in-out infinite;
 }
 
 .live-card.phase-done .live-orb::after {
-  background: color-mix(in srgb, var(--app-success, #10b981) 18%, transparent);
+  background: color-mix(in srgb, var(--app-completion, #10b981) 18%, transparent);
   animation-duration: 2.6s;
 }
 
@@ -21921,13 +21906,13 @@ defineExpose({
 }
 
 .pending-input-badge.mode-redirect {
-  background: var(--app-info-soft, rgba(59, 130, 246, 0.12));
-  color: var(--app-info, #2563eb);
+  background: var(--app-redirect-soft, rgba(59, 130, 246, 0.12));
+  color: var(--app-redirect, #2563eb);
 }
 
 .pending-input-badge.mode-queue {
-  background: var(--app-accent-soft, rgba(99, 102, 241, 0.12));
-  color: var(--app-link, #4f46e5);
+  background: var(--app-queue-soft, rgba(99, 102, 241, 0.12));
+  color: var(--app-queue, #4f46e5);
 }
 
 .pending-input-preview {

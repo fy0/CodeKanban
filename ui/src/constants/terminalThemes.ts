@@ -54,6 +54,38 @@ export interface TerminalThemePreset {
   theme: ITheme;
 }
 
+export const TERMINAL_THEME_FOLLOW = 'follow-theme';
+export const TERMINAL_THEME_CUSTOM = 'custom';
+
+export const TERMINAL_THEME_COLOR_KEYS = [
+  'background',
+  'foreground',
+  'cursor',
+  'cursorAccent',
+  'selectionBackground',
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'brightBlack',
+  'brightRed',
+  'brightGreen',
+  'brightYellow',
+  'brightBlue',
+  'brightMagenta',
+  'brightCyan',
+  'brightWhite',
+] as const;
+
+export type TerminalThemeColorKey = (typeof TERMINAL_THEME_COLOR_KEYS)[number];
+export type TerminalThemeSettings = Record<TerminalThemeColorKey, string> & {
+  extendedAnsi?: string[];
+};
+
 export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
   {
     id: 'nord',
@@ -531,4 +563,15 @@ export function getTerminalThemeById(id: string): TerminalThemePreset | undefine
 
 export function getDefaultTerminalTheme(): TerminalThemePreset {
   return getTerminalThemeById(DEFAULT_TERMINAL_THEME_ID) || TERMINAL_THEME_PRESETS[0];
+}
+
+export function createTerminalThemeSettings(theme: ITheme): TerminalThemeSettings {
+  const fallbackTheme = getDefaultTerminalTheme().theme;
+  const colors = Object.fromEntries(
+    TERMINAL_THEME_COLOR_KEYS.map(key => [key, theme[key] || fallbackTheme[key] || '#000000'])
+  ) as unknown as TerminalThemeSettings;
+  if (theme.extendedAnsi) {
+    colors.extendedAnsi = [...theme.extendedAnsi];
+  }
+  return colors;
 }

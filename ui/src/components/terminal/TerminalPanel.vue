@@ -477,7 +477,6 @@ import { useSettingsStore } from '@/stores/settings';
 import { useDeveloperConfigStore } from '@/stores/developerConfig';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalSessionSnapshotStore } from '@/stores/terminalSessionSnapshot';
-import { getPresetById } from '@/constants/themes';
 import {
   DEFAULT_EDITOR,
   EDITOR_LABEL_MAP,
@@ -982,7 +981,6 @@ const {
   maxTerminalsPerProject,
   confirmBeforeTerminalClose,
   activeTheme,
-  currentPresetId,
   terminalQuickActions,
   editorSettings,
   defaultTerminalRenderMode,
@@ -1015,12 +1013,8 @@ const defaultEditorLabel = computed(
 // Tabs 主题覆盖 - 用于控制标签背景色
 const tabsThemeOverrides = computed(() => {
   const theme = activeTheme.value;
-  const preset = getPresetById(currentPresetId.value);
-
-  // 获取标签背景色，优先使用主题设置，然后是预设，最后是默认值
-  const tabBg = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
-  const tabActiveBg =
-    theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+  const tabBg = theme.terminalTabBg || theme.bodyColor;
+  const tabActiveBg = theme.terminalTabActiveBg || theme.surfaceColor;
 
   return {
     tabColor: tabBg,
@@ -2431,7 +2425,6 @@ async function performClose(sessionId: string): Promise<boolean> {
 function createTabProps(tab: CombinedTab): HTMLAttributes {
   const isActive = activeId.value === tab.id;
   const theme = activeTheme.value;
-  const preset = getPresetById(currentPresetId.value);
 
   // 空标签的简化处理
   if (isEmptyTabItem(tab)) {
@@ -2440,14 +2433,13 @@ function createTabProps(tab: CombinedTab): HTMLAttributes {
     const hideHeaderBorder = theme.terminalHeaderBorder === false;
     // 设置空标签的背景色（根据激活状态）
     if (isActive) {
-      const bgColor =
-        theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+      const bgColor = theme.terminalTabActiveBg || theme.surfaceColor;
       props.style = {
         backgroundColor: bgColor,
         ...(hideHeaderBorder ? { borderBottom: 'none' } : {}),
       };
     } else {
-      const bgColor = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
+      const bgColor = theme.terminalTabBg || theme.bodyColor;
       props.style = {
         backgroundColor: bgColor,
       };
@@ -2466,14 +2458,13 @@ function createTabProps(tab: CombinedTab): HTMLAttributes {
 
   // 设置普通标签的背景色（根据激活状态）
   if (isActive) {
-    const bgColor =
-      theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+    const bgColor = theme.terminalTabActiveBg || theme.surfaceColor;
     props.style = {
       backgroundColor: bgColor,
       ...(hideHeaderBorder ? { borderBottom: 'none' } : {}),
     };
   } else {
-    const bgColor = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
+    const bgColor = theme.terminalTabBg || theme.bodyColor;
     props.style = {
       backgroundColor: bgColor,
     };

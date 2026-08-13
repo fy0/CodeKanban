@@ -1029,7 +1029,7 @@ if (typeof window !== 'undefined') {
 
 .changes-summary-warning {
   margin-left: 3px;
-  color: var(--app-warning);
+  color: var(--app-change-warning, #b45309);
 }
 
 .changes-summary-loading {
@@ -1058,11 +1058,11 @@ if (typeof window !== 'undefined') {
 }
 
 .changes-summary-add {
-  color: var(--app-success);
+  color: var(--app-change-addition, #15803d);
 }
 
 .changes-summary-del {
-  color: var(--app-error);
+  color: var(--app-change-deletion, #dc2626);
 }
 
 .tab-item.active .changes-summary-count {
@@ -1074,11 +1074,11 @@ if (typeof window !== 'undefined') {
 }
 
 .tab-item.active .changes-summary-add {
-  color: var(--app-success);
+  color: var(--app-change-addition, #15803d);
 }
 
 .tab-item.active .changes-summary-del {
-  color: var(--app-error);
+  color: var(--app-change-deletion, #dc2626);
 }
 
 .header-action-btn {
@@ -1179,7 +1179,7 @@ if (typeof window !== 'undefined') {
 }
 
 .web-main {
-  background: var(--app-canvas);
+  background: var(--app-web-workspace-background, var(--app-canvas));
 }
 
 .terminal-split {

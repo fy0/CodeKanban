@@ -1,7 +1,11 @@
 import { computed } from 'vue';
 import type { ComputedRef } from 'vue';
 import { THEME_PRESETS } from '@/constants/themes';
-import { TERMINAL_THEME_PRESETS } from '@/constants/terminalThemes';
+import {
+  TERMINAL_THEME_CUSTOM,
+  TERMINAL_THEME_FOLLOW,
+  TERMINAL_THEME_PRESETS,
+} from '@/constants/terminalThemes';
 import { useLocale } from './useLocale';
 
 export interface ThemeOption {
@@ -25,10 +29,7 @@ export function useThemeOptions(): ComputedRef<ThemeOption[]> {
   });
 }
 
-/**
- * 终端主题跟随应用主题的特殊值
- */
-export const TERMINAL_THEME_FOLLOW = 'follow-theme';
+export { TERMINAL_THEME_FOLLOW };
 
 /**
  * 获取终端配色选项，自动根据当前语言切换名称
@@ -49,6 +50,11 @@ export function useTerminalThemeOptions(includeFollowOption = true): ComputedRef
         value: TERMINAL_THEME_FOLLOW,
       });
     }
+
+    options.push({
+      label: isZh ? '自定义终端配色' : 'Custom Terminal Theme',
+      value: TERMINAL_THEME_CUSTOM,
+    });
 
     // 添加所有终端主题预设
     options.push(

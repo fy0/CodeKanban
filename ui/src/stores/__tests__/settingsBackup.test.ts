@@ -49,7 +49,7 @@ describe('settings backup helpers in store', () => {
     });
 
     expect(payload.locale).toBe('en-US');
-    expect(payload.settings.version).toBe(7);
+    expect(payload.settings.version).toBe(8);
     expect(payload.settings.recentProjectsLimit).toBe(7);
     expect(payload.settings.showWebSessionReasoning).toBe(true);
     expect('webSessionAutoRetryDispatchPendingOnFailure' in payload.settings).toBe(false);
@@ -66,15 +66,7 @@ describe('settings backup helpers in store', () => {
     store.importClientBackup({
       locale: 'en-US',
       settings: {
-        version: 7,
-        theme: {
-          primaryColor: '#123456',
-          surfaceColor: '#ffffff',
-          bodyColor: '#eeeeee',
-          textColor: '#111111',
-          terminalBg: '#000000',
-          terminalFg: '#ffffff',
-        },
+        version: 8,
         currentPresetId: 'light',
         followSystemTheme: 0,
         customTheme: null,
@@ -99,6 +91,7 @@ describe('settings backup helpers in store', () => {
         webSessionStreamingMarkdownThrottleMode: 'default',
         webSessionStreamingMarkdownThrottleCustomMs: 100,
         terminalThemeId: 'follow-theme',
+        customTerminalTheme: null,
         terminalFont: {
           fontFamily: 'Menlo',
           fontSize: 14,

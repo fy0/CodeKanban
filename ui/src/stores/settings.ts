@@ -6,7 +6,16 @@ import {
   getPresetById,
   getDefaultPreset,
 } from '@/constants/themes';
-import { DEFAULT_TERMINAL_THEME_ID } from '@/constants/terminalThemes';
+import {
+  DEFAULT_TERMINAL_THEME_ID,
+  TERMINAL_THEME_COLOR_KEYS,
+  TERMINAL_THEME_CUSTOM,
+  TERMINAL_THEME_FOLLOW,
+  createTerminalThemeSettings,
+  getDefaultTerminalTheme,
+  getTerminalThemeById,
+  type TerminalThemeSettings,
+} from '@/constants/terminalThemes';
 import {
   DEFAULT_TERMINAL_RENDER_MODE,
   DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
@@ -36,23 +45,60 @@ import {
   type SettingsBackupClientSettings,
 } from '@/utils/settingsBackup';
 
-/**
- * 终端主题跟随应用主题的特殊值
- */
-export const TERMINAL_THEME_FOLLOW = 'follow-theme';
+export { TERMINAL_THEME_FOLLOW };
 
 export interface ThemeSettings {
   primaryColor: string;
   surfaceColor: string;
   bodyColor: string;
   textColor?: string;
-  terminalBg: string;
-  terminalFg: string;
+  surfaceRaisedColor?: string;
+  surfaceSunkenColor?: string;
+  surfaceHoverColor?: string;
+  surfaceActiveColor?: string;
+  secondaryTextColor?: string;
+  mutedTextColor?: string;
+  borderColor?: string;
+  borderStrongColor?: string;
+  controlBorderColor?: string;
+  controlBorderHoverColor?: string;
+  focusRingColor?: string;
+  linkColor?: string;
+  planColor?: string;
+  workingColor?: string;
+  completionColor?: string;
+  approvalColor?: string;
+  planApprovalColor?: string;
+  redirectColor?: string;
+  queueColor?: string;
+  successColor?: string;
+  warningColor?: string;
+  warningContrastColor?: string;
+  errorColor?: string;
+  infoColor?: string;
+  projectTerminalColor?: string;
+  projectTerminalSoftColor?: string;
+  projectWebSessionColor?: string;
+  projectWebSessionSoftColor?: string;
+  changeAdditionColor?: string;
+  changeDeletionColor?: string;
+  changeWarningColor?: string;
+  shadowColor?: string;
+  shadowSubtleColor?: string;
+  workspaceTopColor?: string;
+  workspaceBottomColor?: string;
+  sidebarFooterColor?: string;
   terminalTabBg?: string;
   terminalTabActiveBg?: string;
+  terminalTabTextColor?: string;
+  terminalTabActiveTextColor?: string;
   terminalHeaderBorder?: boolean | string; // 终端 header 边框：false=无边框, true=默认边框, string=自定义边框
+  terminalHeaderBorderColor?: string;
   // 空终端引导文字颜色
   terminalEmptyGuideFg?: string;
+  terminalStatusReadyColor?: string;
+  terminalStatusConnectingColor?: string;
+  terminalStatusErrorColor?: string;
 }
 
 /**
@@ -209,7 +255,6 @@ export interface PageTitleSettings {
 }
 
 interface GeneralSettings {
-  theme: ThemeSettings;
   currentPresetId: string;
   followSystemThemeSetting: FollowSystemThemeSetting;
   customTheme: ThemeSettings | null;
@@ -226,6 +271,7 @@ interface GeneralSettings {
   webSessionStreamingMarkdownThrottleMode: WebSessionStreamingMarkdownThrottleMode;
   webSessionStreamingMarkdownThrottleCustomMs: number;
   terminalThemeId: string;
+  customTerminalTheme: TerminalThemeSettings | null;
   terminalFont: TerminalFontSettings;
   terminalWebGLRenderer: 'auto' | 'force' | 'disable';
   defaultTerminalRenderMode: TerminalRenderMode;
@@ -253,7 +299,7 @@ type LoadSettingsResult = {
   shouldPersist: boolean;
 };
 
-const STORAGE_VERSION = 7;
+const STORAGE_VERSION = 8;
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
@@ -325,7 +371,6 @@ export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
 ];
 
 const defaultSettings: GeneralSettings = {
-  theme: { ...defaultTheme },
   currentPresetId: DEFAULT_PRESET_ID,
   followSystemThemeSetting: FOLLOW_SYSTEM_THEME_DEFAULT,
   customTheme: null,
@@ -346,6 +391,7 @@ const defaultSettings: GeneralSettings = {
   webSessionStreamingMarkdownThrottleMode: 'default',
   webSessionStreamingMarkdownThrottleCustomMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
+  customTerminalTheme: null,
   terminalFont: { ...DEFAULT_TERMINAL_FONT },
   terminalWebGLRenderer: 'auto',
   defaultTerminalRenderMode: DEFAULT_TERMINAL_RENDER_MODE,
@@ -377,7 +423,6 @@ export const useSettingsStore = defineStore('settings', () => {
     saveSettings(loadedSettings.settings);
   }
 
-  const theme = computed(() => settings.value.theme);
   const currentPresetId = computed(() => settings.value.currentPresetId);
   const followSystemThemeSetting = computed(() => settings.value.followSystemThemeSetting);
   const followSystemTheme = computed(() =>
@@ -412,6 +457,7 @@ export const useSettingsStore = defineStore('settings', () => {
       : DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS
   );
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
+  const customTerminalTheme = computed(() => settings.value.customTerminalTheme);
   const terminalFont = computed(() => settings.value.terminalFont);
   const terminalWebGLRenderer = computed(() => settings.value.terminalWebGLRenderer);
   const defaultTerminalRenderMode = computed(() => settings.value.defaultTerminalRenderMode);
@@ -432,11 +478,27 @@ export const useSettingsStore = defineStore('settings', () => {
    */
   const effectiveTerminalThemeId = computed(() => {
     if (settings.value.terminalThemeId === TERMINAL_THEME_FOLLOW) {
-      // 跟随当前应用主题
-      const preset = getPresetById(settings.value.currentPresetId);
+      const presetId = isFollowSystemThemeEnabled(settings.value.followSystemThemeSetting)
+        ? typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light'
+        : settings.value.currentPresetId;
+      const preset = getPresetById(presetId);
       return preset?.terminalThemeId ?? DEFAULT_TERMINAL_THEME_ID;
     }
     return settings.value.terminalThemeId;
+  });
+
+  const activeTerminalTheme = computed<TerminalThemeSettings>(() => {
+    if (
+      settings.value.terminalThemeId === TERMINAL_THEME_CUSTOM &&
+      settings.value.customTerminalTheme
+    ) {
+      return settings.value.customTerminalTheme;
+    }
+    const preset =
+      getTerminalThemeById(effectiveTerminalThemeId.value) ?? getDefaultTerminalTheme();
+    return createTerminalThemeSettings(preset.theme);
   });
 
   /**
@@ -477,22 +539,14 @@ export const useSettingsStore = defineStore('settings', () => {
     { deep: true }
   );
 
-  function updateTheme(partial: Partial<ThemeSettings>) {
-    settings.value.theme = sanitizeThemeSettings({
-      ...settings.value.theme,
-      ...partial,
-    });
-  }
-
   function resetTheme() {
     // 重置为默认预设主题，并清理自定义/系统跟随状态，保持与 activeTheme 计算逻辑一致
     const preset = getPresetById(DEFAULT_PRESET_ID) ?? getDefaultPreset();
     settings.value.currentPresetId = preset.id;
     settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
     settings.value.customTheme = null;
-    settings.value.theme = sanitizeThemeSettings(preset.colors);
-    // 重置终端主题为"跟随主题"
     settings.value.terminalThemeId = TERMINAL_THEME_FOLLOW;
+    settings.value.customTerminalTheme = null;
   }
 
   function updateRecentProjectsLimit(limit: number) {
@@ -800,7 +854,26 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function updateTerminalTheme(themeId: string) {
-    settings.value.terminalThemeId = themeId;
+    if (themeId === TERMINAL_THEME_FOLLOW || getTerminalThemeById(themeId)) {
+      settings.value.terminalThemeId = themeId;
+      return;
+    }
+    if (themeId === TERMINAL_THEME_CUSTOM) {
+      if (!settings.value.customTerminalTheme) {
+        const source =
+          getTerminalThemeById(effectiveTerminalThemeId.value) ?? getDefaultTerminalTheme();
+        settings.value.customTerminalTheme = createTerminalThemeSettings(source.theme);
+      }
+      settings.value.terminalThemeId = TERMINAL_THEME_CUSTOM;
+    }
+  }
+
+  function updateCustomTerminalTheme(partial: Partial<TerminalThemeSettings>) {
+    settings.value.customTerminalTheme = sanitizeTerminalThemeSettings({
+      ...activeTerminalTheme.value,
+      ...partial,
+    });
+    settings.value.terminalThemeId = TERMINAL_THEME_CUSTOM;
   }
 
   function updateTerminalFont(partial: Partial<TerminalFontSettings>) {
@@ -854,7 +927,6 @@ export const useSettingsStore = defineStore('settings', () => {
       const preset = getPresetById(autoPresetId);
       if (preset) {
         settings.value.currentPresetId = autoPresetId;
-        settings.value.theme = sanitizeThemeSettings(preset.colors);
       }
     }
   }
@@ -863,7 +935,6 @@ export const useSettingsStore = defineStore('settings', () => {
     const preset = getPresetById(presetId);
     if (preset) {
       settings.value.currentPresetId = presetId;
-      settings.value.theme = sanitizeThemeSettings(preset.colors);
       settings.value.customTheme = null;
       settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
       // 终端主题保持用户选择不变
@@ -876,7 +947,6 @@ export const useSettingsStore = defineStore('settings', () => {
     const preset = getPresetById(presetId);
     if (preset) {
       settings.value.currentPresetId = presetId;
-      settings.value.theme = sanitizeThemeSettings(preset.colors);
       settings.value.customTheme = null;
       // 终端主题保持用户选择不变
       // 如果是"跟随主题"，effectiveTerminalThemeId 会自动计算正确的值
@@ -894,7 +964,6 @@ export const useSettingsStore = defineStore('settings', () => {
       ...activeTheme.value,
       ...themeColors,
     });
-    settings.value.theme = settings.value.customTheme;
     settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
   }
 
@@ -945,7 +1014,6 @@ export const useSettingsStore = defineStore('settings', () => {
     pageTitle,
     pageTitleSettingsLoaded,
     pageTitleSettingsSaving,
-    theme,
     currentPresetId,
     followSystemThemeSetting,
     followSystemTheme,
@@ -971,6 +1039,7 @@ export const useSettingsStore = defineStore('settings', () => {
     webSessionStreamingMarkdownThrottleCustomMs,
     webSessionStreamingMarkdownThrottleMs,
     terminalThemeId,
+    customTerminalTheme,
     terminalFont,
     terminalWebGLRenderer,
     defaultTerminalRenderMode,
@@ -979,7 +1048,7 @@ export const useSettingsStore = defineStore('settings', () => {
     terminalConnectionPolicy,
     inactiveTerminalSnapshotIntervalMs,
     effectiveTerminalThemeId,
-    updateTheme,
+    activeTerminalTheme,
     resetTheme,
     updateRecentProjectsLimit,
     updateMaxTerminalsPerProject,
@@ -1006,6 +1075,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateWebSessionStreamingMarkdownThrottleMode,
     updateWebSessionStreamingMarkdownThrottleCustomMs,
     updateTerminalTheme,
+    updateCustomTerminalTheme,
     updateTerminalFont,
     updateTerminalWebGLRenderer,
     updateDefaultTerminalRenderMode,
@@ -1106,10 +1176,10 @@ function preserveImportedQuickInputFields(
 
 function cloneDefaultSettings(): GeneralSettings {
   return {
-    theme: { ...defaultSettings.theme },
     currentPresetId: defaultSettings.currentPresetId,
     followSystemThemeSetting: defaultSettings.followSystemThemeSetting,
     terminalThemeId: defaultSettings.terminalThemeId,
+    customTerminalTheme: defaultSettings.customTerminalTheme,
     customTheme: defaultSettings.customTheme,
     recentProjectsLimit: defaultSettings.recentProjectsLimit,
     maxTerminalsPerProject: defaultSettings.maxTerminalsPerProject,
@@ -1172,28 +1242,33 @@ function loadSettingsFromParsed(
 
   const legacyParsed = parsed as Partial<GeneralSettings> & {
     panelShortcut?: PanelShortcutSetting;
+    theme?: Partial<ThemeSettings>;
   };
 
   let currentPresetId = parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
-  if (!parsed.currentPresetId && !legacyParsed.currentPresetId && parsed.theme) {
+  if (!parsed.currentPresetId && !legacyParsed.currentPresetId && legacyParsed.theme) {
     const matchedPreset = THEME_PRESETS.find(
-      p => p.colors.primaryColor === parsed.theme?.primaryColor
+      p => p.colors.primaryColor === legacyParsed.theme?.primaryColor
     );
     if (matchedPreset) {
       currentPresetId = matchedPreset.id;
     }
   }
-  const currentPresetTheme = getPresetById(currentPresetId)?.colors ?? defaultTheme;
+  if (!getPresetById(currentPresetId)) {
+    currentPresetId = DEFAULT_PRESET_ID;
+  }
+  const discardLegacyCustomColors = parsedVersion == null || parsedVersion < STORAGE_VERSION;
 
   return {
     settings: {
-      theme: sanitizeThemeSettings(parsed.theme ?? currentPresetTheme),
       currentPresetId,
       followSystemThemeSetting:
         parsedVersion != null && parsedVersion >= 2
           ? sanitizeFollowSystemThemeSetting(parsed.followSystemTheme)
           : FOLLOW_SYSTEM_THEME_DEFAULT,
-      customTheme: sanitizeOptionalThemeSettings(parsed.customTheme),
+      customTheme: discardLegacyCustomColors
+        ? null
+        : sanitizeOptionalThemeSettings(parsed.customTheme),
       recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
       maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
       panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
@@ -1219,7 +1294,13 @@ function loadSettingsFromParsed(
         sanitizeWebSessionStreamingMarkdownThrottleCustomMs(
           parsed.webSessionStreamingMarkdownThrottleCustomMs
         ),
-      terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
+      terminalThemeId: sanitizeTerminalThemeId(
+        parsed.terminalThemeId,
+        !discardLegacyCustomColors && Boolean(parsed.customTerminalTheme)
+      ),
+      customTerminalTheme: discardLegacyCustomColors
+        ? null
+        : sanitizeOptionalTerminalThemeSettings(parsed.customTerminalTheme),
       terminalFont: sanitizeTerminalFont(parsed.terminalFont),
       terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
       defaultTerminalRenderMode: sanitizeTerminalRenderMode(parsed.defaultTerminalRenderMode),
@@ -1301,13 +1382,57 @@ function sanitizeThemeSettings(value: unknown): ThemeSettings {
     surfaceColor: source.surfaceColor ?? defaultTheme.surfaceColor,
     bodyColor: source.bodyColor ?? defaultTheme.bodyColor,
     textColor: source.textColor ?? defaultTheme.textColor,
-    terminalBg: source.terminalBg ?? defaultTheme.terminalBg,
-    terminalFg: source.terminalFg ?? defaultTheme.terminalFg,
+    surfaceRaisedColor: sanitizeOptionalThemeColor(source.surfaceRaisedColor),
+    surfaceSunkenColor: sanitizeOptionalThemeColor(source.surfaceSunkenColor),
+    surfaceHoverColor: sanitizeOptionalThemeColor(source.surfaceHoverColor),
+    surfaceActiveColor: sanitizeOptionalThemeColor(source.surfaceActiveColor),
+    secondaryTextColor: sanitizeOptionalThemeColor(source.secondaryTextColor),
+    mutedTextColor: sanitizeOptionalThemeColor(source.mutedTextColor),
+    borderColor: sanitizeOptionalThemeColor(source.borderColor),
+    borderStrongColor: sanitizeOptionalThemeColor(source.borderStrongColor),
+    controlBorderColor: sanitizeOptionalThemeColor(source.controlBorderColor),
+    controlBorderHoverColor: sanitizeOptionalThemeColor(source.controlBorderHoverColor),
+    focusRingColor: sanitizeOptionalThemeColor(source.focusRingColor),
+    linkColor: sanitizeOptionalThemeColor(source.linkColor),
+    planColor: sanitizeOptionalThemeColor(source.planColor),
+    workingColor: sanitizeOptionalThemeColor(source.workingColor),
+    completionColor: sanitizeOptionalThemeColor(source.completionColor),
+    approvalColor: sanitizeOptionalThemeColor(source.approvalColor),
+    planApprovalColor: sanitizeOptionalThemeColor(source.planApprovalColor),
+    redirectColor: sanitizeOptionalThemeColor(source.redirectColor),
+    queueColor: sanitizeOptionalThemeColor(source.queueColor),
+    successColor: sanitizeOptionalThemeColor(source.successColor),
+    warningColor: sanitizeOptionalThemeColor(source.warningColor),
+    warningContrastColor: sanitizeOptionalThemeColor(source.warningContrastColor),
+    errorColor: sanitizeOptionalThemeColor(source.errorColor),
+    infoColor: sanitizeOptionalThemeColor(source.infoColor),
+    projectTerminalColor: sanitizeOptionalThemeColor(source.projectTerminalColor),
+    projectTerminalSoftColor: sanitizeOptionalThemeColor(source.projectTerminalSoftColor),
+    projectWebSessionColor: sanitizeOptionalThemeColor(source.projectWebSessionColor),
+    projectWebSessionSoftColor: sanitizeOptionalThemeColor(source.projectWebSessionSoftColor),
+    changeAdditionColor: sanitizeOptionalThemeColor(source.changeAdditionColor),
+    changeDeletionColor: sanitizeOptionalThemeColor(source.changeDeletionColor),
+    changeWarningColor: sanitizeOptionalThemeColor(source.changeWarningColor),
+    shadowColor: sanitizeOptionalThemeColor(source.shadowColor),
+    shadowSubtleColor: sanitizeOptionalThemeColor(source.shadowSubtleColor),
+    workspaceTopColor: sanitizeOptionalThemeColor(source.workspaceTopColor),
+    workspaceBottomColor: sanitizeOptionalThemeColor(source.workspaceBottomColor),
+    sidebarFooterColor: sanitizeOptionalThemeColor(source.sidebarFooterColor),
     terminalTabBg: source.terminalTabBg ?? defaultTheme.terminalTabBg,
     terminalTabActiveBg: source.terminalTabActiveBg ?? defaultTheme.terminalTabActiveBg,
+    terminalTabTextColor: sanitizeOptionalThemeColor(source.terminalTabTextColor),
+    terminalTabActiveTextColor: sanitizeOptionalThemeColor(source.terminalTabActiveTextColor),
     terminalHeaderBorder: source.terminalHeaderBorder ?? defaultTheme.terminalHeaderBorder,
+    terminalHeaderBorderColor: sanitizeOptionalThemeColor(source.terminalHeaderBorderColor),
     terminalEmptyGuideFg: source.terminalEmptyGuideFg ?? defaultTheme.terminalEmptyGuideFg,
+    terminalStatusReadyColor: sanitizeOptionalThemeColor(source.terminalStatusReadyColor),
+    terminalStatusConnectingColor: sanitizeOptionalThemeColor(source.terminalStatusConnectingColor),
+    terminalStatusErrorColor: sanitizeOptionalThemeColor(source.terminalStatusErrorColor),
   };
+}
+
+function sanitizeOptionalThemeColor(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function sanitizeOptionalThemeSettings(value: unknown) {
@@ -1315,6 +1440,42 @@ function sanitizeOptionalThemeSettings(value: unknown) {
     return null;
   }
   return sanitizeThemeSettings(value);
+}
+
+function sanitizeTerminalThemeId(value: unknown, hasCustomTheme: boolean): string {
+  if (value === TERMINAL_THEME_FOLLOW) {
+    return value;
+  }
+  if (value === TERMINAL_THEME_CUSTOM) {
+    return hasCustomTheme ? value : TERMINAL_THEME_FOLLOW;
+  }
+  return typeof value === 'string' && getTerminalThemeById(value) ? value : TERMINAL_THEME_FOLLOW;
+}
+
+function sanitizeTerminalThemeSettings(value: unknown): TerminalThemeSettings {
+  const source =
+    value && typeof value === 'object' ? (value as Partial<TerminalThemeSettings>) : {};
+  const fallback = createTerminalThemeSettings(getDefaultTerminalTheme().theme);
+  const colors = Object.fromEntries(
+    TERMINAL_THEME_COLOR_KEYS.map(key => [
+      key,
+      sanitizeOptionalThemeColor(source[key]) ?? fallback[key],
+    ])
+  ) as unknown as TerminalThemeSettings;
+  const extendedAnsi = Array.isArray(source.extendedAnsi)
+    ? source.extendedAnsi.filter((color): color is string => typeof color === 'string')
+    : fallback.extendedAnsi;
+  if (extendedAnsi?.length) {
+    colors.extendedAnsi = [...extendedAnsi];
+  }
+  return colors;
+}
+
+function sanitizeOptionalTerminalThemeSettings(value: unknown): TerminalThemeSettings | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return sanitizeTerminalThemeSettings(value);
 }
 
 const VALID_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MODES: WebSessionStreamingMarkdownThrottleMode[] =

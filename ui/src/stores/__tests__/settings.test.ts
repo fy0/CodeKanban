@@ -54,6 +54,42 @@ describe('settings theme storage', () => {
     expect(followSystemTheme.value).toBe(false);
   });
 
+  it('keeps explicit terminal themes independent from interface preset changes', () => {
+    const store = useSettingsStore();
+    const { activeTerminalTheme } = storeToRefs(store);
+
+    store.updateTerminalTheme('github-light');
+    const terminalBackground = activeTerminalTheme.value.background;
+    store.selectPreset('dark');
+
+    expect(activeTerminalTheme.value.background).toBe(terminalBackground);
+    expect(activeTerminalTheme.value.background).toBe('#F6F8FA');
+  });
+
+  it('switches the terminal preset with the interface only in follow mode', () => {
+    const store = useSettingsStore();
+    const { activeTerminalTheme } = storeToRefs(store);
+
+    store.updateTerminalTheme('follow-theme');
+    store.selectPreset('light');
+    expect(activeTerminalTheme.value.background).toBe('#0c0c0c');
+
+    store.selectPreset('dark');
+    expect(activeTerminalTheme.value.background).toBe('#2E3440');
+  });
+
+  it('creates an independent custom xterm palette without changing the interface theme', () => {
+    const store = useSettingsStore();
+    const { activeTheme, activeTerminalTheme, terminalThemeId } = storeToRefs(store);
+    const interfaceBody = activeTheme.value.bodyColor;
+
+    store.updateCustomTerminalTheme({ background: '#123456' });
+
+    expect(terminalThemeId.value).toBe('custom');
+    expect(activeTerminalTheme.value.background).toBe('#123456');
+    expect(activeTheme.value.bodyColor).toBe(interfaceBody);
+  });
+
   it('migrates legacy settings to the default follow-system tier without resetting the active preset', () => {
     const darkPreset = getPresetById('dark');
     localStorageMock.setItem(
@@ -77,7 +113,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(7);
+    expect(persisted.version).toBe(8);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -103,7 +139,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(7);
+    expect(persisted.version).toBe(8);
     expect(persisted.followSystemTheme).toBe(1);
 
     setActivePinia(createPinia());
@@ -133,7 +169,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(7);
+    expect(persisted.version).toBe(8);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -157,7 +193,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(7);
+    expect(persisted.version).toBe(8);
     expect(persisted.followSystemTheme).toBe(1);
   });
 
@@ -188,7 +224,7 @@ describe('settings theme storage', () => {
 
     expect(followSystemTheme.value).toBe(true);
     expect((activeTheme.value as Record<string, unknown>).terminalFloatingButtonBg).toBeUndefined();
-    expect((customTheme.value as Record<string, unknown>).terminalFloatingButtonFg).toBeUndefined();
+    expect(customTheme.value).toBeNull();
 
     const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
       version?: number;
@@ -197,7 +233,7 @@ describe('settings theme storage', () => {
       customTheme?: Record<string, unknown>;
     };
 
-    expect(persisted.version).toBe(7);
+    expect(persisted.version).toBe(8);
     expect(persisted.terminalDisplayMode).toBeUndefined();
     expect(persisted.theme?.terminalFloatingButtonBg).toBeUndefined();
     expect(persisted.customTheme?.terminalFloatingButtonFg).toBeUndefined();
@@ -278,7 +314,7 @@ describe('settings theme storage', () => {
       webSessionAutoRetryDispatchPendingOnFailure?: boolean;
     };
 
-    expect(persisted.version).toBe(7);
+    expect(persisted.version).toBe(8);
     expect(persisted.webSessionAutoContinueScope).toBeUndefined();
     expect(persisted.webSessionAutoContinuePreset).toBeUndefined();
     expect(persisted.webSessionAutoContinueMaxAttempts).toBeUndefined();
@@ -318,7 +354,7 @@ describe('settings theme storage', () => {
       dailyTipEnabled?: boolean;
     };
 
-    expect(persisted.version).toBe(7);
+    expect(persisted.version).toBe(8);
     expect(persisted.dailyTipEnabled).toBeUndefined();
   });
 
