@@ -613,6 +613,7 @@ type RuntimeMutationStateSnapshot = {
   blockCount: number;
   historyTotal: number;
   pendingInputCount: number;
+  pendingInputVersion: number;
   livePhase: WebSessionLiveState['phase'];
   liveRunning: boolean;
   liveUpdatedAt: number;
@@ -624,6 +625,7 @@ type RuntimeMutationHydrationOptions = {
   label: string;
   timeoutMs?: number;
   passiveWaitMs?: number;
+  forceSnapshot?: boolean;
   predicate: () => boolean;
 };
 
@@ -1833,6 +1835,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     Record<string, Record<string, WebSessionDraftAttachmentUploadState>>
   >({});
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
+  const pendingInputVersionBySession = new Map<string, number>();
   const scheduledInputsBySession = ref<Record<string, WebSessionScheduledInput[]>>({});
   const snapshotApprovalsBySession = ref<Record<string, WebSessionApprovalState>>({});
   const subAgentsBySession = ref<Record<string, WebSessionSubAgent[]>>({});
@@ -3505,6 +3508,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     appliedSnapshotVersionBySession.delete(sessionId);
     appliedRevisionBySession.delete(sessionId);
     observedRevisionBySession.delete(sessionId);
+    pendingInputVersionBySession.delete(sessionId);
     fullSnapshotBaselineSessions.delete(sessionId);
     pendingAutoRetryOverrides.delete(sessionId);
     pendingAutoRetryDispatchOverrides.delete(sessionId);
@@ -3612,7 +3616,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
     });
   }
 
-  function setPendingInputs(sessionId: string, items: WebSessionPendingInput[]) {
+  function setPendingInputs(
+    sessionId: string,
+    items: WebSessionPendingInput[],
+    options?: { authoritative?: boolean }
+  ) {
     const nextPendingInputs = { ...pendingInputsBySession.value };
     if (items.length === 0) {
       delete nextPendingInputs[sessionId];
@@ -3620,6 +3628,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
       nextPendingInputs[sessionId] = items;
     }
     pendingInputsBySession.value = nextPendingInputs;
+    if (options?.authoritative !== false) {
+      pendingInputVersionBySession.set(
+        sessionId,
+        (pendingInputVersionBySession.get(sessionId) ?? 0) + 1
+      );
+    }
   }
 
   function setScheduledInputs(sessionId: string, items: WebSessionScheduledInput[]) {
@@ -4353,6 +4367,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       blockCount: buildBlocks(sessionId).length,
       historyTotal: getHistoryMeta(sessionId).total,
       pendingInputCount: getPendingInputs(sessionId).length,
+      pendingInputVersion: pendingInputVersionBySession.get(sessionId) ?? 0,
       livePhase: liveState.phase,
       liveRunning: liveState.running,
       liveUpdatedAt: liveState.updatedAt,
@@ -4413,11 +4428,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     let snapshotError: unknown = null;
-    if (!isSessionSnapshotCurrent(sessionId, acknowledgedRevision)) {
+    if (options.forceSnapshot || !isSessionSnapshotCurrent(sessionId, acknowledgedRevision)) {
       try {
         await loadSessionSnapshot(session.projectId, sessionId, {
           rememberActive: false,
-          conditional: true,
+          conditional: !options.forceSnapshot,
         });
       } catch (error) {
         snapshotError = error;
@@ -5729,7 +5744,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
               : null,
           paused: false,
           createdAt: Date.now(),
-        })
+        }),
+        { authoritative: false }
       );
     }
 
@@ -5744,12 +5760,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
         },
         {
           label: 'send',
+          forceSnapshot: Boolean(optimisticPendingId),
           predicate: () => {
-            if (
-              optimisticPendingId &&
-              getPendingInputs(sessionId).some(item => item.id === optimisticPendingId)
-            ) {
-              return true;
+            if (optimisticPendingId) {
+              return (
+                (pendingInputVersionBySession.get(sessionId) ?? 0) > beforeState.pendingInputVersion
+              );
             }
             const liveState = getLiveState(sessionId);
             if (buildBlocks(sessionId).length > beforeState.blockCount) {
@@ -5758,7 +5774,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
             if (getHistoryMeta(sessionId).total > beforeState.historyTotal) {
               return true;
             }
-            if (getPendingInputs(sessionId).length > beforeState.pendingInputCount) {
+            if (
+              !optimisticPendingId &&
+              getPendingInputs(sessionId).length > beforeState.pendingInputCount
+            ) {
               return true;
             }
             if (!beforeState.liveRunning && liveState.running) {
@@ -5778,7 +5797,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (optimisticPendingId) {
         setPendingInputs(
           sessionId,
-          getPendingInputs(sessionId).filter(item => item.id !== optimisticPendingId)
+          getPendingInputs(sessionId).filter(item => item.id !== optimisticPendingId),
+          { authoritative: false }
         );
       }
       throw error;
@@ -5906,8 +5926,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       action: typeof payload?.a === 'string' ? payload.a : 'message',
       targetId: typeof payload?.tid === 'string' ? payload.tid : '',
       mode: typeof payload?.m === 'string' ? payload.m : '',
-      exitPlanMode:
-        typeof payload?.epm === 'boolean' ? payload.epm : options.exitPlanMode === true,
+      exitPlanMode: typeof payload?.epm === 'boolean' ? payload.epm : options.exitPlanMode === true,
       status: typeof payload?.st === 'string' ? payload.st : '',
       lastError: typeof payload?.err === 'string' ? payload.err : '',
       text: typeof payload?.txt === 'string' ? payload.txt : text,

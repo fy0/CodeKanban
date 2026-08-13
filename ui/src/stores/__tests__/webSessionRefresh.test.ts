@@ -1452,6 +1452,21 @@ describe('webSession loading behavior', () => {
     });
 
     listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      revision: '2',
+      session: makeSession({
+        ...session,
+        revision: '2',
+        status: 'running',
+        assistantState: 'working',
+      }),
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [],
+    });
 
     await store.loadSessions(session.projectId);
 
@@ -1499,7 +1514,12 @@ describe('webSession loading behavior', () => {
     });
 
     await sendPromise;
-    expect(store.getPendingInputs(session.id)[0]?.id).toBe(optimistic[0]?.id);
+    expect(snapshotMock).toHaveBeenCalledWith(
+      session.projectId,
+      session.id,
+      expect.objectContaining({ limit: 80, signal: expect.any(AbortSignal) })
+    );
+    expect(store.getPendingInputs(session.id)).toEqual([]);
   });
 
   it('stores scheduled inputs from schedule_send acknowledgements', async () => {
