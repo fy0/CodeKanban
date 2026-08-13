@@ -3739,6 +3739,7 @@ import {
   ChevronForwardOutline,
   ChevronUpOutline,
   CloseOutline,
+  CopyOutline,
   CreateOutline,
   DownloadOutline,
   FlashOutline,
@@ -4012,6 +4013,7 @@ import {
 } from '@/components/web-session/webSessionLiveTime';
 import { calculateCodexRemainingContext } from '@/components/web-session/webSessionContextUsage';
 import { formatWebSessionTokenCount } from '@/components/web-session/webSessionContextDisplay';
+import { resolveCopyableAgentSessionId } from '@/components/web-session/webSessionSessionId';
 import {
   buildOrderedTabSessions,
   resolveNextWebSessionTabAfterClose,
@@ -9117,6 +9119,10 @@ function handleMobileProjectSwitchSelect(key: string | number) {
 }
 
 function buildSessionActionOptions(session: SessionTab | null): DropdownOption[] {
+  const copyableSessionId = resolveCopyableAgentSessionId(
+    session,
+    Boolean(session && isDraftSession(session))
+  );
   const canClaudeSync =
     !!session &&
     !isDraftSession(session) &&
@@ -9169,6 +9175,14 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
       disabled: !session,
     },
   ];
+
+  if (copyableSessionId) {
+    options.splice(2, 0, {
+      label: t('terminal.copyAISessionId'),
+      key: 'copy-session-id',
+      icon: renderDropdownIcon(CopyOutline),
+    });
+  }
 
   if (canPiTree) {
     options.splice(2, 0, {
@@ -9256,6 +9270,17 @@ async function handleSessionActionSelect(action: string, session: SessionTab | n
   }
   if (action === 'tree') {
     showPiTreeDrawer.value = true;
+    return;
+  }
+  if (action === 'copy-session-id') {
+    const sessionId = resolveCopyableAgentSessionId(session, isDraftSession(session));
+    if (!sessionId) {
+      return;
+    }
+    await copyText(sessionId, {
+      failureMessage: t('terminal.copyFailed'),
+      successMessage: t('terminal.aiSessionIdCopied'),
+    });
     return;
   }
   if (action === 'rename') {
