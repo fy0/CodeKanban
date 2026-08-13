@@ -71,9 +71,14 @@ type scheduledPlanExecutionPayload struct {
 	ExecuteOptionLabel string `json:"executeOptionLabel,omitempty"`
 }
 
+type scheduledMessagePayload struct {
+	ExitPlanMode bool `json:"exitPlanMode,omitempty"`
+}
+
 type scheduledInputUpdate struct {
 	Text         *string
 	Mode         *ScheduledInputMode
+	ExitPlanMode *bool
 	ScheduleKind *ScheduledInputScheduleKind
 	ScheduledFor time.Time
 }
@@ -251,8 +256,29 @@ func marshalScheduledInputBlockingReasons(reasons []ScheduledInputBlockingReason
 	return string(encoded)
 }
 
+func parseScheduledMessagePayload(raw string) (scheduledMessagePayload, error) {
+	payload := scheduledMessagePayload{}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return payload, nil
+	}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return scheduledMessagePayload{}, err
+	}
+	return payload, nil
+}
+
+func marshalScheduledMessagePayload(payload scheduledMessagePayload) string {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
+}
+
 func mapScheduledInputRecord(record tables.WebSessionScheduledInputTable) ScheduledInput {
 	scheduleKind := normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind))
+	messagePayload, _ := parseScheduledMessagePayload(record.PayloadJSON)
 	var scheduledFor *time.Time
 	if scheduleKind == ScheduledInputScheduleAtTime {
 		value := record.ScheduledFor
@@ -263,6 +289,7 @@ func mapScheduledInputRecord(record tables.WebSessionScheduledInputTable) Schedu
 		Action:          normalizeScheduledInputAction(ScheduledInputAction(record.Action)),
 		TargetID:        strings.TrimSpace(record.TargetID),
 		Mode:            normalizeScheduledInputMode(ScheduledInputMode(record.Mode)),
+		ExitPlanMode:    messagePayload.ExitPlanMode,
 		Text:            record.Text,
 		AttachmentIDs:   parseScheduledInputAttachmentIDs(record.AttachmentIDsJSON),
 		ScheduleKind:    scheduleKind,
@@ -376,6 +403,7 @@ func (m *Manager) ScheduleInput(
 		mode,
 		ScheduledInputScheduleAtTime,
 		scheduledFor,
+		false,
 	)
 }
 
@@ -394,6 +422,7 @@ func (m *Manager) ScheduleInputWhenIdle(
 		mode,
 		ScheduledInputScheduleWhenIdle,
 		time.Time{},
+		false,
 	)
 }
 
@@ -405,6 +434,7 @@ func (m *Manager) scheduleInput(
 	mode ScheduledInputMode,
 	scheduleKind ScheduledInputScheduleKind,
 	scheduledFor time.Time,
+	exitPlanMode bool,
 ) (ScheduledInput, error) {
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
@@ -454,7 +484,9 @@ func (m *Manager) scheduleInput(
 	item := tables.WebSessionScheduledInputTable{
 		WebSessionID:      record.ID,
 		Action:            string(ScheduledInputActionMessage),
-		PayloadJSON:       "{}",
+		PayloadJSON: marshalScheduledMessagePayload(scheduledMessagePayload{
+			ExitPlanMode: exitPlanMode,
+		}),
 		Mode:              string(normalizedMode),
 		Text:              normalizedText,
 		AttachmentIDsJSON: marshalScheduledInputAttachmentIDs(sanitizedAttachmentIDs),
@@ -834,6 +866,14 @@ func (m *Manager) UpdateScheduledInput(
 			}
 			updates["text"] = normalizedText
 			updates["mode"] = string(normalizedMode)
+			if update.ExitPlanMode != nil {
+				payload, err := parseScheduledMessagePayload(record.PayloadJSON)
+				if err != nil {
+					return fmt.Errorf("invalid scheduled message payload")
+				}
+				payload.ExitPlanMode = *update.ExitPlanMode
+				updates["payload_json"] = marshalScheduledMessagePayload(payload)
+			}
 		case ScheduledInputActionExecutePlan:
 			if update.Text != nil || update.Mode != nil {
 				return fmt.Errorf("scheduled plan only supports changing its schedule")
@@ -1608,9 +1648,29 @@ func (m *Manager) dispatchScheduledInputRecord(
 	case ScheduledInputActionExecutePlan:
 		err = m.dispatchScheduledPlanExecution(ctx, record)
 	case ScheduledInputActionMessage:
+		messagePayload, payloadErr := parseScheduledMessagePayload(record.PayloadJSON)
+		if payloadErr != nil {
+			err = fmt.Errorf("invalid scheduled message payload")
+			break
+		}
+		exitPlanModeApplied := false
+		if messagePayload.ExitPlanMode && effectiveWorkflowMode(session) == WorkflowModePlan {
+			if _, err = m.UpdateWorkflowMode(ctx, session.ID, WorkflowModeDefault); err != nil {
+				break
+			}
+			m.broadcastSessionSummary(ctx, session.ID)
+			exitPlanModeApplied = isCodexSteerSession(session)
+		}
 		attachmentIDs := parseScheduledInputAttachmentIDs(record.AttachmentIDsJSON)
 		mode := normalizeScheduledInputMode(ScheduledInputMode(record.Mode))
-		err = m.dispatchScheduledInput(ctx, record.WebSessionID, mode, record.Text, attachmentIDs)
+		err = m.dispatchScheduledInput(
+			ctx,
+			record.WebSessionID,
+			mode,
+			record.Text,
+			attachmentIDs,
+			exitPlanModeApplied,
+		)
 	default:
 		err = errInvalidScheduledInputAction
 	}
@@ -1700,14 +1760,21 @@ func (m *Manager) dispatchScheduledInput(
 	mode ScheduledInputMode,
 	text string,
 	attachmentIDs []string,
+	preventSteer bool,
 ) error {
 	switch normalizeScheduledInputMode(mode) {
 	case ScheduledInputModeSend:
 		if m.hasActiveRun(sessionID) {
+			if preventSteer {
+				return m.sendMessageWithMode(ctx, sessionID, text, attachmentIDs, PendingInputModeQueue, "")
+			}
 			return m.sendMessageWithMode(ctx, sessionID, text, attachmentIDs, PendingInputModeRedirect, "")
 		}
 		err := m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{updateAutoTitle: true})
 		if err != nil && strings.Contains(strings.ToLower(err.Error()), "already running") {
+			if preventSteer {
+				return m.sendMessageWithMode(ctx, sessionID, text, attachmentIDs, PendingInputModeQueue, "")
+			}
 			return m.sendMessageWithMode(ctx, sessionID, text, attachmentIDs, PendingInputModeRedirect, "")
 		}
 		return err
@@ -1803,6 +1870,7 @@ func (m *Manager) handleScheduleSendCommand(ctx context.Context, client *client,
 		Text         string   `json:"txt"`
 		Attachments  []string `json:"atts"`
 		Mode         string   `json:"mode"`
+		ExitPlanMode bool     `json:"epm"`
 		ScheduleKind string   `json:"sk"`
 		At           *int64   `json:"at"`
 	}
@@ -1814,24 +1882,29 @@ func (m *Manager) handleScheduleSendCommand(ctx context.Context, client *client,
 	var err error
 	switch scheduleKind {
 	case ScheduledInputScheduleWhenIdle:
-		created, err = m.ScheduleInputWhenIdle(
+		created, err = m.scheduleInput(
 			ctx,
 			frame.SessionID,
 			payload.Text,
 			payload.Attachments,
 			ScheduledInputMode(payload.Mode),
+			ScheduledInputScheduleWhenIdle,
+			time.Time{},
+			payload.ExitPlanMode,
 		)
 	case ScheduledInputScheduleAtTime:
 		if payload.At == nil {
 			return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "scheduled time is required", false))
 		}
-		created, err = m.ScheduleInput(
+		created, err = m.scheduleInput(
 			ctx,
 			frame.SessionID,
 			payload.Text,
 			payload.Attachments,
 			ScheduledInputMode(payload.Mode),
+			ScheduledInputScheduleAtTime,
 			time.UnixMilli(*payload.At),
+			payload.ExitPlanMode,
 		)
 	default:
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid scheduled input kind", false))
@@ -1920,10 +1993,12 @@ func (m *Manager) handleScheduledUpdateCommand(ctx context.Context, client *clie
 		ID           string  `json:"id"`
 		Text         *string `json:"txt"`
 		Mode         *string `json:"mode"`
+		ExitPlanMode *bool   `json:"epm"`
 		ScheduleKind *string `json:"sk"`
 		At           *int64  `json:"at"`
 	}
-	if err := json.Unmarshal(frame.Payload, &payload); err != nil || (payload.At == nil && payload.ScheduleKind == nil) {
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil ||
+		(payload.At == nil && payload.ScheduleKind == nil && payload.ExitPlanMode == nil) {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid scheduled update payload", false))
 	}
 	var mode *ScheduledInputMode
@@ -1943,6 +2018,7 @@ func (m *Manager) handleScheduledUpdateCommand(ctx context.Context, client *clie
 	updated, err := m.UpdateScheduledInput(ctx, frame.SessionID, payload.ID, scheduledInputUpdate{
 		Text:         payload.Text,
 		Mode:         mode,
+		ExitPlanMode: payload.ExitPlanMode,
 		ScheduleKind: scheduleKind,
 		ScheduledFor: scheduledFor,
 	})

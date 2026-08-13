@@ -234,6 +234,7 @@ export type WebSessionScheduledInputRecord = {
   action?: 'message' | 'execute_plan' | string;
   targetId?: string;
   mode?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
+  exitPlanMode?: boolean;
   status?: 'scheduled' | 'failed' | 'expired' | 'dispatched' | 'canceled' | string;
   lastError?: string;
   text?: string;

@@ -29,6 +29,8 @@ function makeEntry(
     archiving: false,
     hasWorkflowPlanBadge: false,
     hasScheduledPlanExecution: false,
+    hasScheduledInput: false,
+    scheduledInputTitle: 'Delayed',
     singleProject: true,
     currentIndicatorTitle: 'Current session',
     activityTimeLabel: '09:08',

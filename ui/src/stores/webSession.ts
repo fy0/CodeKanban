@@ -152,6 +152,7 @@ type WireScheduledInput = {
   a?: 'message' | 'execute_plan' | string;
   tid?: string;
   m?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
+  epm?: boolean;
   st?: 'scheduled' | 'failed' | 'expired' | 'dispatched' | 'canceled' | string;
   err?: string;
   txt?: string;
@@ -269,6 +270,30 @@ type WireFrame = {
   msg?: string;
   retry?: boolean;
 };
+
+class WebSessionCommandError extends Error {
+  readonly code: string;
+  readonly operation: string;
+  readonly sessionId: string;
+
+  constructor({
+    code,
+    message,
+    operation,
+    sessionId,
+  }: {
+    code: string;
+    message: string;
+    operation: string;
+    sessionId: string;
+  }) {
+    super(message);
+    this.name = 'WebSessionCommandError';
+    this.code = code;
+    this.operation = operation;
+    this.sessionId = sessionId;
+  }
+}
 
 export interface WebSessionToolBlock {
   id: string;
@@ -555,6 +580,7 @@ export interface WebSessionScheduledInput {
   action: 'message' | 'execute_plan';
   targetId: string;
   mode: 'send' | 'interrupt' | 'queue';
+  exitPlanMode: boolean;
   status: 'scheduled' | 'failed' | 'expired';
   lastError: string;
   text: string;
@@ -1837,6 +1863,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     {
       resolve: (value: WireFrame) => void;
       reject: (reason?: unknown) => void;
+      operation: string;
+      sessionId: string;
     }
   >();
   const draftAttachmentUploadQueues = new Map<string, Promise<unknown>>();
@@ -2918,6 +2946,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     action?: 'message' | 'execute_plan' | string;
     targetId?: string;
     mode?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
+    exitPlanMode?: boolean;
     status?: 'scheduled' | 'failed' | 'expired' | 'dispatched' | 'canceled' | string;
     lastError?: string;
     text?: string;
@@ -3001,6 +3030,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       action,
       targetId: typeof item.targetId === 'string' ? item.targetId.trim() : '',
       mode,
+      exitPlanMode: item.exitPlanMode === true,
       status,
       lastError: typeof item.lastError === 'string' ? item.lastError.trim() : '',
       text: typeof item.text === 'string' ? item.text : '',
@@ -4571,9 +4601,25 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (frame.k === 'err') {
-      lastError.value = frame.msg ?? 'Unknown websocket error';
-      if (frame.rid && pending.has(frame.rid)) {
-        pending.get(frame.rid)?.reject(new Error(frame.msg ?? frame.code ?? 'unknown error'));
+      const request = frame.rid ? pending.get(frame.rid) : undefined;
+      const isMissingPendingInput = Boolean(
+        request &&
+          frame.code === 'not_found' &&
+          frame.msg === 'pending input not found' &&
+          ['pending_del', 'pending_update', 'pending_reorder'].includes(request.operation)
+      );
+      if (!isMissingPendingInput) {
+        lastError.value = frame.msg ?? 'Unknown websocket error';
+      }
+      if (frame.rid && request) {
+        request.reject(
+          new WebSessionCommandError({
+            code: frame.code ?? '',
+            message: frame.msg ?? frame.code ?? 'unknown error',
+            operation: request.operation,
+            sessionId: request.sessionId,
+          })
+        );
         pending.delete(frame.rid);
       }
       return;
@@ -4662,6 +4708,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
                   action: item.a,
                   targetId: item.tid,
                   mode: item.m,
+                  exitPlanMode: item.epm,
                   status: item.st,
                   lastError: item.err,
                   text: item.txt,
@@ -4744,6 +4791,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
                     action: item.a,
                     targetId: item.tid,
                     mode: item.m,
+                    exitPlanMode: item.epm,
                     status: item.st,
                     lastError: item.err,
                     text: item.txt,
@@ -5088,7 +5136,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       p: payload,
     };
     const promise = new Promise<WireFrame>((resolve, reject) => {
-      pending.set(requestId, { resolve, reject });
+      pending.set(requestId, { resolve, reject, operation: op, sessionId });
     });
     commandSocket.send(JSON.stringify(frame));
     return promise;
@@ -5100,12 +5148,39 @@ export const useWebSessionStore = defineStore('web-session', () => {
     payload: Record<string, unknown>,
     hydration: RuntimeMutationHydrationOptions
   ) {
-    const acknowledgement = await sendCommand(op, sessionId, payload);
+    let acknowledgement: WireFrame;
+    try {
+      acknowledgement = await sendCommand(op, sessionId, payload);
+    } catch (error) {
+      if (await reconcileMissingPendingInput(error)) {
+        return;
+      }
+      throw error;
+    }
     const revision = normalizeWebSessionRevision(acknowledgement.rev);
     if (!revision) {
       throw new Error(`websocket command ${op} returned no snapshot revision`);
     }
     await hydrateRuntimeMutation(sessionId, hydration, revision);
+  }
+
+  async function reconcileMissingPendingInput(error: unknown) {
+    if (
+      !(error instanceof WebSessionCommandError) ||
+      error.code !== 'not_found' ||
+      error.message !== 'pending input not found' ||
+      !['pending_del', 'pending_update', 'pending_reorder'].includes(error.operation)
+    ) {
+      return false;
+    }
+    const session = findSessionById(error.sessionId);
+    if (!session?.projectId || session.archivedAt) {
+      return false;
+    }
+    await loadSessionSnapshot(session.projectId, error.sessionId, {
+      rememberActive: false,
+    });
+    return true;
   }
 
   async function loadSessions(projectId: string, force = false) {
@@ -5806,7 +5881,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     text: string,
     attachmentIds: string[],
     scheduledForOrSchedule: number | WebSessionSchedule,
-    mode: 'send' | 'interrupt' | 'queue' = 'send'
+    mode: 'send' | 'interrupt' | 'queue' = 'send',
+    options: { exitPlanMode?: boolean } = {}
   ) {
     const session = findSessionById(sessionId);
     if (session?.archivedAt) {
@@ -5820,6 +5896,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       txt: text,
       atts: attachmentIds,
       mode,
+      epm: options.exitPlanMode === true,
       sk: schedule.scheduleKind,
       ...(schedule.scheduleKind === 'at_time' ? { at: schedule.scheduledFor } : {}),
     });
@@ -5829,6 +5906,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
       action: typeof payload?.a === 'string' ? payload.a : 'message',
       targetId: typeof payload?.tid === 'string' ? payload.tid : '',
       mode: typeof payload?.m === 'string' ? payload.m : '',
+      exitPlanMode:
+        typeof payload?.epm === 'boolean' ? payload.epm : options.exitPlanMode === true,
       status: typeof payload?.st === 'string' ? payload.st : '',
       lastError: typeof payload?.err === 'string' ? payload.err : '',
       text: typeof payload?.txt === 'string' ? payload.txt : text,
@@ -5944,6 +6023,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       scheduledFor?: number | null;
       text?: string;
       mode?: 'send' | 'interrupt' | 'queue';
+      exitPlanMode?: boolean;
     }
   ) {
     const current = getScheduledInputs(sessionId).find(item => item.id === inputId);
@@ -5956,6 +6036,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...(typeof update.scheduledFor === 'number' ? { at: update.scheduledFor } : {}),
       ...(typeof update.text === 'string' ? { txt: update.text } : {}),
       ...(update.mode ? { mode: update.mode } : {}),
+      ...(typeof update.exitPlanMode === 'boolean' ? { epm: update.exitPlanMode } : {}),
     });
     const payload = asRecord(frame.p);
     const updated = normalizeScheduledInput({
@@ -5963,6 +6044,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       action: typeof payload?.a === 'string' ? payload.a : current.action,
       targetId: typeof payload?.tid === 'string' ? payload.tid : current.targetId,
       mode: typeof payload?.m === 'string' ? payload.m : (update.mode ?? current.mode),
+      exitPlanMode:
+        typeof payload?.epm === 'boolean'
+          ? payload.epm
+          : (update.exitPlanMode ?? current.exitPlanMode),
       status: typeof payload?.st === 'string' ? payload.st : 'scheduled',
       lastError: typeof payload?.err === 'string' ? payload.err : '',
       text: typeof payload?.txt === 'string' ? payload.txt : (update.text ?? current.text),

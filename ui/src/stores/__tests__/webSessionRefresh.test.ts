@@ -12,17 +12,15 @@ const {
   syncMock,
   deleteMock,
   commandGroupDetailMock,
-} = vi.hoisted(
-  () => ({
-    listMock: vi.fn(),
-    queryArchivedMock: vi.fn(),
-    snapshotMock: vi.fn(),
-    historyMock: vi.fn(),
-    syncMock: vi.fn(),
-    deleteMock: vi.fn(),
-    commandGroupDetailMock: vi.fn(),
-  })
-);
+} = vi.hoisted(() => ({
+  listMock: vi.fn(),
+  queryArchivedMock: vi.fn(),
+  snapshotMock: vi.fn(),
+  historyMock: vi.fn(),
+  syncMock: vi.fn(),
+  deleteMock: vi.fn(),
+  commandGroupDetailMock: vi.fn(),
+}));
 
 vi.mock('@/api/webSession', () => ({
   webSessionApi: {
@@ -944,6 +942,117 @@ describe('webSession loading behavior', () => {
 
     await removePromise;
     expect(store.getPendingInputs(session.id)).toEqual([]);
+  });
+
+  it('silently reconciles stale pending delete, update, and reorder commands', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-pending-stale',
+      status: 'running',
+      assistantState: 'working',
+    });
+    const snapshotWithPending = (id: string, text: string) => ({
+      session,
+      history: { items: [], hasMore: false, total: 0 },
+      pendingInputs: [
+        {
+          id,
+          mode: 'queue',
+          text,
+          attachmentIds: [],
+          createdAt: '2026-04-09T10:01:00.000Z',
+        },
+      ],
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock
+      .mockResolvedValueOnce(snapshotWithPending('pending-delete', 'Delete me'))
+      .mockResolvedValueOnce(snapshotWithPending('pending-update', 'Update me'))
+      .mockResolvedValueOnce(snapshotWithPending('pending-reorder', 'Move me'))
+      .mockResolvedValueOnce({
+        session,
+        history: { items: [], hasMore: false, total: 0 },
+        pendingInputs: [],
+      });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    const dispatchMissingPendingError = async (operation: string) => {
+      let commandSocket = findSocket('/api/v1/web-sessions/ws');
+      for (
+        let attempt = 0;
+        attempt < 5 &&
+        (commandSocket?.sent.at(-1) as { op?: string } | undefined)?.op !== operation;
+        attempt += 1
+      ) {
+        await Promise.resolve();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        commandSocket = findSocket('/api/v1/web-sessions/ws');
+      }
+      const requestId = String(
+        (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+      );
+      commandSocket?.dispatch({
+        v: 1,
+        k: 'err',
+        rid: requestId,
+        sid: session.id,
+        ts: Date.now(),
+        code: 'not_found',
+        msg: 'pending input not found',
+      });
+    };
+
+    const deletePromise = store.removePendingInput(session.id, 'pending-delete');
+    await dispatchMissingPendingError('pending_del');
+    await expect(deletePromise).resolves.toBeUndefined();
+    expect(store.getPendingInputs(session.id)[0]?.id).toBe('pending-update');
+
+    const updatePromise = store.updatePendingInput(session.id, 'pending-update', 'Updated text');
+    await dispatchMissingPendingError('pending_update');
+    await expect(updatePromise).resolves.toBeUndefined();
+    expect(store.getPendingInputs(session.id)[0]?.id).toBe('pending-reorder');
+
+    const reorderPromise = store.reorderPendingInput(session.id, 'pending-reorder', 'queue', 0);
+    await dispatchMissingPendingError('pending_reorder');
+    await expect(reorderPromise).resolves.toBeUndefined();
+
+    expect(store.getPendingInputs(session.id)).toEqual([]);
+    expect(store.lastError).toBeNull();
+    expect(snapshotMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps non-stale pending command failures visible', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-pending-real-error' });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const removePromise = store.removePendingInput(session.id, 'pending-1');
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'err',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      code: 'internal',
+      msg: 'database unavailable',
+    });
+
+    await expect(removePromise).rejects.toThrow('database unavailable');
+    expect(store.lastError).toBe('database unavailable');
+    expect(snapshotMock).not.toHaveBeenCalled();
   });
 
   it('updates pending inputs via the backend command channel and pending events', async () => {

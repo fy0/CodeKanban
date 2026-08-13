@@ -248,6 +248,7 @@ type wireScheduledInput struct {
 	Action          string   `json:"a,omitempty"`
 	TargetID        string   `json:"tid,omitempty"`
 	Mode            string   `json:"m"`
+	ExitPlanMode    bool     `json:"epm,omitempty"`
 	Text            string   `json:"txt,omitempty"`
 	AttachmentIDs   []string `json:"atts,omitempty"`
 	ScheduleKind    string   `json:"sk,omitempty"`
@@ -648,6 +649,7 @@ func mapWireScheduledInputs(items []ScheduledInput) []wireScheduledInput {
 			Action:          string(item.Action),
 			TargetID:        item.TargetID,
 			Mode:            string(item.Mode),
+			ExitPlanMode:    item.ExitPlanMode,
 			Text:            item.Text,
 			AttachmentIDs:   append([]string(nil), item.AttachmentIDs...),
 			ScheduleKind:    string(item.ScheduleKind),

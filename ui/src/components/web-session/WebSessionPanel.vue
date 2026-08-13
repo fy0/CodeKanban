@@ -153,6 +153,15 @@
                     </n-icon>
                   </span>
                   <span class="mobile-session-drawer-item-title">{{ item.session.title }}</span>
+                  <n-icon
+                    v-if="shouldHighlightScheduledInputSession(item.session)"
+                    class="mobile-session-drawer-scheduled-marker"
+                    size="11"
+                    :title="t('webSession.scheduledBadge')"
+                    :aria-label="t('webSession.scheduledBadge')"
+                  >
+                    <TimeOutline />
+                  </n-icon>
                   <span class="mobile-session-drawer-trailing">
                     <span
                       v-if="getMobileTabOptionProjectBadge(item.session)"
@@ -2434,7 +2443,7 @@
                     placement="bottom-start"
                     :show="activeScheduledInputPopoverId === item.id"
                     :show-arrow="false"
-                    content-style="padding: 10px 12px;"
+                    content-style="padding: 6px 8px;"
                     @clickoutside="closeScheduledInputPopover"
                   >
                     <template #trigger>
@@ -2504,6 +2513,13 @@
                               : formatDateTime(item.scheduledFor ?? item.createdAt)
                           }}
                         </strong>
+                      </div>
+                      <div
+                        v-if="item.action === 'message' && item.exitPlanMode"
+                        class="scheduled-input-detail-row"
+                      >
+                        <span>{{ t('webSession.scheduledTriggerActionLabel') }}</span>
+                        <strong>{{ t('webSession.scheduleExitPlanMode') }}</strong>
                       </div>
                       <div class="scheduled-input-popover-text">
                         {{ scheduledInputDetailText(item) }}
@@ -3399,6 +3415,12 @@
               </label>
             </div>
           </n-radio-group>
+          <n-checkbox
+            v-model:checked="scheduledExitPlanMode"
+            class="scheduled-send-exit-plan"
+          >
+            {{ t('webSession.scheduleExitPlanMode') }}
+          </n-checkbox>
         </div>
       </div>
 
@@ -4441,6 +4463,7 @@ const activeScheduledInputPopoverId = ref('');
 const scheduledInputActionId = ref('');
 const scheduledSendAt = ref<number | null>(null);
 const scheduledSendMode = ref<ScheduledSendMode>('send');
+const scheduledExitPlanMode = ref(false);
 const scheduledScheduleKind = ref<ScheduledScheduleKind>('at_time');
 const scheduledSendPresetOptions = ref<ScheduledSendPresetOption[]>([]);
 const scheduledSendSubmitting = ref(false);
@@ -8270,6 +8293,7 @@ function openScheduledSendDialog(
     presets[0]?.timestamp ??
     Date.now() + 5 * 60_000;
   scheduledSendMode.value = 'send';
+  scheduledExitPlanMode.value = false;
   scheduledScheduleKind.value = 'at_time';
   scheduledSendSubmitting.value = false;
   showScheduledSendDialog.value = true;
@@ -8296,6 +8320,7 @@ function openScheduledInputEditDialog(item: WebSessionScheduledInput) {
   scheduledSendAt.value =
     item.scheduledFor != null && item.scheduledFor > Date.now() ? item.scheduledFor : fallbackTime;
   scheduledSendMode.value = item.mode;
+  scheduledExitPlanMode.value = item.exitPlanMode;
   scheduledScheduleKind.value = item.scheduleKind;
   scheduledSendSubmitting.value = false;
   activeScheduledInputPopoverId.value = '';
@@ -8310,6 +8335,7 @@ function handleScheduledSendDialogVisibilityChange(show: boolean) {
     scheduledPlanDialogTarget.value = null;
     scheduledEditingInput.value = null;
     scheduledEditText.value = '';
+    scheduledExitPlanMode.value = false;
     scheduledScheduleKind.value = 'at_time';
   }
 }
@@ -13969,7 +13995,8 @@ async function handleConfirmScheduledSend() {
       scheduleKind === 'when_idle'
         ? { scheduleKind: 'when_idle' }
         : { scheduleKind: 'at_time', scheduledFor: executeAt },
-      sendMode
+      sendMode,
+      { exitPlanMode: scheduledExitPlanMode.value }
     );
     recordSubmittedPrompt(draftText, session.projectId || submitProjectId);
     clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
@@ -14078,6 +14105,7 @@ async function handleConfirmScheduledInputUpdate() {
         ? {
             text: scheduledEditText.value,
             mode: scheduledSendMode.value,
+            exitPlanMode: scheduledExitPlanMode.value,
           }
         : {}),
     });
@@ -15755,6 +15783,15 @@ function hasScheduledPlanExecution(
   return session?.hasScheduledPlanExecution === true;
 }
 
+function shouldHighlightScheduledInputSession(
+  session: Pick<WebSessionSummary, 'id'> | null | undefined
+) {
+  return Boolean(
+    session &&
+      webSessionStore.getScheduledInputs(session.id).some(item => item.status === 'scheduled')
+  );
+}
+
 function createTabProps(session: (typeof sessions.value)[number]): HTMLAttributes {
   const isActive = activeTabSessionId.value === session.id;
   const theme = activeTheme.value;
@@ -15976,6 +16013,8 @@ function buildSidebarSessionRow(
     archiving: !archived && isSessionArchiving(session.id),
     hasWorkflowPlanBadge: shouldShowSessionWorkflowPlanBadge(session),
     hasScheduledPlanExecution: hasScheduledPlanExecution(session),
+    hasScheduledInput: shouldHighlightScheduledInputSession(session),
+    scheduledInputTitle: t('webSession.scheduledBadge'),
     singleProject: isSingleSidebarProject.value,
     projectBadge: item.projectBadge,
     currentIndicatorTitle: t('terminal.currentActiveSession'),
@@ -17796,7 +17835,7 @@ defineExpose({
 
 .mobile-session-drawer-item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) 16px auto;
   align-items: center;
   gap: 10px;
   padding: 5px 10px;
@@ -17835,6 +17874,18 @@ defineExpose({
   width: 30px;
   height: 30px;
   display: inline-flex;
+  flex-shrink: 0;
+}
+
+.mobile-session-drawer-scheduled-marker {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--app-warning-soft, rgba(245, 158, 11, 0.12));
+  color: var(--web-session-scheduled-marker-color, #d97706);
   flex-shrink: 0;
 }
 
@@ -22009,11 +22060,7 @@ defineExpose({
   padding: 4px 5px 4px 7px;
   border: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
   border-radius: 8px;
-  background: color-mix(
-    in srgb,
-    var(--app-surface-raised, #fff) 92%,
-    var(--app-warning, #f59e0b) 8%
-  );
+  background: var(--app-surface-raised, #fff);
 }
 
 .scheduled-input-item.state-failed {
@@ -22140,8 +22187,8 @@ defineExpose({
 
 .scheduled-input-popover-card {
   display: grid;
-  gap: 10px;
-  width: min(340px, 78vw);
+  gap: 6px;
+  width: min(320px, 78vw);
   max-height: min(62vh, 420px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -22262,6 +22309,10 @@ defineExpose({
   font-size: 12px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.scheduled-send-exit-plan {
+  margin-top: 2px;
 }
 
 .scheduled-send-presets {

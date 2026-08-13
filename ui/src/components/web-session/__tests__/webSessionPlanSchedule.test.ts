@@ -44,17 +44,29 @@ describe('webSession plan scheduling', () => {
     expect(webSessionPanelSource).toContain('webSessionStore.schedulePlanExecution');
   });
 
-  it('uses the amber scheduled state for every plan flag surface', () => {
+  it('uses a dedicated clock marker on sessions with scheduled input', () => {
     expect(webSessionPanelSource.match(/hasScheduledPlanExecution/g)?.length).toBeGreaterThan(4);
     expect(webSessionPanelSource).toContain(
       'var(--web-session-scheduled-plan-flag-color, #d97706)'
     );
+    expect(webSessionPanelSource).toContain('function shouldHighlightScheduledInputSession');
+    expect(webSessionPanelSource).toContain('webSessionStore.getScheduledInputs(session.id)');
+    expect(webSessionPanelSource).toContain("item.status === 'scheduled'");
+    expect(webSessionPanelSource).not.toContain(
+      '!webSessionStore.getLiveState(session.id).running'
+    );
     expect(webSessionPanelSource).toContain('.tab-workflow-plan-flag.is-scheduled');
     expect(webSessionPanelSource).toContain('.mobile-tab-trigger-plan-badge.is-scheduled');
     expect(webSessionPanelSource).toContain('.mobile-session-drawer-plan-badge.is-scheduled');
+    expect(webSessionPanelSource).toContain('.mobile-session-drawer-scheduled-marker');
+    expect(webSessionPanelSource).not.toContain('is-plan-execution');
     expect(webSessionSidebarRowSource).toContain("'is-scheduled': row.hasScheduledPlanExecution");
     expect(webSessionSidebarRowSource).toContain(
       'var(--web-session-scheduled-plan-flag-color, #d97706)'
     );
+    expect(webSessionSidebarRowSource).toContain(
+      'v-if="row.hasScheduledInput"'
+    );
+    expect(webSessionSidebarRowSource).toContain('.session-sidebar-scheduled-marker');
   });
 });

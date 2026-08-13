@@ -49,6 +49,15 @@
       >
         {{ row.projectBadge.label }}
       </span>
+      <n-icon
+        v-if="row.hasScheduledInput"
+        class="session-sidebar-scheduled-marker"
+        size="11"
+        :title="row.scheduledInputTitle"
+        :aria-label="row.scheduledInputTitle"
+      >
+        <TimeOutline />
+      </n-icon>
       <span class="session-sidebar-trailing-slot">
         <span class="session-sidebar-activity-time" :title="row.activityTimeTitle">
           {{ row.activityTimeLabel }}
@@ -83,7 +92,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref } from 'vue';
 import { NDropdown, NIcon, type DropdownOption } from 'naive-ui';
-import { EllipsisHorizontal, Flag as FlagIcon } from '@vicons/ionicons5';
+import { EllipsisHorizontal, Flag as FlagIcon, TimeOutline } from '@vicons/ionicons5';
 import type { WebSessionSidebarRowView } from './webSessionSidebarVirtualList';
 
 defineProps<{
@@ -371,6 +380,22 @@ onBeforeUnmount(clearLongPressTimer);
   border: 1.75px solid color-mix(in srgb, var(--n-primary-color) 24%, transparent);
   border-top-color: var(--n-primary-color);
   animation: web-session-sidebar-spin 0.72s linear infinite;
+}
+
+.session-sidebar-scheduled-marker {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--app-warning-soft, rgba(245, 158, 11, 0.12));
+  color: var(--web-session-scheduled-marker-color, #d97706);
+}
+
+.session-sidebar-scheduled-marker :deep(svg) {
+  display: block;
 }
 
 .project-index-badge.session-project-badge {

@@ -453,6 +453,7 @@ type ScheduledInput struct {
 	Action          ScheduledInputAction           `json:"action"`
 	TargetID        string                         `json:"targetId,omitempty"`
 	Mode            ScheduledInputMode             `json:"mode"`
+	ExitPlanMode    bool                           `json:"exitPlanMode,omitempty"`
 	Text            string                         `json:"text"`
 	AttachmentIDs   []string                       `json:"attachmentIds"`
 	ScheduleKind    ScheduledInputScheduleKind     `json:"scheduleKind"`
