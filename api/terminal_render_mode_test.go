@@ -1,9 +1,56 @@
 package api
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestInitializeTerminalConnectionRenderState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		url          string
+		wantMode     terminalRenderMode
+		wantInterval time.Duration
+		wantZlib     bool
+	}{
+		{
+			name:         "defaults to live",
+			url:          "http://example.test/api/v1/terminal/ws?sessionId=s1",
+			wantMode:     terminalRenderModeLive,
+			wantInterval: defaultTerminalSnapshotInterval,
+			wantZlib:     true,
+		},
+		{
+			name:         "reads snapshot handshake",
+			url:          "http://example.test/api/v1/terminal/ws?sessionId=s1&renderMode=snapshot&snapshotIntervalMs=500&snapshotCompression=none",
+			wantMode:     terminalRenderModeSnapshot,
+			wantInterval: 500 * time.Millisecond,
+			wantZlib:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state := newTerminalConnectionRenderState()
+			initializeTerminalConnectionRenderState(state, httptest.NewRequest("GET", tt.url, nil))
+			mode, interval, compressionEnabled := state.SnapshotConfig()
+			if mode != tt.wantMode {
+				t.Fatalf("mode = %q, want %q", mode, tt.wantMode)
+			}
+			if interval != tt.wantInterval {
+				t.Fatalf("interval = %v, want %v", interval, tt.wantInterval)
+			}
+			if compressionEnabled != tt.wantZlib {
+				t.Fatalf("compression enabled = %v, want %v", compressionEnabled, tt.wantZlib)
+			}
+		})
+	}
+}
 
 func TestNormalizeSnapshotInterval(t *testing.T) {
 	t.Parallel()

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -430,7 +431,7 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 		return nil
 	}
 	sendSnapshot := func(snapshot *terminal.TerminalMirrorSnapshot, force bool) error {
-		if snapshot == nil {
+		if snapshot == nil || renderState.Mode() != terminalRenderModeSnapshot {
 			return nil
 		}
 		_, _, compressionEnabled := renderState.SnapshotConfig()
@@ -449,16 +450,21 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 		session.RecordTraffic(0, len(payload))
 		return nil
 	}
-	if compression := r.URL.Query().Get("snapshotCompression"); compression != "" {
-		mode, interval, _ := renderState.SnapshotConfig()
-		renderState.Update(
-			string(mode),
-			snapshotIntervalMilliseconds(interval),
-			normalizeSnapshotCompression(compression),
-		)
-	}
+	initializeTerminalConnectionRenderState(renderState, r)
 
 	status := session.Status()
+	var initialSnapshot *terminal.TerminalMirrorSnapshot
+	if renderState.Mode() == terminalRenderModeSnapshot {
+		initialSnapshot = session.TerminalMirrorSnapshot()
+	}
+	if renderState.Mode() == terminalRenderModeSnapshot && initialSnapshot == nil {
+		_, interval, compressionEnabled := renderState.SnapshotConfig()
+		renderState.Update(
+			string(terminalRenderModeLive),
+			snapshotIntervalMilliseconds(interval),
+			compressionEnabled,
+		)
+	}
 
 	if err := send(wsMessage{
 		Type: "ready",
@@ -466,13 +472,20 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 	}); err != nil {
 		return
 	}
-
-	scrollback := session.Scrollback()
-	if snapshot := session.TerminalMirrorSnapshot(); snapshot != nil {
-		if err := sendSnapshot(snapshot, true); err != nil {
+	if initialSnapshot == nil && renderState.Mode() == terminalRenderModeLive {
+		if err := c.sendRenderModeAck(renderState, mirrorState, send); err != nil {
 			return
 		}
-		scrollback = session.ScrollbackSince(snapshot.CapturedAt)
+	}
+
+	scrollback := session.Scrollback()
+	if renderState.Mode() == terminalRenderModeSnapshot {
+		if initialSnapshot != nil {
+			if err := sendSnapshot(initialSnapshot, true); err != nil {
+				return
+			}
+			scrollback = session.ScrollbackSince(initialSnapshot.CapturedAt)
+		}
 	}
 	for _, chunk := range scrollback {
 		if len(chunk) == 0 {
@@ -483,10 +496,12 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	if prefix := terminal.BuildTerminalModesReplayPrefix(session.TerminalModesSnapshot(), false); len(prefix) > 0 {
-		encoded := base64.StdEncoding.EncodeToString(prefix)
-		if err := send(wsMessage{Type: "mode-prefix", Data: encoded}); err != nil {
-			return
+	if renderState.Mode() == terminalRenderModeSnapshot {
+		if prefix := terminal.BuildTerminalModesReplayPrefix(session.TerminalModesSnapshot(), false); len(prefix) > 0 {
+			encoded := base64.StdEncoding.EncodeToString(prefix)
+			if err := send(wsMessage{Type: "mode-prefix", Data: encoded}); err != nil {
+				return
+			}
 		}
 	}
 	if err := send(wsMessage{Type: "replay-complete"}); err != nil {
@@ -518,6 +533,27 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 		c.logger.Debug("initial terminal redraw failed", zap.Error(err), zap.String("sessionId", session.ID()))
 	}
 	c.consumeClient(ctx, cancel, session, renderState, mirrorState, conn, send, sendSnapshot)
+}
+
+func initializeTerminalConnectionRenderState(state *terminalConnectionRenderState, r *http.Request) {
+	if state == nil || r == nil {
+		return
+	}
+
+	query := r.URL.Query()
+	mode := query.Get("renderMode")
+	if mode == "" {
+		mode = string(terminalRenderModeLive)
+	}
+	interval := 0
+	if rawInterval := query.Get("snapshotIntervalMs"); rawInterval != "" {
+		interval, _ = strconv.Atoi(rawInterval)
+	}
+	compressionEnabled := true
+	if rawCompression := query.Get("snapshotCompression"); rawCompression != "" {
+		compressionEnabled = normalizeSnapshotCompression(rawCompression)
+	}
+	state.Update(mode, interval, compressionEnabled)
 }
 
 func (c *terminalController) forwardPTY(
@@ -718,6 +754,9 @@ func (c *terminalController) consumeClient(
 					continue
 				}
 			case "snapshot-request":
+				if renderState == nil || renderState.Mode() != terminalRenderModeSnapshot {
+					continue
+				}
 				// A same-size resize is not guaranteed to generate SIGWINCH on
 				// Unix. Nudge the PTY before capturing the snapshot so a prompt or
 				// full-screen program is painted immediately after attachment.
@@ -830,7 +869,12 @@ func (c *terminalController) handleRenderModeMessage(
 				return err
 			}
 		}
-		return fmt.Errorf("snapshot mirror mode is unavailable for this terminal")
+		if err := session.ForceRedraw(); err != nil {
+			return err
+		}
+		// Snapshot support is optional per session. Keep the user's preference
+		// intact on the client while this connection operates as live PTY.
+		return nil
 	}
 
 	previousMode, currentMode, interval, compressionEnabled, changed := renderState.Update(
@@ -851,8 +895,13 @@ func (c *terminalController) handleRenderModeMessage(
 		return err
 	}
 
-	if currentMode == terminalRenderModeSnapshot || (changed && previousMode == terminalRenderModeSnapshot) {
+	if currentMode == terminalRenderModeSnapshot && changed {
 		if err := c.sendTerminalSnapshot(session, sendSnapshot, true); err != nil {
+			return err
+		}
+	}
+	if currentMode == terminalRenderModeLive && changed && previousMode == terminalRenderModeSnapshot {
+		if err := session.ForceRedraw(); err != nil {
 			return err
 		}
 	}

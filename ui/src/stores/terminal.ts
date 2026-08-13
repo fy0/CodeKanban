@@ -63,6 +63,8 @@ export interface TerminalTabState extends TerminalSession {
   clientStatus: ClientStatus;
   connectionRole: TerminalConnectionRole;
   renderMode: TerminalRenderMode;
+  /** Mode confirmed by the currently attached websocket. */
+  connectionRenderMode?: TerminalRenderMode;
   snapshotIntervalMs: number;
   useGlobalRenderMode: boolean;
   useGlobalSnapshotInterval: boolean;
@@ -773,6 +775,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     tab.useGlobalRenderMode = preference?.useGlobalRenderMode !== false;
     tab.useGlobalSnapshotInterval = preference?.useGlobalSnapshotInterval !== false;
     tab.renderMode = getEffectiveRenderMode(tab.projectId, tab.id);
+    tab.connectionRenderMode = getRequestedConnectionRenderMode(tab);
     tab.snapshotIntervalMs = getEffectiveSnapshotIntervalMs(tab.projectId, tab.id);
     return tab;
   }
@@ -815,10 +818,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       return null;
     }
     const tab = record.tab;
-    const mode =
-      tab.connectionRole === 'mirror'
-        ? 'snapshot'
-        : getEffectiveRenderMode(record.projectId, sessionId);
+    const mode = getRequestedConnectionRenderMode(tab);
     const snapshotIntervalMs =
       tab.connectionRole === 'mirror'
         ? getInactiveSnapshotIntervalMs()
@@ -830,6 +830,52 @@ export const useTerminalStore = defineStore('terminal', () => {
       snapshotCompressionEnabled: getGlobalSnapshotCompressionEnabled(),
       snapshotIncrementalEnabled: true,
     };
+  }
+
+  function getConnectionRenderMode(tab: TerminalTabState): TerminalRenderMode {
+    if (tab.connectionRenderMode) {
+      return sanitizeTerminalRenderMode(tab.connectionRenderMode);
+    }
+    return getRequestedConnectionRenderMode(tab);
+  }
+
+  function getRequestedConnectionRenderMode(tab: TerminalTabState): TerminalRenderMode {
+    return tab.connectionRole === 'mirror'
+      ? 'snapshot'
+      : sanitizeTerminalRenderMode(tab.renderMode);
+  }
+
+  function setConnectionRenderMode(sessionId: string, mode: TerminalRenderMode) {
+    const record = sessionIndex.get(sessionId);
+    if (!record) {
+      return;
+    }
+    const bucket = tabStore.get(record.projectId);
+    if (!bucket) {
+      return;
+    }
+    const index = bucket.findIndex(tab => tab.id === sessionId);
+    if (index === -1) {
+      return;
+    }
+    bucket[index] = {
+      ...bucket[index],
+      connectionRenderMode: sanitizeTerminalRenderMode(mode),
+    };
+    record.tab = bucket[index];
+  }
+
+  function clearTerminalSnapshotState(sessionId: string) {
+    latestServerSnapshots.delete(sessionId);
+    latestServerSnapshotSequence.delete(sessionId);
+    serializedSnapshots.delete(sessionId);
+  }
+
+  function clearSnapshotState(sessionId: string) {
+    if (!sessionId) {
+      return;
+    }
+    clearTerminalSnapshotState(sessionId);
   }
 
   function sendRenderModePreference(sessionId: string) {
@@ -859,14 +905,18 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (index === -1) {
       return;
     }
+    const actualMode = sanitizeTerminalRenderMode(mode ?? getConnectionRenderMode(bucket[index]));
     bucket[index] = {
       ...bucket[index],
-      renderMode: sanitizeTerminalRenderMode(mode ?? bucket[index].renderMode),
+      connectionRenderMode: actualMode,
       snapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(
         snapshotIntervalMs ?? bucket[index].snapshotIntervalMs
       ),
     };
     record.tab = bucket[index];
+    if (actualMode === 'live') {
+      clearTerminalSnapshotState(sessionId);
+    }
   }
 
   function applyGlobalRenderDefaultsToTabs() {
@@ -890,9 +940,17 @@ export const useTerminalStore = defineStore('terminal', () => {
       const nextSnapshotIntervalMs = current.useGlobalSnapshotInterval
         ? getGlobalSnapshotIntervalMs()
         : current.snapshotIntervalMs;
+      const nextMode = sanitizeTerminalRenderMode(nextRenderMode);
+      const renderModeChanged = nextMode !== current.renderMode;
+      const currentConnectionMode = getConnectionRenderMode(current);
       bucket[index] = {
         ...current,
-        renderMode: sanitizeTerminalRenderMode(nextRenderMode),
+        renderMode: nextMode,
+        connectionRenderMode: hasAttachedSocket(sessionId)
+          ? currentConnectionMode
+          : renderModeChanged
+            ? getRequestedConnectionRenderMode({ ...current, renderMode: nextMode })
+            : currentConnectionMode,
         snapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(nextSnapshotIntervalMs),
       };
       record.tab = bucket[index];
@@ -1161,10 +1219,15 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (index === -1) {
       return false;
     }
-    bucket[index] = applyRenderPreferenceToTab({
-      ...bucket[index],
-    });
+    const currentConnectionMode = getConnectionRenderMode(bucket[index]);
+    bucket[index] = applyRenderPreferenceToTab({ ...bucket[index] });
+    if (hasAttachedSocket(sessionId)) {
+      bucket[index].connectionRenderMode = currentConnectionMode;
+    }
     record.tab = bucket[index];
+    if (getConnectionRenderMode(record.tab) === 'live') {
+      clearTerminalSnapshotState(sessionId);
+    }
     return sendRenderModePreference(sessionId);
   }
 
@@ -1196,9 +1259,9 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (index === -1) {
       return false;
     }
-    bucket[index] = applyRenderPreferenceToTab({
-      ...bucket[index],
-    });
+    const currentConnectionMode = getConnectionRenderMode(bucket[index]);
+    bucket[index] = applyRenderPreferenceToTab({ ...bucket[index] });
+    bucket[index].connectionRenderMode = currentConnectionMode;
     record.tab = bucket[index];
     return sendRenderModePreference(sessionId);
   }
@@ -1210,6 +1273,13 @@ export const useTerminalStore = defineStore('terminal', () => {
       return true;
     }
     return false;
+  }
+
+  function hasAttachedSocket(sessionId: string) {
+    const socket = sockets.get(sessionId);
+    return Boolean(
+      socket && socket.readyState !== WebSocket.CLOSING && socket.readyState !== WebSocket.CLOSED
+    );
   }
 
   function isProjectConnectionActive(projectId: string | undefined) {
@@ -1371,9 +1441,16 @@ export const useTerminalStore = defineStore('terminal', () => {
       return record.tab;
     }
 
+    const currentConnectionMode = getConnectionRenderMode(bucket[index]);
     bucket[index] = {
       ...bucket[index],
       connectionRole: role,
+      connectionRenderMode:
+        hasAttachedSocket(sessionId)
+          ? currentConnectionMode
+          : role === 'mirror'
+            ? 'snapshot'
+            : sanitizeTerminalRenderMode(bucket[index].renderMode),
     };
     record.tab = bucket[index];
     return record.tab;
@@ -1573,6 +1650,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         projectId: immutableProjectId,
         connectionRole: existing.tab.connectionRole,
         renderMode: existing.tab.renderMode,
+        connectionRenderMode: existing.tab.connectionRenderMode,
         snapshotIntervalMs: existing.tab.snapshotIntervalMs,
         useGlobalRenderMode: existing.tab.useGlobalRenderMode,
         useGlobalSnapshotInterval: existing.tab.useGlobalSnapshotInterval,
@@ -1606,6 +1684,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       clientStatus: 'connecting',
       connectionRole: 'detached',
       renderMode: getEffectiveRenderMode(resolvedProjectId, session.id),
+      connectionRenderMode: getEffectiveRenderMode(resolvedProjectId, session.id),
       snapshotIntervalMs: getEffectiveSnapshotIntervalMs(resolvedProjectId, session.id),
       useGlobalRenderMode: true,
       useGlobalSnapshotInterval: true,
@@ -1688,10 +1767,20 @@ export const useTerminalStore = defineStore('terminal', () => {
     pausedSocketIds.delete(tab.id);
     const resolvedWsURL = resolveWsUrl(tab.wsUrl || tab.wsPath, urlBase);
     const wsURL = new URL(resolvedWsURL);
+    const initialRenderMode = getRequestedConnectionRenderMode(tab);
+    const initialSnapshotIntervalMs =
+      tab.connectionRole === 'mirror'
+        ? getInactiveSnapshotIntervalMs()
+        : getEffectiveSnapshotIntervalMs(tab.projectId, tab.id);
+    wsURL.searchParams.set('renderMode', initialRenderMode);
+    wsURL.searchParams.set('snapshotIntervalMs', String(initialSnapshotIntervalMs));
     wsURL.searchParams.set(
       'snapshotCompression',
       getGlobalSnapshotCompressionEnabled() ? 'zlib' : 'none'
     );
+    // A reconnect starts with the requested mode; the server may acknowledge a
+    // live fallback if a snapshot mirror is unavailable.
+    setConnectionRenderMode(tab.id, initialRenderMode);
     const socket = new WebSocket(wsURL.toString());
     socket.binaryType = 'arraybuffer';
     sockets.set(tab.id, socket);
@@ -1723,8 +1812,18 @@ export const useTerminalStore = defineStore('terminal', () => {
           if (typeof event.data === 'string') {
             payload = JSON.parse(event.data) as ServerMessage;
           } else {
+            const currentRecord = sessionIndex.get(tab.id);
+            if (!currentRecord || getConnectionRenderMode(currentRecord.tab) !== 'snapshot') {
+              return;
+            }
             const frame = await parseBinarySnapshotFrame(event.data as ArrayBuffer);
-            if (!frame || sockets.get(tab.id) !== socket) {
+            const parsedRecord = sessionIndex.get(tab.id);
+            if (
+              !frame ||
+              sockets.get(tab.id) !== socket ||
+              !parsedRecord ||
+              getConnectionRenderMode(parsedRecord.tab) !== 'snapshot'
+            ) {
               return;
             }
             const previousSequence = latestServerSnapshotSequence.get(tab.id) ?? -1;
@@ -2028,5 +2127,6 @@ export const useTerminalStore = defineStore('terminal', () => {
     saveSerializedSnapshot,
     getSerializedSnapshot,
     getLatestServerSnapshot,
+    clearSnapshotState,
   };
 });

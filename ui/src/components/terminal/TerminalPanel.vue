@@ -1145,6 +1145,7 @@ function resolveDisplayTab(tab: TerminalTabState): TerminalTabState {
     clientStatus: tab.clientStatus,
     connectionRole: tab.connectionRole,
     renderMode: tab.renderMode,
+    connectionRenderMode: tab.connectionRenderMode,
     snapshotIntervalMs: tab.snapshotIntervalMs,
     useGlobalRenderMode: tab.useGlobalRenderMode,
     useGlobalSnapshotInterval: tab.useGlobalSnapshotInterval,
@@ -2924,6 +2925,7 @@ defineExpose({
 .terminal-panel {
   position: fixed;
   min-width: 375px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3247,6 +3249,7 @@ defineExpose({
 .panel-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   background-color: var(--kanban-terminal-bg, #1e1e1e);
 }

@@ -311,6 +311,13 @@ function isDocumentVisible() {
   return typeof document === 'undefined' || document.visibilityState === 'visible';
 }
 
+function isSnapshotRenderMode() {
+  const mode =
+    props.tab.connectionRenderMode ??
+    (props.tab.connectionRole === 'mirror' ? 'snapshot' : props.tab.renderMode);
+  return mode === 'snapshot';
+}
+
 function clearTerminalCatchUpTimer() {
   if (terminalCatchUpTimer != null) {
     window.clearTimeout(terminalCatchUpTimer);
@@ -322,6 +329,9 @@ function scheduleTerminalCatchUpSettle(reason: string) {
   clearTerminalCatchUpTimer();
   terminalCatchUpTimer = window.setTimeout(() => {
     terminalCatchUpTimer = null;
+    if (isDisposed) {
+      return;
+    }
     void settleTerminalCatchUp(reason);
   }, TERMINAL_CATCH_UP_SETTLE_MS);
 }
@@ -343,12 +353,13 @@ function beginTerminalCatchUp(
   });
 
   if (options.requestSnapshot) {
+    if (!isSnapshotRenderMode()) {
+      scheduleTerminalCatchUpSettle(reason);
+      return;
+    }
     terminalCatchUpSnapshotRequestedAt = Date.now();
     terminalCatchUpSnapshotAttempts = 1;
-    requestSnapshot(`${reason}-catch-up`, {
-      allowLive: true,
-      continueAfterResize: true,
-    });
+    requestSnapshot(`${reason}-catch-up`, { continueAfterResize: true });
   }
 
   scheduleTerminalCatchUpSettle(reason);
@@ -364,6 +375,15 @@ async function settleTerminalCatchUp(reason: string) {
     return;
   }
 
+  if (!isSnapshotRenderMode()) {
+    await flushPendingTerminalMessages(`${reason}-live`);
+    terminalCatchUpActive = false;
+    terminalCatchUpSnapshotRequestedAt = 0;
+    terminalCatchUpSnapshotAttempts = 0;
+    scheduleInitialViewportRepair(`${reason}-live-settled`);
+    return;
+  }
+
   const waitingForFreshSnapshot =
     terminalCatchUpSnapshotRequestedAt > 0 &&
     pendingServerSnapshotUpdatedAt < terminalCatchUpSnapshotRequestedAt;
@@ -373,10 +393,7 @@ async function settleTerminalCatchUp(reason: string) {
     terminalCatchUpSnapshotAttempts < TERMINAL_CATCH_UP_MAX_SNAPSHOT_ATTEMPTS
   ) {
     terminalCatchUpSnapshotAttempts += 1;
-    requestSnapshot(`${reason}-retry`, {
-      allowLive: true,
-      continueAfterResize: true,
-    });
+    requestSnapshot(`${reason}-retry`, { continueAfterResize: true });
     scheduleTerminalCatchUpSettle(`${reason}-await-snapshot`);
     return;
   }
@@ -465,6 +482,37 @@ watch(activeTerminalTheme, newTheme => {
   }
 });
 
+watch(
+  () => [props.tab.renderMode, props.tab.connectionRole, props.tab.connectionRenderMode],
+  (value, previousValue) => {
+    const nextIsSnapshot =
+      value[2] === 'snapshot' ||
+      (value[2] == null && (value[0] === 'snapshot' || value[1] === 'mirror'));
+    const previousWasSnapshot =
+      previousValue?.[2] === 'snapshot' ||
+      (previousValue?.[2] == null &&
+        (previousValue?.[0] === 'snapshot' || previousValue?.[1] === 'mirror'));
+    if (nextIsSnapshot) {
+      return;
+    }
+
+    // A live viewport must not carry snapshot state into the PTY stream.
+    pendingFrontendSnapshot = null;
+    pendingServerSnapshot = null;
+    pendingServerSnapshotUpdatedAt = 0;
+    terminalStore.saveSerializedSnapshot(props.tab.id, null);
+    terminalStore.clearSnapshotState(props.tab.id);
+    terminalCatchUpSnapshotRequestedAt = 0;
+    terminalCatchUpSnapshotAttempts = 0;
+
+    if (previousWasSnapshot && terminal) {
+      terminal.reset();
+      scheduleInitialViewportRepair('switch-live');
+    }
+  },
+  { immediate: true, flush: 'sync' }
+);
+
 // 监听终端字体设置变化，动态更新终端字体
 watch(
   terminalFont,
@@ -479,8 +527,10 @@ watch(
       terminal.options.letterSpacing = newFont.letterSpacing;
       // 字体变化后需要重新 fit 以适应新的尺寸
       if (fitAddon) {
-        setTimeout(() => {
-          handleResize();
+        window.setTimeout(() => {
+          if (!isDisposed) {
+            handleResize();
+          }
         }, 50);
       }
     }
@@ -589,7 +639,7 @@ function shouldPreferFrontendSnapshot(
 }
 
 async function restoreServerSnapshotIfAvailable() {
-  if (!terminal || !pendingServerSnapshot) {
+  if (!isSnapshotRenderMode() || !terminal || !pendingServerSnapshot) {
     return false;
   }
 
@@ -599,9 +649,10 @@ async function restoreServerSnapshotIfAvailable() {
 
   try {
     await enqueueTerminalTask('restore-server-snapshot', async () => {
-      if (!terminal) {
+      if (!terminal || !isSnapshotRenderMode()) {
         return;
       }
+      terminal.reset();
       if (snapshot.cols > 0 && snapshot.rows > 0) {
         terminal.resize(snapshot.cols, snapshot.rows);
       }
@@ -616,7 +667,7 @@ async function restoreServerSnapshotIfAvailable() {
 }
 
 async function restoreFrontendSnapshotIfAvailable() {
-  if (!terminal || !pendingFrontendSnapshot) {
+  if (!isSnapshotRenderMode() || !terminal || !pendingFrontendSnapshot) {
     return false;
   }
 
@@ -626,7 +677,7 @@ async function restoreFrontendSnapshotIfAvailable() {
 
   try {
     await enqueueTerminalTask('restore-frontend-snapshot', async () => {
-      if (!terminal) {
+      if (!terminal || !isSnapshotRenderMode()) {
         return;
       }
       terminal.reset();
@@ -666,7 +717,7 @@ async function restorePreferredSnapshotIfAvailable(): Promise<TerminalRestoreSou
 }
 
 function persistFrontendSnapshot() {
-  if (!terminal || !serializeAddon) {
+  if (!isSnapshotRenderMode() || !terminal || !serializeAddon) {
     return;
   }
 
@@ -683,24 +734,31 @@ function persistFrontendSnapshot() {
 }
 
 async function applyTerminalMessage(payload: ServerMessage, reason = 'live') {
-  if (!terminal) {
+  if (isDisposed || !terminal) {
     return;
   }
 
   switch (payload.type) {
+    case 'snapshot':
+      // Live terminals are a direct PTY stream. Never merge a mirror frame
+      // into the xterm buffer, even if an old frame arrives during a mode
+      // transition.
+      break;
     case 'data':
-      if (props.tab.renderMode === 'snapshot') {
+      if (isSnapshotRenderMode()) {
         break;
       }
       if (payload.data) {
         const data = payload.data;
         await enqueueTerminalTask(`${reason}:data`, async () => {
-          await writeTerminalRaw(remapInvisibleColors(decodeChunk(data)));
+          // Live mode is a direct PTY stream. Preserve every byte and escape
+          // sequence exactly as received from the server.
+          await writeTerminalRaw(decodeChunk(data));
         });
       }
       break;
     case 'mode-prefix':
-      if (payload.data) {
+      if (isSnapshotRenderMode() && payload.data) {
         const data = payload.data;
         await enqueueTerminalTask(`${reason}:mode-prefix`, async () => {
           await writeTerminalRaw(remapInvisibleColors(decodeChunk(data)));
@@ -740,7 +798,7 @@ function scheduleInitialViewportRepair(reason: string, delay = 48) {
 
   initialViewportRepairTimer = window.setTimeout(() => {
     initialViewportRepairTimer = null;
-    if (!initialViewportReady || !terminal || !isContainerVisible()) {
+    if (isDisposed || !initialViewportReady || !terminal || !isContainerVisible()) {
       return;
     }
     refreshTerminalViewport(reason);
@@ -757,6 +815,9 @@ async function flushPendingTerminalMessages(reason: string) {
   updateLiveBufferedCount();
 
   for (const message of buffered) {
+    if (isDisposed || !terminal) {
+      break;
+    }
     await applyTerminalMessage(message, `${reason}-replay`);
   }
 
@@ -853,6 +914,9 @@ function scheduleServerResize(
     window.clearTimeout(pendingServerResizeTimer);
   }
   pendingServerResizeTimer = window.setTimeout(() => {
+    if (isDisposed) {
+      return;
+    }
     flushPendingServerResize();
   }, TERMINAL_SERVER_RESIZE_SETTLE_MS);
 }
@@ -883,7 +947,7 @@ function commitTerminalSize(options: TerminalSizeSyncOptions = {}) {
 }
 
 async function runInitialViewportRestore(reason: string) {
-  if (!terminal || initialViewportReady || !isContainerVisible()) {
+  if (isDisposed || !terminal || initialViewportReady || !isContainerVisible()) {
     return;
   }
 
@@ -892,9 +956,15 @@ async function runInitialViewportRestore(reason: string) {
   logRestoreTrace('initial-restore-start', { reason });
 
   const restoredSource = await restorePreferredSnapshotIfAvailable();
+  if (isDisposed || !terminal) {
+    return;
+  }
   setRestoreSource(restoredSource);
 
   while (pendingTerminalMessages.length > 0) {
+    if (isDisposed || !terminal) {
+      return;
+    }
     await flushPendingTerminalMessages(reason);
   }
 
@@ -904,7 +974,6 @@ async function runInitialViewportRestore(reason: string) {
   logRestoreTrace('initial-restore-settled', { reason, restoredSource });
 
   requestSnapshot('initial-restore-settled', {
-    allowLive: true,
     continueAfterResize: true,
   });
 
@@ -914,7 +983,7 @@ async function runInitialViewportRestore(reason: string) {
 }
 
 function finalizeInitialViewport(reason: string) {
-  if (!terminal || initialViewportReady || !isContainerVisible()) {
+  if (isDisposed || !terminal || initialViewportReady || !isContainerVisible()) {
     return;
   }
   if (initialRestorePromise) {
@@ -939,7 +1008,7 @@ function finalizeInitialViewport(reason: string) {
 }
 
 function handleMessage(payload: ServerMessage) {
-  if (!terminal) {
+  if (isDisposed || !terminal) {
     return;
   }
 
@@ -947,14 +1016,14 @@ function handleMessage(payload: ServerMessage) {
     // The mount-time request can run before the websocket reaches OPEN. Retry
     // once the server confirms the connection so Unix terminals receive the
     // initial redraw/snapshot request reliably.
-    requestSnapshot('ready', {
-      allowLive: true,
-      continueAfterResize: true,
-    });
+    requestSnapshot('ready', { continueAfterResize: true });
     return;
   }
 
   if (payload.type === 'snapshot' && payload.snapshot) {
+    if (!isSnapshotRenderMode()) {
+      return;
+    }
     pendingServerSnapshot = payload.snapshot;
     pendingServerSnapshotUpdatedAt = Date.now();
     updateSnapshotDebugState();
@@ -985,6 +1054,9 @@ function handleMessage(payload: ServerMessage) {
       finalizeInitialViewport('replay-complete');
     } else {
       void flushPendingTerminalMessages('replay-complete').then(() => {
+        if (isDisposed) {
+          return;
+        }
         scheduleInitialViewportRepair('replay-complete');
       });
     }
@@ -1049,11 +1121,10 @@ function sendTerminalInput(data: string) {
 function requestSnapshot(
   reason: string,
   options: {
-    allowLive?: boolean;
     continueAfterResize?: boolean;
   } = {}
 ) {
-  if (props.tab.renderMode !== 'snapshot' && options.allowLive !== true) {
+  if (!isSnapshotRenderMode()) {
     return;
   }
   if (pendingServerResize) {
@@ -1181,7 +1252,7 @@ const mobileKeyboard = useMobileKeyboard({
     }
 
     syncTerminalSize({
-      forceServerResize: props.tab.renderMode === 'snapshot',
+      forceServerResize: isSnapshotRenderMode(),
       serverSync: 'immediate',
       finalizeReason: 'mobile-keyboard-dismissed',
     });
@@ -1191,7 +1262,7 @@ const mobileKeyboard = useMobileKeyboard({
       skipFit: true,
     });
 
-    if (props.tab.renderMode === 'snapshot') {
+    if (isSnapshotRenderMode()) {
       requestSnapshot('mobile-keyboard-dismissed', {
         continueAfterResize: true,
       });
@@ -1245,7 +1316,7 @@ function refreshTerminalViewport(
     skipFit?: boolean;
   } = {}
 ) {
-  if (!terminal) {
+  if (isDisposed || !terminal) {
     return;
   }
 
@@ -1288,7 +1359,11 @@ function refreshTerminalViewport(
   runRefresh();
 
   if (options.retry !== false && !initialRefreshFrozen) {
-    window.setTimeout(runRefresh, 160);
+    window.setTimeout(() => {
+      if (!isDisposed) {
+        runRefresh();
+      }
+    }, 160);
   }
 }
 
@@ -1301,21 +1376,20 @@ function handleTerminalContainerResize() {
   // Fit and redraw as soon as the pane gets a real size instead of relying on
   // a later keypress or window resize event to wake xterm up.
   window.setTimeout(() => {
-    if (!terminal || !isContainerVisible()) {
+    if (isDisposed || !terminal || !isContainerVisible()) {
       return;
     }
     refreshTerminalViewport('container-visible', {
       forceServerResize: true,
     });
     requestSnapshot('container-visible', {
-      allowLive: true,
       continueAfterResize: true,
     });
   }, 0);
 }
 
 function syncTerminalSize(options: TerminalSizeSyncOptions = {}) {
-  if (!terminal || !fitAddon) {
+  if (isDisposed || !terminal || !fitAddon) {
     return false;
   }
 
@@ -1334,7 +1408,9 @@ function syncTerminalSize(options: TerminalSizeSyncOptions = {}) {
 
   try {
     fitAddon.fit();
-    commitTerminalSize(options);
+    const serverSync =
+      isSnapshotRenderMode() && isRestoreBlockingRefresh() ? 'skip' : options.serverSync;
+    commitTerminalSize({ ...options, serverSync });
     return true;
   } catch (error) {
     // 忽略 fit 可能出现的错误
@@ -1350,7 +1426,7 @@ function handleResize(options: TerminalSizeSyncOptions = {}) {
 // 防抖版本的 resize 处理，避免窗口调整时发送大量 resize 消息阻塞输入
 const debouncedResize = useDebounceFn(() => {
   handleResize({
-    forceServerResize: props.tab.renderMode === 'snapshot',
+    forceServerResize: isSnapshotRenderMode(),
     serverSync: 'deferred',
   });
 }, 100);
@@ -1359,7 +1435,7 @@ function handleTerminalResizeAll() {
   // 延迟一下确保 DOM 更新完成，使用防抖版本避免阻塞输入
   setTimeout(() => {
     refreshTerminalViewport('terminal-resize-event', {
-      forceServerResize: props.tab.renderMode === 'snapshot',
+      forceServerResize: isSnapshotRenderMode(),
     });
   }, 10);
 }
@@ -1388,7 +1464,9 @@ function installDebugForceRefreshHook() {
     refreshTerminalViewport('debug-force-refresh');
     terminal.scrollToTop();
     window.setTimeout(() => {
-      terminal?.scrollToBottom();
+      if (!isDisposed) {
+        terminal?.scrollToBottom();
+      }
     }, 60);
     return true;
   };
@@ -1487,7 +1565,7 @@ onMounted(() => {
     // 延迟执行 fit，确保 DOM 完全渲染且面板动画完成
     // 面板展开动画 200ms + 额外缓冲 150ms = 350ms
     const performFit = (retryIfSmall = true) => {
-      if (!fitAddon || !terminal) return;
+      if (isDisposed || !fitAddon || !terminal) return;
 
       // 检查容器是否可见
       if (
@@ -1497,7 +1575,7 @@ onMounted(() => {
       ) {
         // 容器不可见，稍后重试
         if (retryIfSmall) {
-          setTimeout(() => performFit(false), 200);
+          window.setTimeout(() => performFit(false), 200);
         }
         return;
       }
@@ -1511,7 +1589,7 @@ onMounted(() => {
       if ((cols < 20 || rows < 5) && retryIfSmall) {
         console.warn('[Terminal Init] Size too small, will retry:', { cols, rows });
         // 容器可能还没准备好，延迟再试一次
-        setTimeout(() => performFit(false), 200);
+        window.setTimeout(() => performFit(false), 200);
         return;
       }
 
@@ -1524,7 +1602,7 @@ onMounted(() => {
       const maxChecks = 50;
 
       const checkStableAndScroll = () => {
-        if (!terminal) return;
+        if (isDisposed || !terminal) return;
         totalChecks++;
         if (totalChecks >= maxChecks) {
           return;
@@ -1541,16 +1619,16 @@ onMounted(() => {
           stableCount = 0;
           lastLength = currentLength;
         }
-        setTimeout(checkStableAndScroll, 20);
+        window.setTimeout(checkStableAndScroll, 20);
       };
-      setTimeout(checkStableAndScroll, 20);
+      window.setTimeout(checkStableAndScroll, 20);
 
       // 标记为已访问（初始化时就可见的终端）
       visitedTerminals.add(props.tab.id);
 
       commitTerminalSize({
         forceServerResize: true,
-        serverSync: 'immediate',
+        serverSync: isSnapshotRenderMode() ? 'skip' : 'immediate',
         finalizeReason: 'initial-fit',
       });
       if (shouldAutoFocus.value) {
@@ -1558,7 +1636,7 @@ onMounted(() => {
       }
     };
 
-    setTimeout(() => performFit(), 350);
+    window.setTimeout(() => performFit(), 350);
   }
 
   terminal.onData(data => {
@@ -1630,8 +1708,12 @@ onMounted(() => {
   container?.addEventListener('dragover', dragOverHandler);
   container?.addEventListener('drop', dropHandler);
 
-  pendingFrontendSnapshot = terminalStore.getSerializedSnapshot(props.tab.id) ?? null;
-  pendingServerSnapshot = terminalStore.getLatestServerSnapshot(props.tab.id) ?? null;
+  pendingFrontendSnapshot = isSnapshotRenderMode()
+    ? (terminalStore.getSerializedSnapshot(props.tab.id) ?? null)
+    : null;
+  pendingServerSnapshot = isSnapshotRenderMode()
+    ? (terminalStore.getLatestServerSnapshot(props.tab.id) ?? null)
+    : null;
   updateSnapshotDebugState();
 
   props.emitter.on(props.tab.id, handleMessage);
@@ -1653,7 +1735,6 @@ onMounted(() => {
   updateReplayDebugState(replayBufferedMessagesResult);
   logRestoreTrace('mount-replayed-buffered-messages', replayBufferedMessagesResult ?? {});
   requestSnapshot('mount', {
-    allowLive: true,
     continueAfterResize: true,
   });
 
@@ -1682,7 +1763,6 @@ function handleTerminalActivated() {
 
   refreshTerminalViewport('terminal-activated');
   requestSnapshot('activate', {
-    allowLive: true,
     continueAfterResize: true,
   });
 
@@ -1696,12 +1776,14 @@ function handleTerminalActivated() {
       // ignore
     }
     // 延迟执行滚动，确保 fit 完成
-    setTimeout(() => {
-      if (!terminal) return;
+    window.setTimeout(() => {
+      if (isDisposed || !terminal) return;
       // 先滚动到顶部，再滚动到底部，确保滚动生效
       terminal.scrollToTop();
-      setTimeout(() => {
-        terminal?.scrollToBottom();
+      window.setTimeout(() => {
+        if (!isDisposed) {
+          terminal?.scrollToBottom();
+        }
       }, 100);
     }, 50);
   }
@@ -1814,12 +1896,18 @@ onBeforeUnmount(() => {
   position: relative;
   height: 100%;
   width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background-color: var(--kanban-terminal-bg, #0f111a);
 }
 
 .terminal-shell {
   height: 100%;
   width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .terminal-overlay {

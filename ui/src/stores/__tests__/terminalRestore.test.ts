@@ -219,4 +219,37 @@ describe('terminal auto restore', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps the snapshot preference when the server falls back to live', async () => {
+    listSendMock.mockResolvedValue({
+      items: [makeTerminalSession({ id: 'fallback-1', title: 'Fallback' })],
+    });
+
+    const store = useTerminalStore();
+    await store.loadSessions('project-1');
+    store.retainProjectConnections('project-1');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const terminalSocket = findTerminalSocket('fallback-1');
+    expect(terminalSocket).toBeTruthy();
+
+    store.setSessionRenderMode('project-1', 'fallback-1', 'snapshot');
+    terminalSocket?.onmessage?.({
+      data: JSON.stringify({
+        type: 'render-mode',
+        mode: 'live',
+        snapshotIntervalMs: 50,
+      }),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const tab = store.getTabs('project-1').find(item => item.id === 'fallback-1');
+    expect(tab?.renderMode).toBe('snapshot');
+    expect(tab?.connectionRenderMode).toBe('live');
+
+    store.setSessionRenderMode('project-1', 'fallback-1', null);
+    store.releaseProjectConnections('project-1');
+  });
 });

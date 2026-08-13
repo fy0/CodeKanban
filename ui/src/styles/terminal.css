@@ -1,12 +1,18 @@
 @import '@xterm/xterm/css/xterm.css';
 
+.terminal-viewport,
+.terminal-shell {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .terminal-shell .xterm {
   padding: 8px;
 }
 
 .terminal-shell .xterm-viewport {
-  overflow-y: auto;
-  scrollbar-width: thin;
+  overflow-y: scroll;
 }
 
 /* 改善输入法（IME）光标定位 - 修复输入法导致的布局偏移问题 */
