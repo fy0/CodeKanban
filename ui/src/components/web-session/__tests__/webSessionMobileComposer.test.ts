@@ -159,6 +159,20 @@ describe('webSession mobile composer', () => {
     );
   });
 
+  it('summarizes next-step, queued, and delayed inputs when the mobile composer is collapsed', () => {
+    expect(webSessionPanelSource).toContain(
+      'v-if="isMobileComposerCollapsed && mobileComposerPendingSummary.length > 0"'
+    );
+    expect(webSessionPanelSource).toContain("'webSession.pendingRedirectCount'");
+    expect(webSessionPanelSource).toContain("'webSession.pendingQueueCount'");
+    expect(webSessionPanelSource).toContain("'webSession.scheduledCount'");
+    expect(webSessionPanelSource).toContain('buildWebSessionMobilePendingSummary(');
+    expect(webSessionPanelSource).toMatch(
+      /\.composer-mobile-pending-summary\s*\{[^}]*flex:\s*1;[^}]*display:\s*flex;/s
+    );
+    expect(webSessionPanelSource).toContain('.composer-mobile-pending-chip.mode-scheduled');
+  });
+
   it('keeps lower composer content outside the inline toggle toolbar', () => {
     const toolbarStart = webSessionPanelSource.indexOf('class="composer-mobile-toolbar"');
     const composerContentStart = webSessionPanelSource.indexOf(

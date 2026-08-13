@@ -1949,6 +1949,20 @@
                 </button>
               </div>
 
+              <div
+                v-if="isMobileComposerCollapsed && mobileComposerPendingSummary.length > 0"
+                class="composer-mobile-pending-summary"
+              >
+                <span
+                  v-for="item in mobileComposerPendingSummary"
+                  :key="item.kind"
+                  class="composer-mobile-pending-chip"
+                  :class="`mode-${item.kind}`"
+                >
+                  {{ item.label }}
+                </span>
+              </div>
+
               <button
                 type="button"
                 class="composer-mobile-panel-toggle"
@@ -4005,6 +4019,7 @@ import {
   type MobileSessionCategory,
   type WebSessionMobileTabDescriptor,
 } from '@/components/web-session/webSessionMobileTabOptions';
+import { buildWebSessionMobilePendingSummary } from '@/components/web-session/webSessionMobilePendingSummary';
 import {
   resolveWebSessionMobileSelectionAction,
   type WebSessionMobileSelectionAction,
@@ -7727,6 +7742,21 @@ const mobileComposerSummaryTokens = computed(() => [
   { key: 'model', label: selectedModelLabel.value },
   { key: 'workflow', label: selectedWorkflowModeLabel.value },
 ]);
+const mobileComposerPendingSummary = computed(() => {
+  return buildWebSessionMobilePendingSummary(pendingInputs.value, scheduledInputs.value).map(
+    item => ({
+      ...item,
+      label: t(
+        item.kind === 'redirect'
+          ? 'webSession.pendingRedirectCount'
+          : item.kind === 'queue'
+            ? 'webSession.pendingQueueCount'
+            : 'webSession.scheduledCount',
+        { count: item.count }
+      ),
+    })
+  );
+});
 
 type ContextUsageIndicator = {
   state: 'idle' | 'active' | 'warning' | 'unavailable';
@@ -20745,8 +20775,11 @@ defineExpose({
 }
 
 .composer-mobile-toolbar.is-collapsed {
-  justify-content: flex-end;
   margin-bottom: 0;
+}
+
+.composer-mobile-toolbar.is-collapsed .composer-mobile-panel-toggle {
+  margin-left: auto;
 }
 
 .composer-mobile-toolbar.is-settings-expanded {
@@ -20756,6 +20789,49 @@ defineExpose({
   z-index: 2;
   width: auto;
   margin-bottom: 0;
+}
+
+.composer-mobile-pending-summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.composer-mobile-pending-chip {
+  box-sizing: border-box;
+  max-width: 50%;
+  min-height: 24px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 76%, transparent);
+  border-radius: 5px;
+  background: var(--app-surface-color, #fff);
+  color: var(--n-text-color-2);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-mobile-pending-chip.mode-redirect {
+  border-color: color-mix(in srgb, var(--app-redirect, #2563eb) 30%, var(--n-border-color));
+  background: var(--app-redirect-soft, rgba(59, 130, 246, 0.12));
+  color: var(--app-redirect, #2563eb);
+}
+
+.composer-mobile-pending-chip.mode-queue {
+  border-color: color-mix(in srgb, var(--app-queue, #7c3aed) 30%, var(--n-border-color));
+  background: var(--app-queue-soft, rgba(124, 58, 237, 0.12));
+  color: var(--app-queue, #7c3aed);
+}
+
+.composer-mobile-pending-chip.mode-scheduled {
+  border-color: color-mix(in srgb, var(--app-warning, #f59e0b) 30%, var(--n-border-color));
+  background: var(--app-warning-soft, rgba(245, 158, 11, 0.12));
+  color: var(--app-warning, #b45309);
 }
 
 .composer-mobile-panel-toggle {
