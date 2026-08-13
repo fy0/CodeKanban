@@ -284,7 +284,9 @@
                     :title="mobileChangesSummaryLabel"
                     :aria-label="mobileChangesSummaryLabel"
                   >
-                    <span class="changes-summary-count">{{ mobileChangesSummaryDisplay.count }}</span>
+                    <span class="changes-summary-count">{{
+                      mobileChangesSummaryDisplay.count
+                    }}</span>
                     <template v-if="mobileChangesSummaryIncomplete">
                       <n-icon :size="12" class="changes-summary-warning">
                         <WarningOutline />
@@ -292,9 +294,13 @@
                     </template>
                     <template v-else>
                       <span class="changes-summary-separator">,</span>
-                      <span class="changes-summary-add">{{ mobileChangesSummaryDisplay.additions }}</span>
+                      <span class="changes-summary-add">{{
+                        mobileChangesSummaryDisplay.additions
+                      }}</span>
                       <span class="changes-summary-separator">,</span>
-                      <span class="changes-summary-del">{{ mobileChangesSummaryDisplay.deletions }}</span>
+                      <span class="changes-summary-del">{{
+                        mobileChangesSummaryDisplay.deletions
+                      }}</span>
                       <n-icon
                         v-if="mobileChangesSummaryLoading"
                         :size="11"
@@ -685,37 +691,6 @@
                     </n-button>
                   </template>
 
-                  <n-select
-                    v-if="hasKnownSubAgents"
-                    v-model:value="selectedSubAgentThreadId"
-                    class="timeline-agent-filter"
-                    size="small"
-                    :options="subAgentFilterOptions"
-                    :placeholder="t('webSession.subAgentFilterAll')"
-                  />
-                  <n-tooltip
-                    v-if="hasKnownSubAgents"
-                    trigger="hover"
-                    placement="bottom"
-                    :delay="100"
-                  >
-                    <template #trigger>
-                      <n-button
-                        quaternary
-                        circle
-                        size="small"
-                        :disabled="!selectedSubAgent"
-                        :title="t('webSession.subAgentLocate')"
-                        :aria-label="t('webSession.subAgentLocate')"
-                        @click="locateSelectedSubAgent"
-                      >
-                        <template #icon>
-                          <n-icon><LocateOutline /></n-icon>
-                        </template>
-                      </n-button>
-                    </template>
-                    {{ t('webSession.subAgentLocate') }}
-                  </n-tooltip>
                   <span
                     v-if="!timelineSearchOpen"
                     class="timeline-navigation-reveal-zone"
@@ -889,7 +864,6 @@
                   v-if="
                     visibleBlocks.length === 0 &&
                     filteredTimelineBlocks.length === 0 &&
-                    !selectedSubAgentThreadId &&
                     !historyMeta.loading &&
                     currentRealSession?.syncState !== 'syncing'
                   "
@@ -900,18 +874,6 @@
                   </span>
                   <div class="timeline-intro-title">{{ t('webSession.readyTitle') }}</div>
                   <div class="timeline-intro-text">{{ t('webSession.readyDescription') }}</div>
-                </div>
-
-                <div
-                  v-else-if="
-                    visibleBlocks.length === 0 &&
-                    filteredTimelineBlocks.length === 0 &&
-                    selectedSubAgentThreadId &&
-                    !historyMeta.loading
-                  "
-                  class="history-loading"
-                >
-                  {{ t('webSession.subAgentNoTimelineActivity') }}
                 </div>
 
                 <div
@@ -2149,9 +2111,9 @@
                             :class="{
                               'is-active':
                                 agent.status === 'pending_init' || agent.status === 'running',
-                              'is-selected': selectedSubAgentThreadId === agent.id,
                             }"
-                            @click="selectAndLocateSubAgent(agent)"
+                            :aria-label="`${t('webSession.subAgentLocate')}: ${agent.title}`"
+                            @click="locateSubAgent(agent)"
                           >
                             <span class="live-sub-agent-dot"></span>
                             <div class="live-sub-agent-copy">
@@ -2163,9 +2125,15 @@
                               </div>
                               <div
                                 class="live-sub-agent-summary"
-                                :title="agent.summary || t('webSession.liveSubAgentNoSummary')"
+                                :title="
+                                  subAgentLatestActivitySummary(agent) ||
+                                  t('webSession.liveSubAgentNoSummary')
+                                "
                               >
-                                {{ agent.summary || t('webSession.liveSubAgentNoSummary') }}
+                                {{
+                                  subAgentLatestActivitySummary(agent) ||
+                                  t('webSession.liveSubAgentNoSummary')
+                                }}
                               </div>
                             </div>
                           </button>
@@ -3725,7 +3693,6 @@ import {
   GitBranchOutline,
   GridOutline,
   ImageOutline,
-  LocateOutline,
   RadioOutline,
   RefreshCircleOutline,
   RefreshOutline,
@@ -3843,9 +3810,7 @@ import {
   renderWebSessionComposerPastePlan,
   type WebSessionComposerPastePlan,
 } from '@/components/web-session/webSessionComposerPaste';
-import {
-  resolveWebSessionMobileContextWorktree,
-} from '@/components/web-session/webSessionMobileProjectContext';
+import { resolveWebSessionMobileContextWorktree } from '@/components/web-session/webSessionMobileProjectContext';
 import {
   chooseGitChangesScope,
   formatGitChangesBadgeDelta,
@@ -3889,6 +3854,11 @@ import {
 } from '@/components/web-session/webSessionRawToggle';
 import { resolveWebSessionAttachmentPreviewMode } from '@/components/web-session/webSessionAttachmentPreview';
 import { projectWebSessionVisibleTimelineBlocks } from '@/components/web-session/webSessionCompactTimeline';
+import {
+  findLatestSubAgentActivityBlock,
+  isTransportRetryActivityText,
+  subAgentActivitySummary,
+} from '@/components/web-session/webSessionSubAgentActivity';
 import {
   findWebSessionConversationSearchMatches,
   matchesWebSessionConversationSearchTarget,
@@ -4362,7 +4332,6 @@ const timelineListRef = ref<HTMLDivElement | null>(null);
 const timelineSearchInputRef = ref<InstanceType<typeof NInput> | null>(null);
 const timelineUserMessageElements = new Map<string, HTMLElement>();
 const timelineBlockElements = new Map<string, HTMLElement>();
-const selectedSubAgentThreadId = ref('');
 const timelineSearchOpen = ref(false);
 const timelineSearchQuery = ref('');
 const timelineSearchFilters = ref<WebSessionConversationSearchFilters>({
@@ -4693,11 +4662,7 @@ const canLoadMobileChangesSummary = computed(
     Boolean(props.projectId) &&
     projectStore.currentProject?.id === props.projectId &&
     !projectStore.projectDetailLoading &&
-    gitOperationAvailable(
-      projectStore.gitCapabilities,
-      'status',
-      projectStore.selectedWorktreeId
-    )
+    gitOperationAvailable(projectStore.gitCapabilities, 'status', projectStore.selectedWorktreeId)
 );
 const mobileChangesSummaryDisplay = computed(() => {
   const summary = mobileChangesBadgeSummary.value ?? {
@@ -4728,8 +4693,7 @@ const mobileChangesSummaryStatusText = computed(() =>
 );
 const showMobileChangesSummaryBadge = computed(
   () =>
-    canLoadMobileChangesSummary.value &&
-    shouldShowGitChangesBadge(mobileChangesBadgeSummary.value)
+    canLoadMobileChangesSummary.value && shouldShowGitChangesBadge(mobileChangesBadgeSummary.value)
 );
 const mobileChangesSummaryLabel = computed(() => {
   const display = mobileChangesSummaryDisplay.value;
@@ -5930,24 +5894,6 @@ const subAgentByThreadId = computed(
   () => new Map(knownSubAgents.value.map(agent => [agent.id, agent] as const))
 );
 const hasKnownSubAgents = computed(() => knownSubAgents.value.length > 0);
-const selectedSubAgent = computed(
-  () => subAgentByThreadId.value.get(selectedSubAgentThreadId.value) ?? null
-);
-watch(subAgentByThreadId, agents => {
-  if (selectedSubAgentThreadId.value && !agents.has(selectedSubAgentThreadId.value)) {
-    selectedSubAgentThreadId.value = '';
-  }
-});
-const subAgentFilterOptions = computed(() => [
-  {
-    label: t('webSession.subAgentFilterAll'),
-    value: '',
-  },
-  ...knownSubAgents.value.map(agent => ({
-    label: agent.title,
-    value: agent.id,
-  })),
-]);
 
 function subAgentStatusLabel(status: WebSessionSubAgentStatus) {
   return t(`webSession.subAgentStatus.${status}`);
@@ -5984,12 +5930,6 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) 
 
 const filteredTimelineBlocks = computed(() =>
   timelineBlocks.value.filter((block, index) => {
-    if (
-      selectedSubAgentThreadId.value &&
-      String(block.sourceThreadId ?? '').trim() !== selectedSubAgentThreadId.value
-    ) {
-      return false;
-    }
     if (
       !showWebSessionReasoning.value &&
       isReasoningBlock(block) &&
@@ -6726,16 +6666,14 @@ function isTimelineSearchRequestCurrent(
   requestVersion: number,
   sessionId: string,
   query: string,
-  filters: WebSessionConversationSearchFilters,
-  sourceThreadId: string
+  filters: WebSessionConversationSearchFilters
 ) {
   return (
     requestVersion === timelineSearchRequestVersion &&
     timelineSearchOpen.value &&
     currentRealSession.value?.id === sessionId &&
     normalizedTimelineSearchQuery.value === query &&
-    timelineSearchFiltersEqual(timelineSearchFilters.value, filters) &&
-    selectedSubAgentThreadId.value === sourceThreadId
+    timelineSearchFiltersEqual(timelineSearchFilters.value, filters)
   );
 }
 
@@ -6743,7 +6681,6 @@ async function loadTimelineSearch() {
   const session = currentRealSession.value;
   const query = normalizedTimelineSearchQuery.value;
   const filters = { ...timelineSearchFilters.value };
-  const sourceThreadId = selectedSubAgentThreadId.value;
   if (!timelineSearchOpen.value || !session || !query || !Object.values(filters).some(Boolean)) {
     return;
   }
@@ -6769,15 +6706,12 @@ async function loadTimelineSearch() {
           includeAssistant: filters.assistant,
           includeTools: filters.tools,
           includeSystem: filters.system,
-          sourceThreadId: sourceThreadId || undefined,
           cursor: cursor || undefined,
           limit: 100,
         },
         { signal: abortController.signal }
       );
-      if (
-        !isTimelineSearchRequestCurrent(requestVersion, session.id, query, filters, sourceThreadId)
-      ) {
+      if (!isTimelineSearchRequestCurrent(requestVersion, session.id, query, filters)) {
         return;
       }
 
@@ -6802,7 +6736,7 @@ async function loadTimelineSearch() {
     }
   } catch (error) {
     if (
-      !isTimelineSearchRequestCurrent(requestVersion, session.id, query, filters, sourceThreadId) ||
+      !isTimelineSearchRequestCurrent(requestVersion, session.id, query, filters) ||
       isAbortLikeError(error)
     ) {
       return;
@@ -6913,7 +6847,7 @@ function handleTimelineSearchPageChange(page: number) {
 }
 
 watch(
-  [timelineSearchQuery, timelineSearchFilters, selectedSubAgentThreadId],
+  [timelineSearchQuery, timelineSearchFilters],
   () => {
     timelineSearchCurrentIndex.value = 0;
     clearTimelineSearchTimer();
@@ -7099,23 +7033,22 @@ function scrollToTimelineBlock(targetKey: string) {
   });
 }
 
-async function selectAndLocateSubAgent(agent: WebSessionSubAgent) {
-  selectedSubAgentThreadId.value = agent.id;
+async function locateSubAgent(agent: WebSessionSubAgent) {
   await nextTick();
-  const target =
-    visibleBlocks.value.find(block => block.id === agent.latestItemId) ??
-    [...visibleBlocks.value]
-      .reverse()
-      .find(block => String(block.sourceThreadId ?? '').trim() === agent.id);
+  const target = findLatestSubAgentActivityBlock(visibleBlocks.value, agent.id);
   if (target) {
     scrollToTimelineBlock(target.key);
+    return;
   }
+  message.info(t('webSession.subAgentNoTimelineActivity'));
 }
 
-async function locateSelectedSubAgent() {
-  if (selectedSubAgent.value) {
-    await selectAndLocateSubAgent(selectedSubAgent.value);
+function subAgentLatestActivitySummary(agent: WebSessionSubAgent) {
+  const target = findLatestSubAgentActivityBlock(timelineBlocks.value, agent.id);
+  if (target) {
+    return subAgentActivitySummary(target);
   }
+  return isTransportRetryActivityText(agent.summary) ? '' : agent.summary;
 }
 
 const timelineUserMessageEditTitle = computed(() =>
@@ -16606,7 +16539,6 @@ watch(
     timelineUserMessageElements.clear();
     timelineBlockElements.clear();
     resetTimelineSearchForSessionChange();
-    selectedSubAgentThreadId.value = '';
     handleCommandExecutionDetailVisibilityChange(false);
     rawTimelineBlocks.value = {};
     activeRawTimelineBlockKey.value = '';
@@ -18745,11 +18677,6 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   padding: 2px 6px;
-}
-
-.timeline-agent-filter {
-  min-width: 0;
-  flex: 1 1 auto;
 }
 
 .history-loading {
@@ -21171,8 +21098,7 @@ defineExpose({
   cursor: pointer;
 }
 
-.live-sub-agent-item:hover,
-.live-sub-agent-item.is-selected {
+.live-sub-agent-item:hover {
   border-color: var(--n-border-color);
   background: color-mix(in srgb, var(--app-surface-color, #fff) 88%, var(--n-primary-color) 12%);
 }
@@ -22516,10 +22442,6 @@ defineExpose({
   }
 
   .timeline-agent-toolbar.is-search-open .timeline-search-input {
-    flex-basis: 100%;
-  }
-
-  .timeline-agent-toolbar.is-search-open .timeline-agent-filter {
     flex-basis: 100%;
   }
 

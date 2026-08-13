@@ -1041,10 +1041,7 @@ func (m *Manager) handleCodexAppServerMessage(
 	case "error":
 		if !isRootEvent {
 			errMessage, _ := parseCodexTurnError(message.Params)
-			m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
-				"status":  string(WebSessionSubAgentErrored),
-				"summary": errMessage,
-			})
+			m.appendCodexSubAgentState(session, run, threadID, turnID, codexSubAgentErrorPayload(errMessage))
 			return codexTurnOutcomeNone, nil
 		}
 		run.lastError, run.lastErrorCode = parseCodexTurnError(message.Params)
@@ -1088,11 +1085,19 @@ func (m *Manager) handleCodexAppServerMessage(
 		}
 		return codexTurnOutcomeFailed, fmt.Errorf("%s", firstNonEmpty(run.lastError, "codex app-server turn failed"))
 	case "item/tool/requestUserInput":
+		if !isRootEvent {
+			m.rejectUnsupportedCodexSubAgentRequest(client, message)
+			return codexTurnOutcomeNone, nil
+		}
 		if err := m.handleCodexAppServerUserInputRequest(session, run, message); err != nil {
 			return codexTurnOutcomeFailed, err
 		}
 		return codexTurnOutcomeNone, nil
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval":
+		if !isRootEvent {
+			m.rejectUnsupportedCodexSubAgentRequest(client, message)
+			return codexTurnOutcomeNone, nil
+		}
 		if err := m.handleCodexAppServerApprovalRequest(session, run, message); err != nil {
 			return codexTurnOutcomeFailed, err
 		}
@@ -1118,6 +1123,38 @@ func (m *Manager) handleCodexAppServerMessage(
 		return codexTurnOutcomeNone, nil
 	default:
 		return codexTurnOutcomeNone, nil
+	}
+}
+
+func (m *Manager) rejectUnsupportedCodexSubAgentRequest(
+	client *codexAppServerClient,
+	message codexAppServerIncoming,
+) {
+	if client == nil {
+		return
+	}
+	var result any
+	if strings.TrimSpace(message.Method) == "item/tool/requestUserInput" {
+		result = userInputResponsePayload(nil)
+	} else {
+		result = approvalResponsePayload(decodePendingApprovalRequest(message), "reject")
+	}
+	if err := client.respond(message.ID, result); err != nil && m.logger != nil {
+		m.logger.Warn("failed to reject unsupported Codex sub-agent request",
+			zap.String("method", strings.TrimSpace(message.Method)),
+			zap.String("threadId", codexNotificationThreadID(message.Params)),
+			zap.Error(err),
+		)
+	}
+}
+
+func codexSubAgentErrorPayload(message string) map[string]any {
+	if _, retrying := classifyCodexTransportRetryMessage(message); retrying {
+		return map[string]any{"status": string(WebSessionSubAgentRunning)}
+	}
+	return map[string]any{
+		"status":  string(WebSessionSubAgentErrored),
+		"summary": strings.TrimSpace(message),
 	}
 }
 

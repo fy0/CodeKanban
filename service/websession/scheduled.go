@@ -1680,7 +1680,7 @@ func (m *Manager) dispatchScheduledPlanExecution(
 			payload.QuestionID: {payload.ExecuteOptionLabel},
 		})
 	}
-	return m.sendMessageInternal(ctx, session.ID, "Implement the plan.", nil, false)
+	return m.sendMessageInternal(ctx, session.ID, "Implement the plan.", nil, sendMessageOptions{})
 }
 
 func shouldCancelScheduledInputDispatchError(err error) bool {
@@ -1706,7 +1706,7 @@ func (m *Manager) dispatchScheduledInput(
 		if m.hasActiveRun(sessionID) {
 			return m.sendMessageWithMode(ctx, sessionID, text, attachmentIDs, PendingInputModeRedirect, "")
 		}
-		err := m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+		err := m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{updateAutoTitle: true})
 		if err != nil && strings.Contains(strings.ToLower(err.Error()), "already running") {
 			return m.sendMessageWithMode(ctx, sessionID, text, attachmentIDs, PendingInputModeRedirect, "")
 		}
@@ -1729,14 +1729,14 @@ func (m *Manager) sendMessageAfterInterrupt(
 	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
 		return err
 	}
-	err := m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+	err := m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{updateAutoTitle: true})
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "already running") {
 		return err
 	}
 	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
 		return err
 	}
-	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{updateAutoTitle: true})
 }
 
 func (m *Manager) markScheduledInputDispatched(ctx context.Context, inputID string) error {

@@ -178,6 +178,10 @@ func historyItemSubAgentSummary(item HistoryItem) string {
 	return ""
 }
 
+func historyItemUpdatesSubAgentActivity(item HistoryItem) bool {
+	return !(item.ItemType == "note" && strings.TrimSpace(stringValue(item.Payload["code"])) == "transport_retrying")
+}
+
 func (m *Manager) applySubAgentHistoryItem(
 	ctx context.Context,
 	session tables.WebSessionTable,
@@ -199,6 +203,9 @@ func (m *Manager) applySubAgentHistoryItemDB(
 	item HistoryItem,
 ) (WebSessionSubAgent, bool, error) {
 	if normalizeAgent(Agent(session.Agent)) != AgentCodex {
+		return WebSessionSubAgent{}, false, nil
+	}
+	if !historyItemUpdatesSubAgentActivity(item) {
 		return WebSessionSubAgent{}, false, nil
 	}
 	threadID := strings.TrimSpace(event.ThreadID)

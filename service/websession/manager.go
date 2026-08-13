@@ -2874,7 +2874,7 @@ func (m *Manager) executeAutoRetry(sessionID string) {
 		m.clearAutoRetryNextAt(ctx, sessionID)
 		return
 	}
-	if err := m.sendMessageInternal(ctx, sessionID, "continue", nil, true); err != nil {
+	if err := m.sendMessageInternal(ctx, sessionID, "continue", nil, sendMessageOptions{fromAutoRetry: true}); err != nil {
 		m.clearAutoRetryNextAt(ctx, sessionID)
 		m.triggerPendingProcessing(sessionID)
 		if m.logger != nil {
@@ -3808,7 +3808,9 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 }
 
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attachmentIDs []string) error {
-	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{
+		updateAutoTitle: true,
+	})
 }
 
 func (m *Manager) CompactSession(ctx context.Context, sessionID string) error {
@@ -4036,7 +4038,7 @@ func (m *Manager) sendMessageInternal(
 	sessionID,
 	text string,
 	attachmentIDs []string,
-	fromAutoRetry bool,
+	options sendMessageOptions,
 ) error {
 	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
 	dispatchLock.Lock()
@@ -4073,7 +4075,7 @@ func (m *Manager) sendMessageInternal(
 		return fmt.Errorf("message is empty")
 	}
 	defaultAutoRetryUpdates := map[string]any(nil)
-	if !fromAutoRetry {
+	if !options.fromAutoRetry {
 		defaultAutoRetryUpdates = m.refreshDefaultAutoRetryPolicy(&record)
 	}
 
@@ -4107,7 +4109,7 @@ func (m *Manager) sendMessageInternal(
 			"re":        record.ReasoningEffort,
 			"wm":        effectiveWorkflowMode(record),
 			"pl":        effectivePermissionLevel(record),
-			"autoRetry": fromAutoRetry,
+			"autoRetry": options.fromAutoRetry,
 		},
 	}); err != nil {
 		return err
@@ -4126,7 +4128,7 @@ func (m *Manager) sendMessageInternal(
 	for key, value := range defaultAutoRetryUpdates {
 		updates[key] = value
 	}
-	if fromAutoRetry {
+	if options.fromAutoRetry {
 		updates["auto_retry_next_at"] = nil
 	} else {
 		updates["auto_retry_attempt"] = 0
@@ -4134,7 +4136,7 @@ func (m *Manager) sendMessageInternal(
 	}
 	updates = applyAssistantStateUpdates(updates, AssistantStateWorking, now)
 	titleChanged := false
-	if record.TitleAuto {
+	if options.updateAutoTitle && record.TitleAuto {
 		if autoTitle := deriveAutoTitleFromMessage(text); autoTitle != "" {
 			updates["title_auto"] = false
 			if strings.TrimSpace(record.Title) != autoTitle {
@@ -4162,7 +4164,7 @@ func (m *Manager) sendMessageInternal(
 		agent:         Agent(record.Agent),
 		backend:       effectiveSessionBackend(record),
 		runID:         runID,
-		fromAutoRetry: fromAutoRetry,
+		fromAutoRetry: options.fromAutoRetry,
 		cancel:        cancel,
 		done:          make(chan struct{}),
 	}
@@ -4173,6 +4175,11 @@ func (m *Manager) sendMessageInternal(
 
 	go m.runSession(runCtx, run, record, text, attachments)
 	return nil
+}
+
+type sendMessageOptions struct {
+	fromAutoRetry   bool
+	updateAutoTitle bool
 }
 
 func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable) error {

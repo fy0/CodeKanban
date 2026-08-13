@@ -144,7 +144,7 @@ func (m *Manager) EditUserMessage(
 	// session's striped dispatch lock. The two IDs can hash to the same stripe.
 	dispatchLock.Unlock()
 	dispatchLocked = false
-	if err := m.sendMessageInternal(ctx, branch.ID, text, attachmentIDs, false); err != nil {
+	if err := m.sendMessageInternal(ctx, branch.ID, text, attachmentIDs, sendMessageOptions{updateAutoTitle: true}); err != nil {
 		cleanupBranch()
 		return SessionSnapshot{}, err
 	}

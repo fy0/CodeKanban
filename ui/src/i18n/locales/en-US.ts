@@ -839,7 +839,6 @@ export default {
     liveSubAgentNoSummary: 'Working on a delegated task',
     subAgentKnownCount: '{count} known sub agent | {count} known sub agents',
     subAgentPopoverTitle: '{active} active, {count} total',
-    subAgentFilterAll: 'All agents',
     subAgentLocate: 'Locate latest agent activity',
     subAgentNoTimelineActivity: 'No timeline activity is available for this agent.',
     timelineAgentRole: 'Agent · {name}',

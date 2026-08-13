@@ -21,7 +21,10 @@ var (
 	errPendingInputNotFound      = errors.New("pending input not found")
 )
 
-const defaultPendingSteerDelay = 5 * time.Second
+const (
+	defaultPendingSteerDelay = 5 * time.Second
+	pendingSteerRetryDelay   = 500 * time.Millisecond
+)
 
 type pendingInputUpdate struct {
 	Text   *string
@@ -292,7 +295,7 @@ func (m *Manager) sendMessageWithMode(
 		return err
 	}
 
-	err = m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+	err = m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{updateAutoTitle: true})
 	if normalizedMode != "" && err != nil && strings.Contains(strings.ToLower(err.Error()), "already running") {
 		var readyAt *time.Time
 		if normalizedMode == PendingInputModeRedirect && isCodexSteerSession(record) {
@@ -845,6 +848,7 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			if steerErr != nil || !handled {
 				m.prependPendingInput(sessionID, steerInput)
 				m.broadcastPendingInputs(sessionID)
+				m.setPendingInputTimer(sessionID, time.Now().Add(pendingSteerRetryDelay))
 				if steerErr != nil && m.logger != nil {
 					m.logger.Debug("failed to steer pending Codex redirect",
 						zap.String("sessionId", sessionID),
@@ -867,7 +871,7 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 		m.cancelPendingInputTimer(sessionID)
 		m.broadcastPendingInputs(sessionID)
 
-		if err := m.sendMessageInternal(ctx, sessionID, next.Text, next.AttachmentIDs, false); err != nil {
+		if err := m.sendMessageInternal(ctx, sessionID, next.Text, next.AttachmentIDs, sendMessageOptions{updateAutoTitle: true}); err != nil {
 			m.prependPendingInput(sessionID, next)
 			m.broadcastPendingInputs(sessionID)
 			if m.logger != nil {

@@ -366,7 +366,7 @@ func TestAutomaticContinueKeepsAutoRetryPolicySnapshot(t *testing.T) {
 		Preset:      string(AutoRetryPresetSustain60s),
 		MaxAttempts: 9,
 	}
-	if err := manager.sendMessageInternal(context.Background(), created.ID, "continue", nil, true); err != nil {
+	if err := manager.sendMessageInternal(context.Background(), created.ID, "continue", nil, sendMessageOptions{fromAutoRetry: true}); err != nil {
 		t.Fatalf("sendMessageInternal returned error: %v", err)
 	}
 	waitForSessionToSettle(t, manager, created.ID)
@@ -3419,6 +3419,66 @@ func TestSendMessageAutoRenamesTitleFromFirstUserMessage(t *testing.T) {
 	}
 }
 
+func TestInternalMessageDoesNotConsumeAutoTitle(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	before, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession before internal message: %v", err)
+	}
+	if !before.TitleAuto {
+		t.Fatal("expected a new session to allow automatic naming")
+	}
+
+	if err := manager.sendMessageInternal(
+		context.Background(),
+		created.ID,
+		"background continuation",
+		nil,
+		sendMessageOptions{},
+	); err != nil {
+		t.Fatalf("sendMessageInternal returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+	afterInternal, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after internal message: %v", err)
+	}
+	if afterInternal.Title != before.Title || !afterInternal.TitleAuto {
+		t.Fatalf("expected an internal message to leave automatic naming untouched, got title=%q titleAuto=%v", afterInternal.Title, afterInternal.TitleAuto)
+	}
+
+	userMessage := "真实用户发出的第一条命名消息"
+	if err := manager.SendMessage(context.Background(), created.ID, userMessage, nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+	afterUser, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after user message: %v", err)
+	}
+	if afterUser.Title != userMessage || afterUser.TitleAuto {
+		t.Fatalf("expected the first real user message to name the session, got title=%q titleAuto=%v", afterUser.Title, afterUser.TitleAuto)
+	}
+}
+
 func TestSendMessageDoesNotOverrideManualTitle(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -3483,7 +3543,6 @@ func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
 		t.Fatalf("SendMessage returned error: %v", err)
 	}
-
 	waitForSessionToSettle(t, manager, created.ID)
 
 	record, err := manager.GetSession(context.Background(), created.ID)
@@ -4081,6 +4140,7 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
+	manager.pendingSteerDelay = 20 * time.Millisecond
 
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
@@ -4099,6 +4159,8 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	})
 
 	waitForFile(t, codexPath+".state.child-completed")
+	waitForFile(t, codexPath+".state.child-approval-response.json")
+	waitForFile(t, codexPath+".state.child-input-response.json")
 	waitForHistoryToolEvent(t, manager, created.ID, "child_plan", "tool_end")
 
 	record, err := manager.GetSession(context.Background(), created.ID)
@@ -4131,6 +4193,12 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	if run.codexRolloutMonitorSnapshot() == nil {
 		t.Fatal("expected a fresh Codex thread to monitor its rollout")
 	}
+	if request, ok := run.pendingServerRequest(); ok {
+		t.Fatalf("expected child requests not to become the root pending request, got %#v", request)
+	}
+	if run.blocksCodexSteerForUserInput() {
+		t.Fatal("expected child user input not to block root turn steering")
+	}
 	run.mu.Lock()
 	_, tracksChildCommand := run.activeCalls["child_command"]
 	rootAssistantMessageID := run.assistantMessageID
@@ -4149,6 +4217,9 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	if lastError != "" {
 		t.Fatalf("expected child error not to fail the root run, got %q", lastError)
 	}
+	if record.AssistantState != string(AssistantStateWorking) {
+		t.Fatalf("expected child requests to preserve root working state, got %q", record.AssistantState)
+	}
 
 	rawEvents, err := manager.store.readEvents(created.ID)
 	if err != nil {
@@ -4158,9 +4229,36 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 		t.Fatalf("expected no terminal run event before root completion, got %#v", rawEvents)
 	}
 	for _, event := range rawEvents {
+		if event.Type == "user_input_req" || event.Type == "approval_req" {
+			t.Fatalf("expected child requests not to project as root interaction events, got %#v", event)
+		}
 		if event.Type == "usage" && int64(numberValue(event.Payload["in"])) == 999 {
 			t.Fatalf("expected child usage not to overwrite root context accounting, got %#v", event)
 		}
+	}
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"redirect the root turn",
+		nil,
+		PendingInputModeRedirect,
+		"sub-agent-redirect",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode returned error: %v", err)
+	}
+	steerStatePath := codexPath + ".state.steer.json"
+	waitForFile(t, steerStatePath)
+	steerState, err := os.ReadFile(steerStatePath)
+	if err != nil {
+		t.Fatalf("read steer state: %v", err)
+	}
+	var steerRequest map[string]any
+	if err := json.Unmarshal(steerState, &steerRequest); err != nil {
+		t.Fatalf("decode steer state: %v", err)
+	}
+	if stringValue(steerRequest["threadId"]) != "thread_test" ||
+		stringValue(steerRequest["expectedTurnId"]) != "turn_test" {
+		t.Fatalf("expected redirect to target the root turn, got %#v", steerRequest)
 	}
 	if err := os.WriteFile(codexPath+".state.release-root", []byte("1"), 0o644); err != nil {
 		t.Fatalf("release fake root turn: %v", err)
@@ -6442,6 +6540,89 @@ func TestSendMessageWithModeRedirectSteersActiveCodexTurn(t *testing.T) {
 
 	if err := manager.AbortSession(created.ID); err != nil {
 		t.Fatalf("AbortSession returned error while cleaning up: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
+func TestPendingCodexRedirectRetriesFailedSteer(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "step_redirect_retry")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	manager.pendingSteerDelay = 50 * time.Millisecond
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
+
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"redirected after retry",
+		nil,
+		PendingInputModeRedirect,
+		"pending-retry",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode returned error: %v", err)
+	}
+
+	steerAttemptsPath := codexPath + ".state.steer-attempts"
+	waitForFile(t, steerAttemptsPath)
+	var pending []PendingInput
+	requeueDeadline := time.Now().Add(pendingSteerRetryDelay / 2)
+	for time.Now().Before(requeueDeadline) {
+		pending = manager.pendingInputsSnapshot(created.ID)
+		if len(pending) == 1 && pending[0].ID == "pending-retry" &&
+			pending[0].ReadyAt != nil && !pending[0].ReadyAt.After(time.Now()) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(pending) != 1 ||
+		pending[0].ID != "pending-retry" || pending[0].ReadyAt == nil || pending[0].ReadyAt.After(time.Now()) {
+		t.Fatalf("expected failed steer to remain expired and pending, got %#v", pending)
+	}
+
+	waitForFile(t, codexPath+".state.steer.json")
+	waitForUserMessageCount(t, manager, created.ID, 2)
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected automatic steer retry to clear pending input, got %#v", pending)
+	}
+
+	steerAttempts, err := os.ReadFile(steerAttemptsPath)
+	if err != nil {
+		t.Fatalf("read steer attempts: %v", err)
+	}
+	if strings.TrimSpace(string(steerAttempts)) != "2" {
+		t.Fatalf("expected one failed steer and one automatic retry, got %q", steerAttempts)
+	}
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|redirected after retry" {
+		t.Fatalf("expected retried redirect to persist exactly once, got %#v", got)
+	}
+
+	if err := os.WriteFile(codexPath+".state.release-steer", []byte("1"), 0o644); err != nil {
+		t.Fatalf("release steered turn: %v", err)
 	}
 	waitForSessionToSettle(t, manager, created.ID)
 }
@@ -8905,6 +9086,33 @@ function startSubAgentThreadIsolationTurn() {
     },
   });
   send({
+    id: 'child_approval_req',
+    method: 'item/fileChange/requestApproval',
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      itemId: 'child_file_change',
+      reason: 'Child wants to modify a file.',
+    },
+  });
+  send({
+    id: 'child_input_req',
+    method: 'item/tool/requestUserInput',
+    params: {
+      threadId: childThreadId,
+      turnId: childTurnId,
+      itemId: 'child_question',
+      questions: [
+        {
+          id: 'scope',
+          header: 'Scope',
+          question: 'Which scope should the child use?',
+          options: [],
+        },
+      ],
+    },
+  });
+  send({
     method: 'thread/started',
     params: { thread: { id: childThreadId } },
   });
@@ -9073,12 +9281,21 @@ let awaiting = null;
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 let startedTurns = 0;
 let steered = false;
+let steerAttempts = 0;
 rl.on('line', line => {
   if (!line.trim()) {
     return;
   }
 
   const message = JSON.parse(line);
+  if (mode === 'sub_agent_thread_isolation' && message.id === 'child_approval_req') {
+    fs.writeFileSync(stateFile + '.child-approval-response.json', JSON.stringify(message.result || {}));
+    return;
+  }
+  if (mode === 'sub_agent_thread_isolation' && message.id === 'child_input_req') {
+    fs.writeFileSync(stateFile + '.child-input-response.json', JSON.stringify(message.result || {}));
+    return;
+  }
   if (message.method === 'initialize') {
     send({
       id: message.id,
@@ -9316,9 +9533,15 @@ rl.on('line', line => {
   }
 
   if (message.method === 'turn/steer') {
+    steerAttempts += 1;
+    fs.writeFileSync(stateFile + '.steer-attempts', String(steerAttempts));
+    if (mode === 'step_redirect_retry' && steerAttempts === 1) {
+      send({ id: message.id, error: { code: -32000, message: 'active turn is temporarily unavailable' } });
+      return;
+    }
     fs.writeFileSync(stateFile + '.steer.json', JSON.stringify(message.params || {}));
     send({ id: message.id, result: { turnId } });
-    if (mode === 'step_redirect') {
+    if (mode === 'step_redirect' || mode === 'step_redirect_retry') {
       steered = true;
       emitCommandExecutionCompleted('cmd_step_2', 'step-2');
       send({
@@ -9618,7 +9841,7 @@ rl.on('line', line => {
       return;
     }
 
-    if (mode === 'step_redirect') {
+    if (mode === 'step_redirect' || mode === 'step_redirect_retry') {
       const persistedTurns = readPersistentTurnCount() + 1;
       writePersistentTurnCount(persistedTurns);
       if (persistedTurns === 1) {

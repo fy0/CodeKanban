@@ -811,7 +811,6 @@ export default {
     liveSubAgentNoSummary: '正在处理委派任务',
     subAgentKnownCount: '共 {count} 个 Sub Agent',
     subAgentPopoverTitle: '{active} 个活跃，共 {count} 个',
-    subAgentFilterAll: '全部 Agent',
     subAgentLocate: '定位 Agent 最近活动',
     subAgentNoTimelineActivity: '此 Agent 暂无可显示的时间线活动。',
     timelineAgentRole: 'Agent · {name}',

@@ -343,7 +343,7 @@ func (m *Manager) handleActiveCallTimeout(sessionID string, toolID string) {
 		m.appendActiveCallTimeoutNote(sessionID, "The automatic continue prompt was empty, so no follow-up message was sent.")
 		return
 	}
-	if err := m.sendMessageInternal(context.Background(), sessionID, prompt, nil, false); err != nil {
+	if err := m.sendMessageInternal(context.Background(), sessionID, prompt, nil, sendMessageOptions{}); err != nil {
 		m.appendActiveCallTimeoutNote(
 			sessionID,
 			fmt.Sprintf("Failed to send the automatic continue prompt after interrupting %s: %v", callLabel, err),
