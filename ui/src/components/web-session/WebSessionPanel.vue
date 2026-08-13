@@ -2596,7 +2596,7 @@
                     v-model:show="showQuickInputPopover"
                     trigger="manual"
                     placement="top-start"
-                    content-style="padding: 4px 0;"
+                    content-style="padding: 2px 0;"
                     @clickoutside="handleMobileQuickInputClickOutside"
                     @update:show="handleQuickInputPopoverVisibilityChange"
                   >
@@ -2646,17 +2646,6 @@
                             </n-radio-button>
                           </n-radio-group>
                         </div>
-                        <div class="quick-input-options-row">
-                          <n-checkbox
-                            v-model:checked="quickInputDirectSendEnabled"
-                            size="small"
-                            @mousedown.stop
-                            @touchstart.stop
-                            @click.stop
-                          >
-                            {{ t('webSession.quickInputDirectSend') }}
-                          </n-checkbox>
-                        </div>
                       </div>
                       <div v-if="quickInputItems.length === 0" class="quick-input-empty">
                         {{ quickInputEmptyLabel }}
@@ -2675,15 +2664,26 @@
                           </button>
                         </div>
                       </div>
-                      <n-pagination
-                        v-if="quickInputPageCount > 1"
-                        v-model:page="quickInputPage"
-                        class="quick-input-pagination"
-                        :page-count="quickInputPageCount"
-                        :page-size="WEB_SESSION_QUICK_INPUT_PAGE_SIZE"
-                        :simple="true"
-                        size="small"
-                      />
+                      <div class="quick-input-footer">
+                        <n-checkbox
+                          v-model:checked="quickInputDirectSendEnabled"
+                          size="small"
+                          @mousedown.stop
+                          @touchstart.stop
+                          @click.stop
+                        >
+                          {{ t('webSession.quickInputDirectSend') }}
+                        </n-checkbox>
+                        <n-pagination
+                          v-if="quickInputPageCount > 1"
+                          v-model:page="quickInputPage"
+                          class="quick-input-pagination"
+                          :page-count="quickInputPageCount"
+                          :page-size="WEB_SESSION_QUICK_INPUT_PAGE_SIZE"
+                          :simple="true"
+                          size="small"
+                        />
+                      </div>
                     </div>
                   </n-popover>
                   <button
@@ -2716,7 +2716,7 @@
                     v-model:show="showQuickInputPopover"
                     trigger="click"
                     placement="top-start"
-                    content-style="padding: 4px 0;"
+                    content-style="padding: 2px 0;"
                     @update:show="handleQuickInputPopoverVisibilityChange"
                   >
                     <template #trigger>
@@ -2761,17 +2761,6 @@
                             </n-radio-button>
                           </n-radio-group>
                         </div>
-                        <div class="quick-input-options-row">
-                          <n-checkbox
-                            v-model:checked="quickInputDirectSendEnabled"
-                            size="small"
-                            @mousedown.stop
-                            @touchstart.stop
-                            @click.stop
-                          >
-                            {{ t('webSession.quickInputDirectSend') }}
-                          </n-checkbox>
-                        </div>
                       </div>
                       <div v-if="quickInputItems.length === 0" class="quick-input-empty">
                         {{ quickInputEmptyLabel }}
@@ -2790,15 +2779,26 @@
                           </button>
                         </div>
                       </div>
-                      <n-pagination
-                        v-if="quickInputPageCount > 1"
-                        v-model:page="quickInputPage"
-                        class="quick-input-pagination"
-                        :page-count="quickInputPageCount"
-                        :page-size="WEB_SESSION_QUICK_INPUT_PAGE_SIZE"
-                        :simple="true"
-                        size="small"
-                      />
+                      <div class="quick-input-footer">
+                        <n-checkbox
+                          v-model:checked="quickInputDirectSendEnabled"
+                          size="small"
+                          @mousedown.stop
+                          @touchstart.stop
+                          @click.stop
+                        >
+                          {{ t('webSession.quickInputDirectSend') }}
+                        </n-checkbox>
+                        <n-pagination
+                          v-if="quickInputPageCount > 1"
+                          v-model:page="quickInputPage"
+                          class="quick-input-pagination"
+                          :page-count="quickInputPageCount"
+                          :page-size="WEB_SESSION_QUICK_INPUT_PAGE_SIZE"
+                          :simple="true"
+                          size="small"
+                        />
+                      </div>
                     </div>
                   </n-popover>
                   <n-popover
@@ -3145,7 +3145,22 @@
                   </template>
                 </SplitDropdownControl>
               </div>
-              <span class="session-sidebar-count">{{ sidebarVisibleSessionCount }}</span>
+              <div class="session-sidebar-header-actions">
+                <span class="session-sidebar-count">{{ sidebarVisibleSessionCount }}</span>
+                <n-tooltip placement="bottom" :delay="250">
+                  <template #trigger>
+                    <button
+                      type="button"
+                      class="session-sidebar-reset"
+                      :aria-label="t('common.reset')"
+                      @click="resetSidebarWidth"
+                    >
+                      <n-icon size="14"><RefreshOutline /></n-icon>
+                    </button>
+                  </template>
+                  {{ t('common.reset') }}
+                </n-tooltip>
+              </div>
             </div>
 
             <div class="session-sidebar-search-row">
@@ -12774,6 +12789,10 @@ function setupSidebarResizeObserver() {
   updateSidebarContainerWidth();
 }
 
+function resetSidebarWidth() {
+  sidebarWidthPx.value = DEFAULT_SESSION_SIDEBAR_WIDTH;
+}
+
 function startSidebarResize(event: MouseEvent) {
   if (!sidebarContainerWidth.value) {
     return;
@@ -18151,6 +18170,13 @@ defineExpose({
   min-width: 0;
 }
 
+.session-sidebar-header-actions {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .session-sidebar-scope-control {
   flex-shrink: 0;
 }
@@ -18198,6 +18224,31 @@ defineExpose({
   font-size: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.session-sidebar-reset {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--n-text-color-3);
+  cursor: pointer;
+}
+
+.session-sidebar-reset:hover,
+.session-sidebar-reset:focus-visible {
+  background: color-mix(in srgb, var(--n-border-color) 45%, transparent);
+  color: var(--n-text-color-1);
+}
+
+.session-sidebar-reset:focus-visible {
+  outline: 2px solid var(--n-primary-color);
+  outline-offset: 1px;
 }
 
 .session-sidebar-list {
@@ -21766,15 +21817,13 @@ defineExpose({
 }
 
 .quick-input-popover-card {
-  width: min(360px, 82vw);
+  width: min(352px, 82vw);
   box-sizing: border-box;
   padding: 0;
 }
 
 .quick-input-popover-header {
-  display: grid;
-  gap: 6px;
-  padding: 8px 10px 6px;
+  padding: 5px 6px;
   border-bottom: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
 }
 
@@ -21795,16 +21844,22 @@ defineExpose({
 }
 
 .quick-input-scope :deep(.n-radio-button) {
-  min-width: 52px;
+  min-width: 50px;
 }
 
-.quick-input-options-row {
+.quick-input-footer {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  gap: 8px;
+  padding: 3px 6px 4px;
+  border-top: 1px solid color-mix(in srgb, var(--n-border-color) 72%, transparent);
 }
 
-.quick-input-options-row :deep(.n-checkbox__label) {
-  font-size: 12px;
+.quick-input-footer :deep(.n-checkbox__label) {
+  padding-left: 5px;
+  font-size: 11px;
 }
 
 .quick-input-scroll {
@@ -21812,7 +21867,7 @@ defineExpose({
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 4px 6px 4px 4px;
+  padding: 2px 4px;
   box-sizing: border-box;
 }
 
@@ -21825,8 +21880,16 @@ defineExpose({
 }
 
 .quick-input-pagination {
-  justify-content: center;
-  padding: 4px 8px 6px;
+  flex-shrink: 0;
+  font-size: 11px;
+  --n-item-size: 20px !important;
+  --n-item-margin: 0 0 0 4px !important;
+  --n-input-width: 38px !important;
+}
+
+.quick-input-pagination :deep(.n-input) {
+  --n-height: 20px !important;
+  --n-font-size: 11px !important;
 }
 
 .quick-input-item-list {
@@ -21838,7 +21901,7 @@ defineExpose({
 .quick-input-item {
   display: block;
   width: 100%;
-  padding: 6px 8px;
+  padding: 5px 6px;
   border: none;
   border-radius: 6px;
   background: transparent;

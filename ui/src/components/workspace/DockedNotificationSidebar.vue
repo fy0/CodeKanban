@@ -479,13 +479,6 @@ watch(
   display: flex;
   min-height: 0;
   flex: 0 0 auto;
-  /* 抵消 .terminal-split 的 12px 内边距，让侧边栏及其分隔线上下顶到头 */
-  margin-top: -12px;
-  margin-bottom: -12px;
-  /* 抵消 .terminal-split 的 12px 间隙，让右侧栏左边缘与终端主区对齐 */
-  margin-left: -12px;
-  /* 让侧栏内容贴近工作区右缘，避免保留多余的右侧空白 */
-  margin-right: -12px;
 }
 
 .terminal-sidebar-panel {

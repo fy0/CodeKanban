@@ -967,6 +967,16 @@ if (typeof window !== 'undefined') {
   transition: all 0.2s ease;
 }
 
+@media (min-width: 1024px) {
+  .tab-header {
+    height: 44px;
+  }
+
+  .tab-item {
+    padding: 4px 12px;
+  }
+}
+
 .tab-item:disabled {
   color: var(--app-text-muted);
   cursor: not-allowed;
@@ -1187,7 +1197,7 @@ if (typeof window !== 'undefined') {
   min-height: 0;
   display: flex;
   gap: 12px;
-  padding: 12px;
+  padding: 0;
 }
 
 .terminal-main {
@@ -1195,7 +1205,7 @@ if (typeof window !== 'undefined') {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
 }
 </style>
