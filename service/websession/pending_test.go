@@ -90,6 +90,99 @@ func TestClaimPendingInputRechecksModePauseAndDeadline(t *testing.T) {
 	}
 }
 
+func TestExpireHeadPendingRedirectLockedOnlyExpiresFirstReadyRedirect(t *testing.T) {
+	now := time.Now()
+	firstReadyAt := now.Add(time.Minute)
+	secondReadyAt := now.Add(2 * time.Minute)
+	manager := &Manager{
+		pendingInputs: map[string][]PendingInput{
+			"session-1": {
+				{ID: "redirect-1", Mode: PendingInputModeRedirect, Text: "first", ReadyAt: &firstReadyAt},
+				{ID: "redirect-2", Mode: PendingInputModeRedirect, Text: "second", ReadyAt: &secondReadyAt},
+			},
+		},
+		pendingInputTimers: map[string]*time.Timer{
+			"session-1": time.NewTimer(time.Minute),
+		},
+		pendingInputTimerDeadlines: map[string]time.Time{
+			"session-1": firstReadyAt,
+		},
+	}
+	t.Cleanup(func() {
+		if timer := manager.pendingInputTimers["session-1"]; timer != nil {
+			timer.Stop()
+		}
+	})
+
+	hasRedirect, changed := manager.expireHeadPendingRedirectLocked("session-1", now)
+	if !hasRedirect || !changed {
+		t.Fatalf("expected the head redirect to expire, hasRedirect=%v changed=%v", hasRedirect, changed)
+	}
+	queue := manager.pendingInputs["session-1"]
+	if queue[0].ReadyAt == nil || !queue[0].ReadyAt.Equal(now) {
+		t.Fatalf("expected first redirect deadline to become now, got %#v", queue[0].ReadyAt)
+	}
+	if queue[1].ReadyAt == nil || !queue[1].ReadyAt.Equal(secondReadyAt) {
+		t.Fatalf("expected second redirect deadline to remain unchanged, got %#v", queue[1].ReadyAt)
+	}
+	if _, ok := manager.pendingInputTimers["session-1"]; ok {
+		t.Fatal("expected the old pending timer to be removed")
+	}
+	if _, ok := manager.pendingInputTimerDeadlines["session-1"]; ok {
+		t.Fatal("expected the old pending timer deadline to be removed")
+	}
+}
+
+func TestExpireHeadPendingRedirectLockedLeavesPausedRedirectUnchanged(t *testing.T) {
+	now := time.Now()
+	readyAt := now.Add(time.Minute)
+	manager := &Manager{
+		pendingInputs: map[string][]PendingInput{
+			"session-1": {{
+				ID: "redirect-1", Mode: PendingInputModeRedirect, Text: "paused", ReadyAt: &readyAt, Paused: true,
+			}},
+		},
+		pendingInputTimers:         make(map[string]*time.Timer),
+		pendingInputTimerDeadlines: make(map[string]time.Time),
+	}
+
+	hasRedirect, changed := manager.expireHeadPendingRedirectLocked("session-1", now)
+	if hasRedirect || changed {
+		t.Fatalf("expected paused redirect to remain untouched, hasRedirect=%v changed=%v", hasRedirect, changed)
+	}
+	got := manager.pendingInputs["session-1"][0].ReadyAt
+	if got == nil || !got.Equal(readyAt) {
+		t.Fatalf("expected paused redirect deadline to remain unchanged, got %#v", got)
+	}
+}
+
+func TestAbortSessionDoesNotExpirePendingRedirect(t *testing.T) {
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	readyAt := time.Now().Add(time.Minute)
+	manager := &Manager{
+		runs: map[string]*activeRun{
+			"session-1": {cancel: cancel},
+		},
+		pendingInputs: map[string][]PendingInput{
+			"session-1": {{ID: "redirect-1", Mode: PendingInputModeRedirect, Text: "next", ReadyAt: &readyAt}},
+		},
+	}
+
+	if err := manager.AbortSession("session-1"); err != nil {
+		t.Fatalf("AbortSession returned error: %v", err)
+	}
+	select {
+	case <-runCtx.Done():
+	default:
+		t.Fatal("expected internal abort to cancel the active run")
+	}
+	got := manager.pendingInputs["session-1"][0].ReadyAt
+	if got == nil || !got.Equal(readyAt) {
+		t.Fatalf("expected internal abort to preserve redirect deadline, got %#v", got)
+	}
+}
+
 func TestRedirectDoesNotInterruptAutoRetryRun(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

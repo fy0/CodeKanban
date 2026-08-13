@@ -620,6 +620,26 @@ func (m *Manager) claimPendingInput(
 	return item, true
 }
 
+func (m *Manager) expireHeadPendingRedirectLocked(sessionID string, now time.Time) (bool, bool) {
+	queue := m.pendingInputs[sessionID]
+	if len(queue) == 0 || queue[0].Mode != PendingInputModeRedirect || queue[0].Paused {
+		return false, false
+	}
+
+	changed := queue[0].ReadyAt == nil || queue[0].ReadyAt.After(now)
+	if changed {
+		readyAt := now
+		queue[0].ReadyAt = &readyAt
+		m.pendingInputs[sessionID] = queue
+	}
+	if timer := m.pendingInputTimers[sessionID]; timer != nil {
+		timer.Stop()
+	}
+	delete(m.pendingInputTimers, sessionID)
+	delete(m.pendingInputTimerDeadlines, sessionID)
+	return true, changed
+}
+
 func (m *Manager) prependPendingInput(sessionID string, item PendingInput) {
 	cloned := clonePendingInput(item)
 	m.mu.Lock()

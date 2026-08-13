@@ -743,7 +743,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		if err != nil || record.ProjectID != input.ProjectID {
 			return nil, huma.Error404NotFound("session not found")
 		}
-		if err := c.manager.AbortSession(input.SessionID); err != nil {
+		if err := c.manager.AbortSessionForUser(input.SessionID); err != nil {
 			return nil, huma.Error500InternalServerError("failed to abort session", err)
 		}
 		resp := h.NewMessageResponse("session aborted")

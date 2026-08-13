@@ -2918,6 +2918,27 @@ func (m *Manager) AbortSession(sessionID string) error {
 	return nil
 }
 
+func (m *Manager) AbortSessionForUser(sessionID string) error {
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	now := time.Now()
+
+	if err := m.AbortSession(normalizedSessionID); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	run, ok := m.runs[normalizedSessionID]
+	hasRedirect, redirectChanged := m.expireHeadPendingRedirectLocked(normalizedSessionID, now)
+	m.mu.Unlock()
+
+	if redirectChanged {
+		m.broadcastPendingInputs(normalizedSessionID)
+	}
+	if hasRedirect && (!ok || run == nil) {
+		m.triggerPendingProcessing(normalizedSessionID)
+	}
+	return nil
+}
+
 func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []byte) error {
 	var frame wireCommandFrame
 	if err := json.Unmarshal(payload, &frame); err != nil {
@@ -3289,7 +3310,7 @@ func (m *Manager) handleHistoryCommand(ctx context.Context, client *client, fram
 }
 
 func (m *Manager) handleAbortCommand(_ context.Context, client *client, frame wireCommandFrame) error {
-	if err := m.AbortSession(frame.SessionID); err != nil {
+	if err := m.AbortSessionForUser(frame.SessionID); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
 	return m.sendMutationAck(context.Background(), client, frame, nil)

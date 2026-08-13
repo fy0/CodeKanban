@@ -6544,6 +6544,76 @@ func TestSendMessageWithModeRedirectSteersActiveCodexTurn(t *testing.T) {
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
+func TestAbortSessionForUserExpiresPendingRedirectAndStartsNewTurn(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "step_redirect")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	manager.pendingSteerDelay = 10 * time.Second
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
+
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"redirect after stop",
+		nil,
+		PendingInputModeRedirect,
+		"pending-stop",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode returned error: %v", err)
+	}
+	pending := manager.pendingInputsSnapshot(created.ID)
+	if len(pending) != 1 || pending[0].ReadyAt == nil || time.Until(*pending[0].ReadyAt) < 8*time.Second {
+		t.Fatalf("expected a long redirect undo window before stopping, got %#v", pending)
+	}
+	originalReadyAt := *pending[0].ReadyAt
+
+	if err := manager.AbortSessionForUser(created.ID); err != nil {
+		t.Fatalf("AbortSessionForUser returned error: %v", err)
+	}
+	waitForUserMessageCount(t, manager, created.ID, 2)
+	if time.Now().After(originalReadyAt) {
+		t.Fatalf("expected redirect to send before its original deadline %s", originalReadyAt)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|redirect after stop" {
+		t.Fatalf("expected stopped run followed by exactly one new message, got %#v", got)
+	}
+	if !historyHasEvent(rawEvents, "run_abort") {
+		t.Fatalf("expected the original run to be aborted, got %#v", rawEvents)
+	}
+	if _, err := os.Stat(codexPath + ".state.steer.json"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected redirect to start a new turn instead of steering the stopped turn, stat error=%v", err)
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected pending redirect to be cleared after dispatch, got %#v", pending)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
 func TestPendingCodexRedirectRetriesFailedSteer(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
