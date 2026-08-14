@@ -89,6 +89,7 @@ func registerSystemRoutes(
 ) {
 	applyGitRuntimeConfig(cfg.Git)
 	registerSystemSettingsBackupRoutes(group, cfg, terminalManager, webSessionManager)
+	registerSystemDatabaseRoutes(group, cfg, webSessionManager)
 	registerSystemHistoryCleanupRoutes(group, webSessionManager)
 	registerSystemWorkTimingBackfillRoutes(group, webSessionManager)
 

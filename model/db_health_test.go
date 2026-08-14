@@ -1,0 +1,71 @@
+package model
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+)
+
+func TestInspectDatabaseReportsConfiguredSQLiteHealth(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "health.db")
+	if err := InitWithDSN(dsn, 0, true); err != nil {
+		t.Fatalf("InitWithDSN: %v", err)
+	}
+	t.Cleanup(DBClose)
+
+	health, err := InspectDatabase(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("InspectDatabase: %v", err)
+	}
+	if !health.Healthy {
+		t.Fatalf("database health is unhealthy: %#v", health)
+	}
+	if health.JournalMode != "wal" {
+		t.Fatalf("journal mode = %q, want wal", health.JournalMode)
+	}
+	if health.BusyTimeoutMs != 5000 {
+		t.Fatalf("busy timeout = %d, want 5000", health.BusyTimeoutMs)
+	}
+	if health.Pool.MaxOpenConnections != 1 {
+		t.Fatalf("max open connections = %d, want 1", health.Pool.MaxOpenConnections)
+	}
+	if health.DatabaseBytes <= 0 {
+		t.Fatalf("database bytes = %d, want a positive value", health.DatabaseBytes)
+	}
+	if health.FreeDiskBytes <= 0 {
+		t.Fatalf("free disk bytes = %d, want a positive value", health.FreeDiskBytes)
+	}
+	if !health.ReadProbe.OK || !health.WriteProbe.OK {
+		t.Fatalf("probes are not healthy: read=%#v write=%#v", health.ReadProbe, health.WriteProbe)
+	}
+}
+
+func TestDatabasePathFromDSN(t *testing.T) {
+	tests := []struct {
+		name  string
+		dsn   string
+		want  string
+		empty bool
+	}{
+		{name: "memory", dsn: "file:test?mode=memory&cache=shared", empty: true},
+		{name: "file query", dsn: "./data/test.db?_busy_timeout=5000", want: "data\\test.db"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := databasePathFromDSN(tt.dsn)
+			if tt.empty {
+				if got != "" {
+					t.Fatalf("databasePathFromDSN(%q) = %q, want empty", tt.dsn, got)
+				}
+				return
+			}
+			abs, err := filepath.Abs(tt.want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != abs {
+				t.Fatalf("databasePathFromDSN(%q) = %q, want %q", tt.dsn, got, abs)
+			}
+		})
+	}
+}
