@@ -67,13 +67,28 @@ export type WebSessionHistoryCleanupParams = {
   projectIds: string[];
   olderThanDays: number;
   retainPerProject: number;
+  archivedOnly?: boolean;
+  archivedOlderThanDays?: number;
 };
 
 export type WebSessionHistoryCleanupStorageStats = {
+  databaseBytes: number;
+  walBytes: number;
+  freeDiskBytes: number;
   pageSizeBytes: number;
   pageCount: number;
   freePageCount: number;
   reusableBytes: number;
+  historyBytes: number;
+  historyFileBytes: number;
+  itemBytes: number;
+  turnBytes: number;
+  subAgentBytes: number;
+  itemRowCount: number;
+  turnRowCount: number;
+  subAgentRowCount: number;
+  archivedSessionCount: number;
+  archivedCacheBytes: number;
 };
 
 export type WebSessionHistoryCleanupStats = {
@@ -86,12 +101,31 @@ export type WebSessionHistoryCleanupStats = {
   turnRowCount: number;
   obsoleteItemRowCount: number;
   obsoleteTurnRowCount: number;
+  estimatedBytes: number;
+  historyFileBytes: number;
   storage: WebSessionHistoryCleanupStorageStats;
 };
 
 export type WebSessionHistoryCleanupResult = WebSessionHistoryCleanupStats & {
   clearedSessionIds: string[];
   historyFileFailureCount: number;
+};
+
+export type WebSessionHistoryArchiveParams = {
+  scope: 'all' | 'projects';
+  projectIds: string[];
+  olderThanDays: number;
+};
+
+export type WebSessionHistoryArchiveStats = {
+  scopedProjectCount: number;
+  scopedSessionCount: number;
+  candidateSessionCount: number;
+  skippedBusySessionCount: number;
+};
+
+export type WebSessionHistoryArchiveResult = WebSessionHistoryArchiveStats & {
+  archivedSessionIds: string[];
 };
 
 export type WebSessionWorkTimingItemPatch = {
@@ -677,6 +711,49 @@ export const webSessionApi = {
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to run web session history cleanup');
+    }
+    return body.item;
+  },
+
+  async historyStorageOverview(): Promise<WebSessionHistoryCleanupStorageStats> {
+    const body =
+      (await http
+        .Get<
+          ItemResponse<WebSessionHistoryCleanupStorageStats>
+        >('/system/web-session-storage-overview', { cacheFor: 0 })
+        .send(true)) ?? {};
+    if (!body.item) {
+      throw new Error('failed to load web session storage overview');
+    }
+    return body.item;
+  },
+
+  async previewHistoryArchive(
+    data: WebSessionHistoryArchiveParams
+  ): Promise<WebSessionHistoryArchiveStats> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionHistoryArchiveStats>
+        >('/system/web-session-history-archive/preview', data)
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to preview web session history archive');
+    }
+    return body.item;
+  },
+
+  async runHistoryArchive(
+    data: WebSessionHistoryArchiveParams
+  ): Promise<WebSessionHistoryArchiveResult> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionHistoryArchiveResult>
+        >('/system/web-session-history-archive/run', data)
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to archive web sessions');
     }
     return body.item;
   },

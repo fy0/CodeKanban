@@ -30,13 +30,31 @@ type HistoryCleanupParams struct {
 	ProjectIDs       []string            `json:"projectIds,omitempty"`
 	OlderThanDays    int                 `json:"olderThanDays"`
 	RetainPerProject int                 `json:"retainPerProject"`
+	// ArchivedOnly limits hard deletion to sessions that have already been
+	// archived. ArchivedOlderThanDays is measured from archived_at and is
+	// intentionally separate from OlderThanDays, which uses activity_at.
+	ArchivedOnly          bool `json:"archivedOnly,omitempty"`
+	ArchivedOlderThanDays int  `json:"archivedOlderThanDays,omitempty"`
 }
 
 type HistoryCleanupStorageStats struct {
-	PageSizeBytes int64 `json:"pageSizeBytes"`
-	PageCount     int64 `json:"pageCount"`
-	FreePageCount int64 `json:"freePageCount"`
-	ReusableBytes int64 `json:"reusableBytes"`
+	DatabaseBytes        int64 `json:"databaseBytes"`
+	WALBytes             int64 `json:"walBytes"`
+	FreeDiskBytes        int64 `json:"freeDiskBytes"`
+	PageSizeBytes        int64 `json:"pageSizeBytes"`
+	PageCount            int64 `json:"pageCount"`
+	FreePageCount        int64 `json:"freePageCount"`
+	ReusableBytes        int64 `json:"reusableBytes"`
+	HistoryBytes         int64 `json:"historyBytes"`
+	HistoryFileBytes     int64 `json:"historyFileBytes"`
+	ItemBytes            int64 `json:"itemBytes"`
+	TurnBytes            int64 `json:"turnBytes"`
+	SubAgentBytes        int64 `json:"subAgentBytes"`
+	ItemRowCount         int64 `json:"itemRowCount"`
+	TurnRowCount         int64 `json:"turnRowCount"`
+	SubAgentRowCount     int64 `json:"subAgentRowCount"`
+	ArchivedSessionCount int64 `json:"archivedSessionCount"`
+	ArchivedCacheBytes   int64 `json:"archivedCacheBytes"`
 }
 
 type HistoryCleanupStats struct {
@@ -49,6 +67,8 @@ type HistoryCleanupStats struct {
 	TurnRowCount            int64                      `json:"turnRowCount"`
 	ObsoleteItemRowCount    int64                      `json:"obsoleteItemRowCount"`
 	ObsoleteTurnRowCount    int64                      `json:"obsoleteTurnRowCount"`
+	EstimatedBytes          int64                      `json:"estimatedBytes"`
+	HistoryFileBytes        int64                      `json:"historyFileBytes"`
 	Storage                 HistoryCleanupStorageStats `json:"storage"`
 }
 
@@ -59,23 +79,38 @@ type HistoryCleanupResult struct {
 }
 
 type historyCleanupCounts struct {
-	ActiveItems   int64
-	ObsoleteItems int64
-	ActiveTurns   int64
-	ObsoleteTurns int64
+	ActiveItems       int64
+	ObsoleteItems     int64
+	ActiveTurns       int64
+	ObsoleteTurns     int64
+	ActiveItemBytes   int64
+	ObsoleteItemBytes int64
+	ActiveTurnBytes   int64
+	ObsoleteTurnBytes int64
+	SubAgentRows      int64
+	SubAgentBytes     int64
 }
 
 type historyCleanupPlan struct {
-	stats            HistoryCleanupStats
-	scopedSessionIDs []string
-	clearSessionIDs  []string
-	resetSessionIDs  []string
+	stats              HistoryCleanupStats
+	scopedSessionIDs   []string
+	obsoleteSessionIDs []string
+	clearSessionIDs    []string
+	resetSessionIDs    []string
 }
 
 type historyCleanupCountRow struct {
 	WebSessionID string `gorm:"column:web_session_id"`
 	ActiveCount  int64  `gorm:"column:active_count"`
 	DeletedCount int64  `gorm:"column:deleted_count"`
+	ActiveBytes  int64  `gorm:"column:active_bytes"`
+	DeletedBytes int64  `gorm:"column:deleted_bytes"`
+}
+
+type historyCleanupSubAgentCountRow struct {
+	WebSessionID string `gorm:"column:web_session_id"`
+	RowCount     int64  `gorm:"column:row_count"`
+	PayloadBytes int64  `gorm:"column:payload_bytes"`
 }
 
 func (m *Manager) PreviewHistoryCleanup(ctx context.Context, params HistoryCleanupParams) (HistoryCleanupStats, error) {
@@ -115,7 +150,7 @@ func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupPa
 	}
 
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, ids := range chunkHistoryCleanupIDs(plan.scopedSessionIDs) {
+		for _, ids := range chunkHistoryCleanupIDs(plan.obsoleteSessionIDs) {
 			if err := tx.Unscoped().
 				Where("web_session_id IN ? AND deleted_at IS NOT NULL", ids).
 				Delete(&tables.WebSessionTurnTable{}).Error; err != nil {
@@ -182,7 +217,7 @@ func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupPa
 		}
 	}
 	model_base.FlushWAL(db)
-	plan.stats.Storage = loadHistoryCleanupStorageStats(db)
+	plan.stats.Storage = m.loadHistoryCleanupStorageStats(ctx, db)
 	cleanupSucceeded = true
 
 	return HistoryCleanupResult{
@@ -314,8 +349,66 @@ func (m *Manager) buildHistoryCleanupPlan(ctx context.Context, params HistoryCle
 		return historyCleanupPlan{}, err
 	}
 	historyFiles := make(map[string]bool, len(sessions))
+	historyFileBytes := make(map[string]int64, len(sessions))
 	for _, session := range sessions {
 		historyFiles[session.ID] = m.store.hasSessionHistory(session.ID)
+		historyFileBytes[session.ID] = m.store.sessionHistorySize(session.ID)
+	}
+
+	stats := HistoryCleanupStats{
+		ScopedProjectCount: len(projectSet),
+		ScopedSessionCount: len(sessions),
+		Storage:            m.loadHistoryCleanupStorageStats(ctx, db),
+	}
+	cutoff := now.Add(-time.Duration(normalized.OlderThanDays) * 24 * time.Hour)
+	archivedCutoff := now.Add(-time.Duration(normalized.ArchivedOlderThanDays) * 24 * time.Hour)
+	clearIDs := make([]string, 0)
+	resetIDs := make([]string, 0)
+	obsoleteIDs := sessionIDs
+
+	if normalized.ArchivedOnly {
+		// Archived-cache deletion deliberately ignores retention and activity
+		// settings. It only operates on old, already archived sessions.
+		obsoleteIDs = make([]string, 0)
+		for _, session := range sessions {
+			rowCounts := counts[session.ID]
+			if session.DeletedAt.Valid || session.ArchivedAt == nil {
+				continue
+			}
+			if normalized.ArchivedOlderThanDays > 0 && !session.ArchivedAt.Before(archivedCutoff) {
+				continue
+			}
+			if !historyCleanupSessionHasAnyData(session, rowCounts, historyFiles[session.ID]) {
+				continue
+			}
+			if _, ok := busyIDs[session.ID]; ok {
+				stats.SkippedBusySessionCount++
+				continue
+			}
+			clearIDs = append(clearIDs, session.ID)
+			resetIDs = append(resetIDs, session.ID)
+			obsoleteIDs = append(obsoleteIDs, session.ID)
+			stats.HistorySessionCount++
+			stats.ObsoleteItemRowCount += rowCounts.ObsoleteItems
+			stats.ObsoleteTurnRowCount += rowCounts.ObsoleteTurns
+			stats.ItemRowCount += rowCounts.ActiveItems
+			stats.TurnRowCount += rowCounts.ActiveTurns
+			stats.EstimatedBytes += rowCounts.ActiveItemBytes + rowCounts.ObsoleteItemBytes +
+				rowCounts.ActiveTurnBytes + rowCounts.ObsoleteTurnBytes + rowCounts.SubAgentBytes
+			stats.HistoryFileBytes += historyFileBytes[session.ID]
+			if !historyCleanupSessionSyncable(session) {
+				stats.NonSyncableSessionCount++
+			}
+		}
+		stats.ItemRowCount += stats.ObsoleteItemRowCount
+		stats.TurnRowCount += stats.ObsoleteTurnRowCount
+		return historyCleanupPlan{
+			stats:              stats,
+			scopedSessionIDs:   sessionIDs,
+			obsoleteSessionIDs: obsoleteIDs,
+			clearSessionIDs:    clearIDs,
+			resetSessionIDs:    resetIDs,
+		}, nil
 	}
 
 	byProject := make(map[string][]tables.WebSessionTable)
@@ -344,14 +437,6 @@ func (m *Manager) buildHistoryCleanupPlan(ctx context.Context, params HistoryCle
 		}
 	}
 
-	cutoff := now.Add(-time.Duration(normalized.OlderThanDays) * 24 * time.Hour)
-	clearIDs := make([]string, 0)
-	resetIDs := make([]string, 0)
-	stats := HistoryCleanupStats{
-		ScopedProjectCount: len(projectSet),
-		ScopedSessionCount: len(sessions),
-		Storage:            loadHistoryCleanupStorageStats(db),
-	}
 	for _, session := range sessions {
 		rowCounts := counts[session.ID]
 		stats.ObsoleteItemRowCount += rowCounts.ObsoleteItems
@@ -361,6 +446,10 @@ func (m *Manager) buildHistoryCleanupPlan(ctx context.Context, params HistoryCle
 				clearIDs = append(clearIDs, session.ID)
 				stats.ItemRowCount += rowCounts.ActiveItems
 				stats.TurnRowCount += rowCounts.ActiveTurns
+				stats.EstimatedBytes += rowCounts.ActiveItemBytes + rowCounts.ObsoleteItemBytes +
+					rowCounts.ActiveTurnBytes + rowCounts.ObsoleteTurnBytes + rowCounts.SubAgentBytes +
+					historyFileBytes[session.ID]
+				stats.HistoryFileBytes += historyFileBytes[session.ID]
 			}
 			continue
 		}
@@ -382,23 +471,32 @@ func (m *Manager) buildHistoryCleanupPlan(ctx context.Context, params HistoryCle
 		stats.HistorySessionCount++
 		stats.ItemRowCount += rowCounts.ActiveItems
 		stats.TurnRowCount += rowCounts.ActiveTurns
+		stats.EstimatedBytes += rowCounts.ActiveItemBytes + rowCounts.ActiveTurnBytes + rowCounts.SubAgentBytes + historyFileBytes[session.ID]
+		stats.HistoryFileBytes += historyFileBytes[session.ID]
 		if !historyCleanupSessionSyncable(session) {
 			stats.NonSyncableSessionCount++
 		}
 	}
 	stats.ItemRowCount += stats.ObsoleteItemRowCount
 	stats.TurnRowCount += stats.ObsoleteTurnRowCount
+	for _, session := range sessions {
+		rowCounts := counts[session.ID]
+		stats.EstimatedBytes += rowCounts.ObsoleteItemBytes + rowCounts.ObsoleteTurnBytes
+	}
 
 	return historyCleanupPlan{
-		stats:            stats,
-		scopedSessionIDs: sessionIDs,
-		clearSessionIDs:  clearIDs,
-		resetSessionIDs:  resetIDs,
+		stats:              stats,
+		scopedSessionIDs:   sessionIDs,
+		obsoleteSessionIDs: obsoleteIDs,
+		clearSessionIDs:    clearIDs,
+		resetSessionIDs:    resetIDs,
 	}, nil
 }
 
 func normalizeHistoryCleanupParams(params HistoryCleanupParams) (HistoryCleanupParams, error) {
-	if params.OlderThanDays < 0 || params.OlderThanDays > 36500 || params.RetainPerProject < 0 || params.RetainPerProject > 10000 {
+	if params.OlderThanDays < 0 || params.OlderThanDays > 36500 ||
+		params.ArchivedOlderThanDays < 0 || params.ArchivedOlderThanDays > 36500 ||
+		params.RetainPerProject < 0 || params.RetainPerProject > 10000 {
 		return HistoryCleanupParams{}, ErrInvalidHistoryCleanup
 	}
 	params.Scope = HistoryCleanupScope(strings.ToLower(strings.TrimSpace(string(params.Scope))))
@@ -433,7 +531,11 @@ func loadHistoryCleanupCounts(ctx context.Context, db *gorm.DB, sessionIDs []str
 	for _, ids := range chunkHistoryCleanupIDs(sessionIDs) {
 		var itemRows []historyCleanupCountRow
 		if err := db.WithContext(ctx).Unscoped().Model(&tables.WebSessionItemTable{}).
-			Select("web_session_id, SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active_count, SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count").
+			Select("web_session_id, "+
+				"SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active_count, "+
+				"SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count, "+
+				"SUM(CASE WHEN deleted_at IS NULL THEN "+historyCleanupItemBytesSQL()+" ELSE 0 END) AS active_bytes, "+
+				"SUM(CASE WHEN deleted_at IS NOT NULL THEN "+historyCleanupItemBytesSQL()+" ELSE 0 END) AS deleted_bytes").
 			Where("web_session_id IN ?", ids).Group("web_session_id").Scan(&itemRows).Error; err != nil {
 			return nil, err
 		}
@@ -441,11 +543,17 @@ func loadHistoryCleanupCounts(ctx context.Context, db *gorm.DB, sessionIDs []str
 			value := counts[row.WebSessionID]
 			value.ActiveItems += row.ActiveCount
 			value.ObsoleteItems += row.DeletedCount
+			value.ActiveItemBytes += row.ActiveBytes
+			value.ObsoleteItemBytes += row.DeletedBytes
 			counts[row.WebSessionID] = value
 		}
 		var turnRows []historyCleanupCountRow
 		if err := db.WithContext(ctx).Unscoped().Model(&tables.WebSessionTurnTable{}).
-			Select("web_session_id, SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active_count, SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count").
+			Select("web_session_id, "+
+				"SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active_count, "+
+				"SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS deleted_count, "+
+				"SUM(CASE WHEN deleted_at IS NULL THEN "+historyCleanupTurnBytesSQL()+" ELSE 0 END) AS active_bytes, "+
+				"SUM(CASE WHEN deleted_at IS NOT NULL THEN "+historyCleanupTurnBytesSQL()+" ELSE 0 END) AS deleted_bytes").
 			Where("web_session_id IN ?", ids).Group("web_session_id").Scan(&turnRows).Error; err != nil {
 			return nil, err
 		}
@@ -453,10 +561,36 @@ func loadHistoryCleanupCounts(ctx context.Context, db *gorm.DB, sessionIDs []str
 			value := counts[row.WebSessionID]
 			value.ActiveTurns += row.ActiveCount
 			value.ObsoleteTurns += row.DeletedCount
+			value.ActiveTurnBytes += row.ActiveBytes
+			value.ObsoleteTurnBytes += row.DeletedBytes
+			counts[row.WebSessionID] = value
+		}
+		var subAgentRows []historyCleanupSubAgentCountRow
+		if err := db.WithContext(ctx).Unscoped().Model(&tables.WebSessionSubAgentTable{}).
+			Select("web_session_id, COUNT(*) AS row_count, SUM("+historyCleanupSubAgentBytesSQL()+") AS payload_bytes").
+			Where("web_session_id IN ?", ids).Group("web_session_id").Scan(&subAgentRows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range subAgentRows {
+			value := counts[row.WebSessionID]
+			value.SubAgentRows += row.RowCount
+			value.SubAgentBytes += row.PayloadBytes
 			counts[row.WebSessionID] = value
 		}
 	}
 	return counts, nil
+}
+
+func historyCleanupItemBytesSQL() string {
+	return "(length(CAST(COALESCE(text, '') AS BLOB)) + length(CAST(COALESCE(attachments_json, '') AS BLOB)) + length(CAST(COALESCE(tool_json, '') AS BLOB)) + length(CAST(COALESCE(detail_json, '') AS BLOB)) + length(CAST(COALESCE(payload_json, '') AS BLOB)))"
+}
+
+func historyCleanupTurnBytesSQL() string {
+	return "(length(CAST(COALESCE(error_json, '') AS BLOB)))"
+}
+
+func historyCleanupSubAgentBytesSQL() string {
+	return "(length(CAST(COALESCE(thread_id, '') AS BLOB)) + length(CAST(COALESCE(parent_thread_id, '') AS BLOB)) + length(CAST(COALESCE(agent_path, '') AS BLOB)) + length(CAST(COALESCE(nickname, '') AS BLOB)) + length(CAST(COALESCE(role, '') AS BLOB)) + length(CAST(COALESCE(summary, '') AS BLOB)))"
 }
 
 func (m *Manager) historyCleanupBusySessionIDs(ctx context.Context, db *gorm.DB, sessions []tables.WebSessionTable) (map[string]struct{}, error) {
@@ -470,13 +604,29 @@ func (m *Manager) historyCleanupBusySessionIDs(ctx context.Context, db *gorm.DB,
 			busy[sessionID] = struct{}{}
 		}
 	}
+	for sessionID := range m.autoRetryTimers {
+		busy[sessionID] = struct{}{}
+	}
+	for sessionID, processing := range m.pendingProcessing {
+		if processing {
+			busy[sessionID] = struct{}{}
+		}
+	}
 	m.mu.RUnlock()
+	m.piRuntimeMu.Lock()
+	for sessionID := range m.piRuntimes {
+		busy[sessionID] = struct{}{}
+	}
+	m.piRuntimeMu.Unlock()
 
 	sessionIDs := make([]string, 0, len(sessions))
 	for _, session := range sessions {
 		sessionIDs = append(sessionIDs, session.ID)
 		switch effectiveStatus(session, effectiveAssistantState(session)) {
 		case StatusRunning, StatusWaitingApproval, StatusAborting:
+			busy[session.ID] = struct{}{}
+		}
+		if session.GoalStatus != nil && normalizeGoalStatus(*session.GoalStatus) == GoalStatusActive {
 			busy[session.ID] = struct{}{}
 		}
 	}
@@ -499,6 +649,11 @@ func historyCleanupSessionHasCurrentData(session tables.WebSessionTable, counts 
 	return hasHistoryFile || session.ItemCount > 0 || session.TurnCount > 0 || counts.ActiveItems > 0 || counts.ActiveTurns > 0
 }
 
+func historyCleanupSessionHasAnyData(session tables.WebSessionTable, counts historyCleanupCounts, hasHistoryFile bool) bool {
+	return hasHistoryFile || session.ItemCount > 0 || session.TurnCount > 0 ||
+		counts.ActiveItems+counts.ObsoleteItems+counts.ActiveTurns+counts.ObsoleteTurns+counts.SubAgentRows > 0
+}
+
 func historyCleanupActivityAt(session tables.WebSessionTable) time.Time {
 	if !session.ActivityAt.IsZero() {
 		return session.ActivityAt
@@ -515,15 +670,6 @@ func historyCleanupActivityAt(session tables.WebSessionTable) time.Time {
 func historyCleanupSessionSyncable(session tables.WebSessionTable) bool {
 	return (session.NativeSessionID != nil && strings.TrimSpace(*session.NativeSessionID) != "") ||
 		(session.ThreadPath != nil && strings.TrimSpace(*session.ThreadPath) != "")
-}
-
-func loadHistoryCleanupStorageStats(db *gorm.DB) HistoryCleanupStorageStats {
-	stats := HistoryCleanupStorageStats{}
-	_ = db.Raw("PRAGMA page_size").Scan(&stats.PageSizeBytes).Error
-	_ = db.Raw("PRAGMA page_count").Scan(&stats.PageCount).Error
-	_ = db.Raw("PRAGMA freelist_count").Scan(&stats.FreePageCount).Error
-	stats.ReusableBytes = stats.PageSizeBytes * stats.FreePageCount
-	return stats
 }
 
 func chunkHistoryCleanupIDs(ids []string) [][]string {

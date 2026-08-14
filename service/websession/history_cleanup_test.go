@@ -233,6 +233,108 @@ func TestHistoryCleanupRejectsMissingProjectSelection(t *testing.T) {
 	}
 }
 
+func TestBatchHistoryArchiveAndArchivedCacheCleanupKeepSessionShell(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	old := seedHistoryCleanupSession(t, project.ID, "Old archive candidate", time.Now().Add(-60*24*time.Hour), true)
+	newer := seedHistoryCleanupSession(t, project.ID, "Recent archive candidate", time.Now().Add(-time.Hour), true)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	preview, err := manager.PreviewHistoryArchive(context.Background(), HistoryArchiveParams{
+		Scope:         HistoryCleanupScopeAll,
+		OlderThanDays: 30,
+	})
+	if err != nil {
+		t.Fatalf("PreviewHistoryArchive: %v", err)
+	}
+	if preview.CandidateSessionCount != 1 {
+		t.Fatalf("archive candidates = %d, want 1", preview.CandidateSessionCount)
+	}
+	archiveResult, err := manager.RunHistoryArchive(context.Background(), HistoryArchiveParams{
+		Scope:         HistoryCleanupScopeAll,
+		OlderThanDays: 30,
+	})
+	if err != nil {
+		t.Fatalf("RunHistoryArchive: %v", err)
+	}
+	if len(archiveResult.ArchivedSessionIDs) != 1 || archiveResult.ArchivedSessionIDs[0] != old.ID {
+		t.Fatalf("archived session IDs = %#v, want [%s]", archiveResult.ArchivedSessionIDs, old.ID)
+	}
+
+	var archived tables.WebSessionTable
+	if err := model.GetDB().Unscoped().First(&archived, "id = ?", old.ID).Error; err != nil {
+		t.Fatalf("load archived session: %v", err)
+	}
+	if archived.ArchivedAt == nil {
+		t.Fatal("archive timestamp was not set")
+	}
+
+	cachePreview, err := manager.PreviewHistoryCleanup(context.Background(), HistoryCleanupParams{
+		Scope:                 HistoryCleanupScopeAll,
+		ArchivedOnly:          true,
+		ArchivedOlderThanDays: 0,
+	})
+	if err != nil {
+		t.Fatalf("Preview archived cache cleanup: %v", err)
+	}
+	if cachePreview.HistorySessionCount != 1 || cachePreview.ItemRowCount == 0 {
+		t.Fatalf("unexpected archived cache preview: %+v", cachePreview)
+	}
+	if _, err := manager.RunHistoryCleanup(context.Background(), HistoryCleanupParams{
+		Scope:                 HistoryCleanupScopeAll,
+		ArchivedOnly:          true,
+		ArchivedOlderThanDays: 0,
+	}); err != nil {
+		t.Fatalf("Run archived cache cleanup: %v", err)
+	}
+	assertHistoryCleanupRowCount(t, &tables.WebSessionItemTable{}, old.ID, 0)
+	assertHistoryCleanupRowCount(t, &tables.WebSessionItemTable{}, newer.ID, 1)
+	if err := model.GetDB().Unscoped().First(&archived, "id = ?", old.ID).Error; err != nil {
+		t.Fatalf("archived session shell was removed: %v", err)
+	}
+	if archived.ArchivedAt == nil || archived.ItemCount != 0 || archived.TurnCount != 0 {
+		t.Fatalf("archived session shell metadata = %+v", archived)
+	}
+}
+
+func TestHistoryStorageOverviewReportsLogicalCacheBytes(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedHistoryCleanupSession(t, project.ID, "Storage overview", time.Now(), true)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	overview, err := manager.HistoryStorageOverview(context.Background())
+	if err != nil {
+		t.Fatalf("HistoryStorageOverview: %v", err)
+	}
+	if overview.ItemRowCount == 0 || overview.ItemBytes == 0 || overview.HistoryBytes == 0 {
+		t.Fatalf("overview did not report item payload: %+v", overview)
+	}
+	if overview.ArchivedCacheBytes != 0 {
+		t.Fatalf("unarchived session counted as archived cache: %+v", overview)
+	}
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).Where("id = ?", session.ID).
+		Update("archived_at", time.Now().Add(-time.Hour)).Error; err != nil {
+		t.Fatalf("archive storage overview session: %v", err)
+	}
+	overview, err = manager.HistoryStorageOverview(context.Background())
+	if err != nil {
+		t.Fatalf("HistoryStorageOverview after archive: %v", err)
+	}
+	if overview.ArchivedSessionCount != 1 || overview.ArchivedCacheBytes == 0 {
+		t.Fatalf("archived cache was not attributed: %+v", overview)
+	}
+}
+
 func TestHistoryCleanupRetriesHistoryFileOnlySessions(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

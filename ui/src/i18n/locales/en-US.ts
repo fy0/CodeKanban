@@ -1530,6 +1530,27 @@ export default {
       'Reclaim database space used by chat caches based on age and per-project retention.',
     historyCleanupAction: 'Clean Chat History',
     historyCleanupDialogTitle: 'Clean Session Chat Cache',
+    historyCleanupConcept:
+      'Archiving moves a session to the archive list without removing content. Deleting archived cache removes chat content and internal history files while keeping the session shell; syncing may be required to restore the content later.',
+    historyStorageOverviewTitle: 'Storage Overview',
+    historyStorageOverviewDescription:
+      'Logical sizes show where chat cache data is concentrated. Cleanup usually turns pages into reusable space first; data.db does not shrink automatically.',
+    historyStorageRefresh: 'Refresh storage overview',
+    historyStorageDatabase: 'Database file',
+    historyStorageWal: 'WAL file',
+    historyStorageHistory: 'History cache data',
+    historyStorageItems: 'Item payloads',
+    historyStorageTurns: 'Turn data',
+    historyStorageSubAgents: 'Sub-agent data',
+    historyStorageArchivedCache: 'Archived cache',
+    historyStorageReusable: 'Reusable space',
+    historyStorageFreeDisk: 'Free disk space',
+    historyStorageLoading: 'Loading storage overview...',
+    historyStorageUnavailable: 'Storage overview is temporarily unavailable',
+    historyStorageFailed: 'Failed to load storage overview',
+    historyCleanupModeCleanup: 'Delete by criteria',
+    historyCleanupModeArchive: 'Batch archive sessions',
+    historyCleanupModeArchivedCache: 'Delete archived cache',
     historyCleanupScope: 'Cleanup Scope',
     historyCleanupScopeAll: 'All Projects',
     historyCleanupScopeProjects: 'Selected Projects',
@@ -1538,6 +1559,7 @@ export default {
     historyCleanupProjectsFailed: 'Failed to load projects',
     historyCleanupOlderThanDays: 'Clean records older than',
     historyCleanupRetainPerProject: 'Keep at least per project',
+    historyCleanupEstimatedBytes: 'Estimated data involved',
     historyCleanupFullWarning:
       'With both values set to 0, all chat caches for non-busy sessions in scope will be cleaned.',
     historyCleanupPreviewAction: 'Preview Cleanup',
@@ -1558,6 +1580,22 @@ export default {
     historyCleanupFileFailures:
       '{count} internal history file(s) could not be removed. You can retry later.',
     historyCleanupFailed: 'Failed to clean chat cache',
+    historyArchiveOlderThanDays: 'Archive sessions inactive for more than',
+    historyArchiveOlderThanDaysTip:
+      '0 archives every non-busy session in scope. Running, approval-waiting, pending-input, and active-plan sessions are skipped.',
+    historyArchiveWarning:
+      'Archiving does not delete chat content. The session remains available in the archive list and can be unarchived later.',
+    historyArchiveConfirmTitle: 'Confirm batch archive',
+    historyArchiveConfirmContent:
+      'Archive {sessions} session(s). Chat content and session records will be kept.',
+    historyArchiveRunAction: 'Batch Archive',
+    historyArchiveSuccess: 'Archived {sessions} session(s)',
+    historyArchiveFailed: 'Failed to batch archive sessions',
+    historyArchivedCacheOlderThanDays: 'Delete cache archived more than',
+    historyArchivedCacheOlderThanDaysTip:
+      'Filters by archive time. 0 cleans cache for every archived session in scope.',
+    historyArchivedCacheWarning:
+      'This removes chat content, message rows, and internal history files from archived sessions, but keeps the session shell.',
     workTimingBackfillTitle: 'Session Work Time',
     workTimingBackfillDescription:
       'Historical sessions are calculated only when the timing popover or this action is opened. Batch processing keeps the interface responsive.',

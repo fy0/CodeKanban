@@ -323,3 +323,15 @@ func (s *store) hasSessionHistory(sessionID string) bool {
 	_, err := os.Stat(s.historyPath(sessionID))
 	return err == nil
 }
+
+func (s *store) sessionHistorySize(sessionID string) int64 {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return 0
+	}
+	info, err := os.Stat(s.historyPath(sessionID))
+	if err != nil || info.IsDir() {
+		return 0
+	}
+	return info.Size()
+}
