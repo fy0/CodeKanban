@@ -81,4 +81,15 @@ describe('webSessionSubAgentActivity', () => {
     expect(source).not.toContain('timeline-agent-filter');
     expect(source).not.toContain('selectedSubAgentThreadId');
   });
+
+  it('keeps the timeline toolbar compact when known sub-agents exist', () => {
+    const source = readFileSync(webSessionPanelPath, 'utf8');
+
+    expect(source).toMatch(
+      /class="timeline-agent-toolbar"\s+:class="\{\s*'is-search-open': timelineSearchOpen,\s*\}"/s
+    );
+    expect(source).not.toContain("'has-sub-agent-filter': hasKnownSubAgents");
+    expect(source).toContain('.timeline-agent-toolbar:not(.is-search-open) {');
+    expect(source).not.toContain('.timeline-agent-toolbar:not(.is-search-open):not(.has-sub-agent-filter)');
+  });
 });

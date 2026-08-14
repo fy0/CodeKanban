@@ -564,7 +564,6 @@
                   class="timeline-agent-toolbar"
                   :class="{
                     'is-search-open': timelineSearchOpen,
-                    'has-sub-agent-filter': hasKnownSubAgents,
                   }"
                 >
                   <template v-if="timelineSearchOpen">
@@ -18696,7 +18695,7 @@ defineExpose({
   box-shadow: 0 4px 12px color-mix(in srgb, var(--app-text-color, #111827) 10%, transparent);
 }
 
-.timeline-agent-toolbar:not(.is-search-open):not(.has-sub-agent-filter) {
+.timeline-agent-toolbar:not(.is-search-open) {
   width: auto;
   padding: 0;
   border-color: transparent;
