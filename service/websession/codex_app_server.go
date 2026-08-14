@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -39,6 +40,38 @@ type codexAppServerErr struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
+type codexAppServerRequestTimeoutError struct {
+	Method  string
+	Timeout time.Duration
+	Detail  string
+}
+
+func (e *codexAppServerRequestTimeoutError) Error() string {
+	if e == nil {
+		return "codex app-server request timed out"
+	}
+	method := strings.TrimSpace(e.Method)
+	if method == "" {
+		method = "unknown"
+	}
+	if e.Timeout > 0 {
+		message := fmt.Sprintf("codex app-server request %q timed out after %s", method, e.Timeout.Round(time.Millisecond))
+		if detail := strings.TrimSpace(e.Detail); detail != "" {
+			message += fmt.Sprintf(" (%s)", detail)
+		}
+		return message
+	}
+	message := fmt.Sprintf("codex app-server request %q timed out", method)
+	if detail := strings.TrimSpace(e.Detail); detail != "" {
+		message += fmt.Sprintf(" (%s)", detail)
+	}
+	return message
+}
+
+func (e *codexAppServerRequestTimeoutError) Unwrap() error {
+	return context.DeadlineExceeded
+}
+
 func (e *codexAppServerErr) Error() string {
 	if e == nil {
 		return "codex app-server error"
@@ -57,16 +90,18 @@ type codexAppServerOutgoing struct {
 }
 
 type codexAppServerClient struct {
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	writeMu   sync.Mutex
-	pending   map[string]chan codexAppServerIncoming
-	pendingMu sync.Mutex
-	incoming  chan codexAppServerIncoming
-	closed    chan struct{}
-	closeErr  error
-	closeMu   sync.Mutex
-	seq       uint64
+	cmd                *exec.Cmd
+	stdin              io.WriteCloser
+	writeMu            sync.Mutex
+	pending            map[string]chan codexAppServerIncoming
+	pendingMu          sync.Mutex
+	incoming           chan codexAppServerIncoming
+	closed             chan struct{}
+	closeErr           error
+	closeMu            sync.Mutex
+	seq                uint64
+	mcpStartupStatuses map[string]string
+	mcpStatusMu        sync.Mutex
 }
 
 type pendingServerRequestKind string
@@ -200,6 +235,7 @@ const (
 	codexTransportRetryingCode       = "transport_retrying"
 	codexTransportRetryExhaustedCode = "transport_retry_exhausted"
 	codexRuntimeErrorCode            = "runtime_error"
+	codexAppServerTimeoutCode        = "codex_app_server_timeout"
 	codexIncompleteTurnErrorCode     = "incomplete_turn"
 	codexRetryNoteLevel              = "warn"
 	codexIncompleteTurnMaxRetries    = 1
@@ -207,6 +243,8 @@ const (
 	codexRolloutAttachTimeout        = 3 * time.Second
 	codexActiveWriterRetryTimeout    = 5 * time.Second
 	codexActiveWriterRetryInterval   = 100 * time.Millisecond
+	codexAppServerRequestTimeout     = 45 * time.Second
+	codexAppServerProcessExitTimeout = 5 * time.Second
 )
 
 var codexReconnectProgressPattern = regexp.MustCompile(`(?i)reconnecting\.\.\.\s*(\d+)\s*/\s*(\d+)`)
@@ -240,11 +278,12 @@ func startCodexAppServer(ctx context.Context, codexPath, cwd string) (*codexAppS
 	}
 
 	client := &codexAppServerClient{
-		cmd:      cmd,
-		stdin:    stdin,
-		pending:  make(map[string]chan codexAppServerIncoming),
-		incoming: make(chan codexAppServerIncoming, 64),
-		closed:   make(chan struct{}),
+		cmd:                cmd,
+		stdin:              stdin,
+		pending:            make(map[string]chan codexAppServerIncoming),
+		incoming:           make(chan codexAppServerIncoming, 64),
+		closed:             make(chan struct{}),
+		mcpStartupStatuses: make(map[string]string),
 	}
 	go client.readLoop(stdout)
 	return client, stderr, nil
@@ -273,6 +312,7 @@ func (c *codexAppServerClient) readLoop(stdout io.Reader) {
 			c.setCloseErr(fmt.Errorf("failed to decode codex app-server message: %w", err))
 			return
 		}
+		c.recordMCPStartupStatus(message)
 
 		deliveredResponse := false
 		if key := appServerIDKey(message.ID); key != "" && message.Method == "" {
@@ -302,6 +342,21 @@ func (c *codexAppServerClient) readLoop(stdout io.Reader) {
 }
 
 func (c *codexAppServerClient) request(ctx context.Context, method string, params any) (codexAppServerIncoming, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// Codex may wait for an MCP server during initialize/thread resume. Never
+	// let an app-server RPC hold a session in running state indefinitely.
+	requestCtx := ctx
+	requestTimeout := codexAppServerRequestTimeout
+	cancel := func() {}
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > codexAppServerRequestTimeout {
+		requestCtx, cancel = context.WithTimeout(ctx, codexAppServerRequestTimeout)
+	} else {
+		requestTimeout = time.Until(deadline)
+	}
+	defer cancel()
+
 	requestID := fmt.Sprintf("codekanban_%d", atomic.AddUint64(&c.seq, 1))
 	rawID, _ := json.Marshal(requestID)
 	responseCh := make(chan codexAppServerIncoming, 1)
@@ -315,9 +370,7 @@ func (c *codexAppServerClient) request(ctx context.Context, method string, param
 		Method: method,
 		Params: params,
 	}); err != nil {
-		c.pendingMu.Lock()
-		delete(c.pending, requestID)
-		c.pendingMu.Unlock()
+		c.removePendingRequest(requestID)
 		return codexAppServerIncoming{}, err
 	}
 
@@ -331,10 +384,82 @@ func (c *codexAppServerClient) request(ctx context.Context, method string, param
 		}
 		return response, nil
 	case <-c.closed:
+		c.removePendingRequest(requestID)
 		return codexAppServerIncoming{}, c.readErr()
-	case <-ctx.Done():
-		return codexAppServerIncoming{}, ctx.Err()
+	case <-requestCtx.Done():
+		c.removePendingRequest(requestID)
+		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return codexAppServerIncoming{}, err
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return codexAppServerIncoming{}, &codexAppServerRequestTimeoutError{
+					Method:  method,
+					Timeout: requestTimeout,
+					Detail:  c.mcpStartupStatusSummary(),
+				}
+			}
+			return codexAppServerIncoming{}, err
+		}
+		return codexAppServerIncoming{}, &codexAppServerRequestTimeoutError{
+			Method:  method,
+			Timeout: requestTimeout,
+			Detail:  c.mcpStartupStatusSummary(),
+		}
 	}
+}
+
+func (c *codexAppServerClient) removePendingRequest(requestID string) {
+	if c == nil || strings.TrimSpace(requestID) == "" {
+		return
+	}
+	c.pendingMu.Lock()
+	delete(c.pending, requestID)
+	c.pendingMu.Unlock()
+}
+
+func isCodexAppServerRequestTimeout(err error) bool {
+	var timeoutErr *codexAppServerRequestTimeoutError
+	return errors.As(err, &timeoutErr)
+}
+
+func (c *codexAppServerClient) recordMCPStartupStatus(message codexAppServerIncoming) {
+	if c == nil || strings.TrimSpace(message.Method) != "mcpServer/startupStatus/updated" {
+		return
+	}
+	payload := decodeRawObject(message.Params)
+	name := strings.TrimSpace(stringValue(payload["name"]))
+	status := strings.TrimSpace(stringValue(payload["status"]))
+	if name == "" || status == "" {
+		return
+	}
+	c.mcpStatusMu.Lock()
+	if c.mcpStartupStatuses == nil {
+		c.mcpStartupStatuses = make(map[string]string)
+	}
+	c.mcpStartupStatuses[name] = status
+	c.mcpStatusMu.Unlock()
+}
+
+func (c *codexAppServerClient) mcpStartupStatusSummary() string {
+	if c == nil {
+		return ""
+	}
+	c.mcpStatusMu.Lock()
+	defer c.mcpStatusMu.Unlock()
+	if len(c.mcpStartupStatuses) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(c.mcpStartupStatuses))
+	for name := range c.mcpStartupStatuses {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	statuses := make([]string, 0, len(names))
+	for _, name := range names {
+		statuses = append(statuses, fmt.Sprintf("%s=%s", name, c.mcpStartupStatuses[name]))
+	}
+	return "MCP status: " + strings.Join(statuses, ", ")
 }
 
 func (c *codexAppServerClient) respond(rawID json.RawMessage, result any) error {
@@ -772,8 +897,29 @@ func (m *Manager) waitAndFailCodexAppServer(
 ) {
 	_ = client.closeStdin()
 	killCmdTree(client.cmd)
-	<-waitCh
-	<-stderrDone
+	select {
+	case <-waitCh:
+	case <-time.After(codexAppServerProcessExitTimeout):
+		if m.logger != nil {
+			pid := 0
+			if client != nil && client.cmd != nil && client.cmd.Process != nil {
+				pid = client.cmd.Process.Pid
+			}
+			m.logger.Warn("timed out waiting for Codex app-server process to exit",
+				zap.String("sessionId", session.ID),
+				zap.Int("pid", pid),
+			)
+		}
+	}
+	select {
+	case <-stderrDone:
+	case <-time.After(codexAppServerProcessExitTimeout):
+		if m.logger != nil {
+			m.logger.Warn("timed out waiting for Codex app-server stderr to close",
+				zap.String("sessionId", session.ID),
+			)
+		}
+	}
 
 	message := strings.TrimSpace(cause.Error())
 	if message == "" {
@@ -782,7 +928,21 @@ func (m *Manager) waitAndFailCodexAppServer(
 	if message == "" {
 		message = "codex app-server setup failed"
 	}
-	m.handleRunFailureWithCode(session.ID, session, run, codexRuntimeErrorCode, fmt.Errorf("%s", message))
+	code := codexRuntimeErrorCode
+	var timeoutErr *codexAppServerRequestTimeoutError
+	if errors.As(cause, &timeoutErr) {
+		code = codexAppServerTimeoutCode
+		if m.logger != nil {
+			m.logger.Error("Codex app-server request timed out",
+				zap.String("sessionId", session.ID),
+				zap.String("method", timeoutErr.Method),
+				zap.String("detail", timeoutErr.Detail),
+				zap.Duration("timeout", timeoutErr.Timeout),
+				zap.Error(cause),
+			)
+		}
+	}
+	m.handleRunFailureWithCode(session.ID, session, run, code, fmt.Errorf("%s", message))
 }
 
 func (m *Manager) startOrResumeCodexThread(
@@ -821,7 +981,7 @@ func (m *Manager) startOrResumeCodexThread(
 
 	activeMultiAgentV2 := supportsMultiAgentV2
 	response, err := request(activeMultiAgentV2)
-	if err != nil && activeMultiAgentV2 && !isCodexActiveWriterError(err) {
+	if err != nil && activeMultiAgentV2 && !isCodexActiveWriterError(err) && !isCodexAppServerRequestTimeout(err) {
 		multiAgentV2Err := err
 		response, err = request(false)
 		if err != nil {

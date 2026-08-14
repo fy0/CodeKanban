@@ -4,9 +4,52 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 	"time"
 )
+
+type codexDiscardWriteCloser struct {
+	io.Writer
+}
+
+func (codexDiscardWriteCloser) Close() error {
+	return nil
+}
+
+func TestCodexAppServerRequestTimeoutIdentifiesMethodAndCleansPending(t *testing.T) {
+	client := &codexAppServerClient{
+		stdin:   codexDiscardWriteCloser{Writer: io.Discard},
+		pending: make(map[string]chan codexAppServerIncoming),
+		closed:  make(chan struct{}),
+	}
+	client.recordMCPStartupStatus(codexAppServerIncoming{
+		Method: "mcpServer/startupStatus/updated",
+		Params: json.RawMessage(`{"name":"playwright","status":"starting"}`),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := client.request(ctx, "thread/resume", map[string]any{"threadId": "thread_test"})
+
+	var timeoutErr *codexAppServerRequestTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("request error = %v, want codex app-server timeout", err)
+	}
+	if timeoutErr.Method != "thread/resume" {
+		t.Fatalf("timeout method = %q, want thread/resume", timeoutErr.Method)
+	}
+	if !strings.Contains(timeoutErr.Error(), "MCP status: playwright=starting") {
+		t.Fatalf("timeout error = %q, want MCP startup status", timeoutErr.Error())
+	}
+	client.pendingMu.Lock()
+	pendingCount := len(client.pending)
+	client.pendingMu.Unlock()
+	if pendingCount != 0 {
+		t.Fatalf("pending request count = %d, want 0 after timeout", pendingCount)
+	}
+}
 
 func TestRequestCodexThreadAfterActiveWriter(t *testing.T) {
 	t.Run("retries active writer", func(t *testing.T) {
