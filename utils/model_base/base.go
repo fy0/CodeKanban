@@ -13,6 +13,12 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+const (
+	sqliteMaxOpenConns = 1
+	sqliteMaxIdleConns = 1
+	sqliteBusyTimeout  = 5000
+)
+
 type BaseModel struct {
 	ID        uint64         `gorm:"primary_key;autoIncrement" json:"id"`
 	CreatedAt time.Time      `json:"createdAt"`
@@ -67,10 +73,27 @@ func DBInit(dsn string, logLevel logger.LogLevel) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	// SQLite 模式下开启 WAL 提升并发性能
+	// SQLite 只有一个写者。让 GORM、sqlc 和后台投影共享同一个连接，
+	// 避免连接池内多个写事务互相竞争 RESERVED/EXCLUSIVE 锁。
 	switch dialector.(type) {
 	case *sqliteDialector:
-		db.Exec("PRAGMA journal_mode=WAL")
+		sqlDB, dbErr := db.DB()
+		if dbErr != nil {
+			return nil, dbErr
+		}
+		sqlDB.SetMaxOpenConns(sqliteMaxOpenConns)
+		sqlDB.SetMaxIdleConns(sqliteMaxIdleConns)
+
+		// 驱动默认 busy_timeout 通常只有约 1 秒；事件投影和历史同步
+		// 的短暂写入高峰不应立即变成 SQLITE_BUSY。
+		if result := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", sqliteBusyTimeout)); result.Error != nil {
+			_ = sqlDB.Close()
+			return nil, fmt.Errorf("设置 SQLite busy_timeout 失败: %w", result.Error)
+		}
+		if result := db.Exec("PRAGMA journal_mode=WAL"); result.Error != nil {
+			_ = sqlDB.Close()
+			return nil, fmt.Errorf("启用 SQLite WAL 失败: %w", result.Error)
+		}
 	}
 
 	return db, nil

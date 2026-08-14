@@ -39,6 +39,10 @@ func SqliteInit(dsn string) (*sql.DB, error) {
 	}
 
 	// 启用 WAL 模式
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("设置 SQLite busy_timeout 失败: %w", err)
+	}
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("启用 WAL 模式失败: %w", err)
