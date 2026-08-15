@@ -930,7 +930,7 @@ func TestSyncSessionFromLogSourceMergesDescendantRollouts(t *testing.T) {
 	}
 	agent := snapshot.SubAgents[0]
 	if agent.ThreadID != childThreadID || agent.ParentThreadID == nil || *agent.ParentThreadID != rootThreadID ||
-		agent.Nickname != "Atlas" || agent.Role != "reviewer" || agent.Status != WebSessionSubAgentCompleted ||
+		agent.Nickname != "Atlas" || agent.Role != "reviewer" || agent.Status != WebSessionSubAgentRunning ||
 		agent.LatestOrderIndex != 3 || agent.Summary != "child review complete" {
 		t.Fatalf("unexpected deep-sync sub-agent registry: %#v", agent)
 	}

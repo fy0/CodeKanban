@@ -38,3 +38,57 @@ func TestCodexSubAgentErrorPayloadPreservesActivityWhileRetrying(t *testing.T) {
 		t.Fatalf("error summary = %q", got)
 	}
 }
+
+func TestCodexTurnCompletionDoesNotEndSubAgentLifecycle(t *testing.T) {
+	if got := codexTurnSubAgentStatus("completed"); got != "" {
+		t.Fatalf("completed turn must not produce a lifecycle status, got %q", got)
+	}
+	if got := codexTurnSubAgentStatus("inProgress"); got != WebSessionSubAgentRunning {
+		t.Fatalf("in-progress turn status = %q, want %q", got, WebSessionSubAgentRunning)
+	}
+	if got := codexTurnSubAgentStatus("failed"); got != WebSessionSubAgentErrored {
+		t.Fatalf("failed turn status = %q, want %q", got, WebSessionSubAgentErrored)
+	}
+}
+
+func TestSubAgentThreadIdleAndCompletedTurnRemainActive(t *testing.T) {
+	status := subAgentStatusFromThreadSummary(
+		codexThreadSummary{Status: "idle"},
+		[]map[string]any{{"id": "turn-child", "status": "completed"}},
+	)
+	if status != WebSessionSubAgentRunning {
+		t.Fatalf("idle thread with completed turn = %q, want %q", status, WebSessionSubAgentRunning)
+	}
+
+	status = subAgentStatusFromThreadSummary(
+		codexThreadSummary{},
+		[]map[string]any{{"id": "turn-child", "status": "completed"}},
+	)
+	if status != WebSessionSubAgentRunning {
+		t.Fatalf("completed turn without thread status = %q, want %q", status, WebSessionSubAgentRunning)
+	}
+
+	status = subAgentStatusFromThreadSummary(
+		codexThreadSummary{Status: "idle"},
+		[]map[string]any{{"id": "turn-child", "status": "failed"}},
+	)
+	if status != WebSessionSubAgentErrored {
+		t.Fatalf("idle thread with failed turn = %q, want %q", status, WebSessionSubAgentErrored)
+	}
+
+	status = subAgentStatusFromThreadSummary(
+		codexThreadSummary{Status: "systemError"},
+		nil,
+	)
+	if status != WebSessionSubAgentErrored {
+		t.Fatalf("system-error thread = %q, want %q", status, WebSessionSubAgentErrored)
+	}
+
+	status = subAgentStatusFromThreadSummary(
+		codexThreadSummary{Status: "closed"},
+		nil,
+	)
+	if status != WebSessionSubAgentShutdown {
+		t.Fatalf("closed thread = %q, want %q", status, WebSessionSubAgentShutdown)
+	}
+}

@@ -3924,6 +3924,7 @@ import {
   isTransportRetryActivityText,
   subAgentActivitySummary,
 } from '@/components/web-session/webSessionSubAgentActivity';
+import { resolveWebSessionTimelineSubAgent } from '@/components/web-session/webSessionTimelineRole';
 import {
   findWebSessionConversationSearchMatches,
   matchesWebSessionConversationSearchTarget,
@@ -5970,8 +5971,11 @@ function subAgentStatusLabel(status: WebSessionSubAgentStatus) {
 }
 
 function timelineSubAgent(item: WebSessionBlock) {
-  const threadId = String(item.sourceThreadId ?? '').trim();
-  return threadId ? (subAgentByThreadId.value.get(threadId) ?? null) : null;
+  return resolveWebSessionTimelineSubAgent(
+    item.sourceThreadId,
+    currentRealSession.value?.nativeSessionId,
+    subAgentByThreadId.value
+  );
 }
 
 function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) {

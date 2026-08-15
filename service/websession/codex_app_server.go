@@ -1222,10 +1222,14 @@ func (m *Manager) handleCodexAppServerMessage(
 	case "turn/completed":
 		if !isRootEvent {
 			status, errMessage, _ := parseCodexTurnCompletion(message.Params)
-			m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
-				"status":  string(codexTurnSubAgentStatus(status)),
-				"summary": errMessage,
-			})
+			payload := map[string]any{
+				"summary":       errMessage,
+				"turnCompleted": true,
+			}
+			if nextStatus := codexTurnSubAgentStatus(status); nextStatus != "" {
+				payload["status"] = string(nextStatus)
+			}
+			m.appendCodexSubAgentState(session, run, threadID, turnID, payload)
 			return codexTurnOutcomeNone, nil
 		}
 		status, errMessage, errCode := parseCodexTurnCompletion(message.Params)
@@ -1270,10 +1274,24 @@ func (m *Manager) handleCodexAppServerMessage(
 		}
 		return codexTurnOutcomeNone, nil
 	case "thread/status/changed":
-		if !isRootEvent && codexThreadStatusType(message.Params) == "systemerror" {
-			m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
-				"status": string(WebSessionSubAgentErrored),
-			})
+		if !isRootEvent {
+			status := codexThreadStatusType(message.Params)
+			var lifecycle WebSessionSubAgentStatus
+			switch status {
+			case "active", "running":
+				lifecycle = WebSessionSubAgentRunning
+			case "systemerror", "system_error", "error", "errored", "failed":
+				lifecycle = WebSessionSubAgentErrored
+			case "closed", "shutdown":
+				lifecycle = WebSessionSubAgentShutdown
+			case "interrupted", "aborted", "cancelled", "canceled":
+				lifecycle = WebSessionSubAgentInterrupted
+			}
+			if lifecycle != "" {
+				m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
+					"status": string(lifecycle),
+				})
+			}
 		}
 		return codexTurnOutcomeNone, nil
 	case "configWarning", "account/rateLimits/updated", "serverRequest/resolved",

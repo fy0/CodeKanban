@@ -18,9 +18,9 @@ func normalizeWebSessionSubAgentStatus(value string) WebSessionSubAgentStatus {
 	switch normalized {
 	case "pendinginit", "pending":
 		return WebSessionSubAgentPendingInit
-	case "running", "inprogress", "active":
+	case "running", "inprogress", "active", "idle", "notloaded":
 		return WebSessionSubAgentRunning
-	case "interrupted", "aborted", "idle":
+	case "interrupted", "aborted":
 		return WebSessionSubAgentInterrupted
 	case "completed", "complete", "done":
 		return WebSessionSubAgentCompleted
@@ -55,11 +55,11 @@ func codexSubAgentState(raw any) (WebSessionSubAgentStatus, string) {
 }
 
 func codexTurnSubAgentStatus(status string) WebSessionSubAgentStatus {
+	// A completed turn is not an Agent lifecycle transition. A child thread can
+	// receive another turn after its current turn has completed.
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "inprogress", "in_progress", "running", "active":
 		return WebSessionSubAgentRunning
-	case "completed", "complete", "done":
-		return WebSessionSubAgentCompleted
 	case "interrupted", "cancelled", "canceled", "aborted":
 		return WebSessionSubAgentInterrupted
 	case "failed", "errored", "error", "systemerror", "system_error":
@@ -125,8 +125,12 @@ func applySubAgentPayload(row *tables.WebSessionSubAgentTable, payload map[strin
 	if value := strings.TrimSpace(stringValue(payload["summary"])); value != "" {
 		row.Summary = value
 	}
-	if value := strings.TrimSpace(firstNonEmpty(stringValue(payload["turnId"]), event.TurnID)); value != "" {
-		row.CurrentTurnID = ptr(value)
+	if payload["turnCompleted"] != true {
+		if value := strings.TrimSpace(firstNonEmpty(stringValue(payload["turnId"]), event.TurnID)); value != "" {
+			row.CurrentTurnID = ptr(value)
+		}
+	} else {
+		row.CurrentTurnID = nil
 	}
 	if value := strings.TrimSpace(stringValue(payload["latestItemId"])); value != "" {
 		row.LatestItemID = ptr(value)
@@ -144,6 +148,12 @@ func applySubAgentPayload(row *tables.WebSessionSubAgentTable, payload map[strin
 			endedAt := event.Timestamp
 			row.EndedAt = &endedAt
 		}
+	} else if payload["turnCompleted"] == true &&
+		normalizeWebSessionSubAgentStatus(row.Status) == WebSessionSubAgentPendingInit {
+		// A child that has completed its first turn is initialized and remains
+		// available for follow-up work, even without a separate turn/started event.
+		row.Status = string(WebSessionSubAgentRunning)
+		row.EndedAt = nil
 	}
 	activityAt := event.Timestamp
 	if activityAt.IsZero() {
@@ -356,18 +366,26 @@ func (m *Manager) replaceSessionSubAgents(
 func subAgentStatusFromThreadSummary(summary codexThreadSummary, turns []map[string]any) WebSessionSubAgentStatus {
 	status := strings.ToLower(strings.TrimSpace(summary.Status))
 	switch status {
-	case "active", "running":
-		return WebSessionSubAgentRunning
 	case "systemerror", "system_error", "error", "errored", "failed":
 		return WebSessionSubAgentErrored
+	case "closed", "shutdown":
+		return WebSessionSubAgentShutdown
+	case "interrupted", "aborted", "cancelled", "canceled":
+		return WebSessionSubAgentInterrupted
 	}
+	completedTurnSeen := false
 	for index := len(turns) - 1; index >= 0; index-- {
-		if turnStatus := codexTurnSubAgentStatus(stringValue(turns[index]["status"])); turnStatus != "" {
+		turnStatusText := strings.ToLower(strings.TrimSpace(stringValue(turns[index]["status"])))
+		if turnStatus := codexTurnSubAgentStatus(turnStatusText); turnStatus != "" {
 			return turnStatus
 		}
+		if turnStatusText == "completed" || turnStatusText == "complete" || turnStatusText == "done" {
+			completedTurnSeen = true
+		}
 	}
-	if status == "idle" || status == "notloaded" || status == "not_loaded" {
-		return WebSessionSubAgentCompleted
+	if status == "active" || status == "running" || status == "idle" ||
+		status == "notloaded" || status == "not_loaded" || completedTurnSeen {
+		return WebSessionSubAgentRunning
 	}
 	return WebSessionSubAgentPendingInit
 }
@@ -390,9 +408,10 @@ func webSessionSubAgentFromThread(
 	if len(turns) > 0 {
 		lastTurn := turns[len(turns)-1]
 		turnID := strings.TrimSpace(stringValue(lastTurn["id"]))
-		if webSessionSubAgentIsActive(status) {
+		if webSessionSubAgentIsActive(status) &&
+			codexTurnSubAgentStatus(stringValue(lastTurn["status"])) == WebSessionSubAgentRunning {
 			agent.CurrentTurnID = nilIfEmptyHistory(turnID)
-		} else {
+		} else if !webSessionSubAgentIsActive(status) {
 			agent.EndedAt = firstNonNilTime(
 				parseHistoryTimestamp(lastTurn["completedAt"]),
 				parseHistoryTimestamp(lastTurn["updatedAt"]),

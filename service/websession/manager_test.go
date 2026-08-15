@@ -4424,8 +4424,31 @@ func TestCodexSubAgentRegistrySurvivesEmptyWaitTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sessionSubAgents after child completion: %v", err)
 	}
-	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentCompleted {
-		t.Fatalf("expected completed child, got %#v", agents)
+	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentRunning {
+		t.Fatalf("completed child turn must preserve active Agent lifecycle, got %#v", agents)
+	}
+
+	_, err = manager.handleCodexAppServerMessage(*session, run, nil, rootScope, codexAppServerIncoming{
+		Method: "item/started",
+		Params: params(map[string]any{
+			"threadId": "thread_child",
+			"turnId":   "turn_child_followup",
+			"item": map[string]any{
+				"type":    "commandExecution",
+				"id":      "child_followup_command",
+				"command": "git status --short",
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("handle child follow-up command: %v", err)
+	}
+	agents, err = manager.sessionSubAgents(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("sessionSubAgents after child follow-up: %v", err)
+	}
+	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentRunning {
+		t.Fatalf("child follow-up activity must keep Agent active, got %#v", agents)
 	}
 }
 
