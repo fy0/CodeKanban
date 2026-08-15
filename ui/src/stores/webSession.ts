@@ -670,6 +670,11 @@ export interface WebSessionPendingUserInputDraftState {
   updatedAt: number;
 }
 
+export interface WebSessionPendingInputEditDraft {
+  text: string;
+  updatedAt: number;
+}
+
 export interface WebSessionDraftAttachmentUploadState {
   id: string;
   fileName: string;
@@ -769,6 +774,7 @@ type PendingActiveCallTimeoutOverride = {
 
 const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
 const SESSION_DRAFT_STORAGE_KEY = 'kanban-web-session-drafts';
+const PENDING_INPUT_EDIT_DRAFT_STORAGE_KEY = 'kanban-web-session-pending-input-edits';
 const COMMAND_WS_PATH = '/api/v1/web-sessions/ws';
 const EVENTS_WS_PATH = '/api/v1/web-sessions/events';
 const WEB_SESSION_HEARTBEAT_INTERVAL_MS = 15000;
@@ -859,6 +865,49 @@ function normalizeStoredDrafts(
   return result;
 }
 
+function normalizeStoredPendingInputEditDrafts(
+  value: unknown
+): Record<string, Record<string, Record<string, WebSessionPendingInputEditDraft>>> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const result: Record<
+    string,
+    Record<string, Record<string, WebSessionPendingInputEditDraft>>
+  > = {};
+  Object.entries(value).forEach(([projectId, projectValue]) => {
+    if (!projectId.trim() || !isRecord(projectValue)) {
+      return;
+    }
+    const projectDrafts: Record<string, Record<string, WebSessionPendingInputEditDraft>> = {};
+    Object.entries(projectValue).forEach(([sessionId, sessionValue]) => {
+      if (!sessionId.trim() || !isRecord(sessionValue)) {
+        return;
+      }
+      const sessionDrafts: Record<string, WebSessionPendingInputEditDraft> = {};
+      Object.entries(sessionValue).forEach(([pendingId, draftValue]) => {
+        if (!pendingId.trim() || !isRecord(draftValue) || typeof draftValue.text !== 'string') {
+          return;
+        }
+        sessionDrafts[pendingId] = {
+          text: draftValue.text,
+          updatedAt:
+            typeof draftValue.updatedAt === 'number' && Number.isFinite(draftValue.updatedAt)
+              ? draftValue.updatedAt
+              : Date.now(),
+        };
+      });
+      if (Object.keys(sessionDrafts).length > 0) {
+        projectDrafts[sessionId] = sessionDrafts;
+      }
+    });
+    if (Object.keys(projectDrafts).length > 0) {
+      result[projectId] = projectDrafts;
+    }
+  });
+  return result;
+}
+
 function loadStoredActiveSessions() {
   try {
     const raw = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
@@ -905,6 +954,33 @@ function persistSessionDrafts(value: Record<string, Record<string, WebSessionDra
     localStorage.setItem(SESSION_DRAFT_STORAGE_KEY, JSON.stringify(persisted));
   } catch (error) {
     console.warn('[Web Session] Failed to persist session drafts', error);
+  }
+}
+
+function loadStoredPendingInputEditDrafts() {
+  try {
+    const raw = localStorage.getItem(PENDING_INPUT_EDIT_DRAFT_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    return normalizeStoredPendingInputEditDrafts(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+function persistPendingInputEditDrafts(
+  value: Record<string, Record<string, Record<string, WebSessionPendingInputEditDraft>>>
+) {
+  try {
+    const persisted = normalizeStoredPendingInputEditDrafts(value);
+    if (Object.keys(persisted).length === 0) {
+      localStorage.removeItem(PENDING_INPUT_EDIT_DRAFT_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(PENDING_INPUT_EDIT_DRAFT_STORAGE_KEY, JSON.stringify(persisted));
+  } catch (error) {
+    console.warn('[Web Session] Failed to persist pending input edit drafts', error);
   }
 }
 
@@ -1830,6 +1906,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const historyBySession = ref<Record<string, HistoryMeta>>({});
   const draftStateByProject =
     ref<Record<string, Record<string, WebSessionDraftState>>>(loadStoredSessionDrafts());
+  const pendingInputEditDraftStateByProject = ref<
+    Record<string, Record<string, Record<string, WebSessionPendingInputEditDraft>>>
+  >(loadStoredPendingInputEditDrafts());
   const userInputDraftStateByKey = ref<Record<string, WebSessionPendingUserInputDraftState>>({});
   const draftAttachmentUploadsByProject = ref<
     Record<string, Record<string, WebSessionDraftAttachmentUploadState>>
@@ -2513,6 +2592,113 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
     draftStateByProject.value = nextDraftState;
     persistSessionDrafts(nextDraftState);
+  }
+
+  function commitPendingInputEditDrafts(
+    projectId: string,
+    sessionId: string,
+    drafts: Record<string, WebSessionPendingInputEditDraft>
+  ) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId) {
+      return;
+    }
+
+    const nextDraftState = { ...pendingInputEditDraftStateByProject.value };
+    const nextProjectDrafts = { ...(nextDraftState[normalizedProjectId] ?? {}) };
+    if (Object.keys(drafts).length > 0) {
+      nextProjectDrafts[normalizedSessionId] = drafts;
+      nextDraftState[normalizedProjectId] = nextProjectDrafts;
+    } else {
+      delete nextProjectDrafts[normalizedSessionId];
+      if (Object.keys(nextProjectDrafts).length > 0) {
+        nextDraftState[normalizedProjectId] = nextProjectDrafts;
+      } else {
+        delete nextDraftState[normalizedProjectId];
+      }
+    }
+    pendingInputEditDraftStateByProject.value = nextDraftState;
+    persistPendingInputEditDrafts(nextDraftState);
+  }
+
+  function getPendingInputEditDraft(
+    projectId: string,
+    sessionId: string,
+    pendingId: string
+  ): WebSessionPendingInputEditDraft | null {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    const normalizedPendingId = String(pendingId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId || !normalizedPendingId) {
+      return null;
+    }
+    const draft =
+      pendingInputEditDraftStateByProject.value[normalizedProjectId]?.[normalizedSessionId]?.[
+        normalizedPendingId
+      ];
+    return draft ? { ...draft } : null;
+  }
+
+  function getPendingInputEditDrafts(
+    projectId: string,
+    sessionId: string
+  ): Record<string, WebSessionPendingInputEditDraft> {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId) {
+      return {};
+    }
+    const drafts =
+      pendingInputEditDraftStateByProject.value[normalizedProjectId]?.[normalizedSessionId] ?? {};
+    return Object.fromEntries(Object.entries(drafts).map(([id, draft]) => [id, { ...draft }]));
+  }
+
+  function setPendingInputEditDraft(
+    projectId: string,
+    sessionId: string,
+    pendingId: string,
+    text: string
+  ) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    const normalizedPendingId = String(pendingId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId || !normalizedPendingId) {
+      return;
+    }
+    const currentDrafts = getPendingInputEditDrafts(normalizedProjectId, normalizedSessionId);
+    currentDrafts[normalizedPendingId] = {
+      text: String(text ?? ''),
+      updatedAt: Date.now(),
+    };
+    commitPendingInputEditDrafts(normalizedProjectId, normalizedSessionId, currentDrafts);
+  }
+
+  function clearPendingInputEditDraft(projectId: string, sessionId: string, pendingId: string) {
+    const normalizedPendingId = String(pendingId || '').trim();
+    if (!normalizedPendingId) {
+      return;
+    }
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    const currentDrafts = getPendingInputEditDrafts(normalizedProjectId, normalizedSessionId);
+    if (!Object.prototype.hasOwnProperty.call(currentDrafts, normalizedPendingId)) {
+      return;
+    }
+    delete currentDrafts[normalizedPendingId];
+    commitPendingInputEditDrafts(normalizedProjectId, normalizedSessionId, currentDrafts);
+  }
+
+  function clearPendingInputEditDrafts(projectId: string, sessionId: string) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId) {
+      return;
+    }
+    if (!pendingInputEditDraftStateByProject.value[normalizedProjectId]?.[normalizedSessionId]) {
+      return;
+    }
+    commitPendingInputEditDrafts(normalizedProjectId, normalizedSessionId, {});
   }
 
   function commitDraftAttachmentUploads(
@@ -3529,6 +3715,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     scheduledInputsBySession.value = nextScheduledInputs;
     completedTransitionVersionBySession.delete(sessionId);
     if (projectId) {
+      clearPendingInputEditDrafts(projectId, sessionId);
       clearDraft(projectId, sessionId);
     }
   }
@@ -6821,8 +7008,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getActiveSession,
     getDraftAttachments,
     getDraftAttachmentUpload,
+    getPendingInputEditDraft,
+    getPendingInputEditDrafts,
     getPendingUserInputDraft,
+    setPendingInputEditDraft,
     setPendingUserInputDraft,
+    clearPendingInputEditDraft,
+    clearPendingInputEditDrafts,
     clearPendingUserInputDraft,
     setDraftText,
     getPendingInputs,

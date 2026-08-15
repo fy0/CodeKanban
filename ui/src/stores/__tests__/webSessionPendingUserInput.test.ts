@@ -130,6 +130,54 @@ describe('webSession pending user input', () => {
     expect(store.getPendingUserInputDraft(storageKey)).toBeNull();
   });
 
+  it('persists pending input edit drafts by project, session, and item', () => {
+    const store = useWebSessionStore();
+
+    store.setPendingInputEditDraft(
+      'project-1',
+      'session-1',
+      'pending-1',
+      'Keep this while switching pages'
+    );
+    store.setPendingInputEditDraft('project-1', 'session-1', 'pending-2', 'Another edit');
+
+    const firstRead = store.getPendingInputEditDraft('project-1', 'session-1', 'pending-1');
+    expect(firstRead?.text).toBe('Keep this while switching pages');
+    expect(store.getPendingInputEditDraft('project-2', 'session-1', 'pending-1')).toBeNull();
+
+    firstRead!.text = 'mutated';
+    expect(store.getPendingInputEditDraft('project-1', 'session-1', 'pending-1')?.text).toBe(
+      'Keep this while switching pages'
+    );
+
+    const persisted = JSON.parse(
+      localStorage.getItem('kanban-web-session-pending-input-edits') ?? '{}'
+    ) as Record<string, Record<string, Record<string, { text: string }>>>;
+    expect(persisted['project-1']?.['session-1']?.['pending-1']?.text).toBe(
+      'Keep this while switching pages'
+    );
+
+    store.clearPendingInputEditDraft('project-1', 'session-1', 'pending-1');
+    expect(store.getPendingInputEditDraft('project-1', 'session-1', 'pending-1')).toBeNull();
+    expect(store.getPendingInputEditDraft('project-1', 'session-1', 'pending-2')?.text).toBe(
+      'Another edit'
+    );
+  });
+
+  it('clears all edit drafts for a session without affecting another session', () => {
+    const store = useWebSessionStore();
+
+    store.setPendingInputEditDraft('project-1', 'session-1', 'pending-1', 'Session one');
+    store.setPendingInputEditDraft('project-1', 'session-2', 'pending-2', 'Session two');
+
+    store.clearPendingInputEditDrafts('project-1', 'session-1');
+
+    expect(store.getPendingInputEditDrafts('project-1', 'session-1')).toEqual({});
+    expect(store.getPendingInputEditDraft('project-1', 'session-2', 'pending-2')?.text).toBe(
+      'Session two'
+    );
+  });
+
   it('recovers sourceItemId from payload.iid for older user input history items', async () => {
     const store = useWebSessionStore();
     const session = makeSession();

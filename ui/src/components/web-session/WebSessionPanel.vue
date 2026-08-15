@@ -2297,7 +2297,14 @@
                     :key="item.id"
                     class="pending-input-chip"
                   >
-                    <n-popover trigger="click" placement="bottom-start" :show-arrow="false">
+                    <n-popover
+                      trigger="click"
+                      placement="bottom-start"
+                      :show="pendingInputPopoverId === item.id"
+                      :show-arrow="false"
+                      display-directive="show"
+                      @update:show="handlePendingInputPopoverUpdate(item.id, $event)"
+                    >
                       <template #trigger>
                         <button type="button" class="pending-input-trigger">
                           <span class="pending-input-badge" :class="`mode-${item.mode}`">
@@ -2349,12 +2356,16 @@
                             }}
                           </span>
                         </div>
-                        <div v-if="isEditingPendingInput(item.id)" class="pending-input-editor">
+                        <div
+                          v-if="isEditingPendingInput(item.id)"
+                          v-memo="pendingInputEditorMemoDeps(item.id)"
+                          class="pending-input-editor"
+                        >
                           <n-input
                             v-model:value="pendingEditText"
                             type="textarea"
                             size="small"
-                            :autosize="{ minRows: 2, maxRows: 3 }"
+                            :autosize="pendingInputEditorAutosize"
                           />
                           <div class="pending-input-editor-actions">
                             <n-button
@@ -3984,6 +3995,10 @@ import {
   buildWebSessionUserInputDraftStorageKey,
   reconcileWebSessionUserInputLocalState,
 } from '@/components/web-session/webSessionUserInputDraftSync';
+import {
+  buildWebSessionPendingInputEditorMemoDeps,
+  pickLatestWebSessionPendingInputEditDraft,
+} from '@/components/web-session/webSessionPendingInputEdit';
 import {
   buildWebSessionSendConfirmationSignature,
   findWebSessionSendConflicts,
@@ -7405,6 +7420,8 @@ const pendingInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingInputs(currentRealSession.value.id) : []
 );
 const localPendingInputs = computed(() => pendingInputs.value.filter(item => !item.nativeQueued));
+const pendingInputEditorAutosize = { minRows: 2, maxRows: 3 };
+const pendingInputPopoverId = ref('');
 const pendingEditingId = ref('');
 const pendingEditText = ref('');
 const pendingEditActionId = ref('');
@@ -14442,6 +14459,85 @@ function isEditingPendingInput(pendingId: string) {
   return pendingEditingId.value === pendingId;
 }
 
+function pendingInputEditorMemoDeps(pendingId: string) {
+  return buildWebSessionPendingInputEditorMemoDeps({
+    pendingId,
+    editingId: pendingEditingId.value,
+    text: pendingEditText.value,
+    actionId: pendingEditActionId.value,
+  });
+}
+
+function handlePendingInputPopoverUpdate(pendingId: string, show: boolean) {
+  if (show) {
+    pendingInputPopoverId.value = pendingId;
+  } else if (pendingInputPopoverId.value === pendingId) {
+    pendingInputPopoverId.value = '';
+  }
+}
+
+function persistPendingEditDraft() {
+  const session = currentRealSession.value;
+  const pendingId = pendingEditingId.value;
+  if (!session || !pendingId) {
+    return;
+  }
+  webSessionStore.setPendingInputEditDraft(
+    session.projectId,
+    session.id,
+    pendingId,
+    pendingEditText.value
+  );
+}
+
+function clearPendingEditState(options: { clearDraft?: boolean } = {}) {
+  const session = currentRealSession.value;
+  const pendingId = pendingEditingId.value;
+  if (options.clearDraft !== false && session && pendingId) {
+    webSessionStore.clearPendingInputEditDraft(session.projectId, session.id, pendingId);
+  }
+  pendingEditingId.value = '';
+  pendingEditText.value = '';
+  pendingEditActionId.value = '';
+  if (pendingInputPopoverId.value === pendingId) {
+    pendingInputPopoverId.value = '';
+  }
+}
+
+function restorePendingEditForCurrentSession() {
+  const session = currentRealSession.value;
+  if (!session || pendingEditingId.value) {
+    return;
+  }
+
+  const pendingItems = pendingInputs.value;
+  const pendingIds = pendingItems.map(item => item.id);
+  if (pendingIds.length > 0) {
+    const storedDrafts = webSessionStore.getPendingInputEditDrafts(session.projectId, session.id);
+    const pendingIdSet = new Set(pendingIds);
+    Object.keys(storedDrafts)
+      .filter(pendingId => !pendingIdSet.has(pendingId))
+      .forEach(pendingId => {
+        webSessionStore.clearPendingInputEditDraft(session.projectId, session.id, pendingId);
+      });
+
+    const latest = pickLatestWebSessionPendingInputEditDraft(
+      webSessionStore.getPendingInputEditDrafts(session.projectId, session.id),
+      pendingItems.filter(item => item.paused && !item.nativeQueued).map(item => item.id)
+    );
+    if (!latest) {
+      return;
+    }
+    pendingEditingId.value = latest.pendingId;
+    pendingEditText.value = latest.draft.text;
+    pendingInputPopoverId.value = latest.pendingId;
+  }
+}
+
+watch([pendingEditingId, pendingEditText], () => {
+  persistPendingEditDraft();
+});
+
 async function startPendingEdit(item: WebSessionPendingInput) {
   const session = currentRealSession.value;
   if (!session || item.nativeQueued || pendingEditActionId.value) {
@@ -14458,18 +14554,25 @@ async function startPendingEdit(item: WebSessionPendingInput) {
     ) {
       return;
     }
+    const storedDraft = webSessionStore.getPendingInputEditDraft(
+      session.projectId,
+      session.id,
+      item.id
+    );
     pendingEditingId.value = item.id;
-    pendingEditText.value = item.text;
+    pendingEditText.value = storedDraft?.text ?? item.text;
+    pendingInputPopoverId.value = item.id;
+    webSessionStore.setPendingInputEditDraft(
+      session.projectId,
+      session.id,
+      item.id,
+      pendingEditText.value
+    );
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
     pendingEditActionId.value = '';
   }
-}
-
-function clearPendingEditState() {
-  pendingEditingId.value = '';
-  pendingEditText.value = '';
 }
 
 async function cancelPendingEdit() {
@@ -14481,7 +14584,10 @@ async function cancelPendingEdit() {
   pendingEditActionId.value = pendingId;
   try {
     await webSessionStore.resumePendingInput(session.id, pendingId);
-    clearPendingEditState();
+    webSessionStore.clearPendingInputEditDraft(session.projectId, session.id, pendingId);
+    if (currentRealSession.value?.id === session.id && pendingEditingId.value === pendingId) {
+      clearPendingEditState({ clearDraft: false });
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
@@ -14497,8 +14603,9 @@ async function handleResumePendingInput(pendingId: string) {
   pendingEditActionId.value = pendingId;
   try {
     await webSessionStore.resumePendingInput(session.id, pendingId);
-    if (pendingEditingId.value === pendingId) {
-      clearPendingEditState();
+    webSessionStore.clearPendingInputEditDraft(session.projectId, session.id, pendingId);
+    if (currentRealSession.value?.id === session.id && pendingEditingId.value === pendingId) {
+      clearPendingEditState({ clearDraft: false });
     }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -14508,17 +14615,17 @@ async function handleResumePendingInput(pendingId: string) {
 }
 
 async function handlePendingEditSave(pendingId: string) {
-  if (!currentRealSession.value || !pendingEditCanSave.value || pendingEditActionId.value) {
+  const session = currentRealSession.value;
+  if (!session || !pendingEditCanSave.value || pendingEditActionId.value) {
     return;
   }
   pendingEditActionId.value = pendingId;
   try {
-    await webSessionStore.updatePendingInput(
-      currentRealSession.value.id,
-      pendingId,
-      pendingEditText.value
-    );
-    clearPendingEditState();
+    await webSessionStore.updatePendingInput(session.id, pendingId, pendingEditText.value);
+    webSessionStore.clearPendingInputEditDraft(session.projectId, session.id, pendingId);
+    if (currentRealSession.value?.id === session.id && pendingEditingId.value === pendingId) {
+      clearPendingEditState({ clearDraft: false });
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
@@ -14733,29 +14840,32 @@ function handleDispatchScheduledInputNow(item: WebSessionScheduledInput) {
 }
 
 async function handleRemovePendingInput(pendingId: string) {
-  if (
-    !currentRealSession.value ||
-    pendingInputs.value.some(item => item.id === pendingId && item.nativeQueued)
-  ) {
+  const session = currentRealSession.value;
+  if (!session || pendingInputs.value.some(item => item.id === pendingId && item.nativeQueued)) {
     return;
   }
   try {
-    if (pendingEditingId.value === pendingId) {
-      clearPendingEditState();
+    await webSessionStore.removePendingInput(session.id, pendingId);
+    webSessionStore.clearPendingInputEditDraft(session.projectId, session.id, pendingId);
+    if (currentRealSession.value?.id === session.id && pendingEditingId.value === pendingId) {
+      clearPendingEditState({ clearDraft: false });
     }
-    await webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
 }
 
 async function handleClearPendingInputs() {
-  if (!currentRealSession.value || localPendingInputs.value.length === 0) {
+  const session = currentRealSession.value;
+  if (!session || localPendingInputs.value.length === 0) {
     return;
   }
   try {
-    await webSessionStore.clearPendingInputs(currentRealSession.value.id);
-    clearPendingEditState();
+    await webSessionStore.clearPendingInputs(session.id);
+    webSessionStore.clearPendingInputEditDrafts(session.projectId, session.id);
+    if (currentRealSession.value?.id === session.id) {
+      clearPendingEditState({ clearDraft: false });
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -16538,17 +16648,24 @@ watch(
       return;
     }
     resetTimelineEdgeWindow();
-    clearPendingEditState();
+    clearPendingEditState({ clearDraft: false });
     clearLocalFileDialog();
     closeScheduledInputPopover();
     if (showScheduledSendDialog.value && isScheduledDialogEdit.value) {
       handleScheduledSendDialogVisibilityChange(false);
     }
+    nextTick(restorePendingEditForCurrentSession);
   }
 );
 
 watch(
-  () => pendingInputs.value.map(item => item.id).join('|'),
+  () =>
+    pendingInputs.value
+      .map(
+        item =>
+          `${item.id}:${item.paused ? 'paused' : 'active'}:${item.nativeQueued ? 'native' : ''}`
+      )
+      .join('|'),
   () => {
     if (
       pendingEditingId.value &&
@@ -16556,7 +16673,19 @@ watch(
     ) {
       clearPendingEditState();
     }
-  }
+    restorePendingEditForCurrentSession();
+    const session = currentRealSession.value;
+    if (!session || pendingInputs.value.length === 0) {
+      return;
+    }
+    const pendingIdSet = new Set(pendingInputs.value.map(item => item.id));
+    Object.keys(webSessionStore.getPendingInputEditDrafts(session.projectId, session.id))
+      .filter(pendingId => !pendingIdSet.has(pendingId))
+      .forEach(pendingId => {
+        webSessionStore.clearPendingInputEditDraft(session.projectId, session.id, pendingId);
+      });
+  },
+  { immediate: true }
 );
 
 watch(
@@ -17098,6 +17227,7 @@ onBeforeUnmount(() => {
   clearTimelineSearchTimer();
   invalidateTimelineSearchRequest();
   hideTimelineNavigationControls();
+  persistPendingEditDraft();
   persistActiveUserInputDraft();
   realSessionSnapshotLoadController.cancel();
   streamingMarkdownController.clear();
