@@ -14,6 +14,12 @@ import (
 
 const currentWorkTimingBackfillVersion = 1
 
+const workTimingContinuationPayloadKey = "workTimingContinuation"
+
+func isWorkTimingContinuationPayload(payload map[string]any) bool {
+	return payload["autoRetry"] == true || payload[workTimingContinuationPayloadKey] == true
+}
+
 func normalizeWorkTimingBackfillState(value string) WorkTimingBackfillState {
 	switch WorkTimingBackfillState(strings.TrimSpace(value)) {
 	case WorkTimingBackfillComplete:
@@ -163,7 +169,7 @@ func (m *Manager) applyWorkTimingEventDB(
 		startedAt := event.Timestamp
 		var timingItem *HistoryItem
 		completedDurationMs := session.WorkDurationMs
-		if event.Payload["autoRetry"] == true && session.WorkRetryWaitStartedAt != nil {
+		if isWorkTimingContinuationPayload(event.Payload) && session.WorkRetryWaitStartedAt != nil {
 			startedAt = *session.WorkRetryWaitStartedAt
 		} else if session.WorkRetryWaitStartedAt != nil {
 			addedDurationMs, updatedItem, err := settleRetryWaitIntoSourceRunDB(ctx, tx, session, event.Timestamp)
@@ -438,6 +444,37 @@ func clearCurrentWorkTimingUpdates(session tables.WebSessionTable, runID string)
 		"work_current_run_paused_duration_ms": 0,
 		"work_current_run_pause_depth":        0,
 	}
+}
+
+func (m *Manager) beginWorkTimingContinuation(
+	ctx context.Context,
+	sessionID string,
+	startedAt time.Time,
+	sourceRunID string,
+) error {
+	if m == nil {
+		return model.ErrDBNotInitialized
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("session id is required")
+	}
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	sourceRunID = strings.TrimSpace(sourceRunID)
+	if sourceRunID == "" {
+		sourceRunID = m.latestCompletedWorkTimingRunID(ctx, sessionID)
+	}
+	if err := m.updateRuntimeState(ctx, sessionID, map[string]any{
+		"work_retry_wait_started_at": startedAt,
+		"work_retry_source_run_id":   nilIfEmpty(sourceRunID),
+		"updated_at":                 time.Now(),
+	}); err != nil {
+		return err
+	}
+	m.broadcastSessionSummary(ctx, sessionID)
+	return nil
 }
 
 func (m *Manager) findWorkTimingAnchorDB(

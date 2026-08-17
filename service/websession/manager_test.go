@@ -5383,7 +5383,7 @@ func TestActiveCallTimeoutInterruptsCommandExecutionAndContinues(t *testing.T) {
 	setTrackedActiveCallStartedAt(t, manager, created.ID, call.ToolID, time.Now().Add(-12*time.Second))
 	manager.RefreshDeveloperConfig()
 
-	waitForSessionToSettle(t, manager, created.ID)
+	waitForSessionStatus(t, manager, created.ID, StatusDone)
 
 	record, err := manager.GetSession(context.Background(), created.ID)
 	if err != nil {
@@ -5424,6 +5424,26 @@ func TestActiveCallTimeoutInterruptsCommandExecutionAndContinues(t *testing.T) {
 	}
 	if got := messages[len(messages)-1]; !strings.Contains(got, "pnpm dev --host 127.0.0.1 --port 4173") || !strings.Contains(got, "timed out after") {
 		t.Fatalf("expected rendered prompt with placeholders, got %q", got)
+	}
+
+	var timings []tables.WebSessionRunTimingTable
+	if err := model.GetDB().Where("web_session_id = ?", created.ID).Order("started_at ASC").Find(&timings).Error; err != nil {
+		t.Fatalf("load run timings: %v", err)
+	}
+	if len(timings) != 2 {
+		t.Fatalf("expected timeout and continuation timing rows, got %#v", timings)
+	}
+	if timings[0].Outcome != string(WorkTimingOutcomeTimeout) || timings[1].Outcome != string(WorkTimingOutcomeCompleted) {
+		t.Fatalf("expected timeout then completed timing outcomes, got %#v", timings)
+	}
+	if timings[0].EndedAt == nil || !timings[1].StartedAt.Equal(*timings[0].EndedAt) {
+		t.Fatalf("expected continuation to start at timeout boundary, got first=%v second=%v", timings[0].EndedAt, timings[1].StartedAt)
+	}
+	if record.WorkDurationMs != timings[0].DurationMs+timings[1].DurationMs {
+		t.Fatalf("expected session duration to equal both timing segments, session=%d first=%d second=%d", record.WorkDurationMs, timings[0].DurationMs, timings[1].DurationMs)
+	}
+	if record.WorkRetryWaitStartedAt != nil || record.WorkRetrySourceRunID != nil || record.WorkCurrentRunID != nil {
+		t.Fatalf("expected continuation markers and current run to be cleared after completion: %#v", record)
 	}
 }
 

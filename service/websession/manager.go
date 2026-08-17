@@ -4125,12 +4125,13 @@ func (m *Manager) sendMessageInternal(
 		RunID:     runID,
 		Timestamp: time.Now(),
 		Payload: map[string]any{
-			"ag":        string(normalizeAgent(Agent(record.Agent))),
-			"md":        record.Model,
-			"re":        record.ReasoningEffort,
-			"wm":        effectiveWorkflowMode(record),
-			"pl":        effectivePermissionLevel(record),
-			"autoRetry": options.fromAutoRetry,
+			"ag":                     string(normalizeAgent(Agent(record.Agent))),
+			"md":                     record.Model,
+			"re":                     record.ReasoningEffort,
+			"wm":                     effectiveWorkflowMode(record),
+			"pl":                     effectivePermissionLevel(record),
+			"autoRetry":              options.fromAutoRetry,
+			"workTimingContinuation": options.continueWorkTiming,
 		},
 	}); err != nil {
 		return err
@@ -4199,8 +4200,9 @@ func (m *Manager) sendMessageInternal(
 }
 
 type sendMessageOptions struct {
-	fromAutoRetry   bool
-	updateAutoTitle bool
+	fromAutoRetry      bool
+	continueWorkTiming bool
+	updateAutoTitle    bool
 }
 
 func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable) error {

@@ -309,7 +309,7 @@ func applyScannedWorkTimingEvent(
 			return
 		}
 		startedAt := event.Timestamp
-		if event.Payload["autoRetry"] == true &&
+		if isWorkTimingContinuationPayload(event.Payload) &&
 			!result.lastTerminalAt.IsZero() &&
 			event.Timestamp.After(result.lastTerminalAt) {
 			startedAt = result.lastTerminalAt

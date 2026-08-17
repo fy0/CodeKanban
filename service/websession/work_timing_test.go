@@ -118,6 +118,100 @@ func TestScanSessionWorkTimingEventsCountsExplicitAutoRetryWait(t *testing.T) {
 	}
 }
 
+func TestScanSessionWorkTimingEventsCountsActiveCallContinuation(t *testing.T) {
+	manager, session := newWorkTimingScanManager(t)
+	startedAt := time.Date(2026, 8, 10, 12, 30, 0, 0, time.UTC)
+	appendWorkTimingEvents(t, manager.store, session.ID, []Event{
+		{Seq: 1, Type: "run_st", RunID: "run-1", Timestamp: startedAt},
+		{
+			Seq:       2,
+			Type:      "run_abort",
+			RunID:     "run-1",
+			Timestamp: startedAt.Add(10 * time.Second),
+			Payload:   map[string]any{"reason": activeCallTimeoutReason},
+		},
+		{
+			Seq:       3,
+			Type:      "run_st",
+			RunID:     "run-2",
+			Timestamp: startedAt.Add(15 * time.Second),
+			Payload:   map[string]any{workTimingContinuationPayloadKey: true},
+		},
+		{Seq: 4, Type: "run_done", RunID: "run-2", Timestamp: startedAt.Add(30 * time.Second)},
+	})
+
+	result, err := manager.scanSessionWorkTimingEvents(session)
+	if err != nil {
+		t.Fatalf("scanSessionWorkTimingEvents: %v", err)
+	}
+	if result.incomplete || len(result.runs) != 2 {
+		t.Fatalf("expected two complete continuation runs, got %#v", result)
+	}
+	if result.runs[0].Outcome != WorkTimingOutcomeTimeout || result.runs[1].Outcome != WorkTimingOutcomeCompleted {
+		t.Fatalf("expected timeout then completed outcomes, got %#v", result.runs)
+	}
+	if !result.runs[1].StartedAt.Equal(startedAt.Add(10 * time.Second)) {
+		t.Fatalf("continuation did not start at timeout boundary: %v", result.runs[1].StartedAt)
+	}
+	if result.runs[1].DurationMs != 20_000 {
+		t.Fatalf("expected continuation duration to include recovery interval, got %dms", result.runs[1].DurationMs)
+	}
+}
+
+func TestWorkTimingContinuationSettlementClearsPendingMarker(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "continuation", 1000)
+	manager := &Manager{}
+	startedAt := time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC)
+
+	applyWorkTimingEventForTest(t, manager, session.ID, Event{
+		Type: "run_st", RunID: "run-1", Timestamp: startedAt,
+	})
+	applyWorkTimingEventForTest(t, manager, session.ID, Event{
+		Type: "run_abort", RunID: "run-1", Timestamp: startedAt.Add(10 * time.Second),
+		Payload: map[string]any{"reason": activeCallTimeoutReason},
+	})
+
+	if err := manager.beginWorkTimingContinuation(
+		context.Background(),
+		session.ID,
+		startedAt.Add(10*time.Second),
+		"run-1",
+	); err != nil {
+		t.Fatalf("beginWorkTimingContinuation: %v", err)
+	}
+	if err := manager.settleRetryWaitAndUpdateSession(
+		context.Background(),
+		session.ID,
+		startedAt.Add(15*time.Second),
+		nil,
+	); err != nil {
+		t.Fatalf("settleRetryWaitAndUpdateSession: %v", err)
+	}
+
+	var refreshed tables.WebSessionTable
+	if err := model.GetDB().First(&refreshed, "id = ?", session.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if refreshed.WorkRetryWaitStartedAt != nil || refreshed.WorkRetrySourceRunID != nil {
+		t.Fatalf("expected continuation marker to be cleared: %#v", refreshed)
+	}
+	if refreshed.WorkDurationMs != 15_000 {
+		t.Fatalf("expected recovery interval to be settled into total duration, got %dms", refreshed.WorkDurationMs)
+	}
+
+	var timing tables.WebSessionRunTimingTable
+	if err := model.GetDB().Where("web_session_id = ? AND run_id = ?", session.ID, "run-1").First(&timing).Error; err != nil {
+		t.Fatalf("reload timing: %v", err)
+	}
+	if timing.DurationMs != 15_000 {
+		t.Fatalf("expected source timing to include recovery interval, got %dms", timing.DurationMs)
+	}
+}
+
 func TestScanSessionWorkTimingEventsStrictFailureStates(t *testing.T) {
 	t.Run("missing", func(t *testing.T) {
 		manager, session := newWorkTimingScanManager(t)
