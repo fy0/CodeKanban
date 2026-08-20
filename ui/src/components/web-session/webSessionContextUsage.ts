@@ -8,6 +8,11 @@ export function calculateBillableTokenUsage(
   return Math.max(0, inputTokens - cachedInputTokens) + Math.max(0, outputTokens);
 }
 
+// Cached input is already included in inputTokens, so total usage must not add it twice.
+export function calculateTotalTokenUsage(inputTokens: number, outputTokens: number) {
+  return Math.max(0, inputTokens) + Math.max(0, outputTokens);
+}
+
 export function calculateCodexRemainingContext({
   compactLimitTokens,
   usedTokens,

@@ -905,6 +905,8 @@ export default {
     contextUsageCurrent: '当前占用',
     contextUsageWindowLabel: '窗口上限',
     contextUsageCompactLabel: '压缩线',
+    contextUsageCumulativeNonCached: '累计非缓存消耗',
+    contextUsageTotalUsage: '总消耗（含缓存）',
     contextUsageCurrentMarker: '当前',
     contextUsageWindowMarker: '上限',
     contextUsageShowExact: '显示精确值',

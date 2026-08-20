@@ -2890,9 +2890,10 @@
                   <n-popover
                     v-if="contextUsageIndicator"
                     v-model:show="showContextUsagePopover"
-                    trigger="click"
+                    trigger="hover"
                     placement="top-end"
                     :show-arrow="false"
+                    :keep-alive-on-hover="true"
                     @update:show="handleContextUsagePopoverVisibilityChange"
                   >
                     <template #trigger>
@@ -3007,6 +3008,34 @@
                       </template>
                       <div v-else class="context-usage-unavailable">
                         {{ t('webSession.contextUsageUnavailableDescription') }}
+                      </div>
+
+                      <div
+                        v-if="contextUsageIndicator.available || contextUsageIndicator.hasUsage"
+                        class="context-usage-total-stats"
+                      >
+                        <div class="context-usage-stat">
+                          <span class="context-usage-stat__label">
+                            {{ t('webSession.contextUsageCumulativeNonCached') }}
+                          </span>
+                          <span class="context-usage-total-value">
+                            {{
+                              formatWebSessionTokenCount(
+                                contextUsageIndicator.cumulativeNonCachedTokens
+                              )
+                            }}
+                            tokens
+                          </span>
+                        </div>
+                        <div class="context-usage-stat">
+                          <span class="context-usage-stat__label">
+                            {{ t('webSession.contextUsageTotalUsage') }}
+                          </span>
+                          <span class="context-usage-total-value">
+                            {{ formatWebSessionTokenCount(contextUsageIndicator.totalTokens) }}
+                            tokens
+                          </span>
+                        </div>
                       </div>
 
                       <div class="context-usage-divider"></div>
@@ -4026,7 +4055,11 @@ import {
   resolveWebSessionLiveTimeCopy,
   type WebSessionLiveTimeTooltipItem,
 } from '@/components/web-session/webSessionLiveTime';
-import { calculateCodexRemainingContext } from '@/components/web-session/webSessionContextUsage';
+import {
+  calculateBillableTokenUsage,
+  calculateCodexRemainingContext,
+  calculateTotalTokenUsage,
+} from '@/components/web-session/webSessionContextUsage';
 import { formatWebSessionTokenCount } from '@/components/web-session/webSessionContextDisplay';
 import { resolveCopyableAgentSessionId } from '@/components/web-session/webSessionSessionId';
 import {
@@ -7790,6 +7823,9 @@ type ContextUsageIndicator = {
   label: string;
   title: string;
   available: boolean;
+  hasUsage: boolean;
+  cumulativeNonCachedTokens: number;
+  totalTokens: number;
   usedTokens: number;
   contextWindowTokens: number;
   compactLimitTokens: number;
@@ -7800,18 +7836,6 @@ type ContextUsageIndicator = {
 
 const contextUsageIndicator = computed<ContextUsageIndicator | null>(() => {
   const session = currentSession.value;
-  const unavailable = {
-    state: 'unavailable' as const,
-    label: t('webSession.contextUsageLabelUnavailable'),
-    title: t('webSession.contextUsageUnavailableTitle'),
-    available: false,
-    usedTokens: 0,
-    contextWindowTokens: 0,
-    compactLimitTokens: 0,
-    usedPercent: 0,
-    compactPercent: 0,
-    showCompactMarker: false,
-  };
   if (!session) {
     return null;
   }
@@ -7819,6 +7843,31 @@ const contextUsageIndicator = computed<ContextUsageIndicator | null>(() => {
     return null;
   }
 
+  const inputTokens = Math.max(0, Number(session.usage.inputTokens || 0));
+  const cachedInputTokens = Math.max(0, Number(session.usage.cachedInputTokens || 0));
+  const outputTokens = Math.max(0, Number(session.usage.outputTokens || 0));
+  const cumulativeNonCachedTokens = calculateBillableTokenUsage(
+    inputTokens,
+    cachedInputTokens,
+    outputTokens
+  );
+  const totalTokens = calculateTotalTokenUsage(inputTokens, outputTokens);
+  const hasUsage = inputTokens > 0 || cachedInputTokens > 0 || outputTokens > 0;
+  const unavailable = {
+    state: 'unavailable' as const,
+    label: t('webSession.contextUsageLabelUnavailable'),
+    title: t('webSession.contextUsageUnavailableTitle'),
+    available: false,
+    hasUsage,
+    cumulativeNonCachedTokens,
+    totalTokens,
+    usedTokens: 0,
+    contextWindowTokens: 0,
+    compactLimitTokens: 0,
+    usedPercent: 0,
+    compactPercent: 0,
+    showCompactMarker: false,
+  };
   const runtimeConfig = codexRuntimeConfig.value;
   const sessionSource =
     session.contextWindowSource === 'session_usage' ||
@@ -7899,6 +7948,9 @@ const contextUsageIndicator = computed<ContextUsageIndicator | null>(() => {
         : 'webSession.contextUsageTitle'
     ),
     available: true,
+    hasUsage,
+    cumulativeNonCachedTokens,
+    totalTokens,
     usedTokens,
     contextWindowTokens,
     compactLimitTokens,
@@ -21827,6 +21879,21 @@ defineExpose({
   justify-content: space-between;
   color: var(--n-text-color-3);
   font-size: 10px;
+}
+
+.context-usage-total-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.context-usage-total-value {
+  color: var(--n-text-color-1);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .context-usage-unavailable,

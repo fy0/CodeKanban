@@ -941,6 +941,8 @@ export default {
     contextUsageCurrent: 'Current',
     contextUsageWindowLabel: 'Window limit',
     contextUsageCompactLabel: 'Compact line',
+    contextUsageCumulativeNonCached: 'Cumulative non-cached usage',
+    contextUsageTotalUsage: 'Total usage (cached included)',
     contextUsageCurrentMarker: 'Current',
     contextUsageWindowMarker: 'Limit',
     contextUsageShowExact: 'Show exact value',

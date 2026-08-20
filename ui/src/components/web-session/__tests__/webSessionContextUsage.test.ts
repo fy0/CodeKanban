@@ -3,11 +3,16 @@ import { describe, expect, it } from 'vitest';
 import {
   calculateBillableTokenUsage,
   calculateCodexRemainingContext,
+  calculateTotalTokenUsage,
 } from '@/components/web-session/webSessionContextUsage';
 
 describe('webSessionContextUsage', () => {
   it('excludes cached input from cumulative billable usage', () => {
     expect(calculateBillableTokenUsage(4_380_698, 4_032_512, 96_629)).toBe(444_815);
+  });
+
+  it('counts cached input once in total usage', () => {
+    expect(calculateTotalTokenUsage(4_380_698, 96_629)).toBe(4_477_327);
   });
 
   it('uses the Codex baseline when estimating remaining context', () => {
