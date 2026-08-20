@@ -880,7 +880,7 @@ func (m *Manager) runCodexAppServerSession(
 		message = client.readErr().Error()
 	}
 	code := strings.TrimSpace(run.lastErrorCode)
-	if code == "" && run.transportRetrySeen && isLikelyCodexTransportFailureMessage(message) {
+	if code == "" && run.codexTransportRetrySeen() && isLikelyCodexTransportFailureMessage(message) {
 		code = codexTransportRetryExhaustedCode
 	}
 	m.handleRunFailureWithCode(session.ID, session, run, code, fmt.Errorf("%s", message))
@@ -1207,13 +1207,13 @@ func (m *Manager) handleCodexAppServerMessage(
 		run.lastError, run.lastErrorCode = parseCodexTurnError(message.Params)
 		if retryInfo, ok := classifyCodexTransportRetryMessage(run.lastError); ok {
 			retryInfo = retryInfo.withRemoteURL(run.transportRemoteURL)
-			run.transportRetrySeen = true
+			run.markCodexTransportRetry()
 			m.appendRunNote(session.ID, session, run, codexRetryNoteLevel, retryInfo.Message, retryInfo.payload())
 			run.lastError = ""
 			run.lastErrorCode = ""
 			return codexTurnOutcomeNone, nil
 		}
-		if run.transportRetrySeen {
+		if run.codexTransportRetrySeen() {
 			run.lastErrorCode = codexTransportRetryExhaustedCode
 		} else if strings.TrimSpace(run.lastErrorCode) == "" {
 			run.lastErrorCode = codexRuntimeErrorCode
@@ -1240,7 +1240,7 @@ func (m *Manager) handleCodexAppServerMessage(
 		if errMessage != "" {
 			run.lastError = errMessage
 		}
-		if run.transportRetrySeen {
+		if run.codexTransportRetrySeen() {
 			run.lastErrorCode = codexTransportRetryExhaustedCode
 		} else if errCode != "" {
 			run.lastErrorCode = errCode
@@ -1302,6 +1302,37 @@ func (m *Manager) handleCodexAppServerMessage(
 	default:
 		return codexTurnOutcomeNone, nil
 	}
+}
+
+func (m *Manager) recoverCodexTransportRetryOnReasoning(
+	session tables.WebSessionTable,
+	run *activeRun,
+) {
+	if run == nil || !run.claimCodexTransportRetryRecovery() {
+		return
+	}
+	now := time.Now()
+	if err := m.updateRuntimeState(
+		context.Background(),
+		session.ID,
+		applyAssistantStateUpdates(map[string]any{
+			"status":      string(StatusRunning),
+			"activity_at": now,
+			"updated_at":  now,
+		}, AssistantStateWorking, now),
+	); err != nil {
+		run.releaseCodexTransportRetryRecovery()
+		if m.logger != nil {
+			m.logger.Warn(
+				"failed to mark Codex transport retry as recovered",
+				zap.String("sessionId", session.ID),
+				zap.String("runId", run.runID),
+				zap.Error(err),
+			)
+		}
+		return
+	}
+	m.broadcastSessionSummary(context.Background(), session.ID)
 }
 
 func (m *Manager) rejectUnsupportedCodexSubAgentRequest(
@@ -1568,6 +1599,9 @@ func (m *Manager) handleCodexAppServerItemStarted(
 			m.trackActiveCodexToolStart(run, toolID, itemType, toolName, toolInput, toolMeta)
 		}
 	}
+	if isRootEvent && itemType == "reasoning" {
+		m.recoverCodexTransportRetryOnReasoning(session, run)
+	}
 }
 
 func (m *Manager) handleCodexAppServerAgentDelta(
@@ -1737,6 +1771,9 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 		if isRootEvent {
 			m.trackActiveCodexToolComplete(run, toolID)
 		}
+	}
+	if isRootEvent && itemType == "reasoning" {
+		m.recoverCodexTransportRetryOnReasoning(session, run)
 	}
 }
 

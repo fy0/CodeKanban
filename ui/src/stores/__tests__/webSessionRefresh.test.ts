@@ -846,6 +846,7 @@ describe('webSession loading behavior', () => {
         action: 'message',
         targetId: '',
         mode: 'interrupt',
+        exitPlanMode: false,
         status: 'scheduled',
         lastError: '',
         text: 'Send later',
@@ -1600,6 +1601,7 @@ describe('webSession loading behavior', () => {
         action: 'message',
         targetId: '',
         mode: 'interrupt',
+        exitPlanMode: false,
         status: 'scheduled',
         lastError: '',
         text: 'Later message',
@@ -2034,6 +2036,7 @@ describe('webSession loading behavior', () => {
         action: 'execute_plan',
         targetId: 'plan-item-expired',
         mode: 'send',
+        exitPlanMode: false,
         status: 'expired',
         lastError: 'scheduled plan is no longer available',
         text: 'Implement the plan.',
@@ -3293,6 +3296,86 @@ describe('webSession loading behavior', () => {
         maxAttempts: 5,
       }),
     });
+  });
+
+  it('clears retrying state when a newer working session summary follows hidden reasoning', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-retry-reasoning-recovered',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 2,
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          {
+            id: 'assistant-reasoning-recovery',
+            oi: 1,
+            kd: 'assistant',
+            tp: 'agent_message',
+            txt: 'Working before reconnect',
+            ts2: Date.parse('2026-04-09T10:00:00.000Z'),
+            obs: Date.parse('2026-04-09T10:00:00.000Z'),
+            dn: false,
+          },
+          {
+            id: 'retry-reasoning-recovery',
+            oi: 2,
+            kd: 'system',
+            tp: 'note',
+            txt: 'Reconnecting... 1/5',
+            ts2: Date.parse('2026-04-09T10:00:10.000Z'),
+            obs: Date.parse('2026-04-09T10:00:10.000Z'),
+            lvl: 'warn',
+            pl: {
+              code: 'transport_retrying',
+              txt: 'Reconnecting... 1/5',
+              attempt: 1,
+              maxAttempts: 5,
+            },
+          },
+        ],
+        hasMore: false,
+        total: 2,
+      },
+      pendingInputs: [],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'retrying',
+      running: true,
+    });
+
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession({
+        ...session,
+        assistantState: 'working',
+        assistantStateUpdatedAt: '2026-04-09T10:00:20.000Z',
+        updatedAt: '2026-04-09T10:00:20.000Z',
+      }),
+    });
+
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'thinking',
+      running: true,
+    });
+    expect(store.getLiveState(session.id).retry).toBeUndefined();
   });
 
   it('replies to websocket heartbeat pings on the event stream', async () => {

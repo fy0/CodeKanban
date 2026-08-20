@@ -4695,6 +4695,78 @@ func TestCodexAppServerTransportRetryPersistsAsNoteAndCompletes(t *testing.T) {
 	}
 }
 
+func TestCodexAppServerTransportRetryRecoversOnHiddenReasoning(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "reconnect_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	eventConn := &captureWSConn{}
+	eventClient := manager.RegisterEventClient(eventConn)
+	defer manager.UnregisterClient(eventClient)
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	retryNoteFound := false
+	for _, event := range rawEvents {
+		if event.Type == "note" && stringValue(event.Payload["code"]) == codexTransportRetryingCode {
+			retryNoteFound = true
+			break
+		}
+	}
+	if !retryNoteFound {
+		t.Fatalf("expected retry note in raw events, got %#v", rawEvents)
+	}
+
+	workingSummaries := make([]*wireSess, 0, 2)
+	for _, frame := range eventConn.frames {
+		if frame.Operation != "session" || frame.Session == nil ||
+			frame.Session.Status != string(StatusRunning) ||
+			frame.Session.AssistantState != string(AssistantStateWorking) {
+			continue
+		}
+		if frame.Session.AssistantStateUpdatedAt == nil {
+			t.Fatal("expected working session summary to include assistant state timestamp")
+		}
+		workingSummaries = append(workingSummaries, frame.Session)
+	}
+	if len(workingSummaries) != 2 {
+		t.Fatalf("expected initial and one recovered working session summary, got %d frames: %#v", len(workingSummaries), eventConn.frames)
+	}
+	if *workingSummaries[1].AssistantStateUpdatedAt <= *workingSummaries[0].AssistantStateUpdatedAt {
+		t.Fatalf("expected recovered assistant state timestamp to be newer, got %v then %v", workingSummaries[0].AssistantStateUpdatedAt, workingSummaries[1].AssistantStateUpdatedAt)
+	}
+
+	history, err := manager.History(context.Background(), created.ID, 50, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if historyHasToolKind(history.Events, "reasoning") {
+		t.Fatalf("expected hidden reasoning to remain absent from projected history, got %#v", history.Events)
+	}
+}
+
 func TestCodexAppServerTransportRetryContinuesWhenRemoteURLIsUnavailable(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

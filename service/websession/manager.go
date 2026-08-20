@@ -220,6 +220,7 @@ type activeRun struct {
 	lastError                 string
 	lastErrorCode             string
 	transportRetrySeen        bool
+	transportRetryRecovered   bool
 	transportRemoteURL        string
 	cmd                       *exec.Cmd
 	cancel                    context.CancelFunc
@@ -7832,6 +7833,49 @@ func (r *activeRun) markCompletedPlanTool() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.completedPlanTool = true
+}
+
+func (r *activeRun) markCodexTransportRetry() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.transportRetrySeen = true
+	r.transportRetryRecovered = false
+	r.mu.Unlock()
+}
+
+func (r *activeRun) codexTransportRetrySeen() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.transportRetrySeen
+}
+
+func (r *activeRun) claimCodexTransportRetryRecovery() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.transportRetrySeen || r.transportRetryRecovered {
+		return false
+	}
+	r.transportRetryRecovered = true
+	return true
+}
+
+func (r *activeRun) releaseCodexTransportRetryRecovery() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.transportRetrySeen {
+		r.transportRetryRecovered = false
+	}
+	r.mu.Unlock()
 }
 
 func (r *activeRun) beginClaudeCompaction(toolID string, startedAt time.Time) bool {
