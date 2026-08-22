@@ -1721,6 +1721,10 @@
                         <div
                           v-for="option in question.options"
                           :key="`${question.id}:${option.label}`"
+                          :class="{
+                            'is-selected': userInputSelections[question.id]?.includes(option.label),
+                            'is-disabled': isUserInputInteractionDisabled,
+                          }"
                           class="user-input-option"
                         >
                           <n-checkbox :value="option.label">
@@ -1741,6 +1745,10 @@
                         <div
                           v-for="option in question.options"
                           :key="`${question.id}:${option.label}`"
+                          :class="{
+                            'is-selected': userInputSelections[question.id]?.includes(option.label),
+                            'is-disabled': isUserInputInteractionDisabled,
+                          }"
                           class="user-input-option"
                         >
                           <n-radio :value="option.label">
@@ -20892,6 +20900,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   padding-top: 2px;
 }
 
@@ -20909,12 +20918,17 @@ defineExpose({
 }
 
 .user-input-question-header {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  min-width: 0;
+  color: var(--app-text-primary, var(--app-text-color, #111827));
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .user-input-question-copy {
+  margin-top: -2px;
+  overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 1.5;
   color: var(--n-text-color-2);
@@ -20923,24 +20937,95 @@ defineExpose({
 .user-input-options {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
+  min-width: 0;
 }
 
 .user-input-option {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 88%, transparent);
+  border-radius: 8px;
+  background: color-mix(
+    in srgb,
+    var(--app-surface-raised, var(--app-surface-color, #fff)) 94%,
+    var(--app-surface-sunken, #f2f3f5)
+  );
+  color: var(--app-text-primary, var(--app-text-color, #111827));
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.user-input-option:hover:not(.is-disabled) {
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-approval-accent, var(--n-primary-color)) 54%,
+    var(--n-border-color)
+  );
+  background: color-mix(
+    in srgb,
+    var(--web-session-approval-bg, var(--app-accent-soft, rgba(59, 105, 169, 0.1))) 42%,
+    var(--app-surface-raised, var(--app-surface-color, #fff))
+  );
+}
+
+.user-input-option:focus-within {
+  outline: 2px solid
+    color-mix(in srgb, var(--web-session-approval-accent, var(--n-primary-color)) 54%, transparent);
+  outline-offset: 1px;
+}
+
+.user-input-option.is-selected {
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-approval-accent, var(--n-primary-color)) 68%,
+    var(--n-border-color)
+  );
+  background: color-mix(
+    in srgb,
+    var(--web-session-approval-bg, var(--app-accent-soft, rgba(59, 105, 169, 0.1))) 70%,
+    var(--app-surface-raised, var(--app-surface-color, #fff))
+  );
+  box-shadow: inset 3px 0 0 var(--web-session-approval-accent, var(--n-primary-color));
+}
+
+.user-input-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.user-input-option :deep(.n-radio),
+.user-input-option :deep(.n-checkbox) {
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.user-input-option :deep(.n-radio__label),
+.user-input-option :deep(.n-checkbox__label) {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .user-input-option-label {
+  color: var(--app-text-primary, var(--app-text-color, #111827));
+  font-size: 12px;
+  line-height: 1.45;
   font-weight: 600;
 }
 
 .user-input-option-description {
-  padding-left: 24px;
+  min-width: 0;
+  padding-left: 28px;
+  color: var(--n-text-color-2);
   font-size: 11px;
-  line-height: 1.45;
-  color: var(--n-text-color-3);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .history-option-list {
