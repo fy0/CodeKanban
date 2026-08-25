@@ -146,6 +146,10 @@ type WirePendingInput = {
   ra?: number | null;
   ps?: boolean;
   nq?: boolean;
+  st?: 'retrying' | 'persisting' | 'failed' | string;
+  ac?: number;
+  err?: string;
+  ec?: string;
   ca?: number | null;
 };
 
@@ -565,6 +569,10 @@ export interface WebSessionPendingInput {
   readyAt: number | null;
   paused: boolean;
   nativeQueued?: boolean;
+  status?: 'retrying' | 'persisting' | 'failed';
+  attemptCount?: number;
+  lastError?: string;
+  lastErrorCode?: string;
   createdAt: number;
 }
 
@@ -3052,6 +3060,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     readyAt?: string | number | null;
     paused?: boolean;
     nativeQueued?: boolean;
+    status?: 'retrying' | 'persisting' | 'failed' | string;
+    attemptCount?: number;
+    lastError?: string;
+    lastErrorCode?: string;
     createdAt?: string | number | null;
   }): WebSessionPendingInput | null {
     const id = typeof item.id === 'string' ? item.id.trim() : '';
@@ -3070,6 +3082,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
       typeof item.readyAt === 'number'
         ? item.readyAt
         : Date.parse(typeof item.readyAt === 'string' ? item.readyAt : '');
+    const status =
+      item.status === 'retrying' || item.status === 'persisting' || item.status === 'failed'
+        ? item.status
+        : '';
+    const attemptCount = Math.max(0, Math.trunc(Number(item.attemptCount ?? 0) || 0));
+    const lastError = typeof item.lastError === 'string' ? item.lastError.trim() : '';
+    const lastErrorCode = typeof item.lastErrorCode === 'string' ? item.lastErrorCode.trim() : '';
     return {
       id,
       mode,
@@ -3080,6 +3099,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       readyAt: Number.isFinite(parsedReadyAt) ? parsedReadyAt : null,
       paused: item.paused === true,
       ...(item.nativeQueued === true ? { nativeQueued: true } : {}),
+      ...(status ? { status } : {}),
+      ...(attemptCount > 0 ? { attemptCount } : {}),
+      ...(lastError ? { lastError } : {}),
+      ...(lastErrorCode ? { lastErrorCode } : {}),
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
     };
   }
@@ -5038,6 +5061,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
                     readyAt: item.ra,
                     paused: item.ps,
                     nativeQueued: item.nq,
+                    status: item.st,
+                    attemptCount: item.ac,
+                    lastError: item.err,
+                    lastErrorCode: item.ec,
                     createdAt: item.ca,
                   })
                 )
@@ -6195,7 +6222,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       {},
       {
         label: 'pending_clear',
-        predicate: () => getPendingInputs(sessionId).length === 0,
+        predicate: () =>
+          getPendingInputs(sessionId).every(
+            item => item.nativeQueued || item.status === 'persisting'
+          ),
       }
     );
   }

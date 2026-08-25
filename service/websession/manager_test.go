@@ -6507,6 +6507,85 @@ func TestPendingCodexRedirectWaitsForUserInput(t *testing.T) {
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
+func TestPendingCodexRedirectSteersWhenAnsweredTurnResumes(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "user_input_continue_steer")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	manager.pendingSteerDelay = 20 * time.Millisecond
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if manager.hasActiveRun(created.ID) {
+			_ = manager.AbortSession(created.ID)
+		}
+	})
+
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestUserInput)
+	if request == nil {
+		t.Fatal("expected pending user input request")
+	}
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"steer after the answer",
+		nil,
+		PendingInputModeRedirect,
+		"pending-after-answer",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode returned error: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if err := manager.respondToUserInput(created.ID, request.ItemID, map[string][]string{
+		"scope": {"full migration"},
+	}); err != nil {
+		t.Fatalf("respondToUserInput returned error: %v", err)
+	}
+	waitForFile(t, codexPath+".state.answer-received")
+	steerStatePath := codexPath + ".state.steer.json"
+	if _, err := os.Stat(steerStatePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected the response barrier to hold until root progress, stat error=%v", err)
+	}
+
+	if err := os.WriteFile(codexPath+".state.release-input-progress", []byte("1"), 0o644); err != nil {
+		t.Fatalf("release answered turn progress: %v", err)
+	}
+	waitForFile(t, steerStatePath)
+	waitForUserMessageCount(t, manager, created.ID, 2)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|steer after the answer" {
+		t.Fatalf("expected redirect in the resumed active turn, got %#v", got)
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected resumed turn redirect to clear, got %#v", pending)
+	}
+	if !manager.hasActiveRun(created.ID) {
+		t.Fatal("expected the answered root turn to remain active after steering")
+	}
+}
+
 func TestUserInputRequestProjectionPersistsSourceItemID(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -7141,6 +7220,20 @@ func TestPendingCodexRedirectRetriesFailedSteer(t *testing.T) {
 
 	steerAttemptsPath := codexPath + ".state.steer-attempts"
 	waitForFile(t, steerAttemptsPath)
+	retryDeadline := time.Now().Add(2 * time.Second)
+	for {
+		pending := manager.pendingInputsSnapshot(created.ID)
+		if len(pending) == 1 && pending[0].Status == PendingInputStatusRetrying {
+			if pending[0].AttemptCount != 1 || pending[0].LastError == "" || pending[0].ReadyAt == nil {
+				t.Fatalf("expected observable retry metadata, got %#v", pending[0])
+			}
+			break
+		}
+		if time.Now().After(retryDeadline) {
+			t.Fatalf("expected failed steer to enter retrying state, got %#v", pending)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	waitForFile(t, codexPath+".state.steer.json")
 	waitForUserMessageCount(t, manager, created.ID, 2)
 	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
@@ -7154,12 +7247,129 @@ func TestPendingCodexRedirectRetriesFailedSteer(t *testing.T) {
 	if strings.TrimSpace(string(steerAttempts)) != "2" {
 		t.Fatalf("expected one failed steer and one automatic retry, got %q", steerAttempts)
 	}
+	messageIDs, err := os.ReadFile(codexPath + ".state.steer-message-ids")
+	if err != nil {
+		t.Fatalf("read steer message ids: %v", err)
+	}
+	ids := strings.Fields(string(messageIDs))
+	if len(ids) != 2 || ids[0] == "" || ids[0] != ids[1] {
+		t.Fatalf("expected retries to reuse one client user message id, got %#v", ids)
+	}
 	rawEvents, err := manager.store.readEvents(created.ID)
 	if err != nil {
 		t.Fatalf("readEvents returned error: %v", err)
 	}
 	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|redirected after retry" {
 		t.Fatalf("expected retried redirect to persist exactly once, got %#v", got)
+	}
+
+	if err := os.WriteFile(codexPath+".state.release-steer", []byte("1"), 0o644); err != nil {
+		t.Fatalf("release steered turn: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
+func TestPendingCodexRedirectRetriesPersistenceWithoutRepeatingSteer(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "step_redirect")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	manager.pendingSteerDelay = 20 * time.Millisecond
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
+
+	eventState := manager.sessionEventState(created.ID)
+	eventState.mu.Lock()
+	eventState.closed = true
+	eventState.mu.Unlock()
+	t.Cleanup(func() {
+		eventState.mu.Lock()
+		eventState.closed = false
+		eventState.mu.Unlock()
+		if manager.hasActiveRun(created.ID) {
+			_ = manager.AbortSession(created.ID)
+		}
+	})
+
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"persist after temporary failure",
+		nil,
+		PendingInputModeRedirect,
+		"pending-persist-retry",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode returned error: %v", err)
+	}
+	waitForFile(t, codexPath+".state.steer.json")
+
+	persistDeadline := time.Now().Add(2 * time.Second)
+	for {
+		pending := manager.pendingInputsSnapshot(created.ID)
+		if len(pending) == 1 && pending[0].Status == PendingInputStatusPersisting {
+			if pending[0].codexSteerReceipt == nil || pending[0].LastErrorCode != "local_persistence" ||
+				pending[0].AttemptCount != 1 {
+				t.Fatalf("expected accepted steer persistence metadata, got %#v", pending[0])
+			}
+			break
+		}
+		if time.Now().After(persistDeadline) {
+			t.Fatalf("expected accepted steer to wait for local persistence, got %#v", pending)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	eventState.mu.Lock()
+	eventState.closed = false
+	eventState.mu.Unlock()
+	manager.mu.Lock()
+	queue := manager.pendingInputs[created.ID]
+	if len(queue) != 1 {
+		manager.mu.Unlock()
+		t.Fatalf("expected one pending persistence retry, got %#v", queue)
+	}
+	retryNow := time.Now()
+	queue[0].ReadyAt = &retryNow
+	manager.pendingInputs[created.ID] = queue
+	manager.mu.Unlock()
+	manager.cancelPendingInputTimer(created.ID)
+	manager.triggerPendingProcessing(created.ID)
+
+	waitForUserMessageCount(t, manager, created.ID, 2)
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected persistence retry to clear pending input, got %#v", pending)
+	}
+	steerAttempts, err := os.ReadFile(codexPath + ".state.steer-attempts")
+	if err != nil {
+		t.Fatalf("read steer attempts: %v", err)
+	}
+	if strings.TrimSpace(string(steerAttempts)) != "1" {
+		t.Fatalf("expected local persistence retry not to repeat turn/steer, got %q", steerAttempts)
+	}
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|persist after temporary failure" {
+		t.Fatalf("expected accepted steer to persist exactly once, got %#v", got)
 	}
 
 	if err := os.WriteFile(codexPath+".state.release-steer", []byte("1"), 0o644); err != nil {
@@ -10076,6 +10286,10 @@ rl.on('line', line => {
   if (message.method === 'turn/steer') {
     steerAttempts += 1;
     fs.writeFileSync(stateFile + '.steer-attempts', String(steerAttempts));
+    fs.appendFileSync(
+      stateFile + '.steer-message-ids',
+      String((message.params || {}).clientUserMessageId || '') + '\n'
+    );
     if (mode === 'step_redirect_retry' && steerAttempts === 1) {
       send({ id: message.id, error: { code: -32000, message: 'active turn is temporarily unavailable' } });
       return;
@@ -10346,7 +10560,11 @@ rl.on('line', line => {
       return;
     }
 
-    if (mode === 'user_input' || mode === 'user_input_linger') {
+    if (
+      mode === 'user_input' ||
+      mode === 'user_input_linger' ||
+      mode === 'user_input_continue_steer'
+    ) {
       awaiting = 'req_user_1';
       send({
         id: awaiting,
@@ -10451,6 +10669,27 @@ rl.on('line', line => {
     if (mode === 'user_input_linger') {
       awaiting = null;
       setTimeout(() => finishTurn('answered'), 250);
+      return;
+    }
+    if (mode === 'user_input_continue_steer') {
+      awaiting = null;
+      fs.writeFileSync(stateFile + '.answer-received', '1');
+      const progressTimer = setInterval(() => {
+        if (!fs.existsSync(stateFile + '.release-input-progress')) return;
+        clearInterval(progressTimer);
+        send({
+          method: 'item/started',
+          params: {
+            item: {
+              type: 'commandExecution',
+              id: 'cmd_after_answer',
+              command: 'continue-after-answer',
+            },
+            threadId,
+            turnId,
+          },
+        });
+      }, 10);
       return;
     }
     finishTurn(mode === 'user_input' ? 'answered' : 'approved');

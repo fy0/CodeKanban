@@ -8012,6 +8012,19 @@ func (r *activeRun) markUserInputResponsePending() {
 	r.mu.Unlock()
 }
 
+func (r *activeRun) releaseUserInputResponsePending() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.inputResponsePending {
+		return false
+	}
+	r.inputResponsePending = false
+	return true
+}
+
 func (r *activeRun) blocksCodexSteerForUserInput() bool {
 	if r == nil {
 		return false

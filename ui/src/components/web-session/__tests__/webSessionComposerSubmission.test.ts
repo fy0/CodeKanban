@@ -107,13 +107,14 @@ describe('web session composer submission', () => {
       'async function handleRemoveScheduledInput('
     );
 
-    expect(webSessionPanelSource).toContain(
-      'const localPendingInputs = computed(() => pendingInputs.value.filter(item => !item.nativeQueued))'
-    );
+    expect(webSessionPanelSource).toContain('const localPendingInputs = computed(() =>');
+    expect(webSessionPanelSource).toContain("!item.nativeQueued && item.status !== 'persisting'");
     expect(pendingTemplateSource).toContain('v-if="item.nativeQueued"');
     expect(pendingTemplateSource).toContain("t('webSession.pendingNativeQueued')");
     expect(pendingTemplateSource).toContain('v-else class="pending-input-popover-actions"');
-    expect(pendingTemplateSource).toContain('v-if="!item.nativeQueued"');
+    expect(pendingTemplateSource).toContain(
+      'v-if="!item.nativeQueued && item.status !== \'persisting\'"'
+    );
     expect(pendingHandlerSource).toContain('item.nativeQueued');
     expect(pendingHandlerSource).toContain('const currentItems = localPendingInputs.value;');
     expect(clearHandlerSource).toContain('localPendingInputs.value.length === 0');

@@ -19,11 +19,14 @@ var (
 	errInvalidPendingInputUpdate = errors.New("invalid pending input update")
 	errEmptyPendingInput         = errors.New("message is empty")
 	errPendingInputNotFound      = errors.New("pending input not found")
+	errPendingInputDelivered     = errors.New("pending input was already delivered")
 )
 
 const (
-	defaultPendingSteerDelay = 5 * time.Second
-	pendingSteerRetryDelay   = 500 * time.Millisecond
+	defaultPendingSteerDelay   = 5 * time.Second
+	pendingSteerRetryDelay     = 500 * time.Millisecond
+	maxPendingSteerRetryDelay  = 5 * time.Second
+	pendingSteerBlockedRecheck = 1 * time.Second
 )
 
 type pendingInputUpdate struct {
@@ -42,6 +45,28 @@ func normalizePendingInputMode(mode PendingInputMode) PendingInputMode {
 	}
 }
 
+func normalizePendingInputStatus(status PendingInputStatus) PendingInputStatus {
+	switch strings.ToLower(strings.TrimSpace(string(status))) {
+	case string(PendingInputStatusRetrying):
+		return PendingInputStatusRetrying
+	case string(PendingInputStatusPersisting):
+		return PendingInputStatusPersisting
+	case string(PendingInputStatusFailed):
+		return PendingInputStatusFailed
+	default:
+		return ""
+	}
+}
+
+func cloneCodexSteerReceipt(receipt *codexSteerReceipt) *codexSteerReceipt {
+	if receipt == nil {
+		return nil
+	}
+	cloned := *receipt
+	cloned.event.Payload = cloneMap(receipt.event.Payload)
+	return &cloned
+}
+
 func clonePendingInput(item PendingInput) PendingInput {
 	var readyAt *time.Time
 	if item.ReadyAt != nil {
@@ -49,14 +74,20 @@ func clonePendingInput(item PendingInput) PendingInput {
 		readyAt = &value
 	}
 	return PendingInput{
-		ID:            strings.TrimSpace(item.ID),
-		Mode:          normalizePendingInputMode(item.Mode),
-		Text:          item.Text,
-		AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
-		ReadyAt:       readyAt,
-		Paused:        item.Paused,
-		NativeQueued:  item.NativeQueued,
-		CreatedAt:     item.CreatedAt,
+		ID:                strings.TrimSpace(item.ID),
+		Mode:              normalizePendingInputMode(item.Mode),
+		Text:              item.Text,
+		AttachmentIDs:     append([]string(nil), item.AttachmentIDs...),
+		ReadyAt:           readyAt,
+		Paused:            item.Paused,
+		NativeQueued:      item.NativeQueued,
+		Status:            normalizePendingInputStatus(item.Status),
+		AttemptCount:      item.AttemptCount,
+		LastError:         strings.TrimSpace(item.LastError),
+		LastErrorCode:     strings.TrimSpace(item.LastErrorCode),
+		CreatedAt:         item.CreatedAt,
+		codexMessageID:    strings.TrimSpace(item.codexMessageID),
+		codexSteerReceipt: cloneCodexSteerReceipt(item.codexSteerReceipt),
 	}
 }
 
@@ -69,6 +100,69 @@ func clonePendingInputs(items []PendingInput) []PendingInput {
 		cloned = append(cloned, clonePendingInput(item))
 	}
 	return cloned
+}
+
+func resetPendingInputDelivery(item *PendingInput) {
+	if item == nil {
+		return
+	}
+	item.Status = ""
+	item.AttemptCount = 0
+	item.LastError = ""
+	item.LastErrorCode = ""
+	item.codexMessageID = ""
+	item.codexSteerReceipt = nil
+}
+
+func pendingSteerRetryDelayForAttempt(attempt int) time.Duration {
+	delay := pendingSteerRetryDelay
+	for current := 1; current < attempt && delay < maxPendingSteerRetryDelay; current++ {
+		delay *= 2
+	}
+	if delay > maxPendingSteerRetryDelay {
+		return maxPendingSteerRetryDelay
+	}
+	return delay
+}
+
+func pendingInputRetry(
+	item PendingInput,
+	status PendingInputStatus,
+	errorCode string,
+	err error,
+) PendingInput {
+	item.Status = normalizePendingInputStatus(status)
+	item.AttemptCount++
+	item.LastErrorCode = strings.TrimSpace(errorCode)
+	item.LastError = ""
+	if err != nil {
+		item.LastError = strings.TrimSpace(err.Error())
+	}
+	item.Paused = false
+	readyAt := time.Now().Add(pendingSteerRetryDelayForAttempt(item.AttemptCount))
+	item.ReadyAt = &readyAt
+	return item
+}
+
+func failedPendingInput(item PendingInput, errorCode string, err error) PendingInput {
+	item.Status = PendingInputStatusFailed
+	item.AttemptCount++
+	item.LastErrorCode = strings.TrimSpace(errorCode)
+	item.LastError = ""
+	if err != nil {
+		item.LastError = strings.TrimSpace(err.Error())
+	}
+	item.Paused = true
+	item.ReadyAt = nil
+	return item
+}
+
+func pendingInputDeliveryLocked(item PendingInput) bool {
+	return item.codexSteerReceipt != nil || item.Status == PendingInputStatusPersisting
+}
+
+func shouldLogPendingInputAttempt(attempt int) bool {
+	return attempt <= 1 || attempt&(attempt-1) == 0
 }
 
 func sanitizePendingAttachmentIDs(attachmentIDs []string) []string {
@@ -331,6 +425,10 @@ func (m *Manager) removePendingInput(sessionID, pendingID string) bool {
 	removed := false
 	for _, item := range queue {
 		if !removed && item.ID == normalizedPendingID {
+			if pendingInputDeliveryLocked(item) {
+				m.mu.Unlock()
+				return false
+			}
 			removed = true
 			continue
 		}
@@ -466,13 +564,24 @@ func (m *Manager) updatePendingInput(
 		if item.ID != normalizedPendingID {
 			continue
 		}
+		if pendingInputDeliveryLocked(item) {
+			m.mu.Unlock()
+			return PendingInput{}, errPendingInputDelivered
+		}
 		if update.Text != nil {
 			item.Text = normalizedText
+			resetPendingInputDelivery(&item)
 		}
 		if update.Paused != nil && *update.Paused {
 			item.Paused = true
 			item.ReadyAt = nil
 		} else if update.Text != nil || update.Paused != nil {
+			if update.Text == nil {
+				item.Status = ""
+				item.AttemptCount = 0
+				item.LastError = ""
+				item.LastErrorCode = ""
+			}
 			item.Paused = false
 			item.ReadyAt = nil
 			if item.Mode == PendingInputModeRedirect && usesCodexSteer {
@@ -505,6 +614,10 @@ func (m *Manager) reorderPendingInput(sessionID, pendingID string, mode PendingI
 	m.mu.RLock()
 	for _, item := range m.pendingInputs[sessionID] {
 		if item.ID == normalizedPendingID {
+			if pendingInputDeliveryLocked(item) {
+				m.mu.RUnlock()
+				return errPendingInputDelivered
+			}
 			previousMode = item.Mode
 			break
 		}
@@ -544,6 +657,7 @@ func (m *Manager) reorderPendingInput(sessionID, pendingID string, mode PendingI
 			if next[itemIndex].ID != normalizedPendingID {
 				continue
 			}
+			resetPendingInputDelivery(&next[itemIndex])
 			next[itemIndex].Paused = false
 			next[itemIndex].ReadyAt = nil
 			if readyAt != nil {
@@ -561,14 +675,29 @@ func (m *Manager) reorderPendingInput(sessionID, pendingID string, mode PendingI
 
 func (m *Manager) clearPendingInputsForSession(sessionID string) bool {
 	m.mu.Lock()
-	if len(m.pendingInputs[sessionID]) == 0 {
+	queue := m.pendingInputs[sessionID]
+	if len(queue) == 0 {
 		m.mu.Unlock()
 		m.cancelPendingInputTimer(sessionID)
 		return false
 	}
-	delete(m.pendingInputs, sessionID)
+	retained := make([]PendingInput, 0, len(queue))
+	for _, item := range queue {
+		if pendingInputDeliveryLocked(item) {
+			retained = append(retained, item)
+		}
+	}
+	removed := len(retained) != len(queue)
+	if len(retained) == 0 {
+		delete(m.pendingInputs, sessionID)
+	} else {
+		m.pendingInputs[sessionID] = retained
+	}
 	delete(m.pendingDirty, sessionID)
 	m.mu.Unlock()
+	if !removed {
+		return false
+	}
 	m.cancelPendingInputTimer(sessionID)
 	m.broadcastPendingInputs(sessionID)
 	m.triggerPendingProcessing(sessionID)
@@ -813,6 +942,38 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			m.clearPendingInputs(sessionID)
 			return
 		}
+		if next.codexSteerReceipt != nil {
+			persistInput, claimed := m.claimPendingInput(sessionID, next.ID, next.Mode, time.Now())
+			if !claimed {
+				continue
+			}
+			m.cancelPendingInputTimer(sessionID)
+			m.broadcastPendingInputs(sessionID)
+			persistErr := m.persistCodexSteerReceipt(ctx, record, persistInput.codexSteerReceipt)
+			if persistErr == nil {
+				continue
+			}
+			persistInput = pendingInputRetry(
+				persistInput,
+				PendingInputStatusPersisting,
+				"local_persistence",
+				persistErr,
+			)
+			m.prependPendingInput(sessionID, persistInput)
+			m.broadcastPendingInputs(sessionID)
+			m.setPendingInputTimer(sessionID, *persistInput.ReadyAt)
+			if m.logger != nil && shouldLogPendingInputAttempt(persistInput.AttemptCount) {
+				m.logger.Error("failed to persist accepted Codex steer message",
+					zap.String("sessionId", sessionID),
+					zap.String("pendingId", persistInput.ID),
+					zap.String("turnId", persistInput.codexSteerReceipt.turnID),
+					zap.Int("attempt", persistInput.AttemptCount),
+					zap.Time("retryAt", *persistInput.ReadyAt),
+					zap.Error(persistErr),
+				)
+			}
+			return
+		}
 
 		if m.hasActiveRun(sessionID) {
 			m.mu.RLock()
@@ -847,6 +1008,7 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 				return
 			}
 			if run != nil && run.blocksCodexSteerForUserInput() {
+				m.setPendingInputTimer(sessionID, time.Now().Add(pendingSteerBlockedRecheck))
 				return
 			}
 			if next.ReadyAt == nil {
@@ -866,16 +1028,71 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			}
 			m.cancelPendingInputTimer(sessionID)
 			m.broadcastPendingInputs(sessionID)
-			handled, steerErr := m.steerActiveCodexTurn(ctx, record, steerInput.Text, steerInput.AttachmentIDs)
-			if steerErr != nil || !handled {
+			if strings.TrimSpace(steerInput.codexMessageID) == "" {
+				steerInput.codexMessageID = utils.NewID()
+			}
+			handled, receipt, steerErr := m.steerActiveCodexTurn(
+				ctx,
+				record,
+				steerInput.Text,
+				steerInput.AttachmentIDs,
+				steerInput.codexMessageID,
+			)
+			if steerErr != nil || !handled || receipt == nil {
+				if steerErr == nil {
+					steerErr = errors.New("active Codex turn is not currently steerable")
+				}
+				errorCode, retryable := codexSteerErrorMetadata(steerErr)
+				if retryable || !handled {
+					steerInput = pendingInputRetry(
+						steerInput,
+						PendingInputStatusRetrying,
+						errorCode,
+						steerErr,
+					)
+				} else {
+					steerInput = failedPendingInput(steerInput, errorCode, steerErr)
+				}
 				m.prependPendingInput(sessionID, steerInput)
 				m.broadcastPendingInputs(sessionID)
-				m.setPendingInputTimer(sessionID, time.Now().Add(pendingSteerRetryDelay))
-				if steerErr != nil && m.logger != nil {
-					m.logger.Debug("failed to steer pending Codex redirect",
+				if !steerInput.Paused && steerInput.ReadyAt != nil {
+					m.setPendingInputTimer(sessionID, *steerInput.ReadyAt)
+				}
+				if m.logger != nil && (steerInput.Paused || shouldLogPendingInputAttempt(steerInput.AttemptCount)) {
+					m.logger.Warn("failed to steer pending Codex redirect",
 						zap.String("sessionId", sessionID),
 						zap.String("pendingId", steerInput.ID),
+						zap.String("errorCode", steerInput.LastErrorCode),
+						zap.Int("attempt", steerInput.AttemptCount),
+						zap.Bool("retrying", !steerInput.Paused),
 						zap.Error(steerErr),
+					)
+				}
+				return
+			}
+			steerInput.codexSteerReceipt = receipt
+			steerInput.Status = PendingInputStatusPersisting
+			steerInput.AttemptCount = 0
+			steerInput.LastError = ""
+			steerInput.LastErrorCode = ""
+			if persistErr := m.persistCodexSteerReceipt(ctx, record, receipt); persistErr != nil {
+				steerInput = pendingInputRetry(
+					steerInput,
+					PendingInputStatusPersisting,
+					"local_persistence",
+					persistErr,
+				)
+				m.prependPendingInput(sessionID, steerInput)
+				m.broadcastPendingInputs(sessionID)
+				m.setPendingInputTimer(sessionID, *steerInput.ReadyAt)
+				if m.logger != nil && shouldLogPendingInputAttempt(steerInput.AttemptCount) {
+					m.logger.Error("failed to persist accepted Codex steer message",
+						zap.String("sessionId", sessionID),
+						zap.String("pendingId", steerInput.ID),
+						zap.String("turnId", receipt.turnID),
+						zap.Int("attempt", steerInput.AttemptCount),
+						zap.Time("retryAt", *steerInput.ReadyAt),
+						zap.Error(persistErr),
 					)
 				}
 				return

@@ -207,6 +207,14 @@ const (
 	PendingInputModeQueue    PendingInputMode = "queue"
 )
 
+type PendingInputStatus string
+
+const (
+	PendingInputStatusRetrying   PendingInputStatus = "retrying"
+	PendingInputStatusPersisting PendingInputStatus = "persisting"
+	PendingInputStatusFailed     PendingInputStatus = "failed"
+)
+
 type ScheduledInputMode string
 
 const (
@@ -448,14 +456,21 @@ type HistoryWindow struct {
 }
 
 type PendingInput struct {
-	ID            string           `json:"id"`
-	Mode          PendingInputMode `json:"mode"`
-	Text          string           `json:"text"`
-	AttachmentIDs []string         `json:"attachmentIds"`
-	ReadyAt       *time.Time       `json:"readyAt,omitempty"`
-	Paused        bool             `json:"paused,omitempty"`
-	NativeQueued  bool             `json:"nativeQueued,omitempty"`
-	CreatedAt     time.Time        `json:"createdAt"`
+	ID            string             `json:"id"`
+	Mode          PendingInputMode   `json:"mode"`
+	Text          string             `json:"text"`
+	AttachmentIDs []string           `json:"attachmentIds"`
+	ReadyAt       *time.Time         `json:"readyAt,omitempty"`
+	Paused        bool               `json:"paused,omitempty"`
+	NativeQueued  bool               `json:"nativeQueued,omitempty"`
+	Status        PendingInputStatus `json:"status,omitempty"`
+	AttemptCount  int                `json:"attemptCount,omitempty"`
+	LastError     string             `json:"lastError,omitempty"`
+	LastErrorCode string             `json:"lastErrorCode,omitempty"`
+	CreatedAt     time.Time          `json:"createdAt"`
+
+	codexMessageID    string
+	codexSteerReceipt *codexSteerReceipt
 }
 
 type ScheduledInput struct {

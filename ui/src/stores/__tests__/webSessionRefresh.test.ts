@@ -908,6 +908,10 @@ describe('webSession loading behavior', () => {
           attachmentIds: ['attachment-1'],
           readyAt: '2026-04-09T10:01:05.000Z',
           paused: true,
+          status: 'failed',
+          attemptCount: 2,
+          lastError: 'active turn cannot be steered',
+          lastErrorCode: 'activeTurnNotSteerable',
           createdAt: '2026-04-09T10:01:00.000Z',
         },
         {
@@ -933,6 +937,10 @@ describe('webSession loading behavior', () => {
         attachmentIds: ['attachment-1'],
         readyAt: Date.parse('2026-04-09T10:01:05.000Z'),
         paused: true,
+        status: 'failed',
+        attemptCount: 2,
+        lastError: 'active turn cannot be steered',
+        lastErrorCode: 'activeTurnNotSteerable',
         createdAt: Date.parse('2026-04-09T10:01:00.000Z'),
       },
       {

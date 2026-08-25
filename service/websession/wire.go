@@ -263,6 +263,10 @@ type wirePendingInput struct {
 	ReadyAt       *int64   `json:"ra,omitempty"`
 	Paused        bool     `json:"ps,omitempty"`
 	NativeQueued  bool     `json:"nq,omitempty"`
+	Status        string   `json:"st,omitempty"`
+	AttemptCount  int      `json:"ac,omitempty"`
+	LastError     string   `json:"err,omitempty"`
+	LastErrorCode string   `json:"ec,omitempty"`
 	CreatedAt     int64    `json:"ca"`
 }
 
@@ -610,6 +614,10 @@ func mapWirePendingInputs(items []PendingInput) []wirePendingInput {
 			ReadyAt:       readyAt,
 			Paused:        item.Paused,
 			NativeQueued:  item.NativeQueued,
+			Status:        string(item.Status),
+			AttemptCount:  item.AttemptCount,
+			LastError:     item.LastError,
+			LastErrorCode: item.LastErrorCode,
 			CreatedAt:     item.CreatedAt.UnixMilli(),
 		})
 	}

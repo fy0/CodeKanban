@@ -2368,7 +2368,10 @@
                           <span
                             v-if="pendingInputTimingLabel(item)"
                             class="pending-input-timing"
-                            :class="{ 'is-paused': item.paused }"
+                            :class="{
+                              'is-paused': item.paused,
+                              'is-error': Boolean(item.lastError),
+                            }"
                           >
                             {{ pendingInputTimingLabel(item) }}
                           </span>
@@ -2392,7 +2395,10 @@
                           <span
                             v-if="pendingInputTimingLabel(item)"
                             class="pending-input-timing"
-                            :class="{ 'is-paused': item.paused }"
+                            :class="{
+                              'is-paused': item.paused,
+                              'is-error': Boolean(item.lastError),
+                            }"
                           >
                             {{ pendingInputTimingLabel(item) }}
                           </span>
@@ -2442,8 +2448,23 @@
                           <div class="pending-input-popover-text">
                             {{ pendingInputPreview(item) }}
                           </div>
+                          <div v-if="item.lastError" class="pending-input-error">
+                            <span>{{ item.lastError }}</span>
+                            <small v-if="item.attemptCount">
+                              {{
+                                t('webSession.pendingSteerAttempts', { count: item.attemptCount })
+                              }}
+                            </small>
+                            <code v-if="item.lastErrorCode">{{ item.lastErrorCode }}</code>
+                          </div>
                           <div v-if="item.nativeQueued" class="pending-input-native-status">
                             {{ t('webSession.pendingNativeQueued') }}
+                          </div>
+                          <div
+                            v-else-if="item.status === 'persisting'"
+                            class="pending-input-native-status"
+                          >
+                            {{ t('webSession.pendingSteerPersisting') }}
                           </div>
                           <div v-else class="pending-input-popover-actions">
                             <button
@@ -2499,7 +2520,7 @@
                       </div>
                     </n-popover>
                     <button
-                      v-if="!item.nativeQueued"
+                      v-if="!item.nativeQueued && item.status !== 'persisting'"
                       type="button"
                       class="pending-input-remove"
                       :disabled="pendingEditActionId === item.id"
@@ -5275,9 +5296,7 @@ const currentSessionAutoRetryDispatchPendingOnFailure = computed(() =>
 );
 
 const canConfigureActiveCallTimeout = computed(() => currentSession.value?.agent === 'codex');
-const canForceTerminateCodexAppServer = computed(
-  () => currentRealSession.value?.agent === 'codex'
-);
+const canForceTerminateCodexAppServer = computed(() => currentRealSession.value?.agent === 'codex');
 const forceTerminateAppServerLoading = ref(false);
 const currentSessionActiveCallTimeoutEnabled = computed(() => {
   const session = currentSession.value;
@@ -7582,7 +7601,9 @@ function openDraftAttachmentPreview(
 const pendingInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingInputs(currentRealSession.value.id) : []
 );
-const localPendingInputs = computed(() => pendingInputs.value.filter(item => !item.nativeQueued));
+const localPendingInputs = computed(() =>
+  pendingInputs.value.filter(item => !item.nativeQueued && item.status !== 'persisting')
+);
 const pendingInputEditorAutosize = { minRows: 2, maxRows: 3 };
 const pendingInputPopoverId = ref('');
 const pendingEditingId = ref('');
@@ -14722,13 +14743,29 @@ function pendingInputPreview(item: WebSessionPendingInput) {
 }
 
 function pendingInputTimingLabel(item: WebSessionPendingInput) {
+  const remainingSeconds =
+    item.readyAt == null
+      ? 0
+      : Math.max(0, Math.ceil((item.readyAt - liveStateClockMs.value) / 1000));
+  if (item.status === 'failed') {
+    return t('webSession.pendingSteerFailed');
+  }
+  if (item.status === 'persisting') {
+    return remainingSeconds > 0
+      ? t('webSession.pendingSteerPersistRetryCountdown', { seconds: remainingSeconds })
+      : t('webSession.pendingSteerPersisting');
+  }
+  if (item.status === 'retrying') {
+    return remainingSeconds > 0
+      ? t('webSession.pendingSteerRetryCountdown', { seconds: remainingSeconds })
+      : t('webSession.pendingSteerRetrying');
+  }
   if (item.paused) {
     return t('webSession.pendingPaused');
   }
   if (item.mode !== 'redirect' || item.readyAt == null) {
     return '';
   }
-  const remainingSeconds = Math.max(0, Math.ceil((item.readyAt - liveStateClockMs.value) / 1000));
   return remainingSeconds > 0
     ? t('webSession.pendingSteerCountdown', { seconds: remainingSeconds })
     : t('webSession.pendingSteering');
@@ -14819,7 +14856,7 @@ watch([pendingEditingId, pendingEditText], () => {
 
 async function startPendingEdit(item: WebSessionPendingInput) {
   const session = currentRealSession.value;
-  if (!session || item.nativeQueued || pendingEditActionId.value) {
+  if (!session || item.nativeQueued || item.status === 'persisting' || pendingEditActionId.value) {
     return;
   }
   pendingEditActionId.value = item.id;
@@ -14917,7 +14954,7 @@ async function handleMovePendingInput(
   mode: WebSessionPendingInput['mode'],
   index: number
 ) {
-  if (!currentRealSession.value || item.nativeQueued) {
+  if (!currentRealSession.value || item.nativeQueued || item.status === 'persisting') {
     return;
   }
   try {
@@ -14946,7 +14983,7 @@ async function handleMovePendingInputToAbsoluteIndex(
 }
 
 async function handleTogglePendingPriority(item: WebSessionPendingInput) {
-  if (!currentRealSession.value || item.nativeQueued) {
+  if (!currentRealSession.value || item.nativeQueued || item.status === 'persisting') {
     return;
   }
   const targetMode = item.mode === 'redirect' ? 'queue' : 'redirect';
@@ -15120,7 +15157,12 @@ function handleDispatchScheduledInputNow(item: WebSessionScheduledInput) {
 
 async function handleRemovePendingInput(pendingId: string) {
   const session = currentRealSession.value;
-  if (!session || pendingInputs.value.some(item => item.id === pendingId && item.nativeQueued)) {
+  if (
+    !session ||
+    pendingInputs.value.some(
+      item => item.id === pendingId && (item.nativeQueued || item.status === 'persisting')
+    )
+  ) {
     return;
   }
   try {
@@ -22560,6 +22602,24 @@ defineExpose({
   color: var(--n-text-color-3);
 }
 
+.pending-input-error {
+  display: grid;
+  gap: 3px;
+  padding: 6px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--app-error, #ef4444) 8%, transparent);
+  color: var(--app-error, #b91c1c);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.pending-input-error small,
+.pending-input-error code {
+  color: var(--n-text-color-3);
+  font-size: 10px;
+}
+
 .pending-input-position,
 .pending-input-attachments {
   font-size: 11px;
@@ -22576,6 +22636,10 @@ defineExpose({
 
 .pending-input-timing.is-paused {
   color: var(--n-warning-color);
+}
+
+.pending-input-timing.is-error {
+  color: var(--app-error, #b91c1c);
 }
 
 .pending-input-action,

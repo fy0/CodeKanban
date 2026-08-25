@@ -95,6 +95,17 @@ func TestRequestCodexThreadAfterActiveWriter(t *testing.T) {
 	})
 }
 
+func TestCodexSteerErrorMetadataRetriesActiveTurnNotSteerable(t *testing.T) {
+	code, retryable := codexSteerErrorMetadata(&codexAppServerErr{
+		Code:    -32600,
+		Message: "invalid request",
+		Data:    json.RawMessage(`{"activeTurnNotSteerable":{"turnKind":"review"}}`),
+	})
+	if code != "activeTurnNotSteerable" || !retryable {
+		t.Fatalf("codexSteerErrorMetadata returned code=%q retryable=%v", code, retryable)
+	}
+}
+
 func TestCodexErrorInfoSupportsRolloutAndAppServerShapes(t *testing.T) {
 	tests := []struct {
 		name   string

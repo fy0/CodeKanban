@@ -277,6 +277,10 @@ export type WebSessionPendingInputRecord = {
   readyAt?: string | number | null;
   paused?: boolean;
   nativeQueued?: boolean;
+  status?: 'retrying' | 'persisting' | 'failed' | string;
+  attemptCount?: number;
+  lastError?: string;
+  lastErrorCode?: string;
   createdAt?: string | number | null;
 };
 

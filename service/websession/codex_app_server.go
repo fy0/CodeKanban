@@ -46,6 +46,11 @@ type codexAppServerRequestTimeoutError struct {
 	Detail  string
 }
 
+type codexSteerReceipt struct {
+	event  Event
+	turnID string
+}
+
 func (e *codexAppServerRequestTimeoutError) Error() string {
 	if e == nil {
 		return "codex app-server request timed out"
@@ -1183,7 +1188,11 @@ func (m *Manager) handleCodexAppServerMessage(
 	threadID := codexNotificationThreadID(message.Params)
 	turnID := codexNotificationTurnID(message.Params)
 	isRootEvent := rootScope.contains(message.Params)
-	switch strings.TrimSpace(message.Method) {
+	method := strings.TrimSpace(message.Method)
+	if isRootEvent && method != "" && run.releaseUserInputResponsePending() {
+		defer m.triggerPendingProcessing(session.ID)
+	}
+	switch method {
 	case "":
 		return codexTurnOutcomeNone, nil
 	case "thread/started":
@@ -1425,33 +1434,110 @@ func codexSubAgentErrorPayload(message string) map[string]any {
 	}
 }
 
+func codexSteerDataHasKey(value any, target string) bool {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, nested := range value {
+			if strings.EqualFold(strings.TrimSpace(key), target) || codexSteerDataHasKey(nested, target) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range value {
+			if codexSteerDataHasKey(nested, target) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func codexSteerErrorMetadata(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	var appErr *codexAppServerErr
+	if errors.As(err, &appErr) {
+		code := ""
+		activeTurnNotSteerable := false
+		if len(appErr.Data) > 0 {
+			var data any
+			if json.Unmarshal(appErr.Data, &data) == nil {
+				activeTurnNotSteerable = codexSteerDataHasKey(data, "activeTurnNotSteerable")
+				switch value := data.(type) {
+				case string:
+					code = strings.TrimSpace(value)
+				case map[string]any:
+					code = strings.TrimSpace(firstNonEmpty(
+						stringValue(value["code"]),
+						stringValue(value["errorCode"]),
+						stringValue(value["type"]),
+						stringValue(value["reason"]),
+					))
+				}
+			}
+		}
+		if activeTurnNotSteerable || strings.EqualFold(code, "activeTurnNotSteerable") {
+			return "activeTurnNotSteerable", true
+		}
+		if code == "" {
+			code = fmt.Sprintf("rpc_%d", appErr.Code)
+		}
+		switch appErr.Code {
+		case -32600, -32601, -32602:
+			return code, false
+		default:
+			return code, true
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "request_timeout", true
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	for _, fragment := range []string{
+		"activeturnnotsteerable",
+		"active turn",
+		"not ready to steer",
+		"temporarily unavailable",
+		"server overloaded",
+		"closed while waiting",
+		"retry later",
+	} {
+		if strings.Contains(message, fragment) {
+			return "turn_not_steerable", true
+		}
+	}
+	return "steer_failed", false
+}
+
 func (m *Manager) steerActiveCodexTurn(
 	ctx context.Context,
 	session tables.WebSessionTable,
 	text string,
 	attachmentIDs []string,
-) (bool, error) {
+	messageID string,
+) (bool, *codexSteerReceipt, error) {
 	m.mu.RLock()
 	run := m.runs[session.ID]
 	m.mu.RUnlock()
 	if run == nil || normalizeAgent(run.agent) != AgentCodex || run.backend != SessionBackendCodexAppServer {
-		return false, nil
+		return false, nil, nil
 	}
 	if run.blocksCodexSteerForUserInput() {
-		return false, nil
+		return false, nil, nil
 	}
 
 	attachments := make([]Attachment, 0, len(attachmentIDs))
 	for _, attachmentID := range attachmentIDs {
 		attachment, err := m.loadAttachment(strings.TrimSpace(attachmentID))
 		if err != nil {
-			return true, fmt.Errorf("attachment %s not found", attachmentID)
+			return true, nil, fmt.Errorf("attachment %s not found", attachmentID)
 		}
 		attachments = append(attachments, attachment)
 	}
 	text = strings.TrimSpace(text)
 	if text == "" && len(attachments) == 0 {
-		return true, fmt.Errorf("message is empty")
+		return true, nil, fmt.Errorf("message is empty")
 	}
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -1464,7 +1550,7 @@ func (m *Manager) steerActiveCodexTurn(
 	var turnID string
 	for client == nil || threadID == "" || turnID == "" {
 		if run.blocksCodexSteerForUserInput() {
-			return false, nil
+			return false, nil, nil
 		}
 		client, threadID, turnID = run.codexSteerTarget()
 		if client != nil && threadID != "" && turnID != "" {
@@ -1472,19 +1558,22 @@ func (m *Manager) steerActiveCodexTurn(
 		}
 		select {
 		case <-ctx.Done():
-			return true, ctx.Err()
+			return true, nil, ctx.Err()
 		case <-run.done:
-			return false, nil
+			return false, nil, nil
 		case <-timer.C:
-			return true, fmt.Errorf("active Codex turn is not ready to steer")
+			return true, nil, fmt.Errorf("active Codex turn is not ready to steer")
 		case <-ticker.C:
 		}
 	}
 	if run.blocksCodexSteerForUserInput() {
-		return false, nil
+		return false, nil, nil
 	}
 
-	messageID := utils.NewID()
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		messageID = utils.NewID()
+	}
 	response, err := client.request(ctx, "turn/steer", map[string]any{
 		"threadId":            threadID,
 		"expectedTurnId":      turnID,
@@ -1492,33 +1581,50 @@ func (m *Manager) steerActiveCodexTurn(
 		"clientUserMessageId": messageID,
 	})
 	if err != nil {
-		return true, err
+		return true, nil, err
 	}
 	responseTurnID := strings.TrimSpace(stringValue(decodeRawObject(response.Result)["turnId"]))
+	acceptedTurnID := firstNonEmpty(responseTurnID, turnID)
 	if responseTurnID != "" && responseTurnID != turnID {
-		return true, fmt.Errorf("Codex steered unexpected turn %s", responseTurnID)
+		if m.logger != nil {
+			m.logger.Warn("Codex accepted steer on a different turn",
+				zap.String("sessionId", session.ID),
+				zap.String("expectedTurnId", turnID),
+				zap.String("acceptedTurnId", responseTurnID),
+			)
+		}
 	}
 
-	if _, err := m.appendAndBroadcast(context.Background(), session.ID, session, Event{
-		ID:        utils.NewID(),
-		Type:      "msg_u",
-		RunID:     run.runID,
-		ParentID:  messageID,
-		Timestamp: time.Now(),
-		Payload: map[string]any{
-			"mid":  messageID,
-			"txt":  text,
-			"atts": attachmentPayloads(attachments),
+	receipt := &codexSteerReceipt{
+		turnID: acceptedTurnID,
+		event: Event{
+			ID:        utils.NewID(),
+			Type:      "msg_u",
+			RunID:     run.runID,
+			ParentID:  messageID,
+			ThreadID:  threadID,
+			TurnID:    acceptedTurnID,
+			Timestamp: time.Now(),
+			Payload: map[string]any{
+				"mid":  messageID,
+				"txt":  text,
+				"atts": attachmentPayloads(attachments),
+			},
 		},
-	}); err != nil && m.logger != nil {
-		m.logger.Error("failed to persist Codex steer message",
-			zap.String("sessionId", session.ID),
-			zap.String("turnId", turnID),
-			zap.Error(err),
-		)
 	}
-	m.broadcastPendingInputs(session.ID)
-	return true, nil
+	return true, receipt, nil
+}
+
+func (m *Manager) persistCodexSteerReceipt(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	receipt *codexSteerReceipt,
+) error {
+	if receipt == nil || strings.TrimSpace(receipt.event.ID) == "" {
+		return fmt.Errorf("Codex steer receipt is unavailable")
+	}
+	_, err := m.appendAndBroadcast(ctx, session.ID, session, receipt.event)
+	return err
 }
 
 func classifyCodexTransportRetryMessage(message string) (codexTransportRetryInfo, bool) {
