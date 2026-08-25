@@ -3,6 +3,7 @@ package websession
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -80,66 +81,100 @@ func TestPersistedEventProjectionRollsBackHistoryWhenCursorUpdateFails(t *testin
 	assertProjectionState(1, 1)
 }
 
-func TestNewManagerRecoversPersistedEventProjectionOnce(t *testing.T) {
+func TestNewManagerDoesNotReplayPersistedEventProjection(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
 	project := seedProject(t)
-	session := seedWebSession(t, project.ID, "Projection recovery", 1000)
+	session := seedWebSession(t, project.ID, "Projection replay skipped", 1000)
 	dataDir := t.TempDir()
 	eventStore, err := newStore(dataDir)
 	if err != nil {
 		t.Fatalf("newStore returned error: %v", err)
 	}
 	observedAt := time.Date(2026, 7, 30, 8, 0, 0, 0, time.UTC)
-	events := []Event{
-		{ID: "evt-note", Seq: 1, Type: "note", Timestamp: observedAt, Payload: map[string]any{"txt": "persisted note"}},
-		{ID: "evt-delta", Seq: 3, Type: "txt_d", ParentID: "message-1", Timestamp: observedAt.Add(time.Second), Payload: map[string]any{"mid": "message-1", "txt": "recovered text"}},
-		{ID: "evt-agent", Seq: 4, Type: "sub_agent_state", ThreadID: "thread-child", Timestamp: observedAt.Add(2 * time.Second), Payload: map[string]any{"threadId": "thread-child", "status": "completed"}},
+	if err := eventStore.appendEvent(session.ID, Event{
+		ID: "evt-note", Seq: 1, Type: "note", Timestamp: observedAt,
+		Payload: map[string]any{"txt": "persisted but not projected"},
+	}); err != nil {
+		t.Fatalf("append event: %v", err)
 	}
-	for _, event := range events {
-		if err := eventStore.appendEvent(session.ID, event); err != nil {
-			t.Fatalf("append event %d: %v", event.Seq, err)
-		}
+	corruptSession := seedWebSession(t, project.ID, "Unreadable history is ignored", 2000)
+	if err := eventStore.ensureSessionDir(corruptSession.ID); err != nil {
+		t.Fatalf("ensure corrupt session directory: %v", err)
+	}
+	if err := os.WriteFile(eventStore.historyPath(corruptSession.ID), []byte(`{"id":"incomplete"}`), 0o600); err != nil {
+		t.Fatalf("write incomplete history tail: %v", err)
 	}
 
 	manager, err := NewManager(Config{DataDir: dataDir}, zap.NewNop())
 	if err != nil {
-		t.Fatalf("NewManager recovery returned error: %v", err)
+		t.Fatalf("NewManager returned error: %v", err)
 	}
-	assertRecoveredProjection(t, manager, session.ID)
-
-	restarted, err := NewManager(Config{DataDir: dataDir}, zap.NewNop())
-	if err != nil {
-		t.Fatalf("second NewManager returned error: %v", err)
-	}
-	assertRecoveredProjection(t, restarted, session.ID)
-}
-
-func assertRecoveredProjection(t *testing.T, manager *Manager, sessionID string) {
-	t.Helper()
-	record, err := manager.GetSession(context.Background(), sessionID)
+	record, err := manager.GetSession(context.Background(), session.ID)
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if record.LastEventSeq != 4 {
-		t.Fatalf("last event sequence = %d, want 4", record.LastEventSeq)
+	if record.LastEventSeq != 0 {
+		t.Fatalf("last event sequence = %d, want 0 without startup replay", record.LastEventSeq)
 	}
-	window, err := manager.loadHistoryWindow(context.Background(), sessionID, 10, nil)
+	window, err := manager.loadHistoryWindow(context.Background(), session.ID, 10, nil)
 	if err != nil {
 		t.Fatalf("loadHistoryWindow returned error: %v", err)
 	}
-	if len(window.Items) != 2 {
-		t.Fatalf("history item count = %d, want 2", len(window.Items))
+	if len(window.Items) != 0 {
+		t.Fatalf("startup replayed persisted history: %#v", window.Items)
 	}
-	if window.Items[0].Text != "persisted note" || window.Items[1].Text != "recovered text" {
-		t.Fatalf("recovered history = %#v", window.Items)
+}
+
+func TestNewManagerRecoversInterruptedSessionPastUnprojectedTail(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Interrupted projection tail", 1000)
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Update("status", string(StatusRunning)).Error; err != nil {
+		t.Fatalf("mark session running: %v", err)
 	}
-	var agents []tables.WebSessionSubAgentTable
-	if err := model.GetDB().Where("web_session_id = ?", sessionID).Find(&agents).Error; err != nil {
-		t.Fatalf("load recovered sub agents: %v", err)
+	dataDir := t.TempDir()
+	eventStore, err := newStore(dataDir)
+	if err != nil {
+		t.Fatalf("newStore returned error: %v", err)
 	}
-	if len(agents) != 1 || agents[0].ThreadID != "thread-child" || agents[0].LastEventSeq != 4 {
-		t.Fatalf("recovered sub agents = %#v", agents)
+	if err := eventStore.appendEvent(session.ID, Event{
+		ID: "evt-unprojected", Seq: 1, Type: "note", Timestamp: time.Now().Add(-time.Minute),
+		Payload: map[string]any{"txt": "unprojected tail"},
+	}); err != nil {
+		t.Fatalf("append unprojected event: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: dataDir}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusIdle) || record.LastEventSeq != 2 {
+		t.Fatalf("recovered session status=%q seq=%d, want idle seq=2", record.Status, record.LastEventSeq)
+	}
+	events, err := manager.History(context.Background(), session.ID, 10, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(events.Events) != 2 || events.Events[0].ID != "evt-unprojected" || events.Events[1].Type != "run_abort" {
+		t.Fatalf("durable history after interrupted recovery = %#v", events.Events)
+	}
+	window, err := manager.loadHistoryWindow(context.Background(), session.ID, 10, nil)
+	if err != nil {
+		t.Fatalf("loadHistoryWindow returned error: %v", err)
+	}
+	for _, item := range window.Items {
+		if item.Text == "unprojected tail" {
+			t.Fatalf("startup replayed the unprojected tail: %#v", window.Items)
+		}
 	}
 }

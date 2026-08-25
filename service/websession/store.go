@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,51 +104,6 @@ func (s *store) readEvents(sessionID string) ([]Event, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
-	}
-	return events, nil
-}
-
-func (s *store) readEventsAfter(sessionID string, afterSeq int64) ([]Event, error) {
-	file, err := os.Open(s.historyPath(sessionID))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []Event{}, nil
-		}
-		return nil, err
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-	events := make([]Event, 0, 32)
-	var previousSeq int64
-	for {
-		line, readErr := reader.ReadBytes('\n')
-		if readErr != nil && readErr != io.EOF {
-			return nil, readErr
-		}
-		if readErr == io.EOF && len(line) > 0 {
-			return nil, fmt.Errorf("web session history has an incomplete trailing event")
-		}
-		if len(line) > 0 {
-			line = bytes.TrimSuffix(line, []byte{'\n'})
-			line = bytes.TrimSuffix(line, []byte{'\r'})
-			if len(bytes.TrimSpace(line)) > 0 {
-				var event Event
-				if err := json.Unmarshal(line, &event); err != nil {
-					return nil, fmt.Errorf("decode web session history event: %w", err)
-				}
-				if event.Seq <= 0 || previousSeq >= event.Seq {
-					return nil, fmt.Errorf("web session history event sequences must be positive and strictly increasing")
-				}
-				previousSeq = event.Seq
-				if event.Seq > afterSeq {
-					events = append(events, event)
-				}
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
 	}
 	return events, nil
 }

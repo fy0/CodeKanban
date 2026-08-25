@@ -615,9 +615,8 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	if err := manager.backfillSessionActivityAt(context.Background()); err != nil {
 		return nil, err
 	}
-	if err := manager.recoverPersistedEventProjections(context.Background()); err != nil {
-		return nil, err
-	}
+	// Keep startup independent of total history size. Interrupted sessions read
+	// only their durable tail below; older projection gaps require explicit sync.
 	if err := manager.recoverInterruptedSessions(context.Background()); err != nil {
 		return nil, err
 	}
