@@ -728,6 +728,19 @@ export const webSessionApi = {
     return body.item;
   },
 
+  async historyStorageDetails(): Promise<WebSessionHistoryCleanupStorageStats> {
+    const body =
+      (await http
+        .Get<
+          ItemResponse<WebSessionHistoryCleanupStorageStats>
+        >('/system/web-session-storage-details', { cacheFor: 0 })
+        .send(true)) ?? {};
+    if (!body.item) {
+      throw new Error('failed to analyze web session storage details');
+    }
+    return body.item;
+  },
+
   async previewHistoryArchive(
     data: WebSessionHistoryArchiveParams
   ): Promise<WebSessionHistoryArchiveStats> {

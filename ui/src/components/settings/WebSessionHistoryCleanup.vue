@@ -3,23 +3,17 @@
     <div class="history-cleanup-entry__copy">
       <div class="history-cleanup-entry__title">{{ t('settings.historyCleanupTitle') }}</div>
       <div class="form-tip">{{ t('settings.historyCleanupDescription') }}</div>
+      <div class="history-cleanup-entry__hint">
+        <n-icon size="14"><InformationCircleOutline /></n-icon>
+        <span>{{ t('settings.historyCleanupEntryHint') }}</span>
+      </div>
     </div>
-    <n-tooltip trigger="hover" placement="top">
-      <template #trigger>
-        <n-button
-          type="error"
-          secondary
-          :aria-label="t('settings.historyCleanupAction')"
-          @click="openDialog"
-        >
-          <template #icon>
-            <n-icon><TrashOutline /></n-icon>
-          </template>
-          {{ t('settings.historyCleanupAction') }}
-        </n-button>
+    <n-button secondary :aria-label="t('settings.historyCleanupAction')" @click="openDialog">
+      <template #icon>
+        <n-icon><SettingsOutline /></n-icon>
       </template>
       {{ t('settings.historyCleanupAction') }}
-    </n-tooltip>
+    </n-button>
   </div>
 
   <n-modal
@@ -71,26 +65,6 @@
             :value="formatBytes(storageOverview.walBytes)"
           />
           <n-statistic
-            :label="t('settings.historyStorageHistory')"
-            :value="formatBytes(storageOverview.historyBytes)"
-          />
-          <n-statistic
-            :label="t('settings.historyStorageItems')"
-            :value="formatBytes(storageOverview.itemBytes)"
-          />
-          <n-statistic
-            :label="t('settings.historyStorageTurns')"
-            :value="formatBytes(storageOverview.turnBytes)"
-          />
-          <n-statistic
-            :label="t('settings.historyStorageSubAgents')"
-            :value="formatBytes(storageOverview.subAgentBytes)"
-          />
-          <n-statistic
-            :label="t('settings.historyStorageArchivedCache')"
-            :value="formatBytes(storageOverview.archivedCacheBytes)"
-          />
-          <n-statistic
             :label="t('settings.historyStorageReusable')"
             :value="formatBytes(storageOverview.reusableBytes)"
           />
@@ -105,6 +79,50 @@
               ? t('settings.historyStorageLoading')
               : t('settings.historyStorageUnavailable')
           }}
+        </div>
+
+        <div class="history-storage-details__header">
+          <div>
+            <div class="history-storage-overview__title">
+              {{ t('settings.historyStorageDetailsTitle') }}
+            </div>
+            <div class="form-tip">{{ t('settings.historyStorageDetailsDescription') }}</div>
+          </div>
+          <n-button secondary :loading="storageDetailsLoading" @click="loadStorageDetails">
+            <template #icon>
+              <n-icon><AnalyticsOutline /></n-icon>
+            </template>
+            {{
+              storageDetails
+                ? t('settings.historyStorageDetailsRefresh')
+                : t('settings.historyStorageDetailsAction')
+            }}
+          </n-button>
+        </div>
+        <div v-if="storageDetails" class="history-storage-overview__stats">
+          <n-statistic
+            :label="t('settings.historyStorageHistory')"
+            :value="formatBytes(storageDetails.historyBytes)"
+          />
+          <n-statistic
+            :label="t('settings.historyStorageItems')"
+            :value="formatBytes(storageDetails.itemBytes)"
+          />
+          <n-statistic
+            :label="t('settings.historyStorageTurns')"
+            :value="formatBytes(storageDetails.turnBytes)"
+          />
+          <n-statistic
+            :label="t('settings.historyStorageSubAgents')"
+            :value="formatBytes(storageDetails.subAgentBytes)"
+          />
+          <n-statistic
+            :label="t('settings.historyStorageArchivedCache')"
+            :value="formatBytes(storageDetails.archivedCacheBytes)"
+          />
+        </div>
+        <div v-else-if="storageDetailsLoading" class="history-storage-overview__empty">
+          {{ t('settings.historyStorageDetailsLoading') }}
         </div>
       </section>
 
@@ -280,7 +298,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useDialog, useMessage } from 'naive-ui';
-import { ArchiveOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5';
+import {
+  AnalyticsOutline,
+  ArchiveOutline,
+  InformationCircleOutline,
+  RefreshOutline,
+  SettingsOutline,
+  TrashOutline,
+} from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import {
   webSessionApi,
@@ -319,6 +344,8 @@ const previewLoading = ref(false);
 const cleanupRunning = ref(false);
 const storageOverview = ref<WebSessionHistoryCleanupStorageStats | null>(null);
 const storageLoading = ref(false);
+const storageDetails = ref<WebSessionHistoryCleanupStorageStats | null>(null);
+const storageDetailsLoading = ref(false);
 
 const projectOptions = computed(() =>
   [...projectStore.projects]
@@ -455,6 +482,19 @@ async function refreshStorageOverview() {
   }
 }
 
+async function loadStorageDetails() {
+  if (storageDetailsLoading.value) return;
+  storageDetailsLoading.value = true;
+  try {
+    storageDetails.value = await webSessionApi.historyStorageDetails();
+  } catch (error) {
+    console.error('Failed to analyze web session storage details:', error);
+    message.error(t('settings.historyStorageDetailsFailed'));
+  } finally {
+    storageDetailsLoading.value = false;
+  }
+}
+
 async function openDialog() {
   showDialog.value = true;
   preview.value = null;
@@ -548,6 +588,7 @@ async function runCleanup() {
         );
       }
     }
+    storageDetails.value = null;
     void refreshStorageOverview();
     return true;
   } catch (error) {
@@ -611,6 +652,21 @@ function formatBytes(value: number) {
   font-weight: 600;
 }
 
+.history-cleanup-entry__hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--n-text-color-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.history-cleanup-entry__hint .n-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .history-storage-overview {
   display: grid;
   gap: 14px;
@@ -624,6 +680,15 @@ function formatBytes(value: number) {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.history-storage-details__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--n-border-color);
 }
 
 .history-storage-overview__title {
@@ -670,6 +735,11 @@ function formatBytes(value: number) {
 @media (max-width: 640px) {
   .history-cleanup-entry {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .history-storage-details__header {
+    align-items: stretch;
     flex-direction: column;
   }
 

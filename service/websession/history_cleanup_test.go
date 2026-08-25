@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -303,8 +304,11 @@ func TestBatchHistoryArchiveAndArchivedCacheCleanupKeepSessionShell(t *testing.T
 }
 
 func TestHistoryStorageOverviewReportsLogicalCacheBytes(t *testing.T) {
-	cleanup := initTestDB(t)
-	defer cleanup()
+	dsn := filepath.Join(t.TempDir(), "history-storage.db")
+	if err := model.InitWithDSN(dsn, 0, true); err != nil {
+		t.Fatalf("InitWithDSN: %v", err)
+	}
+	defer model.DBClose()
 
 	project := seedProject(t)
 	session := seedHistoryCleanupSession(t, project.ID, "Storage overview", time.Now(), true)
@@ -316,22 +320,50 @@ func TestHistoryStorageOverviewReportsLogicalCacheBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HistoryStorageOverview: %v", err)
 	}
-	if overview.ItemRowCount == 0 || overview.ItemBytes == 0 || overview.HistoryBytes == 0 {
-		t.Fatalf("overview did not report item payload: %+v", overview)
+	if overview.ItemRowCount != 0 || overview.ItemBytes != 0 || overview.HistoryBytes != 0 {
+		t.Fatalf("fast overview unexpectedly scanned payloads: %+v", overview)
 	}
-	if overview.ArchivedCacheBytes != 0 {
-		t.Fatalf("unarchived session counted as archived cache: %+v", overview)
+	details, err := manager.HistoryStorageDetails(context.Background())
+	if err != nil {
+		t.Fatalf("HistoryStorageDetails: %v", err)
+	}
+	if details.ItemRowCount == 0 || details.ItemBytes == 0 || details.HistoryBytes == 0 {
+		t.Fatalf("details did not report item payload: %+v", details)
+	}
+	if details.ArchivedCacheBytes != 0 {
+		t.Fatalf("unarchived session counted as archived cache: %+v", details)
 	}
 	if err := model.GetDB().Model(&tables.WebSessionTable{}).Where("id = ?", session.ID).
 		Update("archived_at", time.Now().Add(-time.Hour)).Error; err != nil {
 		t.Fatalf("archive storage overview session: %v", err)
 	}
-	overview, err = manager.HistoryStorageOverview(context.Background())
+	details, err = manager.HistoryStorageDetails(context.Background())
 	if err != nil {
-		t.Fatalf("HistoryStorageOverview after archive: %v", err)
+		t.Fatalf("HistoryStorageDetails after archive: %v", err)
 	}
-	if overview.ArchivedSessionCount != 1 || overview.ArchivedCacheBytes == 0 {
-		t.Fatalf("archived cache was not attributed: %+v", overview)
+	if details.ArchivedSessionCount != 1 || details.ArchivedCacheBytes == 0 {
+		t.Fatalf("archived cache was not attributed: %+v", details)
+	}
+
+	mainSQLDB, err := model.GetDB().DB()
+	if err != nil {
+		t.Fatalf("main DB handle: %v", err)
+	}
+	databasePath, err := historyStorageDatabasePath(context.Background(), model.GetDB())
+	if err != nil {
+		t.Fatalf("historyStorageDatabasePath: %v", err)
+	}
+	reader, closeReader, err := openHistoryStorageReader(databasePath)
+	if err != nil {
+		t.Fatalf("openHistoryStorageReader: %v", err)
+	}
+	defer closeReader()
+	readerSQLDB, err := reader.DB()
+	if err != nil {
+		t.Fatalf("reader DB handle: %v", err)
+	}
+	if readerSQLDB == mainSQLDB {
+		t.Fatal("storage details reader reused the primary database pool")
 	}
 }
 

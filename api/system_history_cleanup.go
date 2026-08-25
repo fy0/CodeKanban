@@ -33,7 +33,31 @@ func registerSystemHistoryCleanupRoutes(group *huma.Group, manager *websession.M
 	}, func(op *huma.Operation) {
 		op.OperationID = "system-web-session-storage-overview"
 		op.Summary = "查看会话缓存存储概览"
-		op.Description = "返回数据库文件、WAL、可复用空间和归档缓存的逻辑大小"
+		op.Description = "快速返回数据库文件、WAL、可复用空间和磁盘剩余空间"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Get(group, "/system/web-session-storage-details", func(
+		ctx context.Context,
+		_ *struct{},
+	) (*h.ItemResponse[websession.HistoryCleanupStorageStats], error) {
+		if manager == nil {
+			return nil, huma.Error503ServiceUnavailable("web session manager is not available")
+		}
+		item, err := manager.HistoryStorageDetails(ctx)
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			}
+			return nil, huma.Error500InternalServerError("failed to analyze web session storage", err)
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-web-session-storage-details"
+		op.Summary = "分析会话缓存存储明细"
+		op.Description = "使用独立只读连接统计聊天缓存的逻辑大小"
 		op.Tags = []string{systemTag}
 	})
 

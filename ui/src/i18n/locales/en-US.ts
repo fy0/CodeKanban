@@ -1530,13 +1530,15 @@ export default {
     historyCleanupTitle: 'Session Chat Cache',
     historyCleanupDescription:
       'Reclaim database space used by chat caches based on age and per-project retention.',
-    historyCleanupAction: 'Clean Chat History',
+    historyCleanupEntryHint:
+      'Opens the management screen. Nothing is cleaned until you preview and confirm the action.',
+    historyCleanupAction: 'Manage Chat Cache',
     historyCleanupDialogTitle: 'Clean Session Chat Cache',
     historyCleanupConcept:
       'Archiving moves a session to the archive list without removing content. Deleting archived cache removes chat content and internal history files while keeping the session shell; syncing may be required to restore the content later.',
     historyStorageOverviewTitle: 'Storage Overview',
     historyStorageOverviewDescription:
-      'Logical sizes show where chat cache data is concentrated. Cleanup usually turns pages into reusable space first; data.db does not shrink automatically.',
+      'Basic capacity is read quickly without scanning chat content. Cleanup usually turns pages into reusable space first; data.db does not shrink automatically.',
     historyStorageRefresh: 'Refresh storage overview',
     historyStorageDatabase: 'Database file',
     historyStorageWal: 'WAL file',
@@ -1550,6 +1552,13 @@ export default {
     historyStorageLoading: 'Loading storage overview...',
     historyStorageUnavailable: 'Storage overview is temporarily unavailable',
     historyStorageFailed: 'Failed to load storage overview',
+    historyStorageDetailsTitle: 'Cache Details',
+    historyStorageDetailsDescription:
+      'Analysis reads chat data and may take time for a large database, but it does not occupy the primary database connection.',
+    historyStorageDetailsAction: 'Analyze Cache Details',
+    historyStorageDetailsRefresh: 'Analyze Again',
+    historyStorageDetailsLoading: 'Analyzing cache details on an isolated read-only connection...',
+    historyStorageDetailsFailed: 'Failed to analyze cache details',
     historyCleanupModeCleanup: 'Delete by criteria',
     historyCleanupModeArchive: 'Batch archive sessions',
     historyCleanupModeArchivedCache: 'Delete archived cache',

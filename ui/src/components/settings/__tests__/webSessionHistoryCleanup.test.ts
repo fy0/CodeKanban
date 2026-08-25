@@ -27,9 +27,13 @@ describe('web session history cleanup settings', () => {
   });
 
   it('explains storage concepts and exposes archive cache actions', () => {
+    expect(componentSource).toContain('settings.historyCleanupEntryHint');
+    expect(componentSource).toContain('<SettingsOutline />');
     expect(componentSource).toContain('settings.historyCleanupConcept');
     expect(componentSource).toContain('settings.historyStorageDatabase');
     expect(componentSource).toContain('settings.historyStorageArchivedCache');
+    expect(componentSource).toContain('webSessionApi.historyStorageDetails');
+    expect(componentSource).toContain('settings.historyStorageDetailsAction');
     expect(componentSource).toContain('settings.historyCleanupModeArchive');
     expect(componentSource).toContain('settings.historyCleanupModeArchivedCache');
     expect(componentSource).toContain('webSessionApi.previewHistoryArchive');
