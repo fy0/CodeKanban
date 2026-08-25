@@ -739,6 +739,6 @@ func (m *Manager) maybeSyncSessionAfterRun(session tables.WebSessionTable) {
 			}
 			return
 		}
-		_ = m.broadcastSnapshot(context.Background(), session.ID)
+		_ = m.broadcastResyncRequired(context.Background(), session.ID, resyncReasonHistoryReconciled)
 	}()
 }

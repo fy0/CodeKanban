@@ -2,7 +2,9 @@ package websession
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +118,77 @@ func TestHistoryWindowForTransportLimitsFallbackSummaries(t *testing.T) {
 	summary := stringValue(projected.Items[0].Tool.Meta["subtitle"])
 	if len([]rune(summary)) != maxHistoryTransportSummaryRunes+3 {
 		t.Fatalf("expected bounded summary length, got %d", len([]rune(summary)))
+	}
+}
+
+func TestHistoryWindowForTransportBoundsSingletonToolPayloads(t *testing.T) {
+	largeValues := make([]any, 80)
+	for index := range largeValues {
+		largeValues[index] = strings.Repeat(fmt.Sprintf("value-%d-", index), 300)
+	}
+	item := HistoryItem{
+		ID:         "singleton-command",
+		OrderIndex: 1,
+		Kind:       "tool",
+		ItemType:   "command_execution",
+		Tool: &HistoryTool{
+			ID:     "tool-singleton",
+			Name:   "CommandExecution",
+			Kind:   "command_execution",
+			Input:  map[string]any{"command": "go test ./...", "values": largeValues},
+			Output: strings.Repeat("large output ", 20_000),
+			Status: "done",
+			Meta: map[string]any{
+				"title":    "CommandExecution",
+				"subtitle": "go test ./...",
+				"details":  largeValues,
+			},
+		},
+		Payload: map[string]any{
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "go test ./...", "values": largeValues},
+			"out":  strings.Repeat("large output ", 20_000),
+			"meta": map[string]any{"subtitle": "go test ./...", "details": largeValues},
+			"raw":  largeValues,
+		},
+	}
+
+	projected := HistoryWindowForTransport(HistoryWindow{Items: []HistoryItem{item}}).Items[0]
+	encoded, err := json.Marshal(projected)
+	if err != nil {
+		t.Fatalf("marshal projected item: %v", err)
+	}
+	if len(encoded) > 24*1024 {
+		t.Fatalf("projected singleton tool is still unbounded: %d bytes", len(encoded))
+	}
+	if projected.Tool == nil {
+		t.Fatal("expected projected tool")
+	}
+	input := decodeRawObject(projected.Tool.Input)
+	if stringValue(input["command"]) != "go test ./..." {
+		t.Fatalf("expected useful command summary to remain, got %#v", input)
+	}
+	if len([]rune(projected.Tool.Output)) > maxHistoryTransportToolOutputRunes+3 {
+		t.Fatalf("tool output was not bounded: %d runes", len([]rune(projected.Tool.Output)))
+	}
+	for _, duplicate := range []string{"in", "out", "meta"} {
+		if _, exists := projected.Payload[duplicate]; exists {
+			t.Fatalf("expected duplicate payload field %q to be removed", duplicate)
+		}
+	}
+	if item.Tool == nil || len(item.Tool.Output) <= len(projected.Tool.Output) {
+		t.Fatal("expected persisted source item to remain unchanged")
+	}
+}
+
+func TestBoundedHistoryTransportValueFallsBackForUnencodableValues(t *testing.T) {
+	projected := boundedHistoryTransportValue(
+		math.Inf(1),
+		maxHistoryTransportPayloadBytes,
+		map[string]any{"_truncated": true},
+	)
+	if _, err := json.Marshal(projected); err != nil {
+		t.Fatalf("bounded transport value remains unencodable: %v", err)
 	}
 }
 

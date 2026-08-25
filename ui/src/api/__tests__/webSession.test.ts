@@ -117,8 +117,8 @@ describe('webSessionApi.search', () => {
   it('creates an edited-message branch through the source history item', async () => {
     postSendMock.mockResolvedValueOnce({
       item: {
+        revision: '7',
         session: { id: 'session-branch' },
-        history: { items: [], hasMore: false, total: 0 },
       },
     });
 
@@ -134,6 +134,7 @@ describe('webSessionApi.search', () => {
       { text: 'revised prompt' }
     );
     expect(result.session?.id).toBe('session-branch');
+    expect(result.revision).toBe('7');
   });
 
   it('omits unspecified session defaults so the server can resolve global settings', async () => {

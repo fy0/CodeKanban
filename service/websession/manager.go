@@ -2009,7 +2009,19 @@ func (m *Manager) SnapshotWithAutoSyncIfChanged(
 		return SessionSnapshotResponse{}, err
 	}
 	current := normalizeSnapshotRevision(record.SnapshotRevision)
-	if known > 0 && known == current && !record.HasUnread && !shouldAutoSyncSnapshot(record, record.ItemCount) {
+	historyTotal := record.ItemCount
+	if known > 0 && known == current {
+		itemCount, turnCount, countErr := m.sessionHistoryCounts(ctx, record.ID)
+		if countErr == nil {
+			historyTotal = itemCount
+			if itemCount != record.ItemCount || turnCount != record.TurnCount {
+				m.repairSessionHistoryCounts(ctx, record, itemCount, turnCount)
+				record.ItemCount = itemCount
+				record.TurnCount = turnCount
+			}
+		}
+	}
+	if known > 0 && known == current && !record.HasUnread && !shouldAutoSyncSnapshot(record, historyTotal) {
 		return SessionSnapshotResponse{
 			Revision:  formatSnapshotRevision(current),
 			Unchanged: true,
@@ -2046,6 +2058,14 @@ func (m *Manager) loadSnapshotLocal(
 	history, err := m.loadHistoryWindow(ctx, record.ID, limit, nil)
 	if err != nil {
 		return SessionSnapshot{}, err
+	}
+	if history.Total != record.ItemCount {
+		itemCount, turnCount, countErr := m.sessionHistoryCounts(ctx, record.ID)
+		if countErr == nil {
+			m.repairSessionHistoryCounts(ctx, record, itemCount, turnCount)
+			record.ItemCount = itemCount
+			record.TurnCount = turnCount
+		}
 	}
 
 	// Entering a session clears the unread state.
@@ -2638,11 +2658,14 @@ func (m *Manager) MoveSession(ctx context.Context, sessionID, prevSessionID, nex
 			}
 			if err := tx.Model(&tables.WebSessionTable{}).
 				Where("id = ?", item.ID).
-				UpdateColumn("order_index", nextOrderIndex).Error; err != nil {
+				UpdateColumns(withSnapshotRevisionIncrement(map[string]any{
+					"order_index": nextOrderIndex,
+				})).Error; err != nil {
 				return err
 			}
 			if item.ID == moving.ID {
 				moving.OrderIndex = nextOrderIndex
+				moving.SnapshotRevision = normalizeSnapshotRevision(moving.SnapshotRevision + 1)
 			}
 		}
 
@@ -3027,7 +3050,10 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 	if err := json.Unmarshal(payload, &frame); err != nil {
 		return client.send(newErrorFrame("", "", "bad_req", "invalid json payload", false))
 	}
-	if frame.Kind != "cmd" {
+	if frame.Version != protocolVersion {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "unsupported_version", "unsupported protocol version", false))
+	}
+	if frame.Kind != wireKindCommand {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "unsupported frame kind", false))
 	}
 
@@ -3126,7 +3152,7 @@ func (m *Manager) HandleHeartbeatPayload(client *client, payload []byte) (bool, 
 	if err := json.Unmarshal(payload, &frame); err != nil {
 		return false, nil
 	}
-	if frame.Kind != "hb" {
+	if frame.Version != protocolVersion || frame.Kind != wireKindHeartbeat {
 		return false, nil
 	}
 	client.MarkSeen()
@@ -3300,53 +3326,21 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, "", "bad_req", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, summary.ID, nil, summary.Revision)); err != nil {
-		return err
-	}
-	snap, err := m.Snapshot(ctx, summary.ID, DefaultHistoryWindow)
-	if err != nil {
-		return client.send(newErrorFrame(frame.RequestID, summary.ID, "internal", err.Error(), false))
-	}
-	return client.send(newSnapshotFrame(summary.ID, snap))
+	return client.send(newRevisionAckFrame(frame.RequestID, frame.Operation, summary.ID, summary.Revision, nil))
 }
 
 func (m *Manager) handleConnectCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
-	snap, err := m.Snapshot(ctx, frame.SessionID, DefaultHistoryWindow)
+	record, err := m.GetSession(ctx, frame.SessionID)
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil, snap.Revision)); err != nil {
-		return err
-	}
-	return client.send(newSnapshotFrame(frame.SessionID, snap))
-}
-
-func (m *Manager) sendAckWithSnapshot(
-	ctx context.Context,
-	client *client,
-	frame wireCommandFrame,
-) error {
-	snap, err := m.Snapshot(ctx, frame.SessionID, DefaultHistoryWindow)
-	if err != nil {
-		if m.logger != nil {
-			m.logger.Debug("failed to build command hydration snapshot",
-				zap.String("sessionId", frame.SessionID),
-				zap.String("operation", frame.Operation),
-				zap.Error(err),
-			)
-		}
-		return nil
-	}
-	if err := client.send(newAckFrame(
+	return client.send(newRevisionAckFrame(
 		frame.RequestID,
 		frame.Operation,
 		frame.SessionID,
+		formatSnapshotRevision(record.SnapshotRevision),
 		nil,
-		snap.Revision,
-	)); err != nil {
-		return err
-	}
-	return client.send(newSnapshotFrame(frame.SessionID, snap))
+	))
 }
 
 func (m *Manager) sendMutationAck(
@@ -3355,14 +3349,26 @@ func (m *Manager) sendMutationAck(
 	frame wireCommandFrame,
 	payload any,
 ) error {
-	m.broadcastSessionSummary(ctx, frame.SessionID)
-	return client.send(newAckFrame(
+	summary := m.summaryForBroadcast(ctx, frame.SessionID)
+	revision := ""
+	if summary != nil {
+		revision = summary.Revision
+	} else {
+		revision = m.currentSessionRevision(ctx, frame.SessionID)
+	}
+	if err := client.send(newRevisionAckFrame(
 		frame.RequestID,
 		frame.Operation,
 		frame.SessionID,
+		revision,
 		payload,
-		m.currentSessionRevision(ctx, frame.SessionID),
-	))
+	)); err != nil {
+		return err
+	}
+	if summary != nil {
+		m.broadcastCommittedFrame(frame.SessionID, newSessionFrame(frame.SessionID, *summary), revision)
+	}
+	return nil
 }
 
 func (m *Manager) handleHistoryCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -3380,12 +3386,12 @@ func (m *Manager) handleHistoryCommand(ctx context.Context, client *client, fram
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", err.Error(), false))
 	}
-	if err := client.send(newAckFrame(
+	if err := client.send(newRevisionAckFrame(
 		frame.RequestID,
 		frame.Operation,
 		frame.SessionID,
-		nil,
 		m.currentSessionRevision(ctx, frame.SessionID),
+		nil,
 	)); err != nil {
 		return err
 	}
@@ -3574,10 +3580,17 @@ func (m *Manager) handleSetWorkflowModeCommand(ctx context.Context, client *clie
 }
 
 func (m *Manager) handleGoalGetCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
-	if _, err := m.GetSessionGoal(ctx, frame.SessionID); err != nil {
+	goal, err := m.GetSessionGoal(ctx, frame.SessionID)
+	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
-	return m.sendAckWithSnapshot(ctx, client, frame)
+	return client.send(newRevisionAckFrame(
+		frame.RequestID,
+		frame.Operation,
+		frame.SessionID,
+		m.currentSessionRevision(ctx, frame.SessionID),
+		wireGoalPayload{Goal: mapWireGoal(goal)},
+	))
 }
 
 func (m *Manager) handleGoalSetCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -3754,12 +3767,12 @@ func (m *Manager) handleMoveCommand(ctx context.Context, client *client, frame w
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
 	m.broadcastProjectSessionSummaries(ctx, summary.ProjectID)
-	return client.send(newAckFrame(
+	return client.send(newRevisionAckFrame(
 		frame.RequestID,
 		frame.Operation,
 		frame.SessionID,
-		nil,
 		m.currentSessionRevision(ctx, frame.SessionID),
+		nil,
 	))
 }
 
@@ -3816,7 +3829,13 @@ func (m *Manager) handlePiTreeGetCommand(ctx context.Context, client *client, fr
 	if err != nil {
 		return client.send(newPiTreeErrorFrame(frame, err))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, tree, m.currentSessionRevision(ctx, frame.SessionID)))
+	return client.send(newRevisionAckFrame(
+		frame.RequestID,
+		frame.Operation,
+		frame.SessionID,
+		m.currentSessionRevision(ctx, frame.SessionID),
+		tree,
+	))
 }
 
 func (m *Manager) handlePiTreeNavigateCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -3837,7 +3856,13 @@ func (m *Manager) handlePiTreeNavigateCommand(ctx context.Context, client *clien
 	if err != nil {
 		return client.send(newPiTreeErrorFrame(frame, err))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, result, m.currentSessionRevision(ctx, frame.SessionID)))
+	return client.send(newRevisionAckFrame(
+		frame.RequestID,
+		frame.Operation,
+		frame.SessionID,
+		m.currentSessionRevision(ctx, frame.SessionID),
+		result,
+	))
 }
 
 func (m *Manager) handlePiTreeForkCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -6668,7 +6693,7 @@ func (m *Manager) releaseActiveRun(sessionID string, run *activeRun) bool {
 }
 
 func (m *Manager) broadcast(frame wireFrame) {
-	if frame.SessionID != "" && (frame.Kind == "evt" || frame.Kind == "snap") {
+	if frame.SessionID != "" && frame.Kind == wireKindEvent {
 		lock := &m.revisionBroadcastLocks[sessionRevisionLockIndex(frame.SessionID)]
 		lock.Lock()
 		if revision := m.currentSessionRevision(context.Background(), frame.SessionID); revision != "" {
@@ -6691,21 +6716,25 @@ func applyWireFrameRevision(frame *wireFrame, revision string) {
 	}
 }
 
-func (m *Manager) broadcastNextRevision(
-	ctx context.Context,
-	sessionID string,
-	build func() (wireFrame, bool),
-) error {
+// broadcastCommittedFrame publishes state at the revision committed by the
+// business mutation. It never advances the SQLite revision on its own.
+func (m *Manager) broadcastCommittedFrame(sessionID string, frame wireFrame, revision string) {
+	lock := &m.revisionBroadcastLocks[sessionRevisionLockIndex(sessionID)]
+	lock.Lock()
+	applyWireFrameRevision(&frame, revision)
+	m.broadcastFrame(frame)
+	lock.Unlock()
+}
+
+// broadcastTransientFrame advances the durable revision for state that is not
+// stored on web_sessions, then publishes that state at the new revision.
+func (m *Manager) broadcastTransientFrame(ctx context.Context, sessionID string, frame wireFrame) error {
 	lock := &m.revisionBroadcastLocks[sessionRevisionLockIndex(sessionID)]
 	lock.Lock()
 	defer lock.Unlock()
 	revision, err := m.advanceSessionRevision(ctx, sessionID)
 	if err != nil {
 		return err
-	}
-	frame, ok := build()
-	if !ok {
-		return nil
 	}
 	applyWireFrameRevision(&frame, formatSnapshotRevision(revision))
 	m.broadcastFrame(frame)
@@ -6739,11 +6768,9 @@ func shouldSendFrameToClient(client *client, frame wireFrame) bool {
 	}
 	focusedSessionID := client.FocusedSessionID()
 	switch frame.Kind {
-	case "snap":
-		return focusedSessionID != "" && focusedSessionID == strings.TrimSpace(frame.SessionID)
-	case "evt":
+	case wireKindEvent:
 		switch strings.ToLower(strings.TrimSpace(frame.Operation)) {
-		case "hist_item", "hist_page", "pending", "sub_agent":
+		case wireOpHistoryItem, wireOpHistoryPage, wireOpPending, wireOpScheduled, wireOpSubAgent, wireOpResyncRequired:
 			return focusedSessionID != "" && focusedSessionID == strings.TrimSpace(frame.SessionID)
 		default:
 			return true
@@ -6753,7 +6780,7 @@ func shouldSendFrameToClient(client *client, frame wireFrame) bool {
 	}
 }
 
-func (m *Manager) broadcastSnapshot(ctx context.Context, sessionID string) error {
+func (m *Manager) broadcastResyncRequired(ctx context.Context, sessionID string, reason resyncReason) error {
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return err
@@ -6761,23 +6788,20 @@ func (m *Manager) broadcastSnapshot(ctx context.Context, sessionID string) error
 	if record.ArchivedAt != nil {
 		return nil
 	}
-	snap, err := m.loadSnapshotLocal(ctx, record, DefaultHistoryWindow, false)
-	if err != nil {
-		return err
-	}
-	return m.broadcastNextRevision(ctx, sessionID, func() (wireFrame, bool) {
-		return newSnapshotFrame(sessionID, snap), true
-	})
+	m.broadcastCommittedFrame(
+		sessionID,
+		newResyncRequiredFrame(sessionID, reason),
+		formatSnapshotRevision(record.SnapshotRevision),
+	)
+	return nil
 }
 
 func (m *Manager) broadcastSessionSummary(ctx context.Context, sessionID string) {
-	_ = m.broadcastNextRevision(ctx, sessionID, func() (wireFrame, bool) {
-		summary := m.summaryForBroadcast(ctx, sessionID)
-		if summary == nil {
-			return wireFrame{}, false
-		}
-		return newSessionFrame(sessionID, *summary), true
-	})
+	summary := m.summaryForBroadcast(ctx, sessionID)
+	if summary == nil {
+		return
+	}
+	m.broadcastCommittedFrame(sessionID, newSessionFrame(sessionID, *summary), summary.Revision)
 }
 
 func (m *Manager) broadcastProjectSessionSummaries(ctx context.Context, projectID string) {

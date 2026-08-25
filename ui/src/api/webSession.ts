@@ -336,12 +336,12 @@ export type WebSessionSnapshot = {
   subAgents?: WebSessionSubAgentRecord[];
 };
 
-export type WebSessionImportResult = Omit<
-  WebSessionSnapshot,
-  'session' | 'history' | 'unchanged'
-> & {
+export type WebSessionHydrationTarget = {
+  revision: string;
   session: WebSessionSummary;
-  history: WebSessionHistoryWindow;
+};
+
+export type WebSessionImportResult = WebSessionHydrationTarget & {
   created: boolean;
   reused: boolean;
   synced: boolean;
@@ -436,14 +436,14 @@ export const webSessionApi = {
     sessionId: string,
     itemId: string,
     text: string
-  ): Promise<WebSessionSnapshot> {
+  ): Promise<WebSessionHydrationTarget> {
     const body =
       (await http
         .Post<
-          ItemResponse<WebSessionSnapshot>
+          ItemResponse<WebSessionHydrationTarget>
         >(`/projects/${projectId}/web-sessions/${sessionId}/messages/${itemId}/edit`, { text })
         .send()) ?? {};
-    if (!body.item?.session || !body.item.history) {
+    if (!body.item?.session) {
       throw new Error('failed to create edited message branch');
     }
     return body.item;
@@ -672,10 +672,10 @@ export const webSessionApi = {
     sessionId: string,
     mode?: 'fast' | 'deep',
     clearExisting = false
-  ): Promise<WebSessionSnapshot> {
+  ): Promise<WebSessionHydrationTarget> {
     const body =
       (await http
-        .Post<ItemResponse<WebSessionSnapshot>>(
+        .Post<ItemResponse<WebSessionHydrationTarget>>(
           `/projects/${projectId}/web-sessions/${sessionId}/sync`,
           {
             ...(mode ? { mode } : {}),

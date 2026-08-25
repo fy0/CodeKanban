@@ -8,6 +8,32 @@ import (
 
 const protocolVersion = 1
 
+const (
+	wireKindCommand   = "cmd"
+	wireKindAck       = "ack"
+	wireKindEvent     = "evt"
+	wireKindError     = "err"
+	wireKindHeartbeat = "hb"
+)
+
+const (
+	wireOpSession        = "session"
+	wireOpHistoryPage    = "hist_page"
+	wireOpHistoryItem    = "hist_item"
+	wireOpPending        = "pending"
+	wireOpScheduled      = "scheduled"
+	wireOpSubAgent       = "sub_agent"
+	wireOpResyncRequired = "resync_required"
+)
+
+type resyncReason string
+
+const (
+	resyncReasonHistoryReconciled resyncReason = "history_reconciled"
+	resyncReasonTreeNavigation    resyncReason = "tree_navigation"
+	resyncReasonRuntimeReconciled resyncReason = "runtime_reconciled"
+)
+
 // Wire payloads intentionally use short keys to reduce websocket overhead.
 // Keep business logic on the semantic structs in types.go and only map to/from
 // these short keys at the protocol boundary.
@@ -29,27 +55,24 @@ type wireHeartbeatFrame struct {
 }
 
 type wireFrame struct {
-	Version          int                   `json:"v"`
-	Kind             string                `json:"k"`
-	RequestID        string                `json:"rid,omitempty"`
-	SessionID        string                `json:"sid,omitempty"`
-	Timestamp        int64                 `json:"ts"`
-	Revision         string                `json:"rev,omitempty"`
-	Operation        string                `json:"op,omitempty"`
-	Payload          any                   `json:"p,omitempty"`
-	OK               *int                  `json:"ok,omitempty"`
-	Session          *wireSess             `json:"s,omitempty"`
-	History          *wireHist             `json:"h,omitempty"`
-	Item             *wireHistItem         `json:"i,omitempty"`
-	Pending          []wirePendingInput    `json:"pi,omitempty"`
-	Scheduled        []wireScheduledInput  `json:"si,omitempty"`
-	PendingApproval  *wirePendingApproval  `json:"pa,omitempty"`
-	PendingUserInput *wirePendingUserInput `json:"ui,omitempty"`
-	SubAgents        *[]wireSubAgent       `json:"ags,omitempty"`
-	SubAgent         *wireSubAgent         `json:"ag,omitempty"`
-	Code             string                `json:"code,omitempty"`
-	Message          string                `json:"msg,omitempty"`
-	Retry            bool                  `json:"retry,omitempty"`
+	Version   int                  `json:"v"`
+	Kind      string               `json:"k"`
+	RequestID string               `json:"rid,omitempty"`
+	SessionID string               `json:"sid,omitempty"`
+	Timestamp int64                `json:"ts"`
+	Revision  string               `json:"rev,omitempty"`
+	Operation string               `json:"op,omitempty"`
+	Payload   any                  `json:"p,omitempty"`
+	OK        *int                 `json:"ok,omitempty"`
+	Session   *wireSess            `json:"s,omitempty"`
+	History   *wireHist            `json:"h,omitempty"`
+	Item      *wireHistItem        `json:"i,omitempty"`
+	Pending   []wirePendingInput   `json:"pi,omitempty"`
+	Scheduled []wireScheduledInput `json:"si,omitempty"`
+	SubAgent  *wireSubAgent        `json:"ag,omitempty"`
+	Code      string               `json:"code,omitempty"`
+	Message   string               `json:"msg,omitempty"`
+	Retry     bool                 `json:"retry,omitempty"`
 }
 
 type wireSess struct {
@@ -264,27 +287,19 @@ type wireScheduledInput struct {
 	CanceledAt      *int64   `json:"xa,omitempty"`
 }
 
-type wirePendingUserInput struct {
-	ItemID      string                `json:"iid"`
-	Prompt      string                `json:"txt,omitempty"`
-	Questions   []toolRequestQuestion `json:"qs,omitempty"`
-	RequestedAt *int64                `json:"ra,omitempty"`
+type wireResyncRequiredPayload struct {
+	Reason resyncReason `json:"reason,omitempty"`
 }
 
-type wirePendingApproval struct {
-	ItemID      string `json:"iid"`
-	Kind        string `json:"kind"`
-	Prompt      string `json:"txt"`
-	Command     string `json:"cmd,omitempty"`
-	RequestedAt *int64 `json:"ra,omitempty"`
-	Actionable  bool   `json:"act"`
+type wireGoalPayload struct {
+	Goal *wireGoal `json:"goal"`
 }
 
-func newAckFrame(requestID, op, sessionID string, payload any, revision ...string) wireFrame {
+func newAckFrame(requestID, op, sessionID string, payload any) wireFrame {
 	ok := 1
-	frame := wireFrame{
+	return wireFrame{
 		Version:   protocolVersion,
-		Kind:      "ack",
+		Kind:      wireKindAck,
 		RequestID: requestID,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
@@ -292,16 +307,18 @@ func newAckFrame(requestID, op, sessionID string, payload any, revision ...strin
 		Payload:   payload,
 		OK:        &ok,
 	}
-	if len(revision) > 0 {
-		frame.Revision = revision[0]
-	}
+}
+
+func newRevisionAckFrame(requestID, op, sessionID, revision string, payload any) wireFrame {
+	frame := newAckFrame(requestID, op, sessionID, payload)
+	frame.Revision = revision
 	return frame
 }
 
 func newErrorFrame(requestID, sessionID, code, message string, retry bool) wireFrame {
 	return wireFrame{
 		Version:   protocolVersion,
-		Kind:      "err",
+		Kind:      wireKindError,
 		RequestID: requestID,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
@@ -314,35 +331,20 @@ func newErrorFrame(requestID, sessionID, code, message string, retry bool) wireF
 func newHeartbeatFrame(op string) wireFrame {
 	return wireFrame{
 		Version:   protocolVersion,
-		Kind:      "hb",
+		Kind:      wireKindHeartbeat,
 		Timestamp: nowUnixMilli(),
 		Operation: op,
 	}
 }
 
-func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
-	wireHistory := make([]wireHistItem, 0, len(snap.History.Items))
-	for _, item := range snap.History.Items {
-		wireHistory = append(wireHistory, mapWireHistoryItem(item))
-	}
+func newResyncRequiredFrame(sessionID string, reason resyncReason) wireFrame {
 	return wireFrame{
 		Version:   protocolVersion,
-		Kind:      "snap",
+		Kind:      wireKindEvent,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
-		Revision:  snap.Revision,
-		Session:   mapWireSession(snap.Session),
-		History: &wireHist{
-			Items:        wireHistory,
-			HasMore:      snap.History.HasMore,
-			BeforeCursor: snap.History.BeforeCursor,
-			Total:        snap.History.Total,
-		},
-		Pending:          mapWirePendingInputs(snap.PendingInputs),
-		Scheduled:        mapWireScheduledInputs(snap.ScheduledInputs),
-		PendingApproval:  mapWirePendingApproval(snap.PendingApproval),
-		PendingUserInput: mapWirePendingUserInput(snap.PendingUserInput),
-		SubAgents:        ptr(mapWireSubAgents(snap.SubAgents)),
+		Operation: wireOpResyncRequired,
+		Payload:   wireResyncRequiredPayload{Reason: reason},
 	}
 }
 
@@ -353,10 +355,10 @@ func newHistoryPageFrame(sessionID string, window HistoryWindow) wireFrame {
 	}
 	return wireFrame{
 		Version:   protocolVersion,
-		Kind:      "evt",
+		Kind:      wireKindEvent,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
-		Operation: "hist_page",
+		Operation: wireOpHistoryPage,
 		History: &wireHist{
 			Items:        wireHistory,
 			HasMore:      window.HasMore,
@@ -369,10 +371,10 @@ func newHistoryPageFrame(sessionID string, window HistoryWindow) wireFrame {
 func newHistoryItemFrame(sessionID string, item HistoryItem, summary *SessionSummary) wireFrame {
 	frame := wireFrame{
 		Version:   protocolVersion,
-		Kind:      "evt",
+		Kind:      wireKindEvent,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
-		Operation: "hist_item",
+		Operation: wireOpHistoryItem,
 		Item:      ptr(mapWireHistoryItem(item)),
 	}
 	if summary != nil {
@@ -384,10 +386,10 @@ func newHistoryItemFrame(sessionID string, item HistoryItem, summary *SessionSum
 func newSubAgentFrame(sessionID string, agent WebSessionSubAgent, summary *SessionSummary) wireFrame {
 	frame := wireFrame{
 		Version:   protocolVersion,
-		Kind:      "evt",
+		Kind:      wireKindEvent,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
-		Operation: "sub_agent",
+		Operation: wireOpSubAgent,
 		SubAgent:  ptr(mapWireSubAgent(agent)),
 	}
 	if summary != nil {
@@ -399,10 +401,10 @@ func newSubAgentFrame(sessionID string, agent WebSessionSubAgent, summary *Sessi
 func newSessionFrame(sessionID string, summary SessionSummary) wireFrame {
 	return wireFrame{
 		Version:   protocolVersion,
-		Kind:      "evt",
+		Kind:      wireKindEvent,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
-		Operation: "session",
+		Operation: wireOpSession,
 		Session:   mapWireSession(summary),
 	}
 }
@@ -410,10 +412,10 @@ func newSessionFrame(sessionID string, summary SessionSummary) wireFrame {
 func newPendingFrame(sessionID string, items []PendingInput) wireFrame {
 	return wireFrame{
 		Version:   protocolVersion,
-		Kind:      "evt",
+		Kind:      wireKindEvent,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
-		Operation: "pending",
+		Operation: wireOpPending,
 		Pending:   mapWirePendingInputs(items),
 	}
 }
@@ -421,10 +423,10 @@ func newPendingFrame(sessionID string, items []PendingInput) wireFrame {
 func newScheduledFrame(sessionID string, items []ScheduledInput) wireFrame {
 	return wireFrame{
 		Version:   protocolVersion,
-		Kind:      "evt",
+		Kind:      wireKindEvent,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
-		Operation: "scheduled",
+		Operation: wireOpScheduled,
 		Scheduled: mapWireScheduledInputs(items),
 	}
 }
@@ -668,23 +670,6 @@ func mapWireScheduledInputs(items []ScheduledInput) []wireScheduledInput {
 	return wireItems
 }
 
-func mapWirePendingUserInput(input *PendingUserInput) *wirePendingUserInput {
-	if input == nil {
-		return nil
-	}
-	var requestedAt *int64
-	if input.RequestedAt != nil {
-		value := input.RequestedAt.UnixMilli()
-		requestedAt = &value
-	}
-	return &wirePendingUserInput{
-		ItemID:      input.ItemID,
-		Prompt:      input.Prompt,
-		Questions:   cloneToolRequestQuestions(input.Questions),
-		RequestedAt: requestedAt,
-	}
-}
-
 func mapWireHistoryItem(item HistoryItem) wireHistItem {
 	item = historyItemForTransport(item)
 	var timestamp *int64
@@ -728,17 +713,6 @@ func mapWireHistoryItem(item HistoryItem) wireHistItem {
 		Detail:         mapWireHistoryDetail(item.Detail),
 		Payload:        item.Payload,
 	}
-}
-
-func mapWireSubAgents(items []WebSessionSubAgent) []wireSubAgent {
-	if len(items) == 0 {
-		return []wireSubAgent{}
-	}
-	result := make([]wireSubAgent, 0, len(items))
-	for _, item := range items {
-		result = append(result, mapWireSubAgent(item))
-	}
-	return result
 }
 
 func mapWireSubAgent(item WebSessionSubAgent) wireSubAgent {
@@ -844,24 +818,5 @@ func mapWireHistoryDetail(detail *HistoryDetail) *wireHistoryDetail {
 		Questions:    detail.Questions,
 		Answers:      detail.Answers,
 		Action:       detail.Action,
-	}
-}
-
-func mapWirePendingApproval(input *PendingApproval) *wirePendingApproval {
-	if input == nil {
-		return nil
-	}
-	var requestedAt *int64
-	if input.RequestedAt != nil {
-		value := input.RequestedAt.UnixMilli()
-		requestedAt = &value
-	}
-	return &wirePendingApproval{
-		ItemID:      input.ItemID,
-		Kind:        input.Kind,
-		Prompt:      input.Prompt,
-		Command:     input.Command,
-		RequestedAt: requestedAt,
-		Actionable:  input.Actionable,
 	}
 }

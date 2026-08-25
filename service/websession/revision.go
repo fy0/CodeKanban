@@ -9,6 +9,7 @@ import (
 	"code-kanban/model"
 	"code-kanban/model/tables"
 
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -89,4 +90,54 @@ func (m *Manager) currentSessionRevision(ctx context.Context, sessionID string) 
 		return ""
 	}
 	return formatSnapshotRevision(record.SnapshotRevision)
+}
+
+func (m *Manager) sessionHistoryCounts(ctx context.Context, sessionID string) (int, int, error) {
+	db := model.GetReaderDB()
+	if db == nil {
+		return 0, 0, model.ErrDBNotInitialized
+	}
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	var counts struct {
+		ItemCount int64 `gorm:"column:item_count"`
+		TurnCount int64 `gorm:"column:turn_count"`
+	}
+	if err := db.WithContext(ctx).Raw(
+		`SELECT
+			(SELECT COUNT(*) FROM web_session_items WHERE web_session_id = ?) AS item_count,
+			(SELECT COUNT(*) FROM web_session_turns WHERE web_session_id = ?) AS turn_count`,
+		normalizedSessionID,
+		normalizedSessionID,
+	).Scan(&counts).Error; err != nil {
+		return 0, 0, err
+	}
+	return int(counts.ItemCount), int(counts.TurnCount), nil
+}
+
+func (m *Manager) repairSessionHistoryCounts(
+	ctx context.Context,
+	record tables.WebSessionTable,
+	itemCount int,
+	turnCount int,
+) {
+	db := model.GetDB()
+	if db == nil {
+		return
+	}
+	result := db.WithContext(ctx).Exec(
+		`UPDATE web_sessions
+		 SET item_count = ?, turn_count = ?
+		 WHERE id = ? AND item_count = ? AND turn_count = ?`,
+		itemCount,
+		turnCount,
+		record.ID,
+		record.ItemCount,
+		record.TurnCount,
+	)
+	if result.Error != nil && m.logger != nil {
+		m.logger.Debug("failed to repair web session history counts",
+			zap.String("sessionId", record.ID),
+			zap.Error(result.Error),
+		)
+	}
 }

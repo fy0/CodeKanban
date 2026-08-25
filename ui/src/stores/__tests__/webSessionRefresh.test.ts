@@ -445,6 +445,77 @@ describe('webSession loading behavior', () => {
     expect(store.getBlocks(session.id).map(block => block.text)).toEqual(['baseline', 'new event']);
   });
 
+  it('singleflights resync notifications through conditional HTTP hydration', async () => {
+    const store = useWebSessionStore();
+    const baseline = makeSession({
+      id: 'session-resync',
+      revision: '5',
+      itemCount: 1,
+    });
+    const hydrated = makeSession({
+      ...baseline,
+      revision: '6',
+      itemCount: 2,
+      updatedAt: '2026-04-09T10:00:02.000Z',
+    });
+    listMock.mockResolvedValue([baseline]);
+    snapshotMock
+      .mockResolvedValueOnce({
+        revision: '5',
+        session: baseline,
+        history: {
+          items: [makeWireHistoryItem(1, { txt: 'baseline' })],
+          hasMore: false,
+          total: 1,
+        },
+      })
+      .mockResolvedValue({
+        revision: '6',
+        session: hydrated,
+        history: {
+          items: [
+            makeWireHistoryItem(1, { txt: 'baseline' }),
+            makeWireHistoryItem(2, { txt: 'hydrated' }),
+          ],
+          hasMore: false,
+          total: 2,
+        },
+      });
+
+    await store.loadSessions(baseline.projectId);
+    await store.loadSessionSnapshot(baseline.projectId, baseline.id);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+
+    const resyncFrame = {
+      v: 1,
+      k: 'evt',
+      sid: baseline.id,
+      rev: '6',
+      ts: Date.now(),
+      op: 'resync_required',
+      p: { reason: 'history_reconciled' },
+    };
+    eventSocket?.dispatch(resyncFrame);
+    eventSocket?.dispatch(resyncFrame);
+
+    await vi.waitFor(() =>
+      expect(store.getBlocks(baseline.id).map(block => block.text)).toEqual([
+        'baseline',
+        'hydrated',
+      ])
+    );
+    expect(snapshotMock).toHaveBeenCalledTimes(2);
+    expect(snapshotMock).toHaveBeenLastCalledWith(
+      baseline.projectId,
+      baseline.id,
+      expect.objectContaining({ knownRevision: '5' })
+    );
+    eventSocket?.dispatch(resyncFrame);
+    await flushMicrotasks();
+    expect(snapshotMock).toHaveBeenCalledTimes(2);
+  });
+
   it('loads archived session snapshots over HTTP without replacing the active session', async () => {
     const store = useWebSessionStore();
     const currentSession = makeSession({
@@ -508,6 +579,68 @@ describe('webSession loading behavior', () => {
     expect(store.getBlocks(archivedSession.id)).toHaveLength(1);
   });
 
+  it('applies goal_get ack data without waiting for or fetching a snapshot', async () => {
+    const store = useWebSessionStore();
+    const updatedAt = '2026-04-09T10:00:00.000Z';
+    const session = makeSession({
+      id: 'session-goal-refresh',
+      revision: '7',
+      goal: {
+        threadId: 'native-1',
+        objective: 'Keep the objective',
+        status: 'active',
+        tokenBudget: null,
+        tokensUsed: 10,
+        timeUsedSeconds: 20,
+        createdAt: updatedAt,
+        updatedAt,
+      },
+    });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const refresh = store.refreshGoal(session.id);
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await flushMicrotasks();
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+    const sent = commandSocket?.sent[0] as { rid: string; op: string } | undefined;
+    expect(sent?.op).toBe('goal_get');
+    if (!sent) {
+      throw new Error('goal_get command was not sent');
+    }
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: sent.rid,
+      sid: session.id,
+      rev: '8',
+      ts: Date.now(),
+      op: 'goal_get',
+      ok: 1,
+      p: {
+        goal: {
+          tid: 'native-1',
+          obj: 'Keep the objective',
+          st: 'active',
+          tu: 42,
+          tsu: 30,
+          ca: Date.parse(updatedAt),
+          ua: Date.parse(updatedAt),
+        },
+      },
+    });
+
+    await refresh;
+    expect(snapshotMock).not.toHaveBeenCalled();
+    expect(store.getSessions(session.projectId)[0]?.goal).toMatchObject({
+      updatedAt,
+      tokensUsed: 42,
+      timeUsedSeconds: 30,
+    });
+  });
+
   it('sends goal_bootstrap for draft codex goal starts', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
@@ -557,7 +690,7 @@ describe('webSession loading behavior', () => {
       k: 'evt',
       sid: session.id,
       ts: Date.now(),
-      op: 'snap',
+      op: 'session',
       s: {
         ...toWireSession({
           ...session,
@@ -927,7 +1060,7 @@ describe('webSession loading behavior', () => {
     const requestId = String(
       (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
     );
-    commandSocket?.dispatch({
+    eventSocket?.dispatch({
       v: 1,
       k: 'ack',
       rid: requestId,
@@ -2104,7 +2237,7 @@ describe('webSession loading behavior', () => {
     expect(store.getSessions(session.projectId)[0]?.hasScheduledPlanExecution).toBe(false);
   });
 
-  it('hydrates first sends from command-channel snapshots before falling back to HTTP snapshots', async () => {
+  it('hydrates first sends from incremental events without HTTP snapshots', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
       id: 'session-command-hydration',
@@ -2162,25 +2295,19 @@ describe('webSession loading behavior', () => {
     });
     commandSocket?.dispatch({
       v: 1,
-      k: 'snap',
+      k: 'evt',
       sid: session.id,
       ts: Date.now(),
+      op: 'hist_item',
       s: toWireSession(runningSession),
-      h: {
-        its: [
-          {
-            id: 'history-live-send',
-            oi: 1,
-            kd: 'user',
-            tp: 'user_message',
-            txt: 'hello',
-            ts2: Date.parse('2026-04-09T10:00:01.000Z'),
-          },
-        ],
-        hm: false,
-        tot: 1,
+      i: {
+        id: 'history-live-send',
+        oi: 1,
+        kd: 'user',
+        tp: 'user_message',
+        txt: 'hello',
+        ts2: Date.parse('2026-04-09T10:00:01.000Z'),
       },
-      pi: [],
     });
 
     await sendPromise;
@@ -2227,6 +2354,8 @@ describe('webSession loading behavior', () => {
 
     listMock.mockResolvedValue([session]);
     await store.loadSessions(session.projectId);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
 
     const firstSend = store.sendMessage(session.id, 'inspect this', ['attachment-1'], undefined, {
       attachments,
@@ -2252,6 +2381,7 @@ describe('webSession loading behavior', () => {
       rid: firstRequestId,
       sid: session.id,
       op: 'send',
+      ts: Date.now(),
       code: 'unavailable',
       msg: 'APP server did not accept the message',
     });
@@ -2298,37 +2428,38 @@ describe('webSession loading behavior', () => {
       op: 'send',
       ok: 1,
     });
-    commandSocket?.dispatch({
+    eventSocket?.dispatch({
       v: 1,
-      k: 'snap',
+      k: 'evt',
       sid: session.id,
       ts: Date.now(),
+      op: 'hist_item',
       s: toWireSession(runningSession),
-      h: {
-        its: [
-          {
-            id: 'history-retried-user-message',
-            oi: 1,
-            kd: 'user',
-            tp: 'user_message',
-            txt: 'inspect this',
-            atts: attachments,
-            ts2: Date.parse('2026-04-09T10:00:01.000Z'),
-          },
-          {
-            id: 'history-agent-run-failed',
-            oi: 2,
-            kd: 'system',
-            tp: 'run_fail',
-            out: 'failed',
-            txt: '429 Too Many Requests',
-            ts2: Date.parse('2026-04-09T10:00:02.000Z'),
-          },
-        ],
-        hm: false,
-        tot: 2,
+      i: {
+        id: 'history-retried-user-message',
+        oi: 1,
+        kd: 'user',
+        tp: 'user_message',
+        txt: 'inspect this',
+        atts: attachments,
+        ts2: Date.parse('2026-04-09T10:00:01.000Z'),
       },
-      pi: [],
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: {
+        id: 'history-agent-run-failed',
+        oi: 2,
+        kd: 'system',
+        tp: 'run_fail',
+        out: 'failed',
+        txt: '429 Too Many Requests',
+        ts2: Date.parse('2026-04-09T10:00:02.000Z'),
+      },
     });
 
     await retrySend;

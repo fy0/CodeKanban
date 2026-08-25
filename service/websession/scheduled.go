@@ -1126,9 +1126,7 @@ func (m *Manager) broadcastScheduledInputs(sessionID string) {
 	if err != nil {
 		return
 	}
-	_ = m.broadcastNextRevision(context.Background(), sessionID, func() (wireFrame, bool) {
-		return newScheduledFrame(sessionID, items), true
-	})
+	_ = m.broadcastTransientFrame(context.Background(), sessionID, newScheduledFrame(sessionID, items))
 }
 
 func (m *Manager) recoverPendingScheduledInputs(ctx context.Context) error {

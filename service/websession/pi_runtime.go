@@ -801,7 +801,7 @@ func (m *Manager) finishSuccessfulPiRun(runtime *piSessionRuntime, dispatch *piR
 	if err := m.syncPiRuntimeSnapshot(context.Background(), runtime, session, compactionAt); err != nil {
 		return err
 	}
-	if err := m.broadcastSnapshot(context.Background(), session.ID); err != nil {
+	if err := m.broadcastResyncRequired(context.Background(), session.ID, resyncReasonRuntimeReconciled); err != nil {
 		return err
 	}
 	now := time.Now()

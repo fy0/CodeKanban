@@ -1057,6 +1057,136 @@ func TestManagerBroadcastOnlyTargetsEventClients(t *testing.T) {
 	}
 }
 
+func TestHydrationCommandsReplyWithoutWebSocketSnapshots(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_create","op":"create","p":{"pid":%q,"ag":"codex"}}`, project.ID)),
+	); err != nil {
+		t.Fatalf("create command returned error: %v", err)
+	}
+	if len(conn.frames) != 1 || conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "create" {
+		t.Fatalf("expected one lightweight create ack, got %#v", conn.frames)
+	}
+	sessionID := conn.frames[0].SessionID
+	if sessionID == "" || conn.frames[0].Revision == "" {
+		t.Fatalf("create ack is missing session hydration metadata: %#v", conn.frames[0])
+	}
+
+	conn.frames = nil
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_connect","sid":%q,"op":"connect","p":{}}`, sessionID)),
+	); err != nil {
+		t.Fatalf("connect command returned error: %v", err)
+	}
+	if len(conn.frames) != 1 || conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "connect" {
+		t.Fatalf("expected one lightweight connect ack, got %#v", conn.frames)
+	}
+
+	conn.frames = nil
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_goal","sid":%q,"op":"goal_get","p":{}}`, sessionID)),
+	); err != nil {
+		t.Fatalf("goal_get command returned error: %v", err)
+	}
+	if len(conn.frames) != 1 || conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "goal_get" {
+		t.Fatalf("expected one lightweight goal_get ack, got %#v", conn.frames)
+	}
+	payload, ok := conn.frames[0].Payload.(wireGoalPayload)
+	if !ok {
+		t.Fatalf("expected goal_get ack payload, got %#v", conn.frames[0].Payload)
+	}
+	encodedPayload, err := json.Marshal(payload)
+	if err != nil || !strings.Contains(string(encodedPayload), `"goal"`) {
+		t.Fatalf("expected goal_get ack to carry a goal delta, got %s (err=%v)", encodedPayload, err)
+	}
+}
+
+func TestManagerRejectsUnsupportedWebSocketProtocolVersion(t *testing.T) {
+	conn := &captureWSConn{}
+	client := &client{conn: conn}
+
+	if err := (&Manager{}).HandleCommand(
+		context.Background(),
+		client,
+		[]byte(`{"v":2,"k":"cmd","rid":"request-1","op":"list","p":{}}`),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+	if len(conn.frames) != 1 || conn.frames[0].Kind != wireKindError ||
+		conn.frames[0].Code != "unsupported_version" {
+		t.Fatalf("expected an unsupported_version error frame, got %#v", conn.frames)
+	}
+}
+
+func TestSummaryAndResyncBroadcastsReuseCurrentRevision(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Revision stable", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	eventConn := &captureWSConn{}
+	eventClient := manager.RegisterEventClient(eventConn)
+	defer manager.UnregisterClient(eventClient)
+	if _, err := manager.HandleHeartbeatPayload(
+		eventClient,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"hb","ts":1,"op":"focus","sid":%q}`, session.ID)),
+	); err != nil {
+		t.Fatalf("focus event client: %v", err)
+	}
+
+	before, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession before broadcast: %v", err)
+	}
+	manager.broadcastSessionSummary(context.Background(), session.ID)
+	if err := manager.broadcastResyncRequired(context.Background(), session.ID, resyncReasonHistoryReconciled); err != nil {
+		t.Fatalf("broadcastResyncRequired returned error: %v", err)
+	}
+	after, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession after broadcast: %v", err)
+	}
+	if after.SnapshotRevision != before.SnapshotRevision {
+		t.Fatalf("broadcasts advanced revision from %d to %d", before.SnapshotRevision, after.SnapshotRevision)
+	}
+	if len(eventConn.frames) != 2 {
+		t.Fatalf("expected summary and resync events, got %#v", eventConn.frames)
+	}
+	resync := eventConn.frames[1]
+	if resync.Kind != "evt" || resync.Operation != "resync_required" ||
+		resync.SessionID != session.ID || resync.Revision != formatSnapshotRevision(before.SnapshotRevision) {
+		t.Fatalf("unexpected resync frame: %#v", resync)
+	}
+	if resync.Session != nil || resync.History != nil || resync.Item != nil {
+		t.Fatalf("resync frame must not contain snapshot data: %#v", resync)
+	}
+	payload, _ := resync.Payload.(wireResyncRequiredPayload)
+	if payload.Reason != resyncReasonHistoryReconciled {
+		t.Fatalf("unexpected resync reason: %#v", payload)
+	}
+}
+
 func TestManagerHandleHeartbeatPayloadRepliesToPing(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -1857,7 +1987,7 @@ func TestManagerBroadcastSessionSummarySkipsArchivedSessions(t *testing.T) {
 	}
 }
 
-func TestManagerBroadcastSnapshotSkipsArchivedSessions(t *testing.T) {
+func TestManagerBroadcastResyncSkipsArchivedSessions(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -1879,11 +2009,11 @@ func TestManagerBroadcastSnapshotSkipsArchivedSessions(t *testing.T) {
 	eventClient := manager.RegisterEventClient(eventConn)
 	defer manager.UnregisterClient(eventClient)
 
-	if err := manager.broadcastSnapshot(context.Background(), session.ID); err != nil {
-		t.Fatalf("broadcastSnapshot returned error: %v", err)
+	if err := manager.broadcastResyncRequired(context.Background(), session.ID, resyncReasonHistoryReconciled); err != nil {
+		t.Fatalf("broadcastResyncRequired returned error: %v", err)
 	}
 	if len(eventConn.frames) != 0 {
-		t.Fatalf("expected archived snapshot broadcast to produce no frames, got %d", len(eventConn.frames))
+		t.Fatalf("expected archived resync broadcast to produce no frames, got %d", len(eventConn.frames))
 	}
 }
 
@@ -2627,6 +2757,16 @@ func TestManagerMoveSessionRenormalizesProjectOrder(t *testing.T) {
 	first := seedWebSession(t, project.ID, "First", 1000)
 	second := seedWebSession(t, project.ID, "Second", 2000)
 	third := seedWebSession(t, project.ID, "Third", 3000)
+	initialRevisions := map[string]int64{
+		first.ID:  first.SnapshotRevision,
+		second.ID: second.SnapshotRevision,
+		third.ID:  third.SnapshotRevision,
+	}
+	initialUpdatedAt := map[string]time.Time{
+		first.ID:  first.UpdatedAt,
+		second.ID: second.UpdatedAt,
+		third.ID:  third.UpdatedAt,
+	}
 
 	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
 	if err != nil {
@@ -2658,6 +2798,19 @@ func TestManagerMoveSessionRenormalizesProjectOrder(t *testing.T) {
 		if session.OrderIndex != expectedOrder {
 			t.Fatalf("expected orderIndex %.2f at index %d, got %.2f", expectedOrder, index, session.OrderIndex)
 		}
+		revision, err := parseSnapshotRevision(session.Revision)
+		if err != nil {
+			t.Fatalf("parse reordered session %s revision: %v", session.ID, err)
+		}
+		if revision <= initialRevisions[session.ID] {
+			t.Fatalf("expected reordered session %s revision to advance, got %s", session.ID, session.Revision)
+		}
+		if !session.UpdatedAt.Equal(initialUpdatedAt[session.ID]) {
+			t.Fatalf("reordering session %s changed updatedAt from %s to %s", session.ID, initialUpdatedAt[session.ID], session.UpdatedAt)
+		}
+	}
+	if moved.Revision != sessions[0].Revision {
+		t.Fatalf("returned moved revision %s does not match stored revision %s", moved.Revision, sessions[0].Revision)
 	}
 }
 
@@ -6321,17 +6474,13 @@ func TestUserInputRequestProjectionPersistsSourceItemID(t *testing.T) {
 		t.Fatalf("expected source item id %q, got %v", requestID, history.Items[0].SourceItemID)
 	}
 
-	snapshot, err := manager.Snapshot(context.Background(), session.ID, 10)
-	if err != nil {
-		t.Fatalf("Snapshot returned error: %v", err)
-	}
-	frame := newSnapshotFrame(session.ID, snapshot)
+	frame := newHistoryPageFrame(session.ID, history)
 	if frame.History == nil || len(frame.History.Items) != 1 {
-		t.Fatalf("expected snapshot frame history item, got %#v", frame.History)
+		t.Fatalf("expected history frame item, got %#v", frame.History)
 	}
 	if frame.History.Items[0].SourceItemID == nil || *frame.History.Items[0].SourceItemID != requestID {
 		t.Fatalf(
-			"expected wire snapshot source item id %q, got %v",
+			"expected wire history source item id %q, got %v",
 			requestID,
 			frame.History.Items[0].SourceItemID,
 		)

@@ -121,8 +121,14 @@ class FakeWebSocket {
     queueMicrotask(() => {
       this.onmessage?.({
         data: JSON.stringify({
+          v: 1,
           k: 'ack',
           rid: frame.rid,
+          sid: frame.sid,
+          rev: '2',
+          ts: Date.now(),
+          op: frame.op,
+          ok: 1,
         }),
       });
     });

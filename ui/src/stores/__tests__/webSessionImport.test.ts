@@ -4,13 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebSessionSummary } from '@/types/models';
 import { useWebSessionStore } from '@/stores/webSession';
 
-const { importSessionMock } = vi.hoisted(() => ({
+const { importSessionMock, snapshotMock } = vi.hoisted(() => ({
   importSessionMock: vi.fn(),
+  snapshotMock: vi.fn(),
 }));
 
 vi.mock('@/api/webSession', () => ({
   webSessionApi: {
     importSession: importSessionMock,
+    snapshot: snapshotMock,
   },
 }));
 
@@ -112,13 +114,14 @@ describe('webSession import', () => {
       clearInterval,
     });
     importSessionMock.mockReset();
+    snapshotMock.mockReset();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('applies the imported snapshot and activates the imported session', async () => {
+  it('hydrates and activates the imported session through the snapshot endpoint', async () => {
     const store = useWebSessionStore();
     const session = makeSession();
 
@@ -126,7 +129,12 @@ describe('webSession import', () => {
       created: true,
       reused: false,
       synced: true,
+      revision: '18',
       session,
+    });
+    snapshotMock.mockResolvedValue({
+      revision: '18',
+      session: { ...session, revision: '18' },
       history: {
         items: [
           {
@@ -152,6 +160,11 @@ describe('webSession import', () => {
       sessionId: 'thread-imported',
       mode: 'fast',
     });
+    expect(snapshotMock).toHaveBeenCalledWith(
+      session.projectId,
+      session.id,
+      expect.objectContaining({ limit: 80 })
+    );
     expect(store.getActiveSessionId(session.projectId)).toBe(session.id);
     expect(store.getSessions(session.projectId)[0]?.id).toBe(session.id);
     expect(store.getHistoryMeta(session.id).total).toBe(1);

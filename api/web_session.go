@@ -564,7 +564,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				Text string `json:"text"`
 			}
 		},
-	) (*h.ItemResponse[websession.SessionSnapshot], error) {
+	) (*h.ItemResponse[websession.SessionHydrationTarget], error) {
 		record, err := c.manager.GetSession(ctx, input.SessionID)
 		if err != nil || record.ProjectID != input.ProjectID {
 			return nil, huma.Error404NotFound("session not found")
@@ -587,8 +587,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				return nil, huma.Error500InternalServerError("failed to edit user message", err)
 			}
 		}
-		item = websession.SessionSnapshotForTransport(item)
-		resp := h.NewItemResponse(item)
+		resp := h.NewItemResponse(websession.NewSessionHydrationTarget(item.Session))
 		resp.Status = http.StatusCreated
 		return resp, nil
 	}, func(op *huma.Operation) {
@@ -608,7 +607,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				Mode        string `json:"mode,omitempty"`
 			}
 		},
-	) (*h.ItemResponse[websession.ImportResult], error) {
+	) (*h.ItemResponse[websession.ImportHydrationTarget], error) {
 		var (
 			item websession.ImportResult
 			err  error
@@ -647,8 +646,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				return nil, huma.Error400BadRequest(err.Error())
 			}
 		}
-		item = websession.ImportResultForTransport(item)
-		resp := h.NewItemResponse(item)
+		resp := h.NewItemResponse(websession.NewImportHydrationTarget(item))
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {
@@ -792,7 +790,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				ClearExisting bool   `json:"clearExisting,omitempty"`
 			}
 		},
-	) (*h.ItemResponse[websession.SessionSnapshot], error) {
+	) (*h.ItemResponse[websession.SessionHydrationTarget], error) {
 		record, err := c.manager.GetSession(ctx, input.SessionID)
 		if err != nil || record.ProjectID != input.ProjectID {
 			return nil, huma.Error404NotFound("session not found")
@@ -806,8 +804,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		if err != nil {
 			return nil, huma.Error400BadRequest(err.Error())
 		}
-		item = websession.SessionSnapshotForTransport(item)
-		resp := h.NewItemResponse(item)
+		resp := h.NewItemResponse(websession.NewSessionHydrationTarget(item.Session))
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {

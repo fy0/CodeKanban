@@ -6,70 +6,51 @@ import (
 	"time"
 )
 
-func TestSubAgentWireSnapshotCarriesThreadAttributionAndRegistry(t *testing.T) {
+func TestSubAgentWireIncrementalsCarryThreadAttributionAndRegistryEntry(t *testing.T) {
 	startedAt := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	parentThreadID := "thread_root"
 	sourceThreadID := "thread_child"
-	snapshot := SessionSnapshot{
-		History: HistoryWindow{
-			Items: []HistoryItem{
-				{
-					ID:             "child_command",
-					SourceThreadID: &sourceThreadID,
-					OrderIndex:     1,
-					Kind:           "tool",
-					ItemType:       "command_execution",
-				},
-			},
-			Total: 1,
-		},
-		SubAgents: []WebSessionSubAgent{
-			{
-				ThreadID:       sourceThreadID,
-				ParentThreadID: &parentThreadID,
-				Nickname:       "Atlas",
-				Role:           "worker",
-				Status:         WebSessionSubAgentRunning,
-				StartedAt:      &startedAt,
-			},
-		},
-	}
+	historyFrame := newHistoryItemFrame("session_1", HistoryItem{
+		ID:             "child_command",
+		SourceThreadID: &sourceThreadID,
+		OrderIndex:     1,
+		Kind:           "tool",
+		ItemType:       "command_execution",
+	}, nil)
+	agentFrame := newSubAgentFrame("session_1", WebSessionSubAgent{
+		ThreadID:       sourceThreadID,
+		ParentThreadID: &parentThreadID,
+		Nickname:       "Atlas",
+		Role:           "worker",
+		Status:         WebSessionSubAgentRunning,
+		StartedAt:      &startedAt,
+	}, nil)
 
-	encoded, err := json.Marshal(newSnapshotFrame("session_1", snapshot))
+	encoded, err := json.Marshal(historyFrame)
 	if err != nil {
-		t.Fatalf("marshal snapshot frame: %v", err)
+		t.Fatalf("marshal history frame: %v", err)
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(encoded, &payload); err != nil {
-		t.Fatalf("decode snapshot frame: %v", err)
+	var historyPayload map[string]any
+	if err := json.Unmarshal(encoded, &historyPayload); err != nil {
+		t.Fatalf("decode history frame: %v", err)
 	}
-	agents, ok := payload["ags"].([]any)
-	if !ok || len(agents) != 1 {
-		t.Fatalf("expected one compact sub-agent entry, got %s", encoded)
-	}
-	agent, _ := agents[0].(map[string]any)
-	if agent["tid"] != sourceThreadID || agent["ptid"] != parentThreadID ||
-		agent["nn"] != "Atlas" || agent["rl"] != "worker" || agent["st"] != "running" {
-		t.Fatalf("unexpected compact sub-agent entry: %#v", agent)
-	}
-	history, _ := payload["h"].(map[string]any)
-	items, _ := history["its"].([]any)
-	item, _ := items[0].(map[string]any)
+	item, _ := historyPayload["i"].(map[string]any)
 	if item["sthid"] != sourceThreadID {
 		t.Fatalf("expected compact source thread id, got %#v", item)
 	}
 
-	emptyEncoded, err := json.Marshal(newSnapshotFrame("session_empty", SessionSnapshot{}))
+	encoded, err = json.Marshal(agentFrame)
 	if err != nil {
-		t.Fatalf("marshal empty snapshot frame: %v", err)
+		t.Fatalf("marshal sub-agent frame: %v", err)
 	}
-	var emptyPayload map[string]any
-	if err := json.Unmarshal(emptyEncoded, &emptyPayload); err != nil {
-		t.Fatalf("decode empty snapshot frame: %v", err)
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("decode sub-agent frame: %v", err)
 	}
-	emptyAgents, ok := emptyPayload["ags"].([]any)
-	if !ok || len(emptyAgents) != 0 {
-		t.Fatalf("new snapshots must advertise an authoritative empty registry, got %s", emptyEncoded)
+	agent, _ := payload["ag"].(map[string]any)
+	if agent["tid"] != sourceThreadID || agent["ptid"] != parentThreadID ||
+		agent["nn"] != "Atlas" || agent["rl"] != "worker" || agent["st"] != "running" {
+		t.Fatalf("unexpected compact sub-agent entry: %#v", agent)
 	}
 }
 

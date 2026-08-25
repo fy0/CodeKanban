@@ -508,6 +508,20 @@ type SessionSnapshotResponse struct {
 	SubAgents        []WebSessionSubAgent `json:"subAgents"`
 }
 
+// SessionHydrationTarget identifies state that the client hydrates through the
+// conditional snapshot endpoint. Mutation endpoints must not return history.
+type SessionHydrationTarget struct {
+	Revision string         `json:"revision"`
+	Session  SessionSummary `json:"session"`
+}
+
+func NewSessionHydrationTarget(session SessionSummary) SessionHydrationTarget {
+	return SessionHydrationTarget{
+		Revision: session.Revision,
+		Session:  session,
+	}
+}
+
 func NewSessionSnapshotResponse(snapshot SessionSnapshot) SessionSnapshotResponse {
 	return SessionSnapshotResponse{
 		Revision:         snapshot.Revision,
@@ -558,6 +572,24 @@ type ImportResult struct {
 	Created         bool                 `json:"created"`
 	Reused          bool                 `json:"reused"`
 	Synced          bool                 `json:"synced"`
+}
+
+type ImportHydrationTarget struct {
+	Revision string         `json:"revision"`
+	Session  SessionSummary `json:"session"`
+	Created  bool           `json:"created"`
+	Reused   bool           `json:"reused"`
+	Synced   bool           `json:"synced"`
+}
+
+func NewImportHydrationTarget(result ImportResult) ImportHydrationTarget {
+	return ImportHydrationTarget{
+		Revision: result.Session.Revision,
+		Session:  result.Session,
+		Created:  result.Created,
+		Reused:   result.Reused,
+		Synced:   result.Synced,
+	}
 }
 
 type ImportSourceSummary struct {

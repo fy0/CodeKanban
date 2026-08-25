@@ -4,13 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWebSessionStore } from '@/stores/webSession';
 import type { WebSessionSummary } from '@/types/models';
 
-const { editUserMessageMock } = vi.hoisted(() => ({
+const { editUserMessageMock, snapshotMock } = vi.hoisted(() => ({
   editUserMessageMock: vi.fn(),
+  snapshotMock: vi.fn(),
 }));
 
 vi.mock('@/api/webSession', () => ({
   webSessionApi: {
     editUserMessage: editUserMessageMock,
+    snapshot: snapshotMock,
   },
 }));
 
@@ -95,16 +97,22 @@ describe('webSession edited message branch', () => {
       clearInterval,
     });
     editUserMessageMock.mockReset();
+    snapshotMock.mockReset();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('applies and activates the returned branch snapshot', async () => {
+  it('hydrates and activates the returned branch target through the snapshot endpoint', async () => {
     const session = makeBranchSession();
     editUserMessageMock.mockResolvedValue({
+      revision: '12',
       session,
+    });
+    snapshotMock.mockResolvedValue({
+      revision: '12',
+      session: { ...session, revision: '12' },
       history: {
         items: [
           { id: 'item-1', oi: 1, kd: 'user', tp: 'userMessage', txt: 'Earlier prompt' },
@@ -130,6 +138,11 @@ describe('webSession edited message branch', () => {
       'session-source',
       'source-item-2',
       'Revised prompt'
+    );
+    expect(snapshotMock).toHaveBeenCalledWith(
+      'project-1',
+      session.id,
+      expect.objectContaining({ limit: 80 })
     );
     expect(result.session?.id).toBe(session.id);
     expect(store.getActiveSessionId('project-1')).toBe(session.id);

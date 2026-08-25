@@ -2516,11 +2516,60 @@ func (m *Manager) syncCodexGoalState(
 	if err != nil {
 		return err
 	}
+	_, err = m.persistCodexGoalState(ctx, session, goal)
+	return err
+}
+
+func (m *Manager) persistCodexGoalState(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	goal *SessionGoal,
+) (bool, error) {
+	if sessionGoalMatchesRecord(session, goal) {
+		return false, nil
+	}
 	updates := map[string]any{
 		"updated_at": time.Now(),
 	}
 	applySessionGoalUpdates(updates, goal)
-	return m.updateRuntimeState(ctx, session.ID, updates)
+	if err := m.updateRuntimeState(ctx, session.ID, updates); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func sessionGoalMatchesRecord(record tables.WebSessionTable, goal *SessionGoal) bool {
+	if goal == nil {
+		return record.GoalObjective == nil &&
+			record.GoalStatus == nil &&
+			record.GoalTokenBudget == nil &&
+			record.GoalTokensUsed == 0 &&
+			record.GoalTimeUsedSeconds == 0 &&
+			record.GoalCreatedAt == nil &&
+			record.GoalUpdatedAt == nil
+	}
+	return stringPointerEqual(record.GoalObjective, goal.Objective) &&
+		stringPointerEqual(record.GoalStatus, string(goal.Status)) &&
+		int64PointersEqual(record.GoalTokenBudget, goal.TokenBudget) &&
+		record.GoalTokensUsed == goal.TokensUsed &&
+		record.GoalTimeUsedSeconds == goal.TimeUsedSeconds &&
+		timePointerEqual(record.GoalCreatedAt, goal.CreatedAt) &&
+		timePointerEqual(record.GoalUpdatedAt, goal.UpdatedAt)
+}
+
+func stringPointerEqual(value *string, expected string) bool {
+	return value != nil && *value == expected
+}
+
+func int64PointersEqual(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func timePointerEqual(value *time.Time, expected time.Time) bool {
+	return value != nil && value.Equal(expected)
 }
 
 func (m *Manager) handleCodexAppServerGoalUpdated(

@@ -6,6 +6,7 @@ import {
   type WebSessionAttachmentUploadProgress,
   type WebSessionCommandExecutionGroupDetail,
   type WebSessionImportResult,
+  type WebSessionHydrationTarget,
   type WebSessionSnapshot,
   type WebSessionPendingApprovalRecord,
   type WebSessionSubAgentRecord,
@@ -19,14 +20,15 @@ import type {
   WebSessionSummary,
   WebSessionWorkTimingOutcome,
 } from '@/types/models';
+import { WebSessionSync } from '@/stores/webSessionSync';
 import {
-  buildWebSessionSnapshotVersion,
-  compareWebSessionSnapshotVersion,
-  selectLatestWebSessionSnapshotVersion,
-  shouldApplyIncomingWebSessionSnapshot,
-  type WebSessionSnapshotVersion,
-  type WebSessionSnapshotVersionInput,
-} from '@/stores/webSessionSnapshotVersion';
+  buildWebSessionCommandFrame,
+  buildWebSessionHeartbeatFrame,
+  parseWebSessionWireFrame,
+  WebSessionCommandError,
+  type WebSessionWireFrame,
+  type WebSessionWireHeartbeatOperation,
+} from '@/stores/webSessionWireProtocol';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import {
   compareWebSessionRevisions,
@@ -36,8 +38,6 @@ import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 import { selectMostRecentWebSession } from '@/utils/webSessionRecency';
 
-type WireFrameKind = 'ack' | 'snap' | 'evt' | 'err' | 'hb';
-type WireHeartbeatOp = 'ping' | 'pong' | 'focus';
 type WebSessionSocketKind = 'event' | 'command';
 type SessionStatus = WebSessionSummary['status'];
 type SessionAssistantState =
@@ -236,63 +236,22 @@ type WireSubAgent = {
   ea?: number | null;
 };
 
-type WireFrame = {
-  v: number;
-  k: WireFrameKind;
-  rid?: string;
-  sid?: string;
-  ts: number;
-  rev?: string;
-  op?: string;
-  p?: unknown;
-  ok?: number;
-  s?: WireSession;
-  h?: {
-    its: WireHistoryItem[];
-    hm: boolean;
-    bc?: string;
-    tot: number;
-  };
-  i?: WireHistoryItem;
-  ags?: WireSubAgent[];
-  ag?: WireSubAgent;
-  pi?: WirePendingInput[];
-  si?: WireScheduledInput[];
-  pa?: {
-    iid: string;
-    kind: string;
-    txt: string;
-    cmd?: string;
-    ra?: number | null;
-    act: boolean;
-  } | null;
-  code?: string;
-  msg?: string;
-  retry?: boolean;
-};
+type WireFrame = WebSessionWireFrame<
+  WireSession,
+  WireHistoryItem,
+  WireSubAgent,
+  WirePendingInput,
+  WireScheduledInput
+>;
 
-class WebSessionCommandError extends Error {
-  readonly code: string;
-  readonly operation: string;
-  readonly sessionId: string;
-
-  constructor({
-    code,
-    message,
-    operation,
-    sessionId,
-  }: {
-    code: string;
-    message: string;
-    operation: string;
-    sessionId: string;
-  }) {
-    super(message);
-    this.name = 'WebSessionCommandError';
-    this.code = code;
-    this.operation = operation;
-    this.sessionId = sessionId;
-  }
+function parseWireFrame(raw: unknown): WireFrame {
+  return parseWebSessionWireFrame<
+    WireSession,
+    WireHistoryItem,
+    WireSubAgent,
+    WirePendingInput,
+    WireScheduledInput
+  >(raw);
 }
 
 export interface WebSessionToolBlock {
@@ -1226,7 +1185,7 @@ function isActiveSubAgent(agent: WebSessionSubAgent) {
 }
 
 function normalizePendingApproval(
-  value: WebSessionPendingApprovalRecord | WireFrame['pa'] | null | undefined
+  value: WebSessionPendingApprovalRecord | null | undefined
 ): WebSessionApprovalState | null {
   const record = asRecord(value);
   if (!record) {
@@ -1993,10 +1952,26 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const pendingActiveCallTimeoutOverrides = reactive(
     new Map<string, PendingActiveCallTimeoutOverride>()
   );
-  const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
-  const appliedRevisionBySession = new Map<string, string>();
-  const observedRevisionBySession = new Map<string, string>();
-  const fullSnapshotBaselineSessions = new Set<string>();
+  const sessionSync = new WebSessionSync({
+    hydrate: async request => {
+      const session = findSessionById(request.sessionId);
+      if (!session?.projectId || session.archivedAt) {
+        return;
+      }
+      await loadSessionSnapshot(session.projectId, request.sessionId, {
+        rememberActive: false,
+        conditional: true,
+      });
+    },
+    onError: (request, error) => {
+      console.warn('[Web Session] Failed to hydrate requested session revision', {
+        sessionId: request.sessionId,
+        revision: request.revision,
+        reason: request.reason,
+        error,
+      });
+    },
+  });
   const inFlightSessionLists = new Map<string, Promise<WebSessionSummary[]>>();
   const inFlightWorkTimingCalculations = new Map<
     string,
@@ -2310,78 +2285,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     };
   }
 
-  function currentSnapshotVersionInput(sessionId: string): WebSessionSnapshotVersionInput | null {
-    const session = findSessionById(sessionId);
-    if (!session) {
-      return null;
-    }
-    return {
-      session,
-      historyTotal: getHistoryMeta(sessionId).total,
-    };
-  }
-
-  function observeSessionRevision(sessionId: string, value: unknown) {
-    const revision = normalizeWebSessionRevision(value);
-    if (!revision) {
-      return '';
-    }
-    const current = observedRevisionBySession.get(sessionId) ?? '';
-    if (!current || compareWebSessionRevisions(revision, current) === 1) {
-      observedRevisionBySession.set(sessionId, revision);
-    }
-    return revision;
-  }
-
-  function rememberAppliedRevision(sessionId: string, value: unknown, fullSnapshot = false) {
-    const revision = observeSessionRevision(sessionId, value);
-    if (!revision) {
-      return;
-    }
-    const current = appliedRevisionBySession.get(sessionId) ?? '';
-    if (!current || compareWebSessionRevisions(revision, current) !== -1) {
-      appliedRevisionBySession.set(sessionId, revision);
-    }
-    if (fullSnapshot) {
-      fullSnapshotBaselineSessions.add(sessionId);
-    }
-  }
-
-  function getAppliedRevision(sessionId: string) {
-    return appliedRevisionBySession.get(sessionId) ?? '';
-  }
-
   function isSessionSnapshotCurrent(sessionId: string, serverRevision?: string | null) {
-    if (!fullSnapshotBaselineSessions.has(sessionId)) {
-      return false;
-    }
-    const normalizedServerRevision = normalizeWebSessionRevision(serverRevision);
-    const appliedRevision = getAppliedRevision(sessionId);
-    return Boolean(
-      normalizedServerRevision &&
-        appliedRevision &&
-        compareWebSessionRevisions(appliedRevision, normalizedServerRevision) !== -1
-    );
-  }
-
-  function shouldApplyRevision(sessionId: string, value: unknown) {
-    const revision = normalizeWebSessionRevision(value);
-    const appliedRevision = getAppliedRevision(sessionId);
-    if (!revision || !appliedRevision) {
-      return true;
-    }
-    return compareWebSessionRevisions(revision, appliedRevision) !== -1;
-  }
-
-  function rememberAppliedSnapshotVersion(
-    sessionId: string,
-    snapshot: WebSessionSnapshotVersionInput
-  ) {
-    const nextVersion = buildWebSessionSnapshotVersion(snapshot);
-    const currentVersion = appliedSnapshotVersionBySession.get(sessionId) ?? null;
-    if (!currentVersion || compareWebSessionSnapshotVersion(nextVersion, currentVersion) >= 0) {
-      appliedSnapshotVersionBySession.set(sessionId, nextVersion);
-    }
+    return sessionSync.isSnapshotCurrent(sessionId, serverRevision);
   }
 
   function setPendingAutoRetryOverride(
@@ -2578,11 +2483,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         loading: false,
       },
     };
-    rememberAppliedSnapshotVersion(sessionId, {
-      session: summary,
-      historyTotal: history.total,
-    });
-    rememberAppliedRevision(sessionId, summary.revision, true);
+    sessionSync.markHydrated(sessionId, summary.revision);
     if (summary.status === 'done') {
       completedTransitionVersionBySession.set(
         sessionId,
@@ -3731,11 +3632,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextHistory = { ...historyBySession.value };
     delete nextHistory[sessionId];
     historyBySession.value = nextHistory;
-    appliedSnapshotVersionBySession.delete(sessionId);
-    appliedRevisionBySession.delete(sessionId);
-    observedRevisionBySession.delete(sessionId);
+    sessionSync.clear(sessionId);
     pendingInputVersionBySession.delete(sessionId);
-    fullSnapshotBaselineSessions.delete(sessionId);
     pendingAutoRetryOverrides.delete(sessionId);
     pendingAutoRetryDispatchOverrides.delete(sessionId);
     pendingActiveCallTimeoutOverrides.delete(sessionId);
@@ -4867,7 +4765,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     let snapshotError: unknown = null;
-    if (options.forceSnapshot || !isSessionSnapshotCurrent(sessionId, acknowledgedRevision)) {
+    if (options.forceSnapshot || !sessionSync.isSnapshotCurrent(sessionId, acknowledgedRevision)) {
       try {
         await loadSessionSnapshot(session.projectId, sessionId, {
           rememberActive: false,
@@ -4891,15 +4789,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return true;
     }
 
-    try {
-      await loadSessionSnapshot(session.projectId, sessionId, {
-        rememberActive: false,
-        conditional: true,
-      });
-      snapshotError = null;
-    } catch (error) {
-      snapshotError = error;
-    }
     if (snapshotError) {
       console.warn('[Web Session] Runtime mutation hydration did not settle cleanly', {
         sessionId,
@@ -5081,7 +4970,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
     if (frame.k === 'ack') {
       if (frame.sid) {
-        observeSessionRevision(frame.sid, frame.rev);
+        sessionSync.observe(frame.sid, frame.rev);
       }
       if (frame.op === 'set_ar' && frame.sid) {
         acknowledgePendingAutoRetryOverride(frame.sid, Date.now());
@@ -5096,109 +4985,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return;
     }
 
-    if (frame.k === 'snap' && frame.sid && frame.s) {
-      const summary = {
-        ...normalizeSession(frame.s),
-        revision: normalizeWebSessionRevision(frame.rev ?? frame.s.rev),
-      };
-      if (!shouldApplyRevision(frame.sid, summary.revision)) {
-        setHistoryLoading(frame.sid, false);
-        return;
-      }
-      const historyTotal = Number(frame.h?.tot ?? frame.h?.its?.length ?? 0);
-      const snapshotInput = currentSnapshotVersionInput(frame.sid);
-      const appliedVersion = appliedSnapshotVersionBySession.get(frame.sid) ?? null;
-      const currentVersion = selectLatestWebSessionSnapshotVersion(
-        appliedVersion,
-        snapshotInput ? buildWebSessionSnapshotVersion(snapshotInput) : null
-      );
-      const incomingSnapshot = {
-        session: summary,
-        historyTotal,
-      };
-      if (
-        !shouldApplyIncomingWebSessionSnapshot({
-          appliedVersion,
-          currentSnapshot: snapshotInput,
-          incomingSnapshot,
-        })
-      ) {
-        if (import.meta.env.DEV) {
-          console.debug('[Web Session] Dropped stale snapshot frame', {
-            sessionId: frame.sid,
-            currentVersion,
-            incomingVersion: buildWebSessionSnapshotVersion(incomingSnapshot),
-          });
-        }
-        setHistoryLoading(frame.sid, false);
-        return;
-      }
-      applySessionSnapshot(
-        frame.sid,
-        summary,
-        Array.isArray(frame.h?.its) ? frame.h.its.map(item => normalizeHistoryItem(item)) : [],
-        normalizePendingApproval(frame.pa),
-        Array.isArray(frame.pi)
-          ? frame.pi
-              .map(item =>
-                normalizePendingInput({
-                  id: item.id,
-                  mode: item.m,
-                  text: item.txt,
-                  attachmentIds: item.atts,
-                  readyAt: item.ra,
-                  paused: item.ps,
-                  nativeQueued: item.nq,
-                  createdAt: item.ca,
-                })
-              )
-              .filter((item): item is WebSessionPendingInput => item != null)
-          : [],
-        Array.isArray(frame.si)
-          ? frame.si
-              .map(item =>
-                normalizeScheduledInput({
-                  id: item.id,
-                  action: item.a,
-                  targetId: item.tid,
-                  mode: item.m,
-                  exitPlanMode: item.epm,
-                  status: item.st,
-                  lastError: item.err,
-                  text: item.txt,
-                  attachmentIds: item.atts,
-                  scheduleKind: item.sk,
-                  scheduledFor: item.sf,
-                  idleSince: item.is,
-                  blockingReasons: item.br,
-                  conditionError: item.ce,
-                  createdAt: item.ca,
-                  updatedAt: item.ua,
-                  sentAt: item.sa,
-                  canceledAt: item.xa,
-                })
-              )
-              .filter((item): item is WebSessionScheduledInput => item != null)
-          : [],
-        {
-          hasMore: frame.h?.hm ?? false,
-          beforeCursor: frame.h?.bc ?? '',
-          total: historyTotal,
-        },
-        Array.isArray(frame.ags)
-          ? {
-              subAgents: frame.ags
-                .map(item => normalizeSubAgent(item))
-                .filter((item): item is WebSessionSubAgent => item != null),
-            }
-          : undefined
-      );
-      return;
-    }
-
     if (frame.k === 'evt' && frame.sid) {
-      observeSessionRevision(frame.sid, frame.rev);
-      if (!shouldApplyRevision(frame.sid, frame.rev)) {
+      if (frame.op === 'resync_required') {
+        const payload = asRecord(frame.p);
+        sessionSync.requestHydration(frame.sid, frame.rev, String(payload?.reason ?? '').trim());
+        return;
+      }
+      sessionSync.observe(frame.sid, frame.rev);
+      if (!sessionSync.shouldApply(frame.sid, frame.rev)) {
         return;
       }
       const shouldEmitTransition = frame.op !== 'hist_page';
@@ -5230,7 +5024,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
             : []
         );
         emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
-        rememberAppliedRevision(frame.sid, frame.rev);
+        sessionSync.markApplied(frame.sid, frame.rev);
         return;
       }
 
@@ -5265,7 +5059,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
             : []
         );
         emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
-        rememberAppliedRevision(frame.sid, frame.rev);
+        sessionSync.markApplied(frame.sid, frame.rev);
         return;
       }
 
@@ -5275,7 +5069,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           upsertSubAgent(frame.sid, agent);
         }
         emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
-        rememberAppliedRevision(frame.sid, frame.rev);
+        sessionSync.markApplied(frame.sid, frame.rev);
         return;
       }
 
@@ -5302,7 +5096,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
 
       emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
-      rememberAppliedRevision(frame.sid, frame.rev);
+      sessionSync.markApplied(frame.sid, frame.rev);
     }
   }
 
@@ -5313,14 +5107,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     pending.clear();
   }
 
-  function buildHeartbeatPayload(op: WireHeartbeatOp, sessionId = '') {
-    return JSON.stringify({
-      v: 1,
-      k: 'hb',
-      ts: Date.now(),
-      op,
-      sid: sessionId || undefined,
-    });
+  function buildHeartbeatPayload(operation: WebSessionWireHeartbeatOperation, sessionId = '') {
+    return JSON.stringify(buildWebSessionHeartbeatFrame(operation, sessionId));
   }
 
   function setSocketLastSeen(kind: WebSessionSocketKind, timestamp = Date.now()) {
@@ -5387,11 +5175,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
     commandWatchdogTimer = timer;
   }
 
-  function sendSocketHeartbeat(socket: WebSocket | null, op: WireHeartbeatOp, sessionId = '') {
+  function sendSocketHeartbeat(
+    socket: WebSocket | null,
+    operation: WebSessionWireHeartbeatOperation,
+    sessionId = ''
+  ) {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return;
     }
-    socket.send(buildHeartbeatPayload(op, sessionId));
+    socket.send(buildHeartbeatPayload(operation, sessionId));
   }
 
   function sendEventSessionFocus(sessionId = '') {
@@ -5491,7 +5283,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       };
       ws.onmessage = event => {
         try {
-          const frame = JSON.parse(event.data) as WireFrame;
+          const frame = parseWireFrame(event.data);
           setSocketLastSeen('event');
           if (handleSocketHeartbeat('event', ws, frame)) {
             return;
@@ -5545,7 +5337,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       };
       ws.onmessage = event => {
         try {
-          const frame = JSON.parse(event.data) as WireFrame;
+          const frame = parseWireFrame(event.data);
           setSocketLastSeen('command');
           if (handleSocketHeartbeat('command', ws, frame)) {
             return;
@@ -5581,14 +5373,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       throw new Error('websocket command channel is not connected');
     }
     const requestId = `ws_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const frame = {
-      v: 1,
-      k: 'cmd',
-      rid: requestId,
-      sid: sessionId || undefined,
-      op,
-      p: payload,
-    };
+    const frame = buildWebSessionCommandFrame(requestId, op, sessionId, payload);
     const promise = new Promise<WireFrame>((resolve, reject) => {
       pending.set(requestId, { resolve, reject, operation: op, sessionId });
     });
@@ -5653,7 +5438,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         (sessionsByProject.value[projectId] ?? []).map(session => [session.id, session])
       );
       const sessions = items.map(item => {
-        observeSessionRevision(item.id, item.revision);
+        sessionSync.observe(item.id, item.revision);
         const session = applyPendingActiveCallTimeoutOverride(
           applyPendingAutoRetryDispatchOverride(
             applyPendingAutoRetryOverride({
@@ -5817,10 +5602,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       let flight = inFlightSnapshots.get(key);
       if (!flight) {
         const controller = new AbortController();
-        const knownRevision =
-          options?.conditional && fullSnapshotBaselineSessions.has(sessionId)
-            ? getAppliedRevision(sessionId)
-            : '';
+        const knownRevision = options?.conditional ? sessionSync.getHydrated(sessionId) : '';
         const promise = webSessionApi.snapshot(projectId, sessionId, {
           limit,
           signal: controller.signal,
@@ -5883,72 +5665,66 @@ export const useWebSessionStore = defineStore('web-session', () => {
       const responseRevision = normalizeWebSessionRevision(
         snapshot.revision ?? snapshot.session?.revision
       );
-      observeSessionRevision(sessionId, responseRevision);
+      let result = snapshot;
+      let accepted = true;
+      sessionSync.observe(sessionId, responseRevision);
       if (snapshot.unchanged) {
+        sessionSync.markHydrated(sessionId, responseRevision);
         setHistoryLoading(sessionId, false);
       } else if (snapshot.session && snapshot.history) {
         const summary = {
           ...snapshot.session,
           revision: responseRevision || snapshot.session.revision,
         };
-        if (!shouldApplyRevision(sessionId, responseRevision)) {
+        if (!sessionSync.shouldApply(sessionId, responseRevision)) {
+          accepted = false;
           setHistoryLoading(sessionId, false);
-          const observedRevision = observedRevisionBySession.get(sessionId) ?? '';
-          if (
-            options?.conditional &&
-            !options.skipTrailing &&
-            compareWebSessionRevisions(responseRevision, observedRevision) === -1
-          ) {
-            return loadSessionSnapshot(projectId, sessionId, {
-              ...options,
-              skipTrailing: true,
-            });
-          }
-          return {
-            revision: getAppliedRevision(sessionId),
+          result = {
+            revision: sessionSync.getApplied(sessionId),
             unchanged: true,
           };
+        } else {
+          applySessionSnapshot(
+            sessionId,
+            summary,
+            Array.isArray(snapshot.history?.items)
+              ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+              : [],
+            normalizePendingApproval(snapshot.pendingApproval),
+            Array.isArray(snapshot.pendingInputs)
+              ? snapshot.pendingInputs
+                  .map(item => normalizePendingInput(item))
+                  .filter((item): item is WebSessionPendingInput => item != null)
+              : [],
+            Array.isArray(snapshot.scheduledInputs)
+              ? snapshot.scheduledInputs
+                  .map(item => normalizeScheduledInput(item))
+                  .filter((item): item is WebSessionScheduledInput => item != null)
+              : [],
+            {
+              hasMore: Boolean(snapshot.history?.hasMore),
+              beforeCursor: String(snapshot.history?.beforeCursor ?? ''),
+              total: Number(snapshot.history?.total ?? 0),
+            },
+            {
+              preserveArchivedPosition: options?.preserveArchivedPosition === true,
+              ...(Array.isArray(snapshot.subAgents)
+                ? {
+                    subAgents: snapshot.subAgents
+                      .map(item => normalizeSubAgent(item))
+                      .filter((item): item is WebSessionSubAgent => item != null),
+                  }
+                : {}),
+            }
+          );
         }
-        applySessionSnapshot(
-          sessionId,
-          summary,
-          Array.isArray(snapshot.history?.items)
-            ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
-            : [],
-          normalizePendingApproval(snapshot.pendingApproval),
-          Array.isArray(snapshot.pendingInputs)
-            ? snapshot.pendingInputs
-                .map(item => normalizePendingInput(item))
-                .filter((item): item is WebSessionPendingInput => item != null)
-            : [],
-          Array.isArray(snapshot.scheduledInputs)
-            ? snapshot.scheduledInputs
-                .map(item => normalizeScheduledInput(item))
-                .filter((item): item is WebSessionScheduledInput => item != null)
-            : [],
-          {
-            hasMore: Boolean(snapshot.history?.hasMore),
-            beforeCursor: String(snapshot.history?.beforeCursor ?? ''),
-            total: Number(snapshot.history?.total ?? 0),
-          },
-          {
-            preserveArchivedPosition: options?.preserveArchivedPosition === true,
-            ...(Array.isArray(snapshot.subAgents)
-              ? {
-                  subAgents: snapshot.subAgents
-                    .map(item => normalizeSubAgent(item))
-                    .filter((item): item is WebSessionSubAgent => item != null),
-                }
-              : {}),
-          }
-        );
       } else {
         setHistoryLoading(sessionId, false);
       }
-      if (options?.rememberActive !== false) {
+      if (accepted && options?.rememberActive !== false) {
         rememberActiveSession(projectId, sessionId);
       }
-      const observedRevision = observedRevisionBySession.get(sessionId) ?? '';
+      const observedRevision = sessionSync.getObserved(sessionId);
       if (
         options?.conditional &&
         !options.skipTrailing &&
@@ -5959,11 +5735,31 @@ export const useWebSessionStore = defineStore('web-session', () => {
           skipTrailing: true,
         });
       }
-      return snapshot;
+      return result;
     } catch (error) {
       setHistoryLoading(sessionId, false);
       throw error;
     }
+  }
+
+  async function hydrateSessionTarget(
+    projectId: string,
+    target: WebSessionHydrationTarget,
+    options?: { preserveArchivedPosition?: boolean }
+  ) {
+    const revision = normalizeWebSessionRevision(target.revision ?? target.session.revision);
+    const summary = {
+      ...target.session,
+      revision: revision || target.session.revision,
+    };
+    sessionSync.observe(summary.id, summary.revision);
+    upsertSession(summary, options);
+    await loadSessionSnapshot(projectId, summary.id, {
+      rememberActive: false,
+      conditional: true,
+      preserveArchivedPosition: options?.preserveArchivedPosition === true,
+    });
+    return summary;
   }
 
   async function renameSession(projectId: string, sessionId: string, title: string) {
@@ -6001,36 +5797,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       mode,
     });
     if (result?.session) {
-      applySessionSnapshot(
-        result.session.id,
-        result.session,
-        Array.isArray(result.history?.items)
-          ? result.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
-          : [],
-        normalizePendingApproval(result.pendingApproval),
-        Array.isArray(result.pendingInputs)
-          ? result.pendingInputs
-              .map(item => normalizePendingInput(item))
-              .filter((item): item is WebSessionPendingInput => item != null)
-          : [],
-        Array.isArray(result.scheduledInputs)
-          ? result.scheduledInputs
-              .map(item => normalizeScheduledInput(item))
-              .filter((item): item is WebSessionScheduledInput => item != null)
-          : [],
-        {
-          hasMore: Boolean(result.history?.hasMore),
-          beforeCursor: String(result.history?.beforeCursor ?? ''),
-          total: Number(result.history?.total ?? 0),
-        },
-        Array.isArray(result.subAgents)
-          ? {
-              subAgents: result.subAgents
-                .map(item => normalizeSubAgent(item))
-                .filter((item): item is WebSessionSubAgent => item != null),
-            }
-          : undefined
-      );
+      await hydrateSessionTarget(projectId, result);
       rememberActiveSession(projectId, result.session.id);
     }
     return result;
@@ -6042,47 +5809,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
     itemId: string,
     text: string
   ) {
-    const snapshot = await webSessionApi.editUserMessage(projectId, sessionId, itemId, text);
-    if (!snapshot.session || !snapshot.history) {
-      throw new Error('edited message branch returned an incomplete snapshot');
-    }
-    const branchId = snapshot.session.id;
-    applySessionSnapshot(
-      branchId,
-      snapshot.session,
-      Array.isArray(snapshot.history.items)
-        ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
-        : [],
-      normalizePendingApproval(snapshot.pendingApproval),
-      Array.isArray(snapshot.pendingInputs)
-        ? snapshot.pendingInputs
-            .map(item => normalizePendingInput(item))
-            .filter((item): item is WebSessionPendingInput => item != null)
-        : [],
-      Array.isArray(snapshot.scheduledInputs)
-        ? snapshot.scheduledInputs
-            .map(item => normalizeScheduledInput(item))
-            .filter((item): item is WebSessionScheduledInput => item != null)
-        : [],
-      {
-        hasMore: Boolean(snapshot.history.hasMore),
-        beforeCursor: String(snapshot.history.beforeCursor ?? ''),
-        total: Number(snapshot.history.total ?? 0),
-      },
-      Array.isArray(snapshot.subAgents)
-        ? {
-            subAgents: snapshot.subAgents
-              .map(item => normalizeSubAgent(item))
-              .filter((item): item is WebSessionSubAgent => item != null),
-          }
-        : undefined
-    );
+    const target = await webSessionApi.editUserMessage(projectId, sessionId, itemId, text);
+    const branchId = target.session.id;
+    await hydrateSessionTarget(projectId, target);
     rememberActiveSession(projectId, branchId);
     emitter.emit('web-session:created', {
       projectId,
       sessionId: branchId,
     });
-    return snapshot;
+    return target;
   }
 
   async function syncSession(
@@ -6102,43 +5837,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }));
     setHistoryLoading(sessionId, true);
     try {
-      const snapshot = await webSessionApi.sync(projectId, sessionId, mode, clearExisting);
-      if (snapshot?.session) {
-        applySessionSnapshot(
-          sessionId,
-          snapshot.session,
-          Array.isArray(snapshot?.history?.items)
-            ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
-            : [],
-          normalizePendingApproval(snapshot.pendingApproval),
-          Array.isArray(snapshot.pendingInputs)
-            ? snapshot.pendingInputs
-                .map(item => normalizePendingInput(item))
-                .filter((item): item is WebSessionPendingInput => item != null)
-            : [],
-          Array.isArray(snapshot.scheduledInputs)
-            ? snapshot.scheduledInputs
-                .map(item => normalizeScheduledInput(item))
-                .filter((item): item is WebSessionScheduledInput => item != null)
-            : [],
-          {
-            hasMore: Boolean(snapshot?.history?.hasMore),
-            beforeCursor: String(snapshot?.history?.beforeCursor ?? ''),
-            total: Number(snapshot?.history?.total ?? 0),
-          },
-          Array.isArray(snapshot.subAgents)
-            ? {
-                subAgents: snapshot.subAgents
-                  .map(item => normalizeSubAgent(item))
-                  .filter((item): item is WebSessionSubAgent => item != null),
-              }
-            : undefined
-        );
-      }
+      const target = await webSessionApi.sync(projectId, sessionId, mode, clearExisting);
+      await hydrateSessionTarget(projectId, target, {
+        preserveArchivedPosition: Boolean(session?.archivedAt),
+      });
       if (rememberActive) {
         rememberActiveSession(projectId, sessionId);
       }
-      return snapshot;
+      return target;
     } catch (error) {
       setHistoryLoading(sessionId, false);
       updateSessionStatus(sessionId, current => ({
@@ -6820,25 +6526,21 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   async function refreshGoal(sessionId: string) {
-    const beforeUpdatedAt = findSessionById(sessionId)?.goal?.updatedAt ?? '';
-    await runRuntimeMutationCommand(
-      sessionId,
-      'goal_get',
-      {},
-      {
-        label: 'goal_get',
-        predicate: () => {
-          const session = findSessionById(sessionId);
-          if (!session) {
-            return false;
-          }
-          if (!session.goal) {
-            return true;
-          }
-          return session.goal.updatedAt !== beforeUpdatedAt;
-        },
-      }
-    );
+    const acknowledgement = await sendCommand('goal_get', sessionId, {});
+    const revision = normalizeWebSessionRevision(acknowledgement.rev);
+    if (!revision) {
+      throw new Error('websocket command goal_get returned no snapshot revision');
+    }
+    const payload = asRecord(acknowledgement.p);
+    if (!payload || !Object.prototype.hasOwnProperty.call(payload, 'goal')) {
+      throw new Error('websocket command goal_get returned no goal payload');
+    }
+    updateSessionStatus(sessionId, current => ({
+      ...current,
+      revision,
+      goal: normalizeGoal(payload.goal as WireSession['goal']),
+    }));
+    sessionSync.markApplied(sessionId, revision);
   }
 
   async function setGoal(
@@ -7304,7 +7006,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     fetchHistoryWindow,
     loadCommandGroupDetail,
     getSubAgents,
-    getAppliedRevision,
     isSessionSnapshotCurrent,
     getBlocks,
     getTimelineBlocks,

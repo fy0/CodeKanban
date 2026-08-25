@@ -5,6 +5,10 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
+
+	"code-kanban/model"
+	"code-kanban/model/tables"
 
 	"go.uber.org/zap"
 )
@@ -98,5 +102,137 @@ func TestSessionRevisionAdvancesAtomicallyAndControlsConditionalSnapshots(t *tes
 	changedRevision, _ := strconv.ParseInt(changed.Revision, 10, 64)
 	if changedRevision < initialRevision+advances {
 		t.Fatalf("revision = %d, want at least %d", changedRevision, initialRevision+advances)
+	}
+}
+
+func TestConditionalSnapshotRepairsStaleHistoryCountsWithoutRehydrating(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	nativeSessionID := "native-with-cached-history"
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", created.ID).
+		Update("native_session_id", nativeSessionID).Error; err != nil {
+		t.Fatalf("set native session id: %v", err)
+	}
+	if _, err := manager.appendHistoryItem(context.Background(), created.ID, HistoryItem{
+		ID:         "cached-item",
+		OrderIndex: 1,
+		Kind:       "assistant",
+		ItemType:   "agent_message",
+		Text:       "already cached",
+		Timestamp:  ptr(time.Now()),
+	}); err != nil {
+		t.Fatalf("append cached history: %v", err)
+	}
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", created.ID).
+		Updates(map[string]any{"item_count": 7, "turn_count": 9}).Error; err != nil {
+		t.Fatalf("seed stale history counts: %v", err)
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.ItemCount != 7 {
+		t.Fatalf("expected seeded stale item count, got %d", record.ItemCount)
+	}
+	revision := formatSnapshotRevision(record.SnapshotRevision)
+	response, err := manager.SnapshotWithAutoSyncIfChanged(
+		context.Background(),
+		created.ID,
+		DefaultHistoryWindow,
+		revision,
+	)
+	if err != nil {
+		t.Fatalf("conditional snapshot returned error: %v", err)
+	}
+	if !response.Unchanged || response.Session != nil || response.Revision != revision {
+		t.Fatalf("expected an unchanged response at revision %s, got %#v", revision, response)
+	}
+
+	repaired, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after repair returned error: %v", err)
+	}
+	if repaired.ItemCount != 1 {
+		t.Fatalf("expected repaired item count 1, got %d", repaired.ItemCount)
+	}
+	if repaired.TurnCount != 0 {
+		t.Fatalf("expected repaired turn count 0, got %d", repaired.TurnCount)
+	}
+	if repaired.SnapshotRevision != record.SnapshotRevision {
+		t.Fatalf("count repair advanced revision from %d to %d", record.SnapshotRevision, repaired.SnapshotRevision)
+	}
+}
+
+func TestPersistCodexGoalStateDoesNotRewriteUnchangedGoal(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	budget := int64(50_000)
+	goal := &SessionGoal{
+		ThreadID:        "native-goal-session",
+		Objective:       "Keep the goal stable",
+		Status:          GoalStatusActive,
+		TokenBudget:     &budget,
+		TokensUsed:      120,
+		TimeUsedSeconds: 45,
+		CreatedAt:       now.Add(-time.Hour),
+		UpdatedAt:       now,
+	}
+	changed, err := manager.persistCodexGoalState(context.Background(), record, goal)
+	if err != nil || !changed {
+		t.Fatalf("initial goal persistence = (%v, %v), want changed", changed, err)
+	}
+	persisted, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after goal persistence returned error: %v", err)
+	}
+
+	changed, err = manager.persistCodexGoalState(context.Background(), persisted, goal)
+	if err != nil {
+		t.Fatalf("persist unchanged goal returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("unchanged goal unexpectedly reported a write")
+	}
+	after, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after unchanged goal returned error: %v", err)
+	}
+	if after.SnapshotRevision != persisted.SnapshotRevision {
+		t.Fatalf("unchanged goal advanced revision from %d to %d", persisted.SnapshotRevision, after.SnapshotRevision)
 	}
 }

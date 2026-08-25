@@ -214,8 +214,8 @@ func (m *Manager) NavigatePiSessionTree(
 		return PiTreeNavigateResult{}, err
 	}
 	navigationComplete = true
-	if err := m.broadcastSnapshot(context.Background(), session.ID); err != nil && m.logger != nil {
-		m.logger.Warn("failed to broadcast Pi tree navigation snapshot",
+	if err := m.broadcastResyncRequired(context.Background(), session.ID, resyncReasonTreeNavigation); err != nil && m.logger != nil {
+		m.logger.Warn("failed to broadcast Pi tree navigation resync",
 			zap.String("sessionId", session.ID),
 			zap.Error(err),
 		)

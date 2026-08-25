@@ -760,9 +760,11 @@ func (m *Manager) broadcastPendingInputs(sessionID string) {
 	if err != nil || record.ArchivedAt != nil {
 		return
 	}
-	_ = m.broadcastNextRevision(context.Background(), sessionID, func() (wireFrame, bool) {
-		return newPendingFrame(sessionID, m.pendingInputsDisplaySnapshot(sessionID)), true
-	})
+	_ = m.broadcastTransientFrame(
+		context.Background(),
+		sessionID,
+		newPendingFrame(sessionID, m.pendingInputsDisplaySnapshot(sessionID)),
+	)
 }
 
 func (m *Manager) finishPendingProcessing(sessionID string) {

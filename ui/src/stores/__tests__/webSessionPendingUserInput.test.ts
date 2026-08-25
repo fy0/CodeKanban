@@ -4,15 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebSessionSummary } from '@/types/models';
 import { useWebSessionStore } from '@/stores/webSession';
 
-const { listMock, syncMock } = vi.hoisted(() => ({
+const { listMock, syncMock, snapshotMock } = vi.hoisted(() => ({
   listMock: vi.fn(),
   syncMock: vi.fn(),
+  snapshotMock: vi.fn(),
 }));
 
 vi.mock('@/api/webSession', () => ({
   webSessionApi: {
     list: listMock,
     sync: syncMock,
+    snapshot: snapshotMock,
   },
 }));
 
@@ -94,6 +96,7 @@ describe('webSession pending user input', () => {
     vi.stubGlobal('localStorage', createStorageMock());
     listMock.mockReset();
     syncMock.mockReset();
+    snapshotMock.mockReset();
   });
 
   afterEach(() => {
@@ -184,8 +187,10 @@ describe('webSession pending user input', () => {
     const requestID = 'req_input_123';
 
     listMock.mockResolvedValue([session]);
-    syncMock.mockResolvedValue({
-      session,
+    syncMock.mockResolvedValue({ revision: '2', session: { ...session, revision: '2' } });
+    snapshotMock.mockResolvedValue({
+      revision: '2',
+      session: { ...session, revision: '2' },
       history: {
         items: [
           {
@@ -244,8 +249,10 @@ describe('webSession pending user input', () => {
     });
 
     listMock.mockResolvedValue([session]);
-    syncMock.mockResolvedValue({
-      session,
+    syncMock.mockResolvedValue({ revision: '3', session: { ...session, revision: '3' } });
+    snapshotMock.mockResolvedValue({
+      revision: '3',
+      session: { ...session, revision: '3' },
       history: {
         items: [
           {
