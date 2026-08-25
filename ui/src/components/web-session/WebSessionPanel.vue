@@ -1434,116 +1434,145 @@
                     </div>
                   </div>
 
-                  <div
-                    v-else
-                    class="item-bubble"
-                    :class="[
-                      item.level ? `level-${item.level}` : undefined,
-                      item.itemType ? `type-${item.itemType}` : undefined,
-                      {
-                        'is-raw-capable': shouldShowMessageRawToggle(item),
-                        'is-raw-active': isTimelineRawBlockActive(item, 'message'),
-                      },
-                    ]"
-                    :data-raw-toggle-card="
-                      shouldShowMessageRawToggle(item)
-                        ? getTimelineRawModeKey(item, 'message')
-                        : undefined
-                    "
-                    :tabindex="shouldShowMessageRawToggle(item) ? 0 : undefined"
-                    @mouseenter="handleMessageBubbleMouseEnter(item)"
-                    @mouseleave="handleMessageBubbleMouseLeave(item)"
-                    @click="handleMessageBubbleClick(item)"
-                    @focusin="activateTimelineRawBlock(item, 'message')"
-                    @focusout="handleMessageBubbleFocusOut(item, $event)"
-                    @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'message')"
-                    @keydown.space.self.prevent="activateTimelineRawBlock(item, 'message')"
-                  >
-                    <button
-                      v-if="shouldShowTimelineRawToggle(item, 'message')"
-                      type="button"
-                      class="timeline-display-toggle timeline-display-toggle--copy"
-                      title="copy"
-                      @click.stop="copyTimelineBlock(item, 'message')"
+                  <div v-else class="timeline-message-row">
+                    <n-tooltip
+                      v-if="shouldShowTimelineUserMessageDeliveryIndicator(item)"
+                      trigger="hover"
+                      placement="left"
+                      :delay="100"
                     >
-                      copy
-                    </button>
-                    <button
-                      v-if="shouldShowTimelineRawToggle(item, 'message')"
-                      type="button"
-                      class="timeline-display-toggle"
-                      :class="{ 'is-active': isBlockRawMode(item, 'message') }"
-                      :title="t('terminal.rawMode')"
-                      @click.stop="toggleBlockRawMode(item, 'message')"
-                    >
-                      raw
-                    </button>
-                    <pre
-                      v-if="shouldShowMessageRawToggle(item) && isBlockRawMode(item, 'message')"
-                      class="item-text item-text--raw timeline-raw-text"
-                    ><code v-html="renderHighlightedPlainText(item.text, timelineSearchQuery)"></code></pre>
+                      <template #trigger>
+                        <button
+                          type="button"
+                          class="user-message-failure-indicator"
+                          :class="{ 'is-loading': isRetryingTimelineUserMessage(item) }"
+                          :aria-label="failedTimelineUserMessageActionLabel(item)"
+                          :aria-busy="isRetryingTimelineUserMessage(item)"
+                          @click.stop="handleRetryTimelineUserMessage(item)"
+                        >
+                          <n-icon size="23">
+                            <RefreshOutline v-if="isRetryingTimelineUserMessage(item)" />
+                            <AlertCircleOutline v-else />
+                          </n-icon>
+                        </button>
+                      </template>
+                      {{ failedTimelineUserMessageActionLabel(item) }}
+                    </n-tooltip>
+
                     <div
-                      v-else-if="getDisplayBlockText(item)"
-                      v-memo="getMessageMarkdownMemoDeps(item)"
-                      class="item-text chat-markdown"
-                      v-html="
-                        renderMarkdown(
-                          getMessageMarkdownText(item),
-                          getMessageMarkdownRenderOptions(item)
-                        )
+                      class="item-bubble"
+                      :class="[
+                        item.level ? `level-${item.level}` : undefined,
+                        item.itemType ? `type-${item.itemType}` : undefined,
+                        {
+                          'is-raw-capable': shouldShowMessageRawToggle(item),
+                          'is-raw-active': isTimelineRawBlockActive(item, 'message'),
+                        },
+                      ]"
+                      :data-raw-toggle-card="
+                        shouldShowMessageRawToggle(item)
+                          ? getTimelineRawModeKey(item, 'message')
+                          : undefined
                       "
-                    ></div>
-                    <div v-if="item.attachments.length > 0" class="attachment-row">
-                      <span
-                        v-for="attachment in item.attachments"
-                        :key="attachment.id"
-                        class="attachment-pill"
+                      :tabindex="shouldShowMessageRawToggle(item) ? 0 : undefined"
+                      @mouseenter="handleMessageBubbleMouseEnter(item)"
+                      @mouseleave="handleMessageBubbleMouseLeave(item)"
+                      @click="handleMessageBubbleClick(item)"
+                      @focusin="activateTimelineRawBlock(item, 'message')"
+                      @focusout="handleMessageBubbleFocusOut(item, $event)"
+                      @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'message')"
+                      @keydown.space.self.prevent="activateTimelineRawBlock(item, 'message')"
+                    >
+                      <button
+                        v-if="shouldShowTimelineRawToggle(item, 'message')"
+                        type="button"
+                        class="timeline-display-toggle timeline-display-toggle--copy"
+                        title="copy"
+                        @click.stop="copyTimelineBlock(item, 'message')"
                       >
-                        <n-popover
-                          v-if="shouldUseAttachmentHoverPreview(attachment)"
-                          trigger="hover"
-                          placement="bottom-start"
-                          :delay="120"
+                        copy
+                      </button>
+                      <button
+                        v-if="shouldShowTimelineRawToggle(item, 'message')"
+                        type="button"
+                        class="timeline-display-toggle"
+                        :class="{ 'is-active': isBlockRawMode(item, 'message') }"
+                        :title="t('terminal.rawMode')"
+                        @click.stop="toggleBlockRawMode(item, 'message')"
+                      >
+                        raw
+                      </button>
+                      <pre
+                        v-if="shouldShowMessageRawToggle(item) && isBlockRawMode(item, 'message')"
+                        class="item-text item-text--raw timeline-raw-text"
+                      ><code v-html="renderHighlightedPlainText(item.text, timelineSearchQuery)"></code></pre>
+                      <div
+                        v-else-if="getDisplayBlockText(item)"
+                        v-memo="getMessageMarkdownMemoDeps(item)"
+                        class="item-text chat-markdown"
+                        v-html="
+                          renderMarkdown(
+                            getMessageMarkdownText(item),
+                            getMessageMarkdownRenderOptions(item)
+                          )
+                        "
+                      ></div>
+                      <div v-if="item.attachments.length > 0" class="attachment-row">
+                        <span
+                          v-for="attachment in item.attachments"
+                          :key="attachment.id"
+                          class="attachment-pill"
                         >
-                          <template #trigger>
-                            <button
-                              type="button"
-                              class="attachment-preview-trigger"
-                              :title="attachment.name"
-                              @click="openAttachmentPreview(attachment)"
-                            >
-                              <span class="attachment-preview-trigger-text">{{
-                                attachment.name
-                              }}</span>
-                            </button>
-                          </template>
-                          <div class="attachment-hover-preview">
-                            <img
-                              :src="getAttachmentPreviewUrl(attachment.id)"
-                              :alt="attachment.name"
-                              class="attachment-hover-image"
-                              loading="lazy"
-                            />
-                          </div>
-                        </n-popover>
-                        <button
-                          v-else-if="shouldUseAttachmentModalPreview(attachment)"
-                          type="button"
-                          class="attachment-preview-trigger"
-                          :title="attachment.name"
-                          @click="openAttachmentPreview(attachment)"
-                        >
-                          <span class="attachment-preview-trigger-text">{{ attachment.name }}</span>
-                        </button>
-                        <button
-                          v-else
-                          type="button"
-                          class="attachment-preview-trigger is-static"
-                          :title="attachment.name"
-                        >
-                          <span class="attachment-preview-trigger-text">{{ attachment.name }}</span>
-                        </button>
-                      </span>
+                          <n-popover
+                            v-if="shouldUseAttachmentHoverPreview(attachment)"
+                            trigger="hover"
+                            placement="bottom-start"
+                            :delay="120"
+                          >
+                            <template #trigger>
+                              <button
+                                type="button"
+                                class="attachment-preview-trigger"
+                                :title="attachment.name"
+                                @click="openAttachmentPreview(attachment)"
+                              >
+                                <span class="attachment-preview-trigger-text">{{
+                                  attachment.name
+                                }}</span>
+                              </button>
+                            </template>
+                            <div class="attachment-hover-preview">
+                              <img
+                                :src="getAttachmentPreviewUrl(attachment.id)"
+                                :alt="attachment.name"
+                                class="attachment-hover-image"
+                                loading="lazy"
+                              />
+                            </div>
+                          </n-popover>
+                          <button
+                            v-else-if="shouldUseAttachmentModalPreview(attachment)"
+                            type="button"
+                            class="attachment-preview-trigger"
+                            :title="attachment.name"
+                            @click="openAttachmentPreview(attachment)"
+                          >
+                            <span class="attachment-preview-trigger-text">{{
+                              attachment.name
+                            }}</span>
+                          </button>
+                          <button
+                            v-else
+                            type="button"
+                            class="attachment-preview-trigger is-static"
+                            :title="attachment.name"
+                          >
+                            <span class="attachment-preview-trigger-text">{{
+                              attachment.name
+                            }}</span>
+                          </button>
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3481,10 +3510,7 @@
               </label>
             </div>
           </n-radio-group>
-          <n-checkbox
-            v-model:checked="scheduledExitPlanMode"
-            class="scheduled-send-exit-plan"
-          >
+          <n-checkbox v-model:checked="scheduledExitPlanMode" class="scheduled-send-exit-plan">
             {{ t('webSession.scheduleExitPlanMode') }}
           </n-checkbox>
         </div>
@@ -3779,6 +3805,7 @@ import {
 } from 'naive-ui';
 import {
   AddOutline,
+  AlertCircleOutline,
   ArchiveOutline,
   ArrowDownOutline,
   ArrowUpOutline,
@@ -3819,6 +3846,7 @@ import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import { useDeveloperConfigStore } from '@/stores/developerConfig';
 import {
+  isWebSessionMessageDeliveryError,
   useWebSessionStore,
   type WebSessionBlock,
   type WebSessionDraftState,
@@ -3913,6 +3941,7 @@ import {
   type WebSessionComposerPastePlan,
 } from '@/components/web-session/webSessionComposerPaste';
 import { resolveWebSessionMobileContextWorktree } from '@/components/web-session/webSessionMobileProjectContext';
+import { isFailedWebSessionUserMessage } from '@/components/web-session/webSessionMessageFailure';
 import {
   chooseGitChangesScope,
   formatGitChangesBadgeDelta,
@@ -4584,6 +4613,7 @@ const archiveStateBySessionId = ref<WebSessionSubmitState>({});
 const importingCodexSessionId = ref('');
 const sendConfirmationState = ref<WebSessionSendConfirmationState | null>(null);
 const liveCardContinuePending = ref(false);
+const retryingUserMessageKey = ref('');
 const optimisticUnreadClearedVersionBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
 const isProjectSessionInitializing = ref(false);
@@ -5496,7 +5526,7 @@ async function toggleGoalCard() {
   }
 }
 const liveBlocks = computed(() =>
-  currentRealSession.value ? webSessionStore.getBlocks(currentRealSession.value.id) : []
+  currentRealSession.value ? webSessionStore.getTimelineBlocks(currentRealSession.value.id) : []
 );
 const blocks = computed(() =>
   webSessionCatchUpActive.value ? (frozenBlocks.value ?? []) : liveBlocks.value
@@ -5507,6 +5537,32 @@ const timelineBlocks = computed(() => {
     ? edgeWindow.items
     : blocks.value;
 });
+function isFailedTimelineUserMessage(item: WebSessionBlock) {
+  return isFailedWebSessionUserMessage(item);
+}
+
+function isRetryingTimelineUserMessage(item: WebSessionBlock) {
+  return retryingUserMessageKey.value === item.key;
+}
+
+function shouldShowTimelineUserMessageDeliveryIndicator(item: WebSessionBlock) {
+  return isFailedTimelineUserMessage(item) || isRetryingTimelineUserMessage(item);
+}
+
+function failedTimelineUserMessageActionLabel(item: WebSessionBlock) {
+  if (isRetryingTimelineUserMessage(item)) {
+    return t('webSession.userMessageRetrying');
+  }
+  if (
+    retryingUserMessageKey.value ||
+    isRunActive.value ||
+    (currentRealSession.value &&
+      isWebSessionSubmitting(submitStateBySessionId.value, currentRealSession.value.id))
+  ) {
+    return t('webSession.userMessageRetryBusy');
+  }
+  return t('webSession.userMessageFailed');
+}
 
 function cloneBlockForFreeze(block: WebSessionBlock): WebSessionBlock {
   return {
@@ -7179,7 +7235,12 @@ const messageEditCanSubmit = computed(() => {
 
 function canEditTimelineUserMessage(block: WebSessionBlock) {
   const session = currentRealSession.value;
-  return Boolean(block.kind === 'user' && session?.agent === 'codex' && session.nativeSessionId);
+  return Boolean(
+    block.kind === 'user' &&
+      !block.deliveryState &&
+      session?.agent === 'codex' &&
+      session.nativeSessionId
+  );
 }
 
 function openTimelineUserMessageEdit(block: WebSessionBlock) {
@@ -13970,6 +14031,79 @@ async function prepareSessionForSend(
   };
 }
 
+async function handleRetryTimelineUserMessage(item: WebSessionBlock) {
+  const initialSession = currentRealSession.value;
+  if (!initialSession || !isFailedTimelineUserMessage(item) || retryingUserMessageKey.value) {
+    return;
+  }
+  if (
+    isRunActive.value ||
+    isWebSessionSubmitting(submitStateBySessionId.value, initialSession.id)
+  ) {
+    message.info(t('webSession.userMessageRetryBusy'));
+    return;
+  }
+
+  const attachmentIds = item.attachments.map(attachment => attachment.id).filter(Boolean);
+  if (!item.text.trim() && attachmentIds.length === 0) {
+    return;
+  }
+
+  const submitKind: WebSessionSubmitKind =
+    initialSession.workflowMode === 'plan' ? 'plan_message' : 'execute_send';
+  if (
+    submitKind === 'execute_send' &&
+    !ensureSendConflictConfirmed(
+      buildWebSessionSendConfirmationSignature({
+        ownerId: initialSession.id,
+        text: item.text,
+        attachmentIds,
+        conflictSessionIds: sendConflictSessions.value.map(session => session.id),
+      }),
+      { notifyOnBlock: true }
+    )
+  ) {
+    return;
+  }
+
+  const sourceSessionId = initialSession.id;
+  retryingUserMessageKey.value = item.key;
+  beginSessionSubmit(sourceSessionId, submitKind);
+  try {
+    const prepared = await prepareSessionForSend(initialSession, {
+      shouldActivate: () => isCurrentVisibleSession(sourceSessionId),
+    });
+    if (!(await ensureMessageCapabilityAvailable(prepared.session.agent))) {
+      return;
+    }
+    await webSessionStore.sendMessage(prepared.session.id, item.text, attachmentIds, undefined, {
+      outgoingMessageId: item.id,
+      attachments: item.attachments,
+    });
+    recordSubmittedPrompt(item.text, prepared.session.projectId || props.projectId);
+    if (prepared.navigateProjectId && isCurrentVisibleSession(prepared.session.id)) {
+      projectStore.addRecentProject(prepared.navigateProjectId);
+      await router.push(buildProjectRouteLocation(prepared.navigateProjectId, prepared.session.id));
+    }
+    if (isCurrentVisibleSession(prepared.session.id)) {
+      autoFollowBottom.value = true;
+      scrollToBottom(true);
+    }
+    message.success(t('webSession.userMessageRetrySuccess'));
+  } catch (error) {
+    message.error(
+      t('webSession.userMessageRetryFailed', {
+        reason: formatSessionInteractionError(error),
+      })
+    );
+  } finally {
+    endSessionSubmit(sourceSessionId);
+    if (retryingUserMessageKey.value === item.key) {
+      retryingUserMessageKey.value = '';
+    }
+  }
+}
+
 async function continueErroredSession(session: WebSessionSummary) {
   const sourceSessionId = session.id;
   const prepared = await prepareSessionForSend(session, {
@@ -14008,6 +14142,9 @@ async function handleSubmit() {
   }
   const submitAgent = initialRealSession?.agent ?? selectedAgent.value;
   const submitKind = resolveComposerSubmitKind();
+  const goalCommand = parseComposerGoalCommand(draftText);
+  const isPiCompactCommand = submitAgent === 'pi' && draftText.trim() === '/compact';
+  const shouldStageOutgoingMessage = !goalCommand && !isPiCompactCommand;
   if (submitKind === 'execute_send') {
     if (!ensureSendConflictConfirmed(sendConfirmationSignature.value)) {
       return;
@@ -14018,13 +14155,28 @@ async function handleSubmit() {
   let submitOwnerId = initialSubmitOwnerId;
   let draftSessionId = initialSubmitOwnerId;
   let submissionSucceeded = false;
+  let messageRetainedForRetry = false;
+  let outgoingMessageId = '';
+  let outgoingMessageSessionId = '';
+  const stageComposerMessage = (session: WebSessionSummary | null) => {
+    if (!shouldStageOutgoingMessage || !session || outgoingMessageId) {
+      return;
+    }
+    outgoingMessageSessionId = session.id;
+    outgoingMessageId = webSessionStore.stageOutgoingMessage(
+      session.id,
+      draftText,
+      attachments.map(item => item.id),
+      { attachments }
+    );
+  };
   beginSessionSubmit(submitOwnerId, submitKind);
   clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
+  stageComposerMessage(initialRealSession);
   try {
     if (submitAgent === 'pi' && !(await ensurePiProjectTrust())) {
       return;
     }
-    const isPiCompactCommand = submitAgent === 'pi' && draftText.trim() === '/compact';
     if (isPiCompactCommand) {
       if (!initialRealSession || isDraftSession(initialSession)) {
         throw new Error(t('webSession.piCompactRequiresSession'));
@@ -14062,6 +14214,7 @@ async function handleSubmit() {
     if (!session) {
       return;
     }
+    stageComposerMessage(session);
     const sessionBeforePreparation = session;
     const prepared = await prepareSessionForSend(session, {
       shouldActivate: () => isCurrentVisibleSession(sessionBeforePreparation.id),
@@ -14071,7 +14224,6 @@ async function handleSubmit() {
       transferSessionSubmit(submitOwnerId, session.id);
       submitOwnerId = session.id;
     }
-    const goalCommand = parseComposerGoalCommand(draftText);
     if (goalCommand) {
       if (!goalCommand.objective) {
         await handleGoalCompose();
@@ -14102,7 +14254,9 @@ async function handleSubmit() {
     await webSessionStore.sendMessage(
       session.id,
       draftText,
-      attachments.map(item => item.id)
+      attachments.map(item => item.id),
+      undefined,
+      { outgoingMessageId, attachments }
     );
     submissionSucceeded = true;
     recordSubmittedPrompt(draftText, session.projectId || submitProjectId);
@@ -14117,9 +14271,13 @@ async function handleSubmit() {
       scrollToBottom(true);
     }
   } catch (error) {
+    messageRetainedForRetry = isWebSessionMessageDeliveryError(error);
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
-    if (!submissionSucceeded) {
+    if (!submissionSucceeded && !messageRetainedForRetry) {
+      if (outgoingMessageId && outgoingMessageSessionId) {
+        webSessionStore.discardOutgoingMessage(outgoingMessageSessionId, outgoingMessageId);
+      }
       restoreComposerDraftAfterFailedSubmit(draftSessionId, draft, submitProjectId);
     }
     endSessionSubmit(submitOwnerId);
@@ -19199,6 +19357,61 @@ defineExpose({
 .timeline-item.kind-user .item-meta {
   justify-content: flex-end;
   gap: 6px;
+}
+
+.timeline-message-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.timeline-item.kind-user .timeline-message-row {
+  justify-content: flex-end;
+}
+
+.user-message-failure-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--n-error-color, #d03050);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.user-message-failure-indicator:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  transform: scale(1.06);
+}
+
+.user-message-failure-indicator:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.user-message-failure-indicator.is-loading {
+  cursor: progress;
+}
+
+.user-message-failure-indicator.is-loading .n-icon {
+  animation: user-message-retry-spin 0.8s linear infinite;
+}
+
+@keyframes user-message-retry-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .message-edit-modal-body {

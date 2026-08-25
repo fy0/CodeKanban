@@ -360,6 +360,8 @@ export interface WebSessionHistoryDetail {
   action?: 'approve' | 'reject' | string;
 }
 
+export type WebSessionMessageDeliveryState = 'sending' | 'failed' | 'accepted';
+
 export interface WebSessionBlock {
   key: string;
   id: string;
@@ -387,7 +389,40 @@ export interface WebSessionBlock {
   done?: boolean;
   detail?: WebSessionHistoryDetail;
   payload?: Record<string, unknown>;
+  deliveryState?: WebSessionMessageDeliveryState;
 }
+
+export interface WebSessionSendMessageOptions {
+  outgoingMessageId?: string;
+  attachments?: WebSessionBlock['attachments'];
+}
+
+export class WebSessionMessageDeliveryError extends Error {
+  readonly outgoingMessageId: string;
+  readonly originalError: unknown;
+
+  constructor(outgoingMessageId: string, originalError: unknown) {
+    super(
+      originalError instanceof Error
+        ? originalError.message
+        : String(originalError || 'message delivery failed')
+    );
+    this.name = 'WebSessionMessageDeliveryError';
+    this.outgoingMessageId = outgoingMessageId;
+    this.originalError = originalError;
+  }
+}
+
+export function isWebSessionMessageDeliveryError(
+  error: unknown
+): error is WebSessionMessageDeliveryError {
+  return error instanceof WebSessionMessageDeliveryError;
+}
+
+type WebSessionOutgoingMessage = WebSessionBlock & {
+  deliveryState: WebSessionMessageDeliveryState;
+  baseOrderIndex: number;
+};
 
 export interface WebSessionHistoryPage {
   items: WebSessionBlock[];
@@ -1903,6 +1938,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const archivedSessionsById = ref<Record<string, WebSessionSummary>>({});
   const archivedScopeStates = ref<Record<string, ArchivedListScopeState>>({});
   const eventsBySession = ref<Record<string, WebSessionBlock[]>>({});
+  const outgoingMessagesBySession = ref<Record<string, WebSessionOutgoingMessage[]>>({});
   const historyBySession = ref<Record<string, HistoryMeta>>({});
   const draftStateByProject =
     ref<Record<string, Record<string, WebSessionDraftState>>>(loadStoredSessionDrafts());
@@ -1985,6 +2021,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const eventIndexBySession = new Map<string, Map<string, number>>();
   const emptySessionBlocks: WebSessionBlock[] = [];
   let draftAttachmentUploadSeed = 0;
+  let outgoingMessageSeed = 0;
 
   const allSessionIds = computed(() => {
     const ids = new Set<string>();
@@ -3688,6 +3725,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextEvents = { ...eventsBySession.value };
     delete nextEvents[sessionId];
     eventsBySession.value = nextEvents;
+    const nextOutgoingMessages = { ...outgoingMessagesBySession.value };
+    delete nextOutgoingMessages[sessionId];
+    outgoingMessagesBySession.value = nextOutgoingMessages;
     const nextHistory = { ...historyBySession.value };
     delete nextHistory[sessionId];
     historyBySession.value = nextHistory;
@@ -3934,6 +3974,188 @@ export const useWebSessionStore = defineStore('web-session', () => {
     setSubAgents(sessionId, next);
   }
 
+  function getOutgoingMessages(sessionId: string) {
+    return outgoingMessagesBySession.value[sessionId] ?? [];
+  }
+
+  function setOutgoingMessages(sessionId: string, messages: WebSessionOutgoingMessage[]) {
+    const next = { ...outgoingMessagesBySession.value };
+    if (messages.length === 0) {
+      delete next[sessionId];
+    } else {
+      next[sessionId] = messages;
+    }
+    outgoingMessagesBySession.value = next;
+  }
+
+  function buildOutgoingMessageAttachments(
+    attachmentIds: string[],
+    attachments: WebSessionBlock['attachments'] = []
+  ): WebSessionBlock['attachments'] {
+    const attachmentById = new Map(
+      attachments
+        .filter(attachment => Boolean(attachment?.id))
+        .map(attachment => [attachment.id, attachment] as const)
+    );
+    return attachmentIds
+      .map(attachmentId => String(attachmentId || '').trim())
+      .filter(Boolean)
+      .map(attachmentId => {
+        const attachment = attachmentById.get(attachmentId);
+        return {
+          id: attachmentId,
+          name: attachment?.name || attachmentId,
+          ...(attachment?.mime ? { mime: attachment.mime } : {}),
+          ...(typeof attachment?.size === 'number' ? { size: attachment.size } : {}),
+          ...(attachment?.path ? { path: attachment.path } : {}),
+        };
+      });
+  }
+
+  function stageOutgoingMessage(
+    sessionId: string,
+    text: string,
+    attachmentIds: string[],
+    options?: WebSessionSendMessageOptions
+  ) {
+    const current = getOutgoingMessages(sessionId);
+    const normalizedText = text.trim();
+    const requestedId = String(options?.outgoingMessageId || '').trim();
+    const existingIndex = requestedId
+      ? current.findIndex(message => message.id === requestedId)
+      : -1;
+    const attachments = buildOutgoingMessageAttachments(attachmentIds, options?.attachments);
+
+    if (existingIndex >= 0) {
+      const existing = current[existingIndex]!;
+      const next = [...current];
+      next.splice(existingIndex, 1, {
+        ...existing,
+        text: normalizedText,
+        attachments,
+        deliveryState: 'sending',
+      });
+      setOutgoingMessages(sessionId, next);
+      return existing.id;
+    }
+
+    outgoingMessageSeed += 1;
+    const timestamp = Date.now();
+    const id =
+      requestedId ||
+      `outgoing_${timestamp}_${outgoingMessageSeed}_${Math.random().toString(36).slice(2, 8)}`;
+    const events = buildBlocks(sessionId);
+    const session = findSessionById(sessionId);
+    const baseOrderIndex = Math.max(
+      0,
+      session?.itemCount ?? 0,
+      getHistoryMeta(sessionId).total,
+      events.reduce((latest, block) => Math.max(latest, block.orderIndex), 0)
+    );
+    setOutgoingMessages(sessionId, [
+      ...current,
+      {
+        key: `outgoing:${id}`,
+        id,
+        runId: null,
+        runDurationMs: null,
+        runOutcome: null,
+        orderIndex: baseOrderIndex,
+        baseOrderIndex,
+        kind: 'user',
+        itemType: 'user_message',
+        text: normalizedText,
+        timestamp,
+        observedAt: timestamp,
+        attachments,
+        deliveryState: 'sending',
+      },
+    ]);
+    return id;
+  }
+
+  function setOutgoingMessageDeliveryState(
+    sessionId: string,
+    outgoingMessageId: string,
+    deliveryState: WebSessionMessageDeliveryState
+  ) {
+    const current = getOutgoingMessages(sessionId);
+    const index = current.findIndex(message => message.id === outgoingMessageId);
+    if (index < 0) {
+      return false;
+    }
+    if (current[index]?.deliveryState === deliveryState) {
+      return true;
+    }
+    const next = [...current];
+    next.splice(index, 1, {
+      ...current[index]!,
+      deliveryState,
+    });
+    setOutgoingMessages(sessionId, next);
+    return true;
+  }
+
+  function discardOutgoingMessage(sessionId: string, outgoingMessageId: string) {
+    const current = getOutgoingMessages(sessionId);
+    const next = current.filter(message => message.id !== outgoingMessageId);
+    if (next.length === current.length) {
+      return;
+    }
+    setOutgoingMessages(sessionId, next);
+  }
+
+  function blockAttachmentIds(block: Pick<WebSessionBlock, 'attachments'>) {
+    return block.attachments
+      .map(attachment => String(attachment.id || '').trim())
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right));
+  }
+
+  function matchesOutgoingMessage(
+    outgoing: WebSessionOutgoingMessage,
+    authoritative: WebSessionBlock
+  ) {
+    if (
+      authoritative.kind !== 'user' ||
+      authoritative.itemType !== 'user_message' ||
+      authoritative.orderIndex <= outgoing.baseOrderIndex ||
+      authoritative.text.trim() !== outgoing.text
+    ) {
+      return false;
+    }
+    const outgoingAttachmentIds = blockAttachmentIds(outgoing);
+    const authoritativeAttachmentIds = blockAttachmentIds(authoritative);
+    return (
+      outgoingAttachmentIds.length === authoritativeAttachmentIds.length &&
+      outgoingAttachmentIds.every(
+        (attachmentId, index) => attachmentId === authoritativeAttachmentIds[index]
+      )
+    );
+  }
+
+  function reconcileOutgoingMessages(sessionId: string, events: WebSessionBlock[]) {
+    const current = getOutgoingMessages(sessionId);
+    if (current.length === 0 || events.length === 0) {
+      return;
+    }
+    const authoritativeUserMessages = events.filter(block => block.kind === 'user');
+    const claimedIndexes = new Set<number>();
+    const remaining = current.filter(outgoing => {
+      const matchIndex = authoritativeUserMessages.findIndex(
+        (block, index) => !claimedIndexes.has(index) && matchesOutgoingMessage(outgoing, block)
+      );
+      if (matchIndex < 0) {
+        return true;
+      }
+      claimedIndexes.add(matchIndex);
+      return false;
+    });
+    if (remaining.length !== current.length) {
+      setOutgoingMessages(sessionId, remaining);
+    }
+  }
+
   function sortEventBlocks(items: WebSessionBlock[]) {
     webSessionRuntimePerformanceCounters.eventSorts += 1;
     return [...items].sort((left, right) => left.orderIndex - right.orderIndex);
@@ -3957,6 +4179,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...eventsBySession.value,
       [sessionId]: events,
     };
+    reconcileOutgoingMessages(sessionId, events);
     return eventsBySession.value[sessionId] ?? [];
   }
 
@@ -4086,6 +4309,35 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   const getBlocks = (sessionId: string) => buildBlocks(sessionId);
+
+  function getTimelineBlocks(sessionId: string): WebSessionBlock[] {
+    const events = buildBlocks(sessionId);
+    const outgoing = getOutgoingMessages(sessionId);
+    if (outgoing.length === 0) {
+      return events;
+    }
+
+    const pending = [...outgoing].sort(
+      (left, right) =>
+        left.baseOrderIndex - right.baseOrderIndex ||
+        left.timestamp - right.timestamp ||
+        left.id.localeCompare(right.id)
+    );
+    const timeline: WebSessionBlock[] = [];
+    let pendingIndex = 0;
+    for (const event of events) {
+      while (
+        pendingIndex < pending.length &&
+        pending[pendingIndex]!.baseOrderIndex < event.orderIndex
+      ) {
+        timeline.push(pending[pendingIndex]!);
+        pendingIndex += 1;
+      }
+      timeline.push(event);
+    }
+    timeline.push(...pending.slice(pendingIndex));
+    return timeline;
+  }
 
   function createRuntimeAccumulator(session: WebSessionSummary | null): RuntimeAccumulator {
     const snapshotApproval =
@@ -5908,12 +6160,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sessionId: string,
     text: string,
     attachmentIds: string[],
-    mode?: 'redirect' | 'queue'
+    mode?: 'redirect' | 'queue',
+    options?: WebSessionSendMessageOptions
   ) {
     const session = findSessionById(sessionId);
     if (session?.archivedAt) {
       throw new Error('session is archived');
     }
+    const outgoingMessageId = mode
+      ? ''
+      : stageOutgoingMessage(sessionId, text, attachmentIds, options);
     const beforeState = snapshotRuntimeMutationState(sessionId);
     let optimisticPendingId = '';
     if (session?.status === 'running' && mode) {
@@ -5936,50 +6192,75 @@ export const useWebSessionStore = defineStore('web-session', () => {
       );
     }
 
-    try {
-      await runRuntimeMutationCommand(
-        sessionId,
-        'send',
-        {
-          txt: text,
-          atts: attachmentIds,
-          ...(mode ? { mode, pid: optimisticPendingId } : {}),
-        },
-        {
-          label: 'send',
-          forceSnapshot: Boolean(optimisticPendingId),
-          predicate: () => {
-            if (optimisticPendingId) {
-              return (
-                (pendingInputVersionBySession.get(sessionId) ?? 0) > beforeState.pendingInputVersion
-              );
-            }
-            const liveState = getLiveState(sessionId);
-            if (buildBlocks(sessionId).length > beforeState.blockCount) {
-              return true;
-            }
-            if (getHistoryMeta(sessionId).total > beforeState.historyTotal) {
-              return true;
-            }
-            if (
-              !optimisticPendingId &&
-              getPendingInputs(sessionId).length > beforeState.pendingInputCount
-            ) {
-              return true;
-            }
-            if (!beforeState.liveRunning && liveState.running) {
-              return true;
-            }
-            if (
-              liveState.phase !== beforeState.livePhase &&
-              liveState.updatedAt > beforeState.liveUpdatedAt
-            ) {
-              return true;
-            }
-            return liveState.updatedAt > beforeState.liveUpdatedAt && liveState.phase !== 'idle';
-          },
+    const payload = {
+      txt: text,
+      atts: attachmentIds,
+      ...(mode ? { mode, pid: optimisticPendingId } : {}),
+    };
+    const hydration: RuntimeMutationHydrationOptions = {
+      label: 'send',
+      forceSnapshot: Boolean(optimisticPendingId),
+      predicate: () => {
+        if (optimisticPendingId) {
+          return (
+            (pendingInputVersionBySession.get(sessionId) ?? 0) > beforeState.pendingInputVersion
+          );
         }
-      );
+        const liveState = getLiveState(sessionId);
+        if (buildBlocks(sessionId).length > beforeState.blockCount) {
+          return true;
+        }
+        if (getHistoryMeta(sessionId).total > beforeState.historyTotal) {
+          return true;
+        }
+        if (getPendingInputs(sessionId).length > beforeState.pendingInputCount) {
+          return true;
+        }
+        if (!beforeState.liveRunning && liveState.running) {
+          return true;
+        }
+        if (
+          liveState.phase !== beforeState.livePhase &&
+          liveState.updatedAt > beforeState.liveUpdatedAt
+        ) {
+          return true;
+        }
+        return liveState.updatedAt > beforeState.liveUpdatedAt && liveState.phase !== 'idle';
+      },
+    };
+
+    if (outgoingMessageId) {
+      let acknowledgement: WireFrame;
+      try {
+        acknowledgement = await sendCommand('send', sessionId, payload);
+      } catch (error) {
+        if (setOutgoingMessageDeliveryState(sessionId, outgoingMessageId, 'failed')) {
+          throw new WebSessionMessageDeliveryError(outgoingMessageId, error);
+        }
+        return;
+      }
+
+      setOutgoingMessageDeliveryState(sessionId, outgoingMessageId, 'accepted');
+      const revision = normalizeWebSessionRevision(acknowledgement.rev);
+      if (!revision) {
+        console.warn('[Web Session] Accepted send returned no snapshot revision', {
+          sessionId,
+        });
+        return;
+      }
+      try {
+        await hydrateRuntimeMutation(sessionId, hydration, revision);
+      } catch (error) {
+        console.warn('[Web Session] Accepted send hydration failed', {
+          sessionId,
+          error,
+        });
+      }
+      return;
+    }
+
+    try {
+      await runRuntimeMutationCommand(sessionId, 'send', payload, hydration);
     } catch (error) {
       if (optimisticPendingId) {
         setPendingInputs(
@@ -7026,6 +7307,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getAppliedRevision,
     isSessionSnapshotCurrent,
     getBlocks,
+    getTimelineBlocks,
     getLatestEventSeq,
     loadSessions,
     loadSessionCounts,
@@ -7042,6 +7324,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     syncSession,
     deleteSession,
     invalidateCleanedHistories,
+    stageOutgoingMessage,
+    discardOutgoingMessage,
     sendMessage,
     scheduleMessage,
     schedulePlanExecution,

@@ -2,7 +2,11 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WebSessionSummary } from '@/types/models';
-import { useWebSessionStore, webSessionRuntimePerformance } from '@/stores/webSession';
+import {
+  isWebSessionMessageDeliveryError,
+  useWebSessionStore,
+  webSessionRuntimePerformance,
+} from '@/stores/webSession';
 
 const {
   listMock,
@@ -2126,6 +2130,15 @@ describe('webSession loading behavior', () => {
 
     const sendPromise = store.sendMessage(session.id, 'hello', []);
 
+    expect(store.getBlocks(session.id)).toEqual([]);
+    expect(store.getTimelineBlocks(session.id)).toMatchObject([
+      {
+        kind: 'user',
+        text: 'hello',
+        deliveryState: 'sending',
+      },
+    ]);
+
     let commandSocket = findSocket('/api/v1/web-sessions/ws');
     for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
       await Promise.resolve();
@@ -2175,10 +2188,157 @@ describe('webSession loading behavior', () => {
     expect(snapshotMock).not.toHaveBeenCalled();
     expect(store.getBlocks(session.id)).toHaveLength(1);
     expect(store.getBlocks(session.id)[0]?.text).toBe('hello');
+    expect(store.getTimelineBlocks(session.id)).toHaveLength(1);
+    expect(store.getTimelineBlocks(session.id)[0]?.deliveryState).toBeUndefined();
     expect(store.getLiveState(session.id)).toMatchObject({
       phase: 'starting',
       running: true,
     });
+  });
+
+  it('keeps a pre-ACK failure retryable and reconciles the same bubble after retry', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-message-delivery-retry',
+      status: 'idle',
+      assistantState: null,
+      itemCount: 0,
+      turnCount: 0,
+      lastMessageAt: null,
+    });
+    const runningSession = makeSession({
+      ...session,
+      status: 'idle',
+      assistantState: 'error',
+      itemCount: 2,
+      turnCount: 1,
+      updatedAt: '2026-04-09T10:00:03.000Z',
+      lastMessageAt: '2026-04-09T10:00:03.000Z',
+    });
+    const attachments = [
+      {
+        id: 'attachment-1',
+        name: 'evidence.png',
+        mime: 'image/png',
+        size: 128,
+        path: '/tmp/evidence.png',
+      },
+    ];
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const firstSend = store.sendMessage(session.id, 'inspect this', ['attachment-1'], undefined, {
+      attachments,
+    });
+    const firstLocalMessage = store.getTimelineBlocks(session.id)[0]!;
+    expect(firstLocalMessage).toMatchObject({
+      text: 'inspect this',
+      deliveryState: 'sending',
+      attachments: [{ id: 'attachment-1', name: 'evidence.png' }],
+    });
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await flushMicrotasks();
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+    const firstRequestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'err',
+      rid: firstRequestId,
+      sid: session.id,
+      op: 'send',
+      code: 'unavailable',
+      msg: 'APP server did not accept the message',
+    });
+
+    const deliveryError = await firstSend.catch(error => error);
+    expect(isWebSessionMessageDeliveryError(deliveryError)).toBe(true);
+    expect(store.getBlocks(session.id)).toEqual([]);
+    expect(store.getTimelineBlocks(session.id)).toMatchObject([
+      {
+        id: firstLocalMessage.id,
+        deliveryState: 'failed',
+      },
+    ]);
+
+    const retrySend = store.sendMessage(
+      session.id,
+      firstLocalMessage.text,
+      firstLocalMessage.attachments.map(attachment => attachment.id),
+      undefined,
+      {
+        outgoingMessageId: firstLocalMessage.id,
+        attachments: firstLocalMessage.attachments,
+      }
+    );
+    expect(store.getTimelineBlocks(session.id)).toMatchObject([
+      {
+        id: firstLocalMessage.id,
+        deliveryState: 'sending',
+      },
+    ]);
+
+    for (let attempt = 0; attempt < 5 && (commandSocket?.sent.length ?? 0) < 2; attempt += 1) {
+      await flushMicrotasks();
+    }
+    const retryRequestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: retryRequestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'send',
+      ok: 1,
+    });
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'snap',
+      sid: session.id,
+      ts: Date.now(),
+      s: toWireSession(runningSession),
+      h: {
+        its: [
+          {
+            id: 'history-retried-user-message',
+            oi: 1,
+            kd: 'user',
+            tp: 'user_message',
+            txt: 'inspect this',
+            atts: attachments,
+            ts2: Date.parse('2026-04-09T10:00:01.000Z'),
+          },
+          {
+            id: 'history-agent-run-failed',
+            oi: 2,
+            kd: 'system',
+            tp: 'run_fail',
+            out: 'failed',
+            txt: '429 Too Many Requests',
+            ts2: Date.parse('2026-04-09T10:00:02.000Z'),
+          },
+        ],
+        hm: false,
+        tot: 2,
+      },
+      pi: [],
+    });
+
+    await retrySend;
+
+    const timeline = store.getTimelineBlocks(session.id);
+    const userMessages = timeline.filter(block => block.kind === 'user');
+    expect(userMessages.map(block => block.id)).toEqual(['history-retried-user-message']);
+    expect(userMessages[0]?.deliveryState).toBeUndefined();
+    expect(timeline.some(block => block.id === firstLocalMessage.id)).toBe(false);
+    expect(timeline.some(block => block.itemType === 'run_fail')).toBe(true);
   });
 
   it('trims inactive session history to a recent retained window', async () => {
