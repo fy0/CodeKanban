@@ -357,6 +357,16 @@ export type WebSessionImportResult = WebSessionHydrationTarget & {
   synced: boolean;
 };
 
+export type WebSessionReconcileTarget = {
+  id: string;
+  revision?: string;
+};
+
+export type WebSessionReconcileResult = {
+  items: WebSessionSummary[];
+  missingIds: string[];
+};
+
 export const webSessionApi = {
   runtimeConfig(options: RuntimeConfigLoadOptions = {}): Promise<WebSessionRuntimeConfig> {
     return runtimeConfigRequestLoader.load(async force => {
@@ -383,6 +393,20 @@ export const webSessionApi = {
         .Get<{ items?: WebSessionSummary[] }>(`/projects/${projectId}/web-sessions`)
         .send(true)) ?? {};
     return body.items ?? [];
+  },
+
+  async reconcile(targets: WebSessionReconcileTarget[]): Promise<WebSessionReconcileResult> {
+    const body =
+      (await http
+        .Post<ItemResponse<WebSessionReconcileResult>>('/web-sessions/reconcile', { targets })
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to reconcile AI sessions');
+    }
+    return {
+      items: Array.isArray(body.item.items) ? body.item.items : [],
+      missingIds: Array.isArray(body.item.missingIds) ? body.item.missingIds : [],
+    };
   },
 
   async counts(): Promise<Record<string, number>> {

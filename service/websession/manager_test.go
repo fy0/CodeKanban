@@ -2723,6 +2723,64 @@ func TestManagerListSessionsNormalizesLegacyStaleSyncState(t *testing.T) {
 	}
 }
 
+func TestManagerReconcileSessionsReturnsOnlyChangedAndMissingTargets(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	changed := seedWebSession(t, project.ID, "Changed", 1000)
+	unchanged := seedWebSession(t, project.ID, "Unchanged", 2000)
+	deleted := seedWebSession(t, project.ID, "Deleted", 3000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	initial, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	revisions := make(map[string]string, len(initial))
+	for _, item := range initial {
+		revisions[item.ID] = item.Revision
+	}
+	now := time.Now()
+	if err := manager.updateRuntimeState(context.Background(), changed.ID, map[string]any{
+		"status":            string(StatusDone),
+		"status_updated_at": now,
+		"updated_at":        now,
+	}); err != nil {
+		t.Fatalf("updateRuntimeState returned error: %v", err)
+	}
+	if err := manager.DeleteSession(context.Background(), deleted.ID); err != nil {
+		t.Fatalf("DeleteSession returned error: %v", err)
+	}
+
+	result, err := manager.ReconcileSessions(context.Background(), []SessionReconcileTarget{
+		{ID: changed.ID, Revision: revisions[changed.ID]},
+		{ID: unchanged.ID, Revision: revisions[unchanged.ID]},
+		{ID: deleted.ID, Revision: revisions[deleted.ID]},
+		{ID: "missing-session", Revision: "1"},
+		{ID: changed.ID, Revision: ""},
+		{ID: "   "},
+	})
+	if err != nil {
+		t.Fatalf("ReconcileSessions returned error: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected one changed summary, got %#v", result.Items)
+	}
+	if result.Items[0].ID != changed.ID || result.Items[0].Status != StatusDone {
+		t.Fatalf("unexpected changed summary: %#v", result.Items[0])
+	}
+	if result.Items[0].Revision == revisions[changed.ID] {
+		t.Fatalf("expected changed revision, got %q", result.Items[0].Revision)
+	}
+	if !reflect.DeepEqual(result.MissingIDs, []string{deleted.ID, "missing-session"}) {
+		t.Fatalf("unexpected missing IDs: %#v", result.MissingIDs)
+	}
+}
+
 func TestDecodeToolQuestionsPreservesStructuredQuestions(t *testing.T) {
 	questions := []toolRequestQuestion{
 		{

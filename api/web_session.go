@@ -163,6 +163,30 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Post(group, "/web-sessions/reconcile", func(
+		ctx context.Context,
+		input *struct {
+			Body struct {
+				Targets []websession.SessionReconcileTarget `json:"targets" maxItems:"256"`
+			}
+		},
+	) (*h.ItemResponse[websession.SessionReconcileResult], error) {
+		item, err := c.manager.ReconcileSessions(ctx, input.Body.Targets)
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			}
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-reconcile"
+		op.Summary = "按版本对账近期会话摘要"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Get(group, "/web-sessions/counts", func(
 		ctx context.Context,
 		_ *struct{},

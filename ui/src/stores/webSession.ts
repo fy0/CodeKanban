@@ -7,6 +7,8 @@ import {
   type WebSessionCommandExecutionGroupDetail,
   type WebSessionImportResult,
   type WebSessionHydrationTarget,
+  type WebSessionReconcileResult,
+  type WebSessionReconcileTarget,
   type WebSessionSnapshot,
   type WebSessionPendingApprovalRecord,
   type WebSessionSubAgentRecord,
@@ -777,6 +779,10 @@ const WEB_SESSION_SOCKET_IDLE_TIMEOUT_MS = WEB_SESSION_HEARTBEAT_INTERVAL_MS * 2
 const WEB_SESSION_SOCKET_WATCHDOG_INTERVAL_MS = 5000;
 const WEB_SESSION_EVENT_RECONNECT_BASE_DELAY_MS = 1200;
 const WEB_SESSION_EVENT_RECONNECT_MAX_DELAY_MS = 15000;
+const WEB_SESSION_RECONCILE_RECENT_WINDOW_MS = 6 * 60 * 60 * 1000;
+const WEB_SESSION_RECONCILE_RECENT_LIMIT = 48;
+const WEB_SESSION_RECONCILE_MAX_TARGETS = 256;
+const WEB_SESSION_RECONCILE_MIN_INTERVAL_MS = 1000;
 const WEB_SESSION_AUTO_RETRY_OPTIMISTIC_TTL_MS = 5000;
 const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_WAIT_MS = 150;
 const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_POLL_MS = 16;
@@ -1981,6 +1987,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     },
   });
   const inFlightSessionLists = new Map<string, Promise<WebSessionSummary[]>>();
+  let inFlightSessionReconcile: Promise<WebSessionReconcileResult> | null = null;
+  let lastSessionReconcileCompletedAt = 0;
   const inFlightWorkTimingCalculations = new Map<
     string,
     ReturnType<typeof webSessionApi.calculateWorkTiming>
@@ -5290,6 +5298,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
           emitter.emit('web-session:event-stream-recovered', {
             recoveredAt: new Date().toISOString(),
           });
+          void reconcileRecentSessions().catch(error => {
+            console.warn('[Web Session] Failed to reconcile after event stream recovery', error);
+          });
         }
         eventHasConnectedOnce = true;
         resolve();
@@ -5492,6 +5503,112 @@ export const useWebSessionStore = defineStore('web-session', () => {
         }
       }
     );
+    return request;
+  }
+
+  function sessionReconcileTimestamp(session: WebSessionSummary) {
+    const timestamps = [
+      session.statusUpdatedAt,
+      session.assistantStateUpdatedAt,
+      session.activityAt,
+      session.updatedAt,
+    ]
+      .map(value => Date.parse(value || ''))
+      .filter(Number.isFinite);
+    return timestamps.length > 0 ? Math.max(...timestamps) : 0;
+  }
+
+  function isSessionReconcilePriority(session: WebSessionSummary) {
+    return (
+      session.status === 'running' ||
+      session.status === 'waiting_approval' ||
+      session.status === 'aborting' ||
+      Boolean(session.assistantState)
+    );
+  }
+
+  function buildSessionReconcileTargets(now = Date.now()): WebSessionReconcileTarget[] {
+    const sessionsByID = new Map<string, WebSessionSummary>();
+    Object.values(sessionsByProject.value).forEach(sessions => {
+      sessions.forEach(session => sessionsByID.set(session.id, session));
+    });
+    Object.values(archivedSessionsById.value).forEach(session => {
+      if (!sessionsByID.has(session.id)) {
+        sessionsByID.set(session.id, session);
+      }
+    });
+
+    const sessions = [...sessionsByID.values()];
+    const priorityIDs = new Set<string>();
+    const priority = sessions
+      .filter(
+        session => session.id === eventFocusedSessionId || isSessionReconcilePriority(session)
+      )
+      .sort((left, right) => {
+        if (left.id === eventFocusedSessionId) return -1;
+        if (right.id === eventFocusedSessionId) return 1;
+        return sessionReconcileTimestamp(right) - sessionReconcileTimestamp(left);
+      });
+    priority.forEach(session => priorityIDs.add(session.id));
+    const cutoff = now - WEB_SESSION_RECONCILE_RECENT_WINDOW_MS;
+    const recent = sessions
+      .filter(
+        session =>
+          !session.archivedAt &&
+          sessionReconcileTimestamp(session) >= cutoff &&
+          !priorityIDs.has(session.id)
+      )
+      .sort((left, right) => sessionReconcileTimestamp(right) - sessionReconcileTimestamp(left))
+      .slice(0, WEB_SESSION_RECONCILE_RECENT_LIMIT);
+
+    return [...priority, ...recent].slice(0, WEB_SESSION_RECONCILE_MAX_TARGETS).map(session => ({
+      id: session.id,
+      ...(session.revision ? { revision: session.revision } : {}),
+    }));
+  }
+
+  async function reconcileRecentSessions() {
+    if (inFlightSessionReconcile) {
+      return inFlightSessionReconcile;
+    }
+    const now = Date.now();
+    if (now - lastSessionReconcileCompletedAt < WEB_SESSION_RECONCILE_MIN_INTERVAL_MS) {
+      return { items: [], missingIds: [] } satisfies WebSessionReconcileResult;
+    }
+    const targets = buildSessionReconcileTargets(now);
+    if (targets.length === 0) {
+      return { items: [], missingIds: [] } satisfies WebSessionReconcileResult;
+    }
+
+    const request = webSessionApi.reconcile(targets).then(result => {
+      result.items.forEach(summary => {
+        const current = findSessionById(summary.id);
+        if (current && compareWebSessionRevisions(current.revision, summary.revision) === 1) {
+          return;
+        }
+        sessionSync.observe(summary.id, summary.revision);
+        upsertSession({
+          ...summary,
+          hasScheduledPlanExecution: summary.hasScheduledPlanExecution === true,
+        });
+        sessionSync.markApplied(summary.id, summary.revision);
+      });
+      result.missingIds.forEach(sessionId => {
+        const current = findSessionById(sessionId);
+        if (current) {
+          removeSession(current.projectId, sessionId);
+        }
+      });
+      lastSessionReconcileCompletedAt = Date.now();
+      return result;
+    });
+    inFlightSessionReconcile = request;
+    const clearRequest = () => {
+      if (inFlightSessionReconcile === request) {
+        inFlightSessionReconcile = null;
+      }
+    };
+    void request.then(clearRequest, clearRequest);
     return request;
   }
 
@@ -7024,6 +7141,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getTimelineBlocks,
     getLatestEventSeq,
     loadSessions,
+    reconcileRecentSessions,
     loadSessionCounts,
     loadArchivedSessions,
     invalidateArchivedSessions,

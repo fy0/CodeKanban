@@ -34,6 +34,7 @@ import (
 const (
 	DefaultHistoryWindow          = 80
 	MaxHistoryWindow              = 120
+	MaxSessionReconcileTargets    = 256
 	sessionOrderStep              = 1000.0
 	defaultToolOutputLimit        = 4000
 	planPromptPreamble            = "You are operating in planning mode. Inspect the project first, summarize the goal, and propose a concrete plan before making changes. Do not mutate files until the user confirms execution or explicitly asks you to proceed immediately. If additional permissions are needed, call them out explicitly."
@@ -959,6 +960,75 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 		return nil, err
 	}
 	return items, nil
+}
+
+func (m *Manager) ReconcileSessions(
+	ctx context.Context,
+	targets []SessionReconcileTarget,
+) (SessionReconcileResult, error) {
+	result := SessionReconcileResult{
+		Items:      []SessionSummary{},
+		MissingIDs: []string{},
+	}
+	if len(targets) == 0 {
+		return result, nil
+	}
+	if len(targets) > MaxSessionReconcileTargets {
+		return result, fmt.Errorf("session reconciliation supports at most %d targets", MaxSessionReconcileTargets)
+	}
+
+	db := model.GetReaderDB()
+	if db == nil {
+		return result, model.ErrDBNotInitialized
+	}
+
+	normalized := make([]SessionReconcileTarget, 0, len(targets))
+	ids := make([]string, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		id := strings.TrimSpace(target.ID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, SessionReconcileTarget{
+			ID:       id,
+			Revision: strings.TrimSpace(target.Revision),
+		})
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return result, nil
+	}
+
+	var records []tables.WebSessionTable
+	if err := db.WithContext(ctx).Where("id IN ?", ids).Find(&records).Error; err != nil {
+		return result, err
+	}
+	recordsByID := make(map[string]tables.WebSessionTable, len(records))
+	for _, record := range records {
+		recordsByID[record.ID] = record
+	}
+
+	contextConfig := m.cachedCodexSessionContextConfig()
+	for _, target := range normalized {
+		record, exists := recordsByID[target.ID]
+		if !exists {
+			result.MissingIDs = append(result.MissingIDs, target.ID)
+			continue
+		}
+		if target.Revision == formatSnapshotRevision(record.SnapshotRevision) {
+			continue
+		}
+		result.Items = append(result.Items, m.mapSessionSummaryWithContext(record, contextConfig))
+	}
+	if err := m.decorateScheduledPlanExecutionState(ctx, result.Items); err != nil {
+		return SessionReconcileResult{}, err
+	}
+	return result, nil
 }
 
 func (m *Manager) CountSessionsByProject(ctx context.Context) (map[string]int, error) {

@@ -6,12 +6,13 @@ through more than one channel.
 
 ## Transport ownership
 
-| Transport            | Responsibility                                 | Full history allowed |
-| -------------------- | ---------------------------------------------- | -------------------- |
-| `GET .../snapshot`   | Conditional full hydration                     | Yes                  |
-| Other HTTP endpoints | Mutation result and hydration target           | No                   |
-| Command WebSocket    | Command ack or command-specific compact result | No                   |
-| Event WebSocket      | Session summary and incremental state          | No                   |
+| Transport                     | Responsibility                                 | Full history allowed |
+| ----------------------------- | ---------------------------------------------- | -------------------- |
+| `GET .../snapshot`            | Conditional full hydration                     | Yes                  |
+| `POST /web-sessions/reconcile` | Conditional summary recovery                   | No                   |
+| Other HTTP endpoints          | Mutation result and hydration target           | No                   |
+| Command WebSocket             | Command ack or command-specific compact result | No                   |
+| Event WebSocket               | Session summary and incremental state          | No                   |
 
 The conditional snapshot response is either:
 
@@ -20,6 +21,23 @@ The conditional snapshot response is either:
 
 Mutation HTTP responses that require hydration return a target containing
 `session` and `revision`. The client then uses the conditional snapshot endpoint.
+
+## Resume reconciliation
+
+When a page becomes visible, receives window focus, is restored from page cache,
+or reconnects its event stream, the browser conditionally reconciles session
+summaries before hydrating the focused conversation. The request contains at
+most 256 `{ id, revision }` targets: every locally non-terminal session, the
+focused session, and up to 48 other sessions active within the last six hours.
+
+The server reads only those IDs and returns:
+
+- complete summaries whose revision changed; and
+- `missingIds` tombstones for sessions deleted while the client was away.
+
+Unchanged targets produce no response item. This keeps resume traffic bounded
+when a user has hundreds of sessions and avoids loading any conversation history
+until the focused session actually requires hydration.
 
 ## WebSocket envelope
 

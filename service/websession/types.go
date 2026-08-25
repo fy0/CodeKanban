@@ -307,6 +307,16 @@ type SessionSummary struct {
 	WorkTiming                        WorkTiming                 `json:"workTiming"`
 }
 
+type SessionReconcileTarget struct {
+	ID       string `json:"id"`
+	Revision string `json:"revision,omitempty"`
+}
+
+type SessionReconcileResult struct {
+	Items      []SessionSummary `json:"items"`
+	MissingIDs []string         `json:"missingIds"`
+}
+
 type SessionGoal struct {
 	ThreadID        string     `json:"threadId"`
 	Objective       string     `json:"objective"`

@@ -10,6 +10,7 @@ import {
 
 const {
   listMock,
+  reconcileMock,
   queryArchivedMock,
   snapshotMock,
   historyMock,
@@ -18,6 +19,7 @@ const {
   commandGroupDetailMock,
 } = vi.hoisted(() => ({
   listMock: vi.fn(),
+  reconcileMock: vi.fn(),
   queryArchivedMock: vi.fn(),
   snapshotMock: vi.fn(),
   historyMock: vi.fn(),
@@ -29,6 +31,7 @@ const {
 vi.mock('@/api/webSession', () => ({
   webSessionApi: {
     list: listMock,
+    reconcile: reconcileMock,
     queryArchived: queryArchivedMock,
     snapshot: snapshotMock,
     history: historyMock,
@@ -265,6 +268,8 @@ describe('webSession loading behavior', () => {
     FakeWebSocket.instances = [];
     FakeWebSocket.revision = 1;
     listMock.mockReset();
+    reconcileMock.mockReset();
+    reconcileMock.mockResolvedValue({ items: [], missingIds: [] });
     queryArchivedMock.mockReset();
     snapshotMock.mockReset();
     historyMock.mockReset();

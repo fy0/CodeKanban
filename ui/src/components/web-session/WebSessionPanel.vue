@@ -5703,12 +5703,13 @@ async function refreshWebSessionCatchUp(reason: string) {
   try {
     let serverRevision = session.revision;
     if (session?.projectId && !session.archivedAt) {
-      const loadedSessions = await webSessionStore.loadSessions(session.projectId, true);
+      await webSessionStore.reconcileRecentSessions();
       if (!isCurrentCatchUp()) {
         return;
       }
       serverRevision =
-        loadedSessions.find(item => item.id === sessionId)?.revision ?? serverRevision;
+        webSessionStore.getSessions(session.projectId).find(item => item.id === sessionId)
+          ?.revision ?? serverRevision;
     }
     let snapshot = null;
     if (!webSessionStore.isSessionSnapshotCurrent(sessionId, serverRevision)) {

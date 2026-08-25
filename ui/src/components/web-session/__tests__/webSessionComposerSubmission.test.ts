@@ -133,6 +133,8 @@ describe('web session composer submission', () => {
     expect(createSource).toContain('const shouldActivateCreatedSession');
     expect(createSource).toContain('if (shouldActivateCreatedSession)');
     expect(catchUpSource).toContain('const isCurrentCatchUp');
+    expect(catchUpSource).toContain('await webSessionStore.reconcileRecentSessions()');
+    expect(catchUpSource).not.toContain('loadSessions(session.projectId, true)');
     expect(catchUpSource).toContain('rememberActive: false');
   });
 
