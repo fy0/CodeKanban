@@ -3,6 +3,7 @@ package websession
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -21,7 +22,7 @@ import (
 const (
 	codexConfigFileName           = "config.toml"
 	codexRuntimeConfigCacheTTL    = 5 * time.Minute
-	codexBinaryCapabilityCacheTTL = 5 * time.Second
+	codexBinaryCapabilityCacheTTL = 5 * time.Minute
 	codexModelCatalogCacheTTL     = 5 * time.Minute
 	codexModelCatalogTimeout      = 3 * time.Second
 )
@@ -40,23 +41,21 @@ type codexContextWindowCache struct {
 	loaded    bool
 }
 
-type codexBinaryCapabilityCache struct {
-	expiresAt time.Time
-	config    CodexRuntimeConfig
-	loaded    bool
-}
+type codexBinaryCapabilityCache = runtimeCapabilityCache[CodexRuntimeConfig]
 
-type codexModelCatalogCache struct {
-	expiresAt time.Time
-	models    []CodexModelInfo
-	loaded    bool
-}
+type codexModelCatalogCache = runtimeCapabilityCache[[]CodexModelInfo]
 
 type codexContextWindowResolver struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	cache  codexContextWindowCache
 	bins   codexBinaryCapabilityCache
 	models codexModelCatalogCache
+}
+
+type runtimeCapabilityProbeHooks struct {
+	codexBinary func() (CodexRuntimeConfig, error)
+	codexModels func() ([]CodexModelInfo, error)
+	pi          func() (piRuntimeProbeResult, error)
 }
 
 type CodexModelInfo struct {
@@ -143,13 +142,30 @@ type CodexSkillSummary struct {
 }
 
 func (m *Manager) mapSessionSummary(record tables.WebSessionTable) SessionSummary {
+	return m.mapSessionSummaryWithContext(record, m.cachedCodexSessionContextConfig())
+}
+
+type codexSessionContextConfig struct {
+	model               string
+	contextWindowTokens int64
+	source              ContextWindowSource
+}
+
+func (m *Manager) mapSessionSummaryWithContext(
+	record tables.WebSessionTable,
+	contextConfig codexSessionContextConfig,
+) SessionSummary {
 	summary := mapSessionRecord(record)
 	summary.ActiveCallTimeoutEnabled = m.effectiveActiveCallTimeoutEnabled(record)
-	m.decorateSessionSummary(&summary)
+	decorateSessionSummaryWithContext(&summary, contextConfig)
 	return summary
 }
 
 func (m *Manager) decorateSessionSummary(summary *SessionSummary) {
+	decorateSessionSummaryWithContext(summary, m.cachedCodexSessionContextConfig())
+}
+
+func decorateSessionSummaryWithContext(summary *SessionSummary, config codexSessionContextConfig) {
 	if summary == nil {
 		return
 	}
@@ -186,20 +202,20 @@ func (m *Manager) decorateSessionSummary(summary *SessionSummary) {
 		summary.ContextWindowSource == ContextWindowSourceSessionUsage {
 		return
 	}
-	config := m.GetCodexRuntimeConfig()
-	if config.ContextWindowTokens > 0 && sameCodexModel(summary.Model, config.Model) {
-		summary.ContextWindowTokens = ptr(config.ContextWindowTokens)
-		summary.ContextWindowSource = config.Source
+	if config.contextWindowTokens > 0 && sameCodexModel(summary.Model, config.model) {
+		summary.ContextWindowTokens = ptr(config.contextWindowTokens)
+		summary.ContextWindowSource = config.source
 		return
 	}
 	summary.ContextWindowTokens = nil
 	summary.ContextWindowSource = ContextWindowSourceUnavailable
 }
 
-func (m *Manager) GetCodexRuntimeConfig() CodexRuntimeConfig {
-	defaultConfig := CodexRuntimeConfig{
+func defaultCodexRuntimeConfig() CodexRuntimeConfig {
+	config := CodexRuntimeConfig{
 		Source:                 ContextWindowSourceUnavailable,
 		Models:                 []CodexModelInfo{},
+		PiModels:               []PiModelInfo{},
 		HasCodex:               false,
 		HasClaudeCode:          false,
 		SupportsWebSession:     false,
@@ -209,24 +225,45 @@ func (m *Manager) GetCodexRuntimeConfig() CodexRuntimeConfig {
 		SupportsGoalMode:       false,
 		GoalModeMinVersion:     goalModeMinCodexVersion.String(),
 	}
-	defaultConfig.Agents = runtimeAgentCapabilities(defaultConfig)
+	config.Agents = runtimeAgentCapabilities(config)
+	return config
+}
+
+func (m *Manager) cachedCodexSessionContextConfig() codexSessionContextConfig {
+	if m == nil {
+		return codexSessionContextConfig{source: ContextWindowSourceUnavailable}
+	}
+	m.codexContextWindow.mu.RLock()
+	cached := m.codexContextWindow.cache
+	m.codexContextWindow.mu.RUnlock()
+	if !cached.loaded {
+		return codexSessionContextConfig{source: ContextWindowSourceUnavailable}
+	}
+	return codexSessionContextConfig{
+		model:               cached.config.Model,
+		contextWindowTokens: cached.config.ContextWindowTokens,
+		source:              cached.config.Source,
+	}
+}
+
+func (m *Manager) loadCodexContextConfig(force bool) CodexRuntimeConfig {
+	defaultConfig := defaultCodexRuntimeConfig()
 	if m == nil {
 		return defaultConfig
 	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil || strings.TrimSpace(homeDir) == "" {
-		return m.applyCodexRuntimeCapabilities(defaultConfig)
+		return defaultConfig
 	}
 
 	configPath := filepath.Join(homeDir, ".codex", codexConfigFileName)
 
-	m.codexContextWindow.mu.Lock()
+	m.codexContextWindow.mu.RLock()
 	cached := m.codexContextWindow.cache
-	if cached.loaded && cached.path == configPath && time.Now().Before(cached.expiresAt) {
-		m.codexContextWindow.mu.Unlock()
-		return m.applyCodexRuntimeCapabilities(cached.config)
+	m.codexContextWindow.mu.RUnlock()
+	if !force && cached.loaded && cached.path == configPath && time.Now().Before(cached.expiresAt) {
+		return cached.config
 	}
-	m.codexContextWindow.mu.Unlock()
 
 	raw, err := os.ReadFile(configPath)
 	config := defaultConfig
@@ -255,11 +292,27 @@ func (m *Manager) GetCodexRuntimeConfig() CodexRuntimeConfig {
 	}
 	m.codexContextWindow.mu.Unlock()
 
-	return m.applyCodexRuntimeCapabilities(config)
+	return config
+}
+
+func (m *Manager) GetCodexRuntimeConfig() CodexRuntimeConfig {
+	return m.getCodexRuntimeConfig(false)
+}
+
+func (m *Manager) getCodexRuntimeConfig(force bool) CodexRuntimeConfig {
+	config := m.loadCodexContextConfig(force)
+	return m.applyCodexRuntimeCapabilitiesWithRefresh(config, force)
 }
 
 func (m *Manager) applyCodexRuntimeCapabilities(config CodexRuntimeConfig) CodexRuntimeConfig {
-	config = m.applyBinaryCapabilities(config)
+	return m.applyCodexRuntimeCapabilitiesWithRefresh(config, false)
+}
+
+func (m *Manager) applyCodexRuntimeCapabilitiesWithRefresh(
+	config CodexRuntimeConfig,
+	force bool,
+) CodexRuntimeConfig {
+	config = m.applyBinaryCapabilities(config, force)
 	if config.Models == nil {
 		config.Models = []CodexModelInfo{}
 	}
@@ -316,7 +369,11 @@ func runtimeAgentCapabilities(config WebSessionRuntimeConfig) map[Agent]AgentCap
 }
 
 func (m *Manager) GetWebSessionRuntimeConfig() WebSessionRuntimeConfig {
-	return m.applyPiRuntimeCapabilities(m.GetCodexRuntimeConfig())
+	return m.getWebSessionRuntimeConfig(false)
+}
+
+func (m *Manager) getWebSessionRuntimeConfig(force bool) WebSessionRuntimeConfig {
+	return m.applyPiRuntimeCapabilitiesWithRefresh(m.getCodexRuntimeConfig(force), force)
 }
 
 func (m *Manager) SupportsPiSessionTree() bool {
@@ -327,9 +384,17 @@ func (m *Manager) SupportsPiSessionTree() bool {
 }
 
 func (m *Manager) GetWebSessionRuntimeConfigWithModels() WebSessionRuntimeConfig {
-	config := m.GetWebSessionRuntimeConfig()
+	return m.getWebSessionRuntimeConfigWithModels(false)
+}
+
+func (m *Manager) RefreshWebSessionRuntimeConfigWithModels() WebSessionRuntimeConfig {
+	return m.getWebSessionRuntimeConfigWithModels(true)
+}
+
+func (m *Manager) getWebSessionRuntimeConfigWithModels(force bool) WebSessionRuntimeConfig {
+	config := m.getWebSessionRuntimeConfig(force)
 	if config.HasCodex {
-		config.Models = m.getCodexModelCatalog()
+		config.Models = m.getCodexModelCatalog(force)
 	}
 	return config
 }
@@ -338,52 +403,58 @@ func (m *Manager) GetWebSessionRuntimeConfigWithModels() WebSessionRuntimeConfig
 func (m *Manager) GetCodexRuntimeConfigWithModels() CodexRuntimeConfig {
 	config := m.GetCodexRuntimeConfig()
 	if config.HasCodex {
-		config.Models = m.getCodexModelCatalog()
+		config.Models = m.getCodexModelCatalog(false)
 	}
 	return config
 }
 
-func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntimeConfig {
+func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig, force bool) CodexRuntimeConfig {
 	config.WebSessionMinVersion = ""
 	config.MultiAgentV2MinVersion = multiAgentV2MinCodexVersion.String()
 	config.GoalModeMinVersion = goalModeMinCodexVersion.String()
 	if m == nil {
 		return config
 	}
-	now := time.Now()
-	m.codexContextWindow.mu.Lock()
-	cached := m.codexContextWindow.bins
-	if cached.loaded && now.Before(cached.expiresAt) {
-		result := config
-		result.HasCodex = cached.config.HasCodex
-		result.HasClaudeCode = cached.config.HasClaudeCode
-		result.CodexVersion = cached.config.CodexVersion
-		result.SupportsWebSession = cached.config.SupportsWebSession
-		result.WebSessionMinVersion = cached.config.WebSessionMinVersion
-		result.SupportsMultiAgentV2 = cached.config.SupportsMultiAgentV2
-		result.MultiAgentV2MinVersion = cached.config.MultiAgentV2MinVersion
-		result.SupportsGoalMode = cached.config.SupportsGoalMode
-		result.GoalModeMinVersion = cached.config.GoalModeMinVersion
-		m.codexContextWindow.mu.Unlock()
-		return result
-	}
-	m.codexContextWindow.mu.Unlock()
+	binaryConfig := m.codexContextWindow.bins.get(
+		force,
+		runtimeCapabilityCachePolicy{successTTL: codexBinaryCapabilityCacheTTL},
+		cloneCodexBinaryConfig,
+		m.probeCodexBinaryCapabilities,
+	)
+	config.HasCodex = binaryConfig.HasCodex
+	config.HasClaudeCode = binaryConfig.HasClaudeCode
+	config.CodexVersion = binaryConfig.CodexVersion
+	config.SupportsWebSession = binaryConfig.SupportsWebSession
+	config.WebSessionMinVersion = binaryConfig.WebSessionMinVersion
+	config.SupportsMultiAgentV2 = binaryConfig.SupportsMultiAgentV2
+	config.MultiAgentV2MinVersion = binaryConfig.MultiAgentV2MinVersion
+	config.SupportsGoalMode = binaryConfig.SupportsGoalMode
+	config.GoalModeMinVersion = binaryConfig.GoalModeMinVersion
+	return config
+}
 
+func (m *Manager) probeCodexBinaryCapabilities() (CodexRuntimeConfig, error) {
+	if m.runtimeCapabilityProbes.codexBinary != nil {
+		return m.runtimeCapabilityProbes.codexBinary()
+	}
 	hasCodex := hasExecutable(m.cfg.CodexPath)
 	hasClaude := hasExecutable(m.cfg.ClaudePath)
 	codexVersion := (*string)(nil)
 	supportsMultiAgentV2 := false
 	supportsGoalMode := false
+	var probeErr error
 	if hasCodex {
 		if version := detectCodexVersion(m.cfg.CodexPath); version != nil {
 			copied := *version
 			codexVersion = &copied
 			supportsMultiAgentV2 = codexVersionAtLeast(copied, multiAgentV2MinCodexVersion)
 			supportsGoalMode = codexVersionAtLeast(copied, goalModeMinCodexVersion)
+		} else {
+			probeErr = errors.New("failed to detect Codex version")
 		}
 	}
 
-	binaryConfig := CodexRuntimeConfig{
+	return CodexRuntimeConfig{
 		HasCodex:               hasCodex,
 		HasClaudeCode:          hasClaude,
 		CodexVersion:           codexVersion,
@@ -393,54 +464,53 @@ func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig) CodexRuntim
 		MultiAgentV2MinVersion: multiAgentV2MinCodexVersion.String(),
 		SupportsGoalMode:       supportsGoalMode,
 		GoalModeMinVersion:     goalModeMinCodexVersion.String(),
-	}
-
-	m.codexContextWindow.mu.Lock()
-	m.codexContextWindow.bins = codexBinaryCapabilityCache{
-		expiresAt: now.Add(codexBinaryCapabilityCacheTTL),
-		config:    binaryConfig,
-		loaded:    true,
-	}
-	m.codexContextWindow.mu.Unlock()
-
-	config.HasCodex = hasCodex
-	config.HasClaudeCode = hasClaude
-	config.CodexVersion = codexVersion
-	config.SupportsWebSession = hasCodex
-	config.SupportsMultiAgentV2 = supportsMultiAgentV2
-	config.SupportsGoalMode = supportsGoalMode
-	return config
+	}, probeErr
 }
 
-func (m *Manager) getCodexModelCatalog() []CodexModelInfo {
+func cloneCodexBinaryConfig(config CodexRuntimeConfig) CodexRuntimeConfig {
+	cloned := config
+	if config.CodexVersion != nil {
+		version := *config.CodexVersion
+		cloned.CodexVersion = &version
+	}
+	return cloned
+}
+
+func (m *Manager) getCodexModelCatalog(force bool) []CodexModelInfo {
 	if m == nil {
 		return []CodexModelInfo{}
 	}
-	now := time.Now()
-	m.codexContextWindow.mu.Lock()
-	cached := m.codexContextWindow.models
-	if cached.loaded && now.Before(cached.expiresAt) {
-		models := append([]CodexModelInfo(nil), cached.models...)
-		m.codexContextWindow.mu.Unlock()
-		return models
-	}
-	m.codexContextWindow.mu.Unlock()
+	return m.codexContextWindow.models.get(
+		force,
+		runtimeCapabilityCachePolicy{successTTL: codexModelCatalogCacheTTL},
+		cloneCodexModelCatalog,
+		m.probeCodexModelCatalog,
+	)
+}
 
+func (m *Manager) probeCodexModelCatalog() ([]CodexModelInfo, error) {
+	if m.runtimeCapabilityProbes.codexModels != nil {
+		return m.runtimeCapabilityProbes.codexModels()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), codexModelCatalogTimeout)
 	defer cancel()
 	models, err := loadCodexModelCatalog(ctx, m.cfg.CodexPath)
 	if err != nil {
-		models = []CodexModelInfo{}
+		return []CodexModelInfo{}, err
 	}
+	return models, nil
+}
 
-	m.codexContextWindow.mu.Lock()
-	m.codexContextWindow.models = codexModelCatalogCache{
-		expiresAt: now.Add(codexModelCatalogCacheTTL),
-		models:    append([]CodexModelInfo(nil), models...),
-		loaded:    true,
+func cloneCodexModelCatalog(models []CodexModelInfo) []CodexModelInfo {
+	cloned := make([]CodexModelInfo, len(models))
+	for index, model := range models {
+		cloned[index] = model
+		cloned[index].SupportedReasoningEfforts = append(
+			[]ReasoningEffort(nil),
+			model.SupportedReasoningEfforts...,
+		)
 	}
-	m.codexContextWindow.mu.Unlock()
-	return models
+	return cloned
 }
 
 func loadCodexModelCatalog(ctx context.Context, codexPath string) ([]CodexModelInfo, error) {

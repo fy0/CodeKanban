@@ -160,8 +160,8 @@ type Manager struct {
 	pendingProcessing           map[string]bool
 	pendingDirty                map[string]bool
 	codexContextWindow          codexContextWindowResolver
-	piProbeMu                   sync.Mutex
 	piProbe                     piRuntimeProbeCache
+	runtimeCapabilityProbes     runtimeCapabilityProbeHooks
 	piRuntimeMu                 sync.Mutex
 	piRuntimeTerminators        map[string]piRuntimeTerminator
 	piRuntimes                  map[string]*piSessionRuntime
@@ -609,6 +609,7 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		eventStates:                 make(map[string]*sessionEventState),
 		textDeltaFlushWindow:        defaultTextDeltaFlushWindow,
 	}
+	manager.loadCodexContextConfig(false)
 	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
 		return nil, err
 	}
@@ -949,9 +950,10 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 	}
 	records = m.refreshSessionSourceStates(ctx, records)
 
+	contextConfig := m.cachedCodexSessionContextConfig()
 	items := make([]SessionSummary, 0, len(records))
 	for _, record := range records {
-		items = append(items, m.mapSessionSummary(record))
+		items = append(items, m.mapSessionSummaryWithContext(record, contextConfig))
 	}
 	if err := m.decorateScheduledPlanExecutionState(ctx, items); err != nil {
 		return nil, err
@@ -1054,9 +1056,10 @@ func (m *Manager) ListArchivedSessions(
 		return ArchivedQueryResult{}, err
 	}
 
+	contextConfig := m.cachedCodexSessionContextConfig()
 	items := make([]SessionSummary, 0, len(records))
 	for _, record := range records {
-		items = append(items, m.mapSessionSummary(record))
+		items = append(items, m.mapSessionSummaryWithContext(record, contextConfig))
 	}
 	if err := m.decorateScheduledPlanExecutionState(ctx, items); err != nil {
 		return ArchivedQueryResult{}, err

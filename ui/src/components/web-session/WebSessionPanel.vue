@@ -15213,7 +15213,7 @@ function formatSessionInteractionError(error: unknown) {
 }
 
 async function refreshRuntimeCapabilities() {
-  await loadCodexRuntimeConfig();
+  await loadCodexRuntimeConfig(true);
   return codexRuntimeConfig.value;
 }
 
@@ -16795,9 +16795,9 @@ function handleTabDragEnd(event: SortableEvent) {
   });
 }
 
-async function loadCodexRuntimeConfig() {
+async function loadCodexRuntimeConfig(force = false) {
   try {
-    codexRuntimeConfig.value = await webSessionApi.runtimeConfig();
+    codexRuntimeConfig.value = await webSessionApi.runtimeConfig({ force });
   } catch (error) {
     codexRuntimeConfig.value = null;
     console.warn('[Web Session] Failed to load runtime config', error);

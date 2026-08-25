@@ -21,7 +21,7 @@ import (
 const (
 	piMinVersion             = "0.84.1"
 	piProbeSuccessCacheTTL   = 5 * time.Minute
-	piProbeFailureCacheTTL   = 5 * time.Second
+	piProbeFailureCacheTTL   = time.Minute
 	piProbeTimeout           = 5 * time.Second
 	piProbeMaxFrameBytes     = 1024 * 1024
 	piDiagnosticNotInstalled = "not_installed"
@@ -42,11 +42,7 @@ type piRuntimeProbeResult struct {
 	models     []PiModelInfo
 }
 
-type piRuntimeProbeCache struct {
-	result    piRuntimeProbeResult
-	expiresAt time.Time
-	loaded    bool
-}
+type piRuntimeProbeCache = runtimeCapabilityCache[piRuntimeProbeResult]
 
 type piProbeResponse struct {
 	Type    string `json:"type"`
@@ -56,13 +52,20 @@ type piProbeResponse struct {
 }
 
 func (m *Manager) applyPiRuntimeCapabilities(config WebSessionRuntimeConfig) WebSessionRuntimeConfig {
+	return m.applyPiRuntimeCapabilitiesWithRefresh(config, false)
+}
+
+func (m *Manager) applyPiRuntimeCapabilitiesWithRefresh(
+	config WebSessionRuntimeConfig,
+	force bool,
+) WebSessionRuntimeConfig {
 	config.PiMinVersion = piMinVersion
 	if m == nil {
 		config.Agents = runtimeAgentCapabilities(config)
 		return config
 	}
 
-	probe := m.getPiRuntimeProbe()
+	probe := m.getPiRuntimeProbeWithRefresh(force)
 	config.HasPi = probe.installed
 	config.PiVersion = probe.version
 	config.PiRPCCompatible = probe.compatible
@@ -74,25 +77,46 @@ func (m *Manager) applyPiRuntimeCapabilities(config WebSessionRuntimeConfig) Web
 }
 
 func (m *Manager) getPiRuntimeProbe() piRuntimeProbeResult {
-	m.piProbeMu.Lock()
-	defer m.piProbeMu.Unlock()
+	return m.getPiRuntimeProbeWithRefresh(false)
+}
 
-	now := time.Now()
-	if m.piProbe.loaded && now.Before(m.piProbe.expiresAt) {
-		return m.piProbe.result
+func (m *Manager) getPiRuntimeProbeWithRefresh(force bool) piRuntimeProbeResult {
+	return m.piProbe.get(
+		force,
+		runtimeCapabilityCachePolicy{
+			successTTL:     piProbeSuccessCacheTTL,
+			failureBackoff: piProbeFailureCacheTTL,
+		},
+		clonePiRuntimeProbeResult,
+		m.probePiRuntimeCapabilities,
+	)
+}
+
+func (m *Manager) probePiRuntimeCapabilities() (piRuntimeProbeResult, error) {
+	if m.runtimeCapabilityProbes.pi != nil {
+		return m.runtimeCapabilityProbes.pi()
 	}
-
 	result := probePiRuntime(m.cfg.PiPath, m.cfg.DataDir)
-	ttl := piProbeFailureCacheTTL
-	if result.compatible {
-		ttl = piProbeSuccessCacheTTL
+	switch result.diagnostic {
+	case "", piDiagnosticNotInstalled, piDiagnosticTooOld:
+		return result, nil
+	default:
+		return result, errors.New("Pi runtime capability probe failed")
 	}
-	m.piProbe = piRuntimeProbeCache{
-		result:    result,
-		expiresAt: now.Add(ttl),
-		loaded:    true,
+}
+
+func clonePiRuntimeProbeResult(result piRuntimeProbeResult) piRuntimeProbeResult {
+	cloned := result
+	if result.version != nil {
+		version := *result.version
+		cloned.version = &version
 	}
-	return result
+	cloned.models = make([]PiModelInfo, len(result.models))
+	for index, model := range result.models {
+		cloned.models[index] = model
+		cloned.models[index].Input = append([]string(nil), model.Input...)
+	}
+	return cloned
 }
 
 func probePiRuntime(command, workingDir string) piRuntimeProbeResult {

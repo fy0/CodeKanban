@@ -47,6 +47,30 @@ vi.stubGlobal('fetch', fetchMock);
 
 import { buildWebSessionLocalFileContentUrl, webSessionApi } from '@/api/webSession';
 
+describe('webSessionApi.runtimeConfig', () => {
+  it('uses the server refresh endpoint for an explicit forced refresh', async () => {
+    getMethodMock.mockClear();
+    getSendMock.mockReset();
+    getSendMock.mockResolvedValueOnce({
+      item: {
+        agents: {},
+        contextWindowTokens: 0,
+        compactLimitTokens: 0,
+        source: 'unavailable',
+        models: [],
+        piModels: [],
+      },
+    });
+
+    await webSessionApi.runtimeConfig({ force: true });
+
+    expect(getMethodMock).toHaveBeenCalledWith('/web-sessions/runtime-config?refresh=true', {
+      cacheFor: 0,
+    });
+    expect(getSendMock).toHaveBeenCalledWith(true);
+  });
+});
+
 describe('webSessionApi.search', () => {
   beforeEach(() => {
     postMethodMock.mockClear();

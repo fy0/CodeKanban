@@ -9,6 +9,15 @@ import type {
 import { ApiError, urlBase } from '@/api';
 import { extractItem } from './response';
 import { http } from './http';
+import {
+  createRuntimeConfigRequestLoader,
+  type RuntimeConfigLoadOptions,
+} from './webSessionRuntimeConfigLoader';
+
+const WEB_SESSION_RUNTIME_CONFIG_CLIENT_TTL_MS = 60_000;
+const runtimeConfigRequestLoader = createRuntimeConfigRequestLoader<WebSessionRuntimeConfig>(
+  WEB_SESSION_RUNTIME_CONFIG_CLIENT_TTL_MS
+);
 
 type ItemResponse<T> = {
   item?: T;
@@ -348,18 +357,23 @@ export type WebSessionImportResult = WebSessionHydrationTarget & {
 };
 
 export const webSessionApi = {
-  async runtimeConfig(): Promise<WebSessionRuntimeConfig> {
-    const config = extractItem<WebSessionRuntimeConfig>(
-      await http
-        .Get<ItemResponse<WebSessionRuntimeConfig>>('/web-sessions/runtime-config', {
-          cacheFor: 0,
-        })
-        .send(true)
-    );
-    if (!config) {
-      throw new Error('failed to load AI session runtime config');
-    }
-    return config;
+  runtimeConfig(options: RuntimeConfigLoadOptions = {}): Promise<WebSessionRuntimeConfig> {
+    return runtimeConfigRequestLoader.load(async force => {
+      const endpoint = force
+        ? '/web-sessions/runtime-config?refresh=true'
+        : '/web-sessions/runtime-config';
+      const config = extractItem<WebSessionRuntimeConfig>(
+        await http
+          .Get<ItemResponse<WebSessionRuntimeConfig>>(endpoint, {
+            cacheFor: 0,
+          })
+          .send(true)
+      );
+      if (!config) {
+        throw new Error('failed to load AI session runtime config');
+      }
+      return config;
+    }, options);
   },
 
   async list(projectId: string): Promise<WebSessionSummary[]> {

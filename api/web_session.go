@@ -462,9 +462,17 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 
 	huma.Get(group, "/web-sessions/runtime-config", func(
 		ctx context.Context,
-		_ *struct{},
+		input *struct {
+			Refresh bool `query:"refresh" default:"false" doc:"强制刷新运行时能力"`
+		},
 	) (*h.ItemResponse[websession.WebSessionRuntimeConfig], error) {
-		resp := h.NewItemResponse(c.manager.GetWebSessionRuntimeConfigWithModels())
+		var config websession.WebSessionRuntimeConfig
+		if input.Refresh {
+			config = c.manager.RefreshWebSessionRuntimeConfigWithModels()
+		} else {
+			config = c.manager.GetWebSessionRuntimeConfigWithModels()
+		}
+		resp := h.NewItemResponse(config)
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {
