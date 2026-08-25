@@ -18,8 +18,10 @@ func normalizeWebSessionSubAgentStatus(value string) WebSessionSubAgentStatus {
 	switch normalized {
 	case "pendinginit", "pending":
 		return WebSessionSubAgentPendingInit
-	case "running", "inprogress", "active", "idle", "notloaded":
+	case "running", "inprogress", "active":
 		return WebSessionSubAgentRunning
+	case "idle", "notloaded":
+		return WebSessionSubAgentIdle
 	case "interrupted", "aborted":
 		return WebSessionSubAgentInterrupted
 	case "completed", "complete", "done":
@@ -39,6 +41,19 @@ func webSessionSubAgentIsActive(status WebSessionSubAgentStatus) bool {
 	return status == WebSessionSubAgentPendingInit || status == WebSessionSubAgentRunning
 }
 
+func webSessionSubAgentIsTerminal(status WebSessionSubAgentStatus) bool {
+	switch status {
+	case WebSessionSubAgentInterrupted,
+		WebSessionSubAgentCompleted,
+		WebSessionSubAgentErrored,
+		WebSessionSubAgentShutdown,
+		WebSessionSubAgentNotFound:
+		return true
+	default:
+		return false
+	}
+}
+
 func codexSubAgentState(raw any) (WebSessionSubAgentStatus, string) {
 	record := decodeRawObject(raw)
 	statusText := stringValue(raw)
@@ -55,11 +70,13 @@ func codexSubAgentState(raw any) (WebSessionSubAgentStatus, string) {
 }
 
 func codexTurnSubAgentStatus(status string) WebSessionSubAgentStatus {
-	// A completed turn is not an Agent lifecycle transition. A child thread can
-	// receive another turn after its current turn has completed.
+	// A completed turn leaves the child thread reusable, but it is no longer
+	// doing work until another turn starts.
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "inprogress", "in_progress", "running", "active":
 		return WebSessionSubAgentRunning
+	case "completed", "complete", "done":
+		return WebSessionSubAgentIdle
 	case "interrupted", "cancelled", "canceled", "aborted":
 		return WebSessionSubAgentInterrupted
 	case "failed", "errored", "error", "systemerror", "system_error":
@@ -70,9 +87,13 @@ func codexTurnSubAgentStatus(status string) WebSessionSubAgentStatus {
 }
 
 func mapWebSessionSubAgentRow(row tables.WebSessionSubAgentTable) WebSessionSubAgent {
+	parentThreadID := row.ParentThreadID
+	if parentThreadID != nil && strings.TrimSpace(*parentThreadID) == strings.TrimSpace(row.ThreadID) {
+		parentThreadID = nil
+	}
 	return WebSessionSubAgent{
 		ThreadID:         row.ThreadID,
-		ParentThreadID:   row.ParentThreadID,
+		ParentThreadID:   parentThreadID,
 		Path:             row.AgentPath,
 		Nickname:         row.Nickname,
 		Role:             row.Role,
@@ -99,8 +120,25 @@ func (m *Manager) sessionSubAgents(ctx context.Context, sessionID string) ([]Web
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
+	rootThreadID := ""
+	var session struct {
+		NativeSessionID *string
+	}
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionTable{}).
+		Select("native_session_id").
+		Where("id = ?", sessionID).
+		Take(&session).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if session.NativeSessionID != nil {
+		rootThreadID = strings.TrimSpace(*session.NativeSessionID)
+	}
 	items := make([]WebSessionSubAgent, 0, len(rows))
 	for _, row := range rows {
+		if rootThreadID != "" && strings.TrimSpace(row.ThreadID) == rootThreadID {
+			continue
+		}
 		items = append(items, mapWebSessionSubAgentRow(row))
 	}
 	return items, nil
@@ -125,35 +163,35 @@ func applySubAgentPayload(row *tables.WebSessionSubAgentTable, payload map[strin
 	if value := strings.TrimSpace(stringValue(payload["summary"])); value != "" {
 		row.Summary = value
 	}
-	if payload["turnCompleted"] != true {
-		if value := strings.TrimSpace(firstNonEmpty(stringValue(payload["turnId"]), event.TurnID)); value != "" {
-			row.CurrentTurnID = ptr(value)
-		}
-	} else {
-		row.CurrentTurnID = nil
-	}
 	if value := strings.TrimSpace(stringValue(payload["latestItemId"])); value != "" {
 		row.LatestItemID = ptr(value)
 	}
 	if value := int64(numberValue(payload["latestOrderIndex"])); value > 0 {
 		row.LatestOrderIndex = value
 	}
+	previousStatus := normalizeWebSessionSubAgentStatus(row.Status)
 	status := normalizeWebSessionSubAgentStatus(stringValue(payload["status"]))
+	if status == "" && payload["activeTurn"] == true && !webSessionSubAgentIsTerminal(previousStatus) {
+		status = WebSessionSubAgentRunning
+	}
+	if status == "" && payload["turnCompleted"] == true && webSessionSubAgentIsActive(previousStatus) {
+		status = WebSessionSubAgentIdle
+	}
 	if status != "" {
 		row.Status = string(status)
-		if webSessionSubAgentIsActive(status) {
-			row.EndedAt = nil
-		} else {
-			row.CurrentTurnID = nil
+		if webSessionSubAgentIsTerminal(status) {
 			endedAt := event.Timestamp
 			row.EndedAt = &endedAt
+		} else {
+			row.EndedAt = nil
 		}
-	} else if payload["turnCompleted"] == true &&
-		normalizeWebSessionSubAgentStatus(row.Status) == WebSessionSubAgentPendingInit {
-		// A child that has completed its first turn is initialized and remains
-		// available for follow-up work, even without a separate turn/started event.
-		row.Status = string(WebSessionSubAgentRunning)
-		row.EndedAt = nil
+	} else {
+		status = previousStatus
+	}
+	if payload["turnCompleted"] == true || !webSessionSubAgentIsActive(status) {
+		row.CurrentTurnID = nil
+	} else if value := strings.TrimSpace(firstNonEmpty(stringValue(payload["turnId"]), event.TurnID)); value != "" {
+		row.CurrentTurnID = ptr(value)
 	}
 	activityAt := event.Timestamp
 	if activityAt.IsZero() {
@@ -228,6 +266,7 @@ func (m *Manager) applySubAgentHistoryItemDB(
 	payload := map[string]any{
 		"threadId":         threadID,
 		"turnId":           event.TurnID,
+		"activeTurn":       true,
 		"latestItemId":     item.ID,
 		"latestOrderIndex": item.OrderIndex,
 	}
@@ -364,28 +403,21 @@ func (m *Manager) replaceSessionSubAgents(
 }
 
 func subAgentStatusFromThreadSummary(summary codexThreadSummary, turns []map[string]any) WebSessionSubAgentStatus {
-	status := strings.ToLower(strings.TrimSpace(summary.Status))
-	switch status {
-	case "systemerror", "system_error", "error", "errored", "failed":
-		return WebSessionSubAgentErrored
-	case "closed", "shutdown":
-		return WebSessionSubAgentShutdown
-	case "interrupted", "aborted", "cancelled", "canceled":
-		return WebSessionSubAgentInterrupted
+	status := normalizeWebSessionSubAgentStatus(summary.Status)
+	if webSessionSubAgentIsTerminal(status) {
+		return status
 	}
-	completedTurnSeen := false
 	for index := len(turns) - 1; index >= 0; index-- {
 		turnStatusText := strings.ToLower(strings.TrimSpace(stringValue(turns[index]["status"])))
 		if turnStatus := codexTurnSubAgentStatus(turnStatusText); turnStatus != "" {
 			return turnStatus
 		}
-		if turnStatusText == "completed" || turnStatusText == "complete" || turnStatusText == "done" {
-			completedTurnSeen = true
-		}
 	}
-	if status == "active" || status == "running" || status == "idle" ||
-		status == "notloaded" || status == "not_loaded" || completedTurnSeen {
+	if status == WebSessionSubAgentRunning {
 		return WebSessionSubAgentRunning
+	}
+	if status == WebSessionSubAgentIdle {
+		return WebSessionSubAgentIdle
 	}
 	return WebSessionSubAgentPendingInit
 }
@@ -411,7 +443,7 @@ func webSessionSubAgentFromThread(
 		if webSessionSubAgentIsActive(status) &&
 			codexTurnSubAgentStatus(stringValue(lastTurn["status"])) == WebSessionSubAgentRunning {
 			agent.CurrentTurnID = nilIfEmptyHistory(turnID)
-		} else if !webSessionSubAgentIsActive(status) {
+		} else if webSessionSubAgentIsTerminal(status) {
 			agent.EndedAt = firstNonNilTime(
 				parseHistoryTimestamp(lastTurn["completedAt"]),
 				parseHistoryTimestamp(lastTurn["updatedAt"]),

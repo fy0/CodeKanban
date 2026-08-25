@@ -3164,11 +3164,26 @@ describe('webSession loading behavior', () => {
       pendingInputs: [],
       subAgents: [
         {
+          threadId: 'thread-root',
+          nickname: 'Root',
+          status: 'running',
+          currentTurnId: 'turn-root',
+          summary: 'Main session must not be counted as a sub-agent',
+        },
+        {
           threadId: 'thread-child-running',
           nickname: 'Atlas',
           role: 'worker',
           status: 'running',
+          currentTurnId: 'turn-child',
           summary: 'Inspecting the repository',
+        },
+        {
+          threadId: 'thread-child-idle',
+          nickname: 'Kepler',
+          role: 'worker',
+          status: 'running',
+          summary: 'Finished an earlier turn and remains reusable',
         },
         {
           threadId: 'thread-child-done',
@@ -3195,7 +3210,15 @@ describe('webSession loading behavior', () => {
           title: 'Nova [reviewer]',
           status: 'completed',
         }),
+        expect.objectContaining({
+          id: 'thread-child-idle',
+          title: 'Kepler [worker]',
+          status: 'idle',
+        }),
       ])
+    );
+    expect(store.getSubAgents(session.id)).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'thread-root' })])
     );
     expect(store.getLiveState(session.id)).toMatchObject({
       phase: 'starting',

@@ -7625,6 +7625,20 @@ func (m *Manager) recoverInterruptedSessions(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
+		if err := db.WithContext(ctx).
+			Model(&tables.WebSessionSubAgentTable{}).
+			Where("web_session_id = ? AND status IN ?", record.ID, []string{
+				string(WebSessionSubAgentPendingInit),
+				string(WebSessionSubAgentRunning),
+			}).
+			Updates(map[string]any{
+				"status":           string(WebSessionSubAgentInterrupted),
+				"current_turn_id":  nil,
+				"ended_at":         now,
+				"last_activity_at": now,
+			}).Error; err != nil {
+			return err
+		}
 		m.cancelAutoRetryTimer(record.ID)
 		m.broadcastSessionSummary(ctx, record.ID)
 	}

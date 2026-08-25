@@ -3563,6 +3563,19 @@ func TestNewManagerRecoversInterruptedSessionsOnStartup(t *testing.T) {
 	if err := model.GetDB().Create(session).Error; err != nil {
 		t.Fatalf("seed web session failed: %v", err)
 	}
+	parentThreadID := nativeSessionID
+	staleParentTurnID := "turn_parent_written_as_child"
+	subAgent := &tables.WebSessionSubAgentTable{
+		WebSessionID:   session.ID,
+		ThreadID:       "thread_child",
+		ParentThreadID: &parentThreadID,
+		Status:         string(WebSessionSubAgentRunning),
+		CurrentTurnID:  &staleParentTurnID,
+	}
+	subAgent.Init()
+	if err := model.GetDB().Create(subAgent).Error; err != nil {
+		t.Fatalf("seed active sub-agent failed: %v", err)
+	}
 
 	if err := eventStore.appendEvent(session.ID, Event{
 		ID:        "evt_approval",
@@ -3596,6 +3609,14 @@ func TestNewManagerRecoversInterruptedSessionsOnStartup(t *testing.T) {
 	}
 	if record.LastEventSeq != 2 {
 		t.Fatalf("expected recovered lastEventSeq 2, got %d", record.LastEventSeq)
+	}
+	agents, err := manager.sessionSubAgents(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("sessionSubAgents after recovery: %v", err)
+	}
+	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentInterrupted ||
+		agents[0].CurrentTurnID != nil || agents[0].EndedAt == nil {
+		t.Fatalf("expected active sub-agent to be interrupted on restart, got %#v", agents)
 	}
 
 	history, err := manager.History(context.Background(), session.ID, 10, nil)
@@ -4705,8 +4726,8 @@ func TestCodexSubAgentRegistrySurvivesEmptyWaitTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sessionSubAgents after child completion: %v", err)
 	}
-	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentRunning {
-		t.Fatalf("completed child turn must preserve active Agent lifecycle, got %#v", agents)
+	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentIdle || agents[0].CurrentTurnID != nil {
+		t.Fatalf("completed child turn must leave a reusable idle Agent, got %#v", agents)
 	}
 
 	_, err = manager.handleCodexAppServerMessage(*session, run, nil, rootScope, codexAppServerIncoming{
@@ -4728,7 +4749,8 @@ func TestCodexSubAgentRegistrySurvivesEmptyWaitTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sessionSubAgents after child follow-up: %v", err)
 	}
-	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentRunning {
+	if len(agents) != 1 || agents[0].Status != WebSessionSubAgentRunning ||
+		agents[0].CurrentTurnID == nil || *agents[0].CurrentTurnID != "turn_child_followup" {
 		t.Fatalf("child follow-up activity must keep Agent active, got %#v", agents)
 	}
 }
@@ -4781,7 +4803,8 @@ func TestCodexV2SubAgentActivityUpdatesRegistryAndHistory(t *testing.T) {
 	}
 	if len(agents) != 1 || agents[0].ThreadID != "thread_child" ||
 		agents[0].ParentThreadID == nil || *agents[0].ParentThreadID != rootThreadID ||
-		agents[0].Path != "review/atlas" || agents[0].Status != WebSessionSubAgentRunning {
+		agents[0].Path != "review/atlas" || agents[0].Status != WebSessionSubAgentRunning ||
+		agents[0].CurrentTurnID != nil {
 		t.Fatalf("unexpected registry after started activity: %#v", agents)
 	}
 

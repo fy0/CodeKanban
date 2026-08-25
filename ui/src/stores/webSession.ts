@@ -283,6 +283,7 @@ export interface WebSessionLiveSubAgent {
 export type WebSessionSubAgentStatus =
   | 'pending_init'
   | 'running'
+  | 'idle'
   | 'interrupted'
   | 'completed'
   | 'errored'
@@ -1100,6 +1101,9 @@ function normalizeSubAgentStatus(value: unknown): WebSessionSubAgentStatus {
     case 'running':
     case 'active':
       return 'running';
+    case 'idle':
+    case 'notloaded':
+      return 'idle';
     case 'interrupted':
     case 'aborted':
       return 'interrupted';
@@ -1162,16 +1166,18 @@ function normalizeSubAgent(
   const role = String(record.rl ?? record.role ?? '').trim();
   const path = String(record.p ?? record.path ?? '').trim();
   const startedAt = parseHistoryTimeValue(record.sa ?? record.startedAt) ?? undefined;
+  const currentTurnId = String(record.ctid ?? record.currentTurnId ?? '').trim() || null;
+  const normalizedStatus = normalizeSubAgentStatus(record.st ?? record.status);
   return {
     id,
     parentThreadId: String(record.ptid ?? record.parentThreadId ?? '').trim() || null,
     path,
     nickname,
     role,
-    status: normalizeSubAgentStatus(record.st ?? record.status),
+    status: normalizedStatus === 'running' && !currentTurnId ? 'idle' : normalizedStatus,
     title: subAgentDisplayTitle({ id, nickname, role, path }),
     summary: String(record.sm ?? record.summary ?? '').trim(),
-    currentTurnId: String(record.ctid ?? record.currentTurnId ?? '').trim() || null,
+    currentTurnId,
     latestItemId: String(record.liid ?? record.latestItemId ?? '').trim() || null,
     latestOrderIndex: Number(record.loi ?? record.latestOrderIndex ?? 0) || 0,
     startedAt,
@@ -1181,7 +1187,9 @@ function normalizeSubAgent(
 }
 
 function isActiveSubAgent(agent: WebSessionSubAgent) {
-  return agent.status === 'pending_init' || agent.status === 'running';
+  return (
+    agent.status === 'pending_init' || (agent.status === 'running' && Boolean(agent.currentTurnId))
+  );
 }
 
 function normalizePendingApproval(
@@ -3837,7 +3845,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function getSubAgents(sessionId: string) {
-    return subAgentsBySession.value[sessionId] ?? [];
+    const items = subAgentsBySession.value[sessionId] ?? [];
+    const rootThreadId = String(findSessionById(sessionId)?.nativeSessionId ?? '').trim();
+    return rootThreadId ? items.filter(item => item.id !== rootThreadId) : items;
   }
 
   function hasAuthoritativeSubAgents(sessionId: string) {
@@ -3845,14 +3855,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function setSubAgents(sessionId: string, items: WebSessionSubAgent[]) {
-    const normalized = [...items].sort((left, right) => {
-      const leftTime = left.startedAt ?? 0;
-      const rightTime = right.startedAt ?? 0;
-      if (leftTime !== rightTime) {
-        return leftTime - rightTime;
-      }
-      return left.id.localeCompare(right.id);
-    });
+    const rootThreadId = String(findSessionById(sessionId)?.nativeSessionId ?? '').trim();
+    const normalized = items
+      .filter(item => !rootThreadId || item.id !== rootThreadId)
+      .sort((left, right) => {
+        const leftTime = left.startedAt ?? 0;
+        const rightTime = right.startedAt ?? 0;
+        if (leftTime !== rightTime) {
+          return leftTime - rightTime;
+        }
+        return left.id.localeCompare(right.id);
+      });
     subAgentsBySession.value = {
       ...subAgentsBySession.value,
       [sessionId]: normalized,

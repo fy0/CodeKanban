@@ -849,6 +849,7 @@ export default {
     liveSubAgentCount: '{count} sub agent working | {count} sub agents working',
     liveSubAgentPopoverTitle: '{count} active sub agent | {count} active sub agents',
     liveSubAgentNoSummary: 'Working on a delegated task',
+    subAgentNoSummary: 'No activity summary',
     subAgentKnownCount: '{count} known sub agent | {count} known sub agents',
     subAgentPopoverTitle: '{active} active, {count} total',
     subAgentLocate: 'Locate latest agent activity',
@@ -857,6 +858,7 @@ export default {
     subAgentStatus: {
       pending_init: 'Starting',
       running: 'Running',
+      idle: 'Idle',
       interrupted: 'Interrupted',
       completed: 'Done',
       errored: 'Error',

@@ -424,15 +424,18 @@ export function normalizeWebSessionSubAgent(value) {
   const startedAt = value?.sa ?? value?.startedAt;
   const lastActivityAt = value?.la ?? value?.lastActivityAt;
   const endedAt = value?.ea ?? value?.endedAt;
+  const currentTurnId =
+    trimmedString(value?.ctid ?? value?.currentTurnId) || null;
+  const rawStatus = trimmedString(value?.st ?? value?.status) || "pending_init";
   return {
     threadId,
     parentThreadId: trimmedString(value?.ptid ?? value?.parentThreadId) || null,
     path: trimmedString(value?.p ?? value?.path),
     nickname: trimmedString(value?.nn ?? value?.nickname),
     role: trimmedString(value?.rl ?? value?.role),
-    status: trimmedString(value?.st ?? value?.status) || "pending_init",
+    status: rawStatus === "running" && !currentTurnId ? "idle" : rawStatus,
     summary: trimmedString(value?.sm ?? value?.summary),
-    currentTurnId: trimmedString(value?.ctid ?? value?.currentTurnId) || null,
+    currentTurnId,
     latestItemId: trimmedString(value?.liid ?? value?.latestItemId) || null,
     latestOrderIndex: numberValue(value?.loi ?? value?.latestOrderIndex, 0),
     startedAt:
@@ -774,8 +777,11 @@ export function analyzeWebSession(snapshot) {
   const pendingInputs = Array.isArray(snapshot?.pendingInputs)
     ? snapshot.pendingInputs.filter(Boolean)
     : [];
+  const rootThreadId = trimmedString(session?.nativeSessionId);
   const subAgents = Array.isArray(snapshot?.subAgents)
-    ? snapshot.subAgents.map(normalizeWebSessionSubAgent).filter(Boolean)
+    ? snapshot.subAgents
+        .map(normalizeWebSessionSubAgent)
+        .filter((agent) => agent && agent.threadId !== rootThreadId)
     : [];
   const items = Array.isArray(history.items) ? history.items : [];
   const pendingApproval =
@@ -855,7 +861,9 @@ export function analyzeWebSession(snapshot) {
     pendingInputs,
     subAgents,
     activeSubAgents: subAgents.filter(
-      (agent) => agent.status === "pending_init" || agent.status === "running",
+      (agent) =>
+        agent.status === "pending_init" ||
+        (agent.status === "running" && Boolean(agent.currentTurnId)),
     ),
     latestPlan,
     lastAssistantMessage,

@@ -242,6 +242,7 @@ func listCodexDescendantsWithClient(
 		rootThreadID,
 	)
 	if ancestorErr == nil {
+		delete(descendants, strings.TrimSpace(rootThreadID))
 		return descendants, nil
 	}
 
@@ -263,6 +264,9 @@ func listCodexDescendantsWithClient(
 			return nil, fmt.Errorf("descendant listing is unsupported (ancestor: %v; parent: %w)", ancestorErr, err)
 		}
 		for childID, summary := range children {
+			if childID == strings.TrimSpace(rootThreadID) {
+				continue
+			}
 			if _, exists := result[childID]; exists {
 				continue
 			}
@@ -271,6 +275,25 @@ func listCodexDescendantsWithClient(
 		}
 	}
 	return result, nil
+}
+
+func mergeCodexDescendantSummary(read codexThreadSummary, listed codexThreadSummary) codexThreadSummary {
+	if read.ParentThreadID == "" || read.ParentThreadID == read.ID {
+		read.ParentThreadID = listed.ParentThreadID
+	}
+	if read.ParentThreadID == read.ID {
+		read.ParentThreadID = ""
+	}
+	if read.AgentPath == "" {
+		read.AgentPath = listed.AgentPath
+	}
+	if read.Nickname == "" {
+		read.Nickname = listed.Nickname
+	}
+	if read.Role == "" {
+		read.Role = listed.Role
+	}
+	return read
 }
 
 func (m *Manager) readCodexDescendantThreads(
@@ -301,18 +324,7 @@ func (m *Manager) readCodexDescendantThreads(
 			if err != nil {
 				return err
 			}
-			if read.Summary.ParentThreadID == "" {
-				read.Summary.ParentThreadID = summary.ParentThreadID
-			}
-			if read.Summary.AgentPath == "" {
-				read.Summary.AgentPath = summary.AgentPath
-			}
-			if read.Summary.Nickname == "" {
-				read.Summary.Nickname = summary.Nickname
-			}
-			if read.Summary.Role == "" {
-				read.Summary.Role = summary.Role
-			}
+			read.Summary = mergeCodexDescendantSummary(read.Summary, summary)
 			results = append(results, read)
 		}
 		return nil

@@ -821,6 +821,7 @@ export default {
     liveSubAgentCount: '{count} 个 Sub Agent 正在工作',
     liveSubAgentPopoverTitle: '{count} 个活跃 Sub Agent',
     liveSubAgentNoSummary: '正在处理委派任务',
+    subAgentNoSummary: '暂无活动摘要',
     subAgentKnownCount: '共 {count} 个 Sub Agent',
     subAgentPopoverTitle: '{active} 个活跃，共 {count} 个',
     subAgentLocate: '定位 Agent 最近活动',
@@ -829,6 +830,7 @@ export default {
     subAgentStatus: {
       pending_init: '启动中',
       running: '运行中',
+      idle: '空闲',
       interrupted: '已中断',
       completed: '已完成',
       errored: '出错',

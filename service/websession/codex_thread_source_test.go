@@ -121,9 +121,14 @@ func TestListCodexDescendantsUsesAncestorPaginationAcrossArchiveStates(t *testin
 		switch {
 		case !archived && cursor == "":
 			return map[string]any{"result": map[string]any{
-				"data": []any{map[string]any{
-					"id": "thread_child_a", "parentThreadId": "thread_root", "agentNickname": "Atlas",
-				}},
+				"data": []any{
+					map[string]any{
+						"id": "thread_root", "parentThreadId": "thread_child_b", "agentPath": "/root",
+					},
+					map[string]any{
+						"id": "thread_child_a", "parentThreadId": "thread_root", "agentNickname": "Atlas",
+					},
+				},
 				"nextCursor": "page_2",
 			}}
 		case !archived && cursor == "page_2":
@@ -152,6 +157,9 @@ func TestListCodexDescendantsUsesAncestorPaginationAcrossArchiveStates(t *testin
 	if len(descendants) != 3 {
 		t.Fatalf("expected three descendants across pages and archive states, got %#v", descendants)
 	}
+	if _, includesRoot := descendants["thread_root"]; includesRoot {
+		t.Fatalf("native root must not be returned as its own descendant: %#v", descendants)
+	}
 	if descendants["thread_child_a"].Nickname != "Atlas" ||
 		descendants["thread_child_b"].ParentThreadID != "thread_child_a" ||
 		descendants["thread_child_archived"].Status != "idle" {
@@ -163,6 +171,23 @@ func TestListCodexDescendantsUsesAncestorPaginationAcrossArchiveStates(t *testin
 		calls[1] != (relationCall{archived: false, cursor: "page_2"}) ||
 		calls[2] != (relationCall{archived: true, cursor: ""}) {
 		t.Fatalf("unexpected pagination calls: %#v", calls)
+	}
+}
+
+func TestMergeCodexDescendantSummaryRepairsSelfParent(t *testing.T) {
+	merged := mergeCodexDescendantSummary(
+		codexThreadSummary{ID: "thread_child", ParentThreadID: "thread_child"},
+		codexThreadSummary{
+			ID:             "thread_child",
+			ParentThreadID: "thread_root",
+			AgentPath:      "/root/review",
+			Nickname:       "Atlas",
+			Role:           "reviewer",
+		},
+	)
+	if merged.ParentThreadID != "thread_root" || merged.AgentPath != "/root/review" ||
+		merged.Nickname != "Atlas" || merged.Role != "reviewer" {
+		t.Fatalf("unexpected merged descendant metadata: %#v", merged)
 	}
 }
 

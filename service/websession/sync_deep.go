@@ -128,7 +128,7 @@ func (m *Manager) syncSessionFromLogSource(
 	}
 	sortSyncedHistoryItems(items)
 	items = compactSyncedHistoryItems(items)
-	subAgents := subAgentsFromCodexThreads(descendants)
+	subAgents := subAgentsFromCodexThreads(descendants, rootThreadID)
 	updateSubAgentsFromHistory(subAgents, items)
 
 	itemRows := make([]tables.WebSessionItemTable, 0, len(items))

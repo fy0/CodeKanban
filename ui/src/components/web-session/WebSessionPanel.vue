@@ -2191,12 +2191,12 @@
                                 class="live-sub-agent-summary"
                                 :title="
                                   subAgentLatestActivitySummary(agent) ||
-                                  t('webSession.liveSubAgentNoSummary')
+                                  subAgentFallbackSummary(agent)
                                 "
                               >
                                 {{
                                   subAgentLatestActivitySummary(agent) ||
-                                  t('webSession.liveSubAgentNoSummary')
+                                  subAgentFallbackSummary(agent)
                                 }}
                               </div>
                             </div>
@@ -7270,6 +7270,12 @@ function subAgentLatestActivitySummary(agent: WebSessionSubAgent) {
     return subAgentActivitySummary(target);
   }
   return isTransportRetryActivityText(agent.summary) ? '' : agent.summary;
+}
+
+function subAgentFallbackSummary(agent: WebSessionSubAgent) {
+  return agent.status === 'pending_init' || agent.status === 'running'
+    ? t('webSession.liveSubAgentNoSummary')
+    : t('webSession.subAgentNoSummary');
 }
 
 const timelineUserMessageEditTitle = computed(() =>

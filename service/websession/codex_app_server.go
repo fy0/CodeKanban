@@ -1336,6 +1336,8 @@ func (m *Manager) handleCodexAppServerMessage(
 			switch status {
 			case "active", "running":
 				lifecycle = WebSessionSubAgentRunning
+			case "idle", "notloaded", "not_loaded":
+				lifecycle = WebSessionSubAgentIdle
 			case "systemerror", "system_error", "error", "errored", "failed":
 				lifecycle = WebSessionSubAgentErrored
 			case "closed", "shutdown":
@@ -2189,6 +2191,9 @@ func (m *Manager) appendCodexSubAgentState(
 	if threadID == "" {
 		return
 	}
+	if session.NativeSessionID != nil && threadID == strings.TrimSpace(*session.NativeSessionID) {
+		return
+	}
 	nextPayload := cloneMap(payload)
 	if nextPayload == nil {
 		nextPayload = map[string]any{}
@@ -2218,10 +2223,8 @@ func codexThreadStartedSubAgentPayload(raw json.RawMessage) map[string]any {
 		"path":           codexThreadAgentPath(thread),
 		"status":         string(WebSessionSubAgentPendingInit),
 	}
-	if status := strings.ToLower(strings.TrimSpace(codexThreadStatusValue(thread["status"]))); status == "active" {
-		result["status"] = string(WebSessionSubAgentRunning)
-	} else if status == "systemerror" {
-		result["status"] = string(WebSessionSubAgentErrored)
+	if status := normalizeWebSessionSubAgentStatus(codexThreadStatusValue(thread["status"])); status != "" {
+		result["status"] = string(status)
 	}
 	return result
 }
@@ -2298,7 +2301,7 @@ func (m *Manager) handleCodexCollabAgentCompletion(
 			continue
 		}
 		stateRecord := decodeRawObject(state)
-		m.appendCodexSubAgentState(session, run, threadID, turnID, map[string]any{
+		m.appendCodexSubAgentState(session, run, threadID, "", map[string]any{
 			"parentThreadId": parentThreadID,
 			"nickname":       firstNonEmpty(stringValue(stateRecord["agentNickname"]), stringValue(stateRecord["nickname"])),
 			"role":           firstNonEmpty(stringValue(stateRecord["agentRole"]), stringValue(stateRecord["role"])),
@@ -2315,7 +2318,7 @@ func (m *Manager) handleCodexCollabAgentCompletion(
 		return
 	}
 	for _, receiver := range decodeStringArray(item["receiverThreadIds"]) {
-		m.appendCodexSubAgentState(session, run, receiver, turnID, map[string]any{
+		m.appendCodexSubAgentState(session, run, receiver, "", map[string]any{
 			"parentThreadId": parentThreadID,
 			"status":         string(WebSessionSubAgentPendingInit),
 			"summary":        stringValue(item["prompt"]),
@@ -2350,7 +2353,7 @@ func (m *Manager) handleCodexSubAgentActivity(
 	if status != "" {
 		statePayload["status"] = string(status)
 	}
-	m.appendCodexSubAgentState(session, run, agentThreadID, turnID, statePayload)
+	m.appendCodexSubAgentState(session, run, agentThreadID, "", statePayload)
 
 	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),

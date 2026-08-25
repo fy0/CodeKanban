@@ -482,12 +482,17 @@ func sortSyncedHistoryItems(items []HistoryItem) {
 	}
 }
 
-func subAgentsFromCodexThreads(threads []codexThreadReadResult) []WebSessionSubAgent {
+func subAgentsFromCodexThreads(threads []codexThreadReadResult, rootThreadID string) []WebSessionSubAgent {
 	agents := make([]WebSessionSubAgent, 0, len(threads))
+	rootThreadID = strings.TrimSpace(rootThreadID)
 	for _, thread := range threads {
 		agent := webSessionSubAgentFromThread(thread.Summary, thread.Turns)
-		if strings.TrimSpace(agent.ThreadID) == "" {
+		threadID := strings.TrimSpace(agent.ThreadID)
+		if threadID == "" || (rootThreadID != "" && threadID == rootThreadID) {
 			continue
+		}
+		if agent.ParentThreadID != nil && strings.TrimSpace(*agent.ParentThreadID) == threadID {
+			agent.ParentThreadID = nil
 		}
 		agent.Summary = strings.TrimSpace(thread.Summary.Preview)
 		agents = append(agents, agent)
@@ -643,7 +648,7 @@ func (m *Manager) syncSessionFromThreadSource(
 			zap.Error(descendantsErr),
 		)
 	}
-	subAgents := subAgentsFromCodexThreads(descendants)
+	subAgents := subAgentsFromCodexThreads(descendants, remote.Summary.ID)
 
 	metadataUpdates := map[string]any{
 		"source_kind":       string(defaultSessionBackend(AgentCodex)),

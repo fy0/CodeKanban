@@ -319,6 +319,7 @@ export type WebSessionSubAgentRecord = {
   status?:
     | 'pending_init'
     | 'running'
+    | 'idle'
     | 'interrupted'
     | 'completed'
     | 'errored'

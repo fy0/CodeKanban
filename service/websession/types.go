@@ -540,6 +540,7 @@ type WebSessionSubAgentStatus string
 const (
 	WebSessionSubAgentPendingInit WebSessionSubAgentStatus = "pending_init"
 	WebSessionSubAgentRunning     WebSessionSubAgentStatus = "running"
+	WebSessionSubAgentIdle        WebSessionSubAgentStatus = "idle"
 	WebSessionSubAgentInterrupted WebSessionSubAgentStatus = "interrupted"
 	WebSessionSubAgentCompleted   WebSessionSubAgentStatus = "completed"
 	WebSessionSubAgentErrored     WebSessionSubAgentStatus = "errored"

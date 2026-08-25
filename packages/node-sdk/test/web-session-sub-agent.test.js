@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeWebSessionFrame } from "../src/web-session-shared.js";
+import {
+  analyzeWebSession,
+  normalizeWebSessionFrame,
+} from "../src/web-session-shared.js";
 
 function sampleWireSession() {
   return {
@@ -110,4 +113,43 @@ test("incremental sub_agent frames normalize to a dedicated SDK event", () => {
   assert.equal(frame.subAgent.summary, "Review complete");
   assert.equal(frame.subAgent.endedAt, "2026-07-26T12:00:03.000Z");
   assert.equal(frame.session.id, "ws1");
+});
+
+test("analysis excludes the native root and does not count reusable idle threads", () => {
+  const state = analyzeWebSession({
+    session: {
+      id: "ws1",
+      nativeSessionId: "thread-root",
+      status: "running",
+    },
+    history: { items: [], hasMore: false, total: 0 },
+    subAgents: [
+      {
+        threadId: "thread-root",
+        status: "running",
+        currentTurnId: "turn-root",
+      },
+      {
+        threadId: "thread-working",
+        status: "running",
+        currentTurnId: "turn-working",
+      },
+      {
+        threadId: "thread-reusable",
+        status: "running",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    state.subAgents.map((agent) => [agent.threadId, agent.status]),
+    [
+      ["thread-working", "running"],
+      ["thread-reusable", "idle"],
+    ],
+  );
+  assert.deepEqual(
+    state.activeSubAgents.map((agent) => agent.threadId),
+    ["thread-working"],
+  );
 });
