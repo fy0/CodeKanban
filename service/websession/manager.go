@@ -82,6 +82,8 @@ type eventProjectionRetry struct {
 	record     tables.WebSessionTable
 	event      Event
 	stage      eventProjectionStage
+	attempts   int
+	retryDelay time.Duration
 	cachedItem *HistoryItem
 	timingItem *HistoryItem
 	subAgent   *WebSessionSubAgent
@@ -138,6 +140,7 @@ type Manager struct {
 	runs map[string]*activeRun
 	// Codex can report turn completion before its app-server releases the thread writer.
 	codexRunDrains              map[string]*activeRun
+	codexTerminationRequests    map[string]codexTerminationRequest
 	clients                     map[*client]struct{}
 	autoRetryTimers             map[string]*time.Timer
 	scheduledInputTimers        map[string]*time.Timer
@@ -186,17 +189,27 @@ const (
 
 var ErrSessionHistoryUnavailable = errors.New("session history not found")
 
+var (
+	ErrCodexAppServerNotActive       = errors.New("codex app-server is not active")
+	ErrCodexAppServerProjectMismatch = errors.New("codex app-server session does not belong to the project")
+	ErrCodexRunDrainTimeout          = errors.New("codex app-server is still shutting down; retry the command")
+)
+
 type client struct {
-	conn       wsConn
-	logger     *zap.Logger
-	kind       clientKind
-	writeMu    sync.Mutex
-	focusMu    sync.RWMutex
-	focusedSID string
-	done       chan struct{}
-	once       sync.Once
-	lastSeenAt atomic.Int64
+	conn          wsConn
+	logger        *zap.Logger
+	kind          clientKind
+	commandQueue  chan []byte
+	commandCancel context.CancelFunc
+	writeMu       sync.Mutex
+	focusMu       sync.RWMutex
+	focusedSID    string
+	done          chan struct{}
+	once          sync.Once
+	lastSeenAt    atomic.Int64
 }
+
+const commandClientQueueCapacity = 32
 
 type wsConn interface {
 	ReadMessage() (messageType int, p []byte, err error)
@@ -206,6 +219,7 @@ type wsConn interface {
 
 type activeRun struct {
 	sessionID                 string
+	projectID                 string
 	agent                     Agent
 	backend                   SessionBackend
 	runID                     string
@@ -226,6 +240,7 @@ type activeRun struct {
 	cancel                    context.CancelFunc
 	done                      chan struct{}
 	mu                        sync.Mutex
+	forceTerminateRequested   bool
 	stdin                     io.WriteCloser
 	recentRuntimeLines        []string
 	pendingApproval           string
@@ -269,6 +284,22 @@ type activeRun struct {
 	syncSourceAfterRun        bool
 	piCompaction              bool
 }
+
+type CodexAppServerTermination struct {
+	SessionID        string `json:"sessionId"`
+	RunID            string `json:"runId"`
+	StateBefore      string `json:"stateBefore"`
+	ProcessRootPID   int    `json:"processRootPid"`
+	AlreadyRequested bool   `json:"alreadyRequested"`
+}
+
+type codexTerminationRequest struct {
+	projectID string
+	result    CodexAppServerTermination
+	expiresAt time.Time
+}
+
+const codexTerminationRequestTTL = 30 * time.Second
 
 type attachmentMeta struct {
 	ID        string    `json:"id"`
@@ -563,6 +594,7 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		piRuntimes:                  make(map[string]*piSessionRuntime),
 		runs:                        make(map[string]*activeRun),
 		codexRunDrains:              make(map[string]*activeRun),
+		codexTerminationRequests:    make(map[string]codexTerminationRequest),
 		clients:                     make(map[*client]struct{}),
 		autoRetryTimers:             make(map[string]*time.Timer),
 		scheduledInputTimers:        make(map[string]*time.Timer),
@@ -604,6 +636,12 @@ func (m *Manager) registerClient(conn wsConn, kind clientKind) *client {
 		logger: m.logger.Named("client"),
 		kind:   kind,
 		done:   make(chan struct{}),
+	}
+	if kind == clientKindCommand {
+		workerCtx, cancel := context.WithCancel(context.Background())
+		client.commandQueue = make(chan []byte, commandClientQueueCapacity)
+		client.commandCancel = cancel
+		go m.runCommandWorker(workerCtx, client)
 	}
 	client.MarkSeen()
 	m.mu.Lock()
@@ -799,8 +837,52 @@ func (c *client) stop() {
 		return
 	}
 	c.once.Do(func() {
+		if c.commandCancel != nil {
+			c.commandCancel()
+		}
 		close(c.done)
 	})
+}
+
+func (m *Manager) EnqueueCommand(client *client, payload []byte) error {
+	if client == nil || client.kind != clientKindCommand || client.commandQueue == nil {
+		return fmt.Errorf("command client is not registered")
+	}
+	command := append([]byte(nil), payload...)
+	select {
+	case <-client.done:
+		return context.Canceled
+	case client.commandQueue <- command:
+		return nil
+	default:
+		var frame wireCommandFrame
+		_ = json.Unmarshal(payload, &frame)
+		return client.send(newErrorFrame(
+			frame.RequestID,
+			frame.SessionID,
+			"command_queue_full",
+			"command queue is full; retry shortly",
+			true,
+		))
+	}
+}
+
+func (m *Manager) runCommandWorker(ctx context.Context, client *client) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case payload := <-client.commandQueue:
+			if ctx.Err() != nil {
+				return
+			}
+			if err := m.HandleCommand(ctx, client, payload); err != nil && !errors.Is(err, context.Canceled) {
+				if client.logger != nil {
+					client.logger.Debug("failed to handle web session command", zap.Error(err))
+				}
+			}
+		}
+	}
 }
 
 func (c *client) closeWithReason(reason string) {
@@ -857,7 +939,7 @@ func (c *client) startHeartbeat() {
 }
 
 func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]SessionSummary, error) {
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return nil, model.ErrDBNotInitialized
 	}
@@ -879,7 +961,7 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 }
 
 func (m *Manager) CountSessionsByProject(ctx context.Context) (map[string]int, error) {
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return nil, model.ErrDBNotInitialized
 	}
@@ -915,7 +997,7 @@ func (m *Manager) ListArchivedSessions(
 	limit int,
 	offset int,
 ) (ArchivedQueryResult, error) {
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return ArchivedQueryResult{}, model.ErrDBNotInitialized
 	}
@@ -1868,7 +1950,7 @@ func (m *Manager) ImportPiSession(ctx context.Context, projectID, aiSessionID st
 }
 
 func (m *Manager) GetSession(ctx context.Context, sessionID string) (tables.WebSessionTable, error) {
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return tables.WebSessionTable{}, model.ErrDBNotInitialized
 	}
@@ -3824,6 +3906,9 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 		PendingInputMode(payload.Mode),
 		payload.PendingID,
 	); err != nil {
+		if errors.Is(err, ErrCodexRunDrainTimeout) {
+			return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "codex_drain_timeout", err.Error(), true))
+		}
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
 	return m.sendMutationAck(ctx, client, frame, nil)
@@ -3884,10 +3969,11 @@ func (m *Manager) CompactSession(ctx context.Context, sessionID string) error {
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	run := &activeRun{
-		sessionID: sessionID, agent: AgentPi, backend: SessionBackendPiRPC,
+		sessionID: sessionID, projectID: record.ProjectID, agent: AgentPi, backend: SessionBackendPiRPC,
 		runID: runID, cancel: cancel, done: make(chan struct{}), piCompaction: true,
 	}
 	m.mu.Lock()
+	delete(m.codexTerminationRequests, sessionID)
 	m.runs[sessionID] = run
 	m.mu.Unlock()
 	go m.runSession(runCtx, run, record, "", nil)
@@ -4019,6 +4105,7 @@ func (m *Manager) startHiddenSessionRun(
 	runCtx, cancel := context.WithCancel(context.Background())
 	run := &activeRun{
 		sessionID:              record.ID,
+		projectID:              record.ProjectID,
 		agent:                  Agent(record.Agent),
 		backend:                effectiveSessionBackend(record),
 		runID:                  runID,
@@ -4038,6 +4125,7 @@ func (m *Manager) startHiddenSessionRun(
 	}
 
 	m.mu.Lock()
+	delete(m.codexTerminationRequests, record.ID)
 	m.runs[record.ID] = run
 	m.mu.Unlock()
 
@@ -4169,7 +4257,11 @@ func (m *Manager) sendMessageInternal(
 		}
 	}
 
-	if err := model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	if err := db.WithContext(ctx).Model(&tables.WebSessionTable{}).
 		Where("id = ?", sessionID).
 		Updates(updates).Error; err != nil {
 		return err
@@ -4184,6 +4276,7 @@ func (m *Manager) sendMessageInternal(
 	runCtx, cancel := context.WithCancel(context.Background())
 	run := &activeRun{
 		sessionID:     sessionID,
+		projectID:     record.ProjectID,
 		agent:         Agent(record.Agent),
 		backend:       effectiveSessionBackend(record),
 		runID:         runID,
@@ -4193,6 +4286,7 @@ func (m *Manager) sendMessageInternal(
 	}
 
 	m.mu.Lock()
+	delete(m.codexTerminationRequests, sessionID)
 	m.runs[sessionID] = run
 	m.mu.Unlock()
 
@@ -5372,11 +5466,26 @@ func (m *Manager) appendAndBroadcastNow(
 	}
 	if err := m.flushEventProjectionRetriesLocked(ctx, sessionID, eventState); err != nil {
 		m.queueEventProjectionRetryLocked(sessionID, eventState, retry)
-		return Event{}, eventPersistedError{event: event, err: err}
+		if m.logger != nil {
+			m.logger.Warn("web session event persisted; database projection remains queued",
+				zap.String("sessionId", sessionID),
+				zap.String("eventId", event.ID),
+				zap.Error(err),
+			)
+		}
+		return event, nil
 	}
 	if err := m.projectPersistedEvent(ctx, sessionID, &retry); err != nil {
+		retry.recordProjectionFailure(err)
 		m.queueEventProjectionRetryLocked(sessionID, eventState, retry)
-		return Event{}, eventPersistedError{event: event, err: err}
+		if m.logger != nil {
+			m.logger.Warn("web session event persisted; queued database projection retry",
+				zap.String("sessionId", sessionID),
+				zap.String("eventId", event.ID),
+				zap.Error(err),
+			)
+		}
+		return event, nil
 	}
 	return event, nil
 }
@@ -6384,6 +6493,8 @@ func (m *Manager) finishCodexRunDrain(sessionID string, run *activeRun) {
 }
 
 func (m *Manager) waitForCodexRunDrain(ctx context.Context, sessionID string) error {
+	timer := time.NewTimer(codexRunDrainWaitTimeout)
+	defer timer.Stop()
 	for {
 		m.mu.RLock()
 		run := m.codexRunDrains[sessionID]
@@ -6398,8 +6509,105 @@ func (m *Manager) waitForCodexRunDrain(ctx context.Context, sessionID string) er
 			// closed. Re-check it to cover that handoff window.
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-timer.C:
+			m.terminateCodexAppServerRun(run, false)
+			return ErrCodexRunDrainTimeout
 		}
 	}
+}
+
+func (m *Manager) ForceTerminateCodexAppServer(projectID, sessionID string) (CodexAppServerTermination, error) {
+	projectID = strings.TrimSpace(projectID)
+	sessionID = strings.TrimSpace(sessionID)
+
+	m.mu.Lock()
+	run := m.codexRunDrains[sessionID]
+	stateBefore := "draining"
+	if run == nil {
+		run = m.runs[sessionID]
+		stateBefore = "active"
+	}
+	if run == nil {
+		request, ok := m.codexTerminationRequests[sessionID]
+		if ok && time.Now().Before(request.expiresAt) {
+			m.mu.Unlock()
+			if strings.TrimSpace(request.projectID) != projectID {
+				return CodexAppServerTermination{}, ErrCodexAppServerProjectMismatch
+			}
+			result := request.result
+			result.AlreadyRequested = true
+			return result, nil
+		}
+		delete(m.codexTerminationRequests, sessionID)
+	}
+	m.mu.Unlock()
+
+	if run == nil || run.backend != SessionBackendCodexAppServer || normalizeAgent(run.agent) != AgentCodex || run.codexAppServer() == nil {
+		return CodexAppServerTermination{}, ErrCodexAppServerNotActive
+	}
+	if strings.TrimSpace(run.projectID) != projectID {
+		return CodexAppServerTermination{}, ErrCodexAppServerProjectMismatch
+	}
+
+	pid, alreadyRequested := m.terminateCodexAppServerRun(run, stateBefore == "active")
+	result := CodexAppServerTermination{
+		SessionID:        sessionID,
+		RunID:            run.runID,
+		StateBefore:      stateBefore,
+		ProcessRootPID:   pid,
+		AlreadyRequested: alreadyRequested,
+	}
+	m.mu.Lock()
+	if m.codexTerminationRequests == nil {
+		m.codexTerminationRequests = make(map[string]codexTerminationRequest)
+	}
+	stored := result
+	stored.AlreadyRequested = true
+	m.codexTerminationRequests[sessionID] = codexTerminationRequest{
+		projectID: projectID,
+		result:    stored,
+		expiresAt: time.Now().Add(codexTerminationRequestTTL),
+	}
+	expiresAt := m.codexTerminationRequests[sessionID].expiresAt
+	m.mu.Unlock()
+	time.AfterFunc(codexTerminationRequestTTL, func() {
+		m.mu.Lock()
+		request, ok := m.codexTerminationRequests[sessionID]
+		if ok && request.expiresAt.Equal(expiresAt) && !time.Now().Before(request.expiresAt) {
+			delete(m.codexTerminationRequests, sessionID)
+		}
+		m.mu.Unlock()
+	})
+	return result, nil
+}
+
+func (m *Manager) terminateCodexAppServerRun(run *activeRun, cancelActive bool) (int, bool) {
+	if run == nil {
+		return 0, false
+	}
+	run.mu.Lock()
+	alreadyRequested := run.forceTerminateRequested
+	run.forceTerminateRequested = true
+	cancel := run.cancel
+	cmd := run.cmd
+	client := run.app
+	run.mu.Unlock()
+
+	pid := 0
+	if cmd != nil && cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
+	if cancelActive && cancel != nil {
+		cancel()
+	}
+	if client != nil {
+		_ = client.closeStdin()
+	}
+	killCmdTree(cmd)
+	if client != nil {
+		client.closeTransport()
+	}
+	return pid, alreadyRequested
 }
 
 // Claude invokes the PreToolUse hook before it emits a stdio control_request.

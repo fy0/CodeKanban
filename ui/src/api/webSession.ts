@@ -167,6 +167,14 @@ export type WebSessionWorkTimingBackfillResult = WebSessionWorkTimingBackfillSta
   failedResultCount: number;
 };
 
+export type CodexAppServerTermination = {
+  sessionId: string;
+  runId: string;
+  stateBefore: 'active' | 'draining';
+  processRootPid: number;
+  alreadyRequested: boolean;
+};
+
 type CountsResponse = {
   counts?: Record<string, number>;
 };
@@ -677,6 +685,22 @@ export const webSessionApi = {
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to sync AI session');
+    }
+    return body.item;
+  },
+
+  async terminateCodexAppServer(
+    projectId: string,
+    sessionId: string
+  ): Promise<CodexAppServerTermination> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<CodexAppServerTermination>
+        >(`/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/app-server/terminate`)
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to terminate Codex app-server');
     }
     return body.item;
   },

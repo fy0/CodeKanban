@@ -2257,6 +2257,20 @@
                         <div class="composer-settings-popover-tip">
                           {{ activeCallTimeoutPopoverTip }}
                         </div>
+                        <div
+                          v-if="canForceTerminateCodexAppServer"
+                          class="composer-settings-danger-zone"
+                        >
+                          <button
+                            type="button"
+                            class="composer-settings-danger-button"
+                            :disabled="forceTerminateAppServerLoading"
+                            @click="confirmForceTerminateCodexAppServer"
+                          >
+                            <n-icon size="15" aria-hidden="true"><WarningOutline /></n-icon>
+                            <span>{{ t('webSession.forceTerminateAppServer') }}</span>
+                          </button>
+                        </div>
                       </div>
                     </n-popover>
                   </div>
@@ -5261,6 +5275,10 @@ const currentSessionAutoRetryDispatchPendingOnFailure = computed(() =>
 );
 
 const canConfigureActiveCallTimeout = computed(() => currentSession.value?.agent === 'codex');
+const canForceTerminateCodexAppServer = computed(
+  () => currentRealSession.value?.agent === 'codex'
+);
+const forceTerminateAppServerLoading = ref(false);
 const currentSessionActiveCallTimeoutEnabled = computed(() => {
   const session = currentSession.value;
   if (!session || session.agent !== 'codex') {
@@ -5401,6 +5419,38 @@ function handleComposerSettingsPopoverShow(show: boolean) {
   if (show) {
     void loadComposerDeveloperConfig();
   }
+}
+
+function confirmForceTerminateCodexAppServer() {
+  const session = currentRealSession.value;
+  if (!session || session.agent !== 'codex' || forceTerminateAppServerLoading.value) {
+    return;
+  }
+  dialog.warning({
+    title: t('webSession.forceTerminateAppServerTitle'),
+    content: t('webSession.forceTerminateAppServerConfirm'),
+    positiveText: t('webSession.forceTerminateAppServer'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      forceTerminateAppServerLoading.value = true;
+      try {
+        const result = await webSessionApi.terminateCodexAppServer(session.projectId, session.id);
+        message.success(
+          t('webSession.forceTerminateAppServerSuccess', { pid: result.processRootPid || '-' })
+        );
+      } catch (error) {
+        message.error(
+          t('webSession.forceTerminateAppServerFailed', {
+            error: error instanceof Error ? error.message : t('common.error'),
+          })
+        );
+        return false;
+      } finally {
+        forceTerminateAppServerLoading.value = false;
+      }
+      return true;
+    },
+  });
 }
 const composerText = computed({
   get: () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text,
@@ -21992,6 +22042,36 @@ defineExpose({
 
 .composer-settings-popover-tip.is-warning {
   color: var(--n-warning-color, #d97706);
+}
+
+.composer-settings-danger-zone {
+  padding-top: 10px;
+  border-top: 1px solid var(--n-border-color);
+}
+
+.composer-settings-danger-button {
+  width: 100%;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--n-error-color) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--n-error-color) 8%, transparent);
+  color: var(--n-error-color);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.composer-settings-danger-button:hover:not(:disabled),
+.composer-settings-danger-button:focus-visible {
+  background: color-mix(in srgb, var(--n-error-color) 14%, transparent);
+}
+
+.composer-settings-danger-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 .composer-input-shell {

@@ -40,14 +40,14 @@ func TestPersistedEventProjectionRollsBackHistoryWhenCursorUpdateFails(t *testin
 		}
 	}()
 
-	_, appendErr := manager.appendAndBroadcast(context.Background(), session.ID, *session, Event{
+	appended, appendErr := manager.appendAndBroadcast(context.Background(), session.ID, *session, Event{
 		ID:        "evt-atomic-note",
 		Type:      "note",
 		Timestamp: time.Now(),
 		Payload:   map[string]any{"txt": "commit atomically"},
 	})
-	if appendErr == nil || !errors.Is(appendErr, cursorFailure) {
-		t.Fatalf("appendAndBroadcast error = %v, want cursor failure", appendErr)
+	if appendErr != nil || appended.ID != "evt-atomic-note" {
+		t.Fatalf("durable append must not surface projection failure: event=%#v error=%v", appended, appendErr)
 	}
 	assertProjectionState := func(wantItems int64, wantSeq int64) {
 		t.Helper()

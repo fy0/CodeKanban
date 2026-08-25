@@ -755,6 +755,33 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/app-server/terminate", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+		},
+	) (*h.ItemResponse[websession.CodexAppServerTermination], error) {
+		item, err := c.manager.ForceTerminateCodexAppServer(input.ProjectID, input.SessionID)
+		if err != nil {
+			switch {
+			case errors.Is(err, websession.ErrCodexAppServerProjectMismatch):
+				return nil, huma.Error404NotFound("session not found")
+			case errors.Is(err, websession.ErrCodexAppServerNotActive):
+				return nil, huma.Error409Conflict(err.Error())
+			default:
+				return nil, huma.Error500InternalServerError("failed to terminate Codex app-server", err)
+			}
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-codex-app-server-terminate"
+		op.Summary = "强制终止会话的 Codex app-server 进程树"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/sync", func(
 		ctx context.Context,
 		input *struct {
@@ -1161,9 +1188,6 @@ func (c *webSessionController) serveCommandWebsocket(w http.ResponseWriter, r *h
 	client := c.manager.RegisterCommandClient(conn)
 	defer c.manager.UnregisterClient(client)
 
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
 	for {
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
@@ -1182,8 +1206,8 @@ func (c *webSessionController) serveCommandWebsocket(w http.ResponseWriter, r *h
 			}
 			continue
 		}
-		if err := c.manager.HandleCommand(ctx, client, payload); err != nil {
-			c.logger.Debug("failed to handle web session command", zap.Error(err))
+		if err := c.manager.EnqueueCommand(client, payload); err != nil {
+			c.logger.Debug("failed to enqueue web session command", zap.Error(err))
 		}
 	}
 }

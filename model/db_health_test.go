@@ -29,6 +29,15 @@ func TestInspectDatabaseReportsConfiguredSQLiteHealth(t *testing.T) {
 	if health.Pool.MaxOpenConnections != 1 {
 		t.Fatalf("max open connections = %d, want 1", health.Pool.MaxOpenConnections)
 	}
+	if health.ReaderPool.MaxOpenConnections != 4 {
+		t.Fatalf("reader max open connections = %d, want 4", health.ReaderPool.MaxOpenConnections)
+	}
+	if GetReaderDB() == nil || GetReaderDB() == GetDB() {
+		t.Fatal("file-backed SQLite must use a separate reader pool")
+	}
+	if err := GetReaderDB().Exec("CREATE TABLE reader_must_be_read_only (id INTEGER)").Error; err == nil {
+		t.Fatal("reader pool unexpectedly accepted a write")
+	}
 	if health.DatabaseBytes <= 0 {
 		t.Fatalf("database bytes = %d, want a positive value", health.DatabaseBytes)
 	}
@@ -37,6 +46,16 @@ func TestInspectDatabaseReportsConfiguredSQLiteHealth(t *testing.T) {
 	}
 	if !health.ReadProbe.OK || !health.WriteProbe.OK {
 		t.Fatalf("probes are not healthy: read=%#v write=%#v", health.ReadProbe, health.WriteProbe)
+	}
+}
+
+func TestInMemoryDatabaseUsesWriterAsReader(t *testing.T) {
+	if err := InitWithDSN("file:reader-fallback?mode=memory&cache=shared", 0, true); err != nil {
+		t.Fatalf("InitWithDSN: %v", err)
+	}
+	t.Cleanup(DBClose)
+	if GetReaderDB() == nil || GetReaderDB() != GetDB() {
+		t.Fatal("in-memory SQLite must reuse the writer connection")
 	}
 }
 

@@ -791,6 +791,12 @@ export default {
     composerSettings: '会话设置',
     composerSettingsExpand: '展开高级设置',
     composerSettingsCollapse: '收起高级设置',
+    forceTerminateAppServer: '强制终止 App Server',
+    forceTerminateAppServerTitle: '强制终止当前会话的 App Server？',
+    forceTerminateAppServerConfirm:
+      '这会立即终止当前会话的完整子进程树，未完成的输出会丢失，但不会删除已有会话历史。',
+    forceTerminateAppServerSuccess: '已请求终止 App Server（根进程 PID：{pid}）',
+    forceTerminateAppServerFailed: '终止 App Server 失败：{error}',
     approvalLockedPlaceholder: '当前有待处理审批，先批准或拒绝再继续',
     stop: '停止',
     send: '发送',

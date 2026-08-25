@@ -78,7 +78,7 @@ func sessionRevisionLockIndex(sessionID string) uint32 {
 }
 
 func (m *Manager) currentSessionRevision(ctx context.Context, sessionID string) string {
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return ""
 	}

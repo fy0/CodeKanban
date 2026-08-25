@@ -311,7 +311,7 @@ func (m *Manager) scheduledInputsSnapshot(ctx context.Context, sessionID string)
 	if normalizedSessionID == "" {
 		return []ScheduledInput{}, nil
 	}
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return nil, model.ErrDBNotInitialized
 	}
@@ -349,7 +349,7 @@ func (m *Manager) decorateScheduledPlanExecutionState(
 	if len(summaries) == 0 {
 		return nil
 	}
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return model.ErrDBNotInitialized
 	}
@@ -482,8 +482,8 @@ func (m *Manager) scheduleInput(
 		scheduledForValue = time.Now()
 	}
 	item := tables.WebSessionScheduledInputTable{
-		WebSessionID:      record.ID,
-		Action:            string(ScheduledInputActionMessage),
+		WebSessionID: record.ID,
+		Action:       string(ScheduledInputActionMessage),
 		PayloadJSON: marshalScheduledMessagePayload(scheduledMessagePayload{
 			ExitPlanMode: exitPlanMode,
 		}),

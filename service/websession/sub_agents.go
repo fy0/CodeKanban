@@ -88,7 +88,7 @@ func mapWebSessionSubAgentRow(row tables.WebSessionSubAgentTable) WebSessionSubA
 }
 
 func (m *Manager) sessionSubAgents(ctx context.Context, sessionID string) ([]WebSessionSubAgent, error) {
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return nil, model.ErrDBNotInitialized
 	}

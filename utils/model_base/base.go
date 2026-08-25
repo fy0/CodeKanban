@@ -1,9 +1,13 @@
 package model_base
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,6 +21,7 @@ const (
 	sqliteMaxOpenConns = 1
 	sqliteMaxIdleConns = 1
 	sqliteBusyTimeout  = 5000
+	sqliteReaderConns  = 4
 )
 
 type BaseModel struct {
@@ -24,6 +29,73 @@ type BaseModel struct {
 	CreatedAt time.Time      `json:"createdAt"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"deletedAt"`
+}
+
+func DBInitReadOnly(dsn string, logLevel logger.LogLevel) (*gorm.DB, error) {
+	readOnlyDSN, ok, err := sqliteReadOnlyDSN(dsn)
+	if err != nil || !ok {
+		return nil, err
+	}
+	db, err := gorm.Open(sqliteOpen(readOnlyDSN), &gorm.Config{
+		TranslateError: true,
+		Logger: logger.New(
+			log.New(os.Stdout, "\r\n", log.LstdFlags),
+			logger.Config{IgnoreRecordNotFoundError: true, LogLevel: logLevel},
+		),
+	})
+	if err != nil {
+		return nil, err
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxOpenConns(sqliteReaderConns)
+	sqlDB.SetMaxIdleConns(sqliteReaderConns)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(sqliteBusyTimeout)*time.Millisecond)
+	defer cancel()
+	connections := make([]*sql.Conn, 0, sqliteReaderConns)
+	defer func() {
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+	}()
+	for index := 0; index < sqliteReaderConns; index++ {
+		connection, connErr := sqlDB.Conn(ctx)
+		if connErr != nil {
+			_ = sqlDB.Close()
+			return nil, connErr
+		}
+		connections = append(connections, connection)
+		if _, connErr = connection.ExecContext(ctx, "PRAGMA query_only = ON"); connErr != nil {
+			_ = sqlDB.Close()
+			return nil, fmt.Errorf("设置 SQLite 只读连接失败: %w", connErr)
+		}
+		if _, connErr = connection.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", sqliteBusyTimeout)); connErr != nil {
+			_ = sqlDB.Close()
+			return nil, fmt.Errorf("设置 SQLite 只读 busy_timeout 失败: %w", connErr)
+		}
+	}
+	return db, nil
+}
+
+func sqliteReadOnlyDSN(dsn string) (string, bool, error) {
+	value := strings.TrimSpace(strings.TrimPrefix(dsn, "sqlite://"))
+	lower := strings.ToLower(value)
+	if value == "" || value == ":memory:" || strings.HasPrefix(lower, "file::memory:") || strings.Contains(lower, "mode=memory") {
+		return "", false, nil
+	}
+	base, rawQuery, _ := strings.Cut(value, "?")
+	if !strings.HasPrefix(strings.ToLower(base), "file:") {
+		base = "file:" + filepath.ToSlash(base)
+	}
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return "", false, fmt.Errorf("解析 SQLite DSN 失败: %w", err)
+	}
+	query.Set("mode", "ro")
+	return base + "?" + query.Encode(), true, nil
 }
 
 type StringPKBaseModel struct {

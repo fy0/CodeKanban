@@ -511,7 +511,7 @@ func (m *Manager) loadHistoryWindow(
 	limit int,
 	beforeOrder *int64,
 ) (HistoryWindow, error) {
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return HistoryWindow{}, model.ErrDBNotInitialized
 	}
@@ -566,7 +566,7 @@ func (m *Manager) loadHistoryWindowAfter(
 	limit int,
 	afterOrder int64,
 ) (HistoryWindow, error) {
-	db := model.GetDB()
+	db := model.GetReaderDB()
 	if db == nil {
 		return HistoryWindow{}, model.ErrDBNotInitialized
 	}

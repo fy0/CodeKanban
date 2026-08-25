@@ -818,6 +818,12 @@ export default {
     composerSettings: 'Session Settings',
     composerSettingsExpand: 'Expand advanced settings',
     composerSettingsCollapse: 'Collapse advanced settings',
+    forceTerminateAppServer: 'Force Stop App Server',
+    forceTerminateAppServerTitle: 'Force stop this session app server?',
+    forceTerminateAppServerConfirm:
+      'This immediately terminates the entire child process tree for this session. Unfinished output will be lost, but existing session history will not be deleted.',
+    forceTerminateAppServerSuccess: 'App server termination requested (root PID: {pid})',
+    forceTerminateAppServerFailed: 'Failed to stop app server: {error}',
     approvalLockedPlaceholder: 'Resolve the pending approval before sending another message',
     stop: 'Stop',
     send: 'Send',

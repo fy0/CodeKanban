@@ -2,7 +2,9 @@ package websession
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -14,8 +16,9 @@ import (
 )
 
 const (
-	defaultTextDeltaFlushWindow  = 40 * time.Millisecond
+	defaultTextDeltaFlushWindow  = 100 * time.Millisecond
 	defaultProjectionRetryWindow = 100 * time.Millisecond
+	maxProjectionRetryWindow     = 2 * time.Second
 	maxPendingTextDeltaBytes     = 16 * 1024
 )
 
@@ -109,7 +112,11 @@ func (m *Manager) scheduleEventProjectionRetryLocked(sessionID string, state *se
 	}
 	state.projectionTimerGeneration++
 	generation := state.projectionTimerGeneration
-	state.projectionTimer = time.AfterFunc(defaultProjectionRetryWindow, func() {
+	delay := state.projectionRetries[0].retryDelay
+	if delay <= 0 {
+		delay = defaultProjectionRetryWindow
+	}
+	state.projectionTimer = time.AfterFunc(delay, func() {
 		m.flushEventProjectionRetryTimer(sessionID, state, generation)
 	})
 }
@@ -141,6 +148,7 @@ func (m *Manager) flushEventProjectionRetriesLocked(
 	for len(state.projectionRetries) > 0 {
 		retry := &state.projectionRetries[0]
 		if err := m.projectPersistedEvent(ctx, sessionID, retry); err != nil {
+			retry.recordProjectionFailure(err)
 			return err
 		}
 		state.projectionRetries[0] = eventProjectionRetry{}
@@ -152,6 +160,70 @@ func (m *Manager) flushEventProjectionRetriesLocked(
 		state.projectionTimerGeneration++
 	}
 	return nil
+}
+
+func (retry *eventProjectionRetry) recordProjectionFailure(err error) {
+	if retry == nil {
+		return
+	}
+	retry.attempts++
+	if !isSQLiteBusyError(err) {
+		retry.retryDelay = maxProjectionRetryWindow
+		return
+	}
+	delay := defaultProjectionRetryWindow
+	for attempt := 1; attempt < retry.attempts && delay < maxProjectionRetryWindow; attempt++ {
+		delay *= 2
+	}
+	if delay >= maxProjectionRetryWindow {
+		retry.retryDelay = maxProjectionRetryWindow
+		return
+	}
+	// Stable per-event jitter avoids retry bursts without making tests flaky.
+	hash := uint64(retry.attempts)
+	for index := 0; index < len(retry.event.ID); index++ {
+		hash = hash*1099511628211 ^ uint64(retry.event.ID[index])
+	}
+	jitterWindow := delay / 4
+	if jitterWindow > 0 {
+		delay += time.Duration(hash % uint64(jitterWindow))
+	}
+	if delay > maxProjectionRetryWindow {
+		delay = maxProjectionRetryWindow
+	}
+	retry.retryDelay = delay
+}
+
+func isSQLiteBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var coder interface{ Code() int }
+	if errors.As(err, &coder) && sqliteBusyCode(coder.Code()) {
+		return true
+	}
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		value := reflect.ValueOf(current)
+		if value.Kind() == reflect.Pointer && !value.IsNil() {
+			value = value.Elem()
+		}
+		if value.IsValid() && value.Kind() == reflect.Struct {
+			for _, name := range []string{"ExtendedCode", "Code"} {
+				field := value.FieldByName(name)
+				if field.IsValid() && field.CanInt() && sqliteBusyCode(int(field.Int())) {
+					return true
+				}
+			}
+		}
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database table is locked") ||
+		strings.Contains(message, "sqlite_busy")
+}
+
+func sqliteBusyCode(code int) bool {
+	return code == 5 || code == 517 || code&0xff == 5
 }
 
 func (m *Manager) enqueueTextDelta(

@@ -346,7 +346,7 @@ func TestScheduledIdleCheckDoesNotHoldManagementLock(t *testing.T) {
 	}
 }
 
-func TestScheduledInputDispatchRechecksCodexWebSessionSupport(t *testing.T) {
+func TestScheduledInputDispatchRechecksCodexAvailability(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -368,7 +368,7 @@ func TestScheduledInputDispatchRechecksCodexWebSessionSupport(t *testing.T) {
 	item, err := manager.ScheduleInput(
 		context.Background(),
 		created.ID,
-		"Do not dispatch on an old runtime",
+		"Do not dispatch without a runtime",
 		nil,
 		ScheduledInputModeInterrupt,
 		time.Now().Add(time.Hour),
@@ -378,13 +378,13 @@ func TestScheduledInputDispatchRechecksCodexWebSessionSupport(t *testing.T) {
 	}
 	manager.cancelScheduledInputTimer(item.ID)
 
-	manager.cfg.CodexPath = writeFakeCodexVersionCLI(t, "0.145.9")
+	manager.cfg.CodexPath = filepath.Join(t.TempDir(), "missing-codex")
 	manager.codexContextWindow.mu.Lock()
 	manager.codexContextWindow.bins = codexBinaryCapabilityCache{}
 	manager.codexContextWindow.mu.Unlock()
 
 	err = manager.DispatchScheduledInputNow(context.Background(), created.ID, item.ID)
-	expected := "Codex web sessions require Codex >= 0.146.0. Current version: 0.145.9."
+	expected := errCodexNotInstalled
 	if err == nil || err.Error() != expected {
 		t.Fatalf("expected error %q, got %v", expected, err)
 	}

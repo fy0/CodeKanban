@@ -92,6 +92,9 @@ type codexAppServerOutgoing struct {
 type codexAppServerClient struct {
 	cmd                *exec.Cmd
 	stdin              io.WriteCloser
+	stdout             io.ReadCloser
+	stderr             io.ReadCloser
+	transportOnce      sync.Once
 	writeMu            sync.Mutex
 	pending            map[string]chan codexAppServerIncoming
 	pendingMu          sync.Mutex
@@ -245,6 +248,9 @@ const (
 	codexActiveWriterRetryInterval   = 100 * time.Millisecond
 	codexAppServerRequestTimeout     = 45 * time.Second
 	codexAppServerProcessExitTimeout = 5 * time.Second
+	codexRunDrainGracePeriod         = 5 * time.Second
+	codexRunDrainHardTimeout         = 10 * time.Second
+	codexRunDrainWaitTimeout         = 12 * time.Second
 )
 
 var codexReconnectProgressPattern = regexp.MustCompile(`(?i)reconnecting\.\.\.\s*(\d+)\s*/\s*(\d+)`)
@@ -280,6 +286,8 @@ func startCodexAppServer(ctx context.Context, codexPath, cwd string) (*codexAppS
 	client := &codexAppServerClient{
 		cmd:                cmd,
 		stdin:              stdin,
+		stdout:             stdout,
+		stderr:             stderr,
 		pending:            make(map[string]chan codexAppServerIncoming),
 		incoming:           make(chan codexAppServerIncoming, 64),
 		closed:             make(chan struct{}),
@@ -497,6 +505,21 @@ func (c *codexAppServerClient) closeStdin() error {
 	err := c.stdin.Close()
 	c.stdin = nil
 	return err
+}
+
+func (c *codexAppServerClient) closeTransport() {
+	if c == nil {
+		return
+	}
+	_ = c.closeStdin()
+	c.transportOnce.Do(func() {
+		if c.stdout != nil {
+			_ = c.stdout.Close()
+		}
+		if c.stderr != nil {
+			_ = c.stderr.Close()
+		}
+	})
 }
 
 func (c *codexAppServerClient) readErr() error {
@@ -722,7 +745,11 @@ func (m *Manager) runCodexAppServerSession(
 	turnCompleted := false
 	cancelled := false
 	incompleteTurnRetries := 0
+	var drainKillTimer <-chan time.Time
+	var drainHardTimer <-chan time.Time
+	drainHardExpired := false
 
+drainLoop:
 	for !processExited || incoming != nil {
 		select {
 		case <-ctx.Done():
@@ -797,6 +824,8 @@ func (m *Manager) runCodexAppServerSession(
 				stopAndDrainRollout()
 				turnCompleted = true
 				m.beginCodexRunDrain(session.ID, run)
+				drainKillTimer = time.After(codexRunDrainGracePeriod)
+				drainHardTimer = time.After(codexRunDrainHardTimeout)
 				finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
 				now := time.Now()
 				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
@@ -832,10 +861,37 @@ func (m *Manager) runCodexAppServerSession(
 		case waitErr = <-waitCh:
 			processExited = true
 			waitCh = nil
+		case <-drainKillTimer:
+			drainKillTimer = nil
+			killCmdTree(client.cmd)
+			client.closeTransport()
+			if m.logger != nil {
+				m.logger.Warn("Codex app-server did not exit during drain grace period; terminated process tree",
+					zap.String("sessionId", session.ID),
+					zap.Int("pid", client.cmd.Process.Pid),
+				)
+			}
+		case <-drainHardTimer:
+			drainHardTimer = nil
+			drainHardExpired = true
+			client.closeTransport()
+			if m.logger != nil {
+				m.logger.Warn("Codex app-server drain reached hard timeout; detaching resources",
+					zap.String("sessionId", session.ID),
+					zap.Int("pid", client.cmd.Process.Pid),
+				)
+			}
+			break drainLoop
 		}
 	}
 
-	<-stderrDone
+	if !drainHardExpired {
+		select {
+		case <-stderrDone:
+		case <-time.After(codexAppServerProcessExitTimeout):
+			client.closeTransport()
+		}
+	}
 	stopAndDrainRollout()
 
 	if ctx.Err() != nil {

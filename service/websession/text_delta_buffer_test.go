@@ -46,8 +46,8 @@ func TestTextDeltaBufferMergesConsecutiveDeltasWithoutChangingText(t *testing.T)
 
 func TestTextDeltaBufferFlushesAfterDefaultWindow(t *testing.T) {
 	manager, session := newTextDeltaTestManager(t)
-	if manager.textDeltaFlushWindow != 40*time.Millisecond {
-		t.Fatalf("default flush window = %s, want 40ms", manager.textDeltaFlushWindow)
+	if manager.textDeltaFlushWindow != 100*time.Millisecond {
+		t.Fatalf("default flush window = %s, want 100ms", manager.textDeltaFlushWindow)
 	}
 
 	started := time.Now()
@@ -65,6 +65,30 @@ func TestTextDeltaBufferFlushesAfterDefaultWindow(t *testing.T) {
 	assertEventTypes(t, events, "txt_d")
 	if got := stringValue(events[0].Payload["txt"]); got != "timer text" {
 		t.Fatalf("timer-flushed text = %q, want %q", got, "timer text")
+	}
+}
+
+func TestProjectionRetryDelayBacksOffSQLiteBusy(t *testing.T) {
+	retry := eventProjectionRetry{event: Event{ID: "busy-event"}}
+	previous := time.Duration(0)
+	for attempt := 1; attempt <= 8; attempt++ {
+		retry.recordProjectionFailure(errors.New("database is locked (SQLITE_BUSY, code 517)"))
+		if retry.retryDelay < defaultProjectionRetryWindow || retry.retryDelay > maxProjectionRetryWindow {
+			t.Fatalf("attempt %d delay = %s, want within [%s, %s]", attempt, retry.retryDelay, defaultProjectionRetryWindow, maxProjectionRetryWindow)
+		}
+		if retry.retryDelay < previous {
+			t.Fatalf("attempt %d delay regressed from %s to %s", attempt, previous, retry.retryDelay)
+		}
+		previous = retry.retryDelay
+	}
+	if retry.retryDelay != maxProjectionRetryWindow {
+		t.Fatalf("retry delay = %s, want capped at %s", retry.retryDelay, maxProjectionRetryWindow)
+	}
+
+	retry = eventProjectionRetry{event: Event{ID: "other-error"}}
+	retry.recordProjectionFailure(errors.New("projection schema mismatch"))
+	if retry.retryDelay != maxProjectionRetryWindow {
+		t.Fatalf("non-busy retry delay = %s, want %s", retry.retryDelay, maxProjectionRetryWindow)
 	}
 }
 

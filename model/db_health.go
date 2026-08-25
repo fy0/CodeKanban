@@ -48,6 +48,7 @@ type DatabaseHealth struct {
 	FreePageCount int64             `json:"freePageCount"`
 	ReusableBytes int64             `json:"reusableBytes"`
 	Pool          DatabasePoolStats `json:"pool"`
+	ReaderPool    DatabasePoolStats `json:"readerPool"`
 	ReadProbe     DatabaseProbe     `json:"readProbe"`
 	WriteProbe    DatabaseProbe     `json:"writeProbe"`
 }
@@ -68,6 +69,11 @@ func InspectDatabase(ctx context.Context, dsn string) (DatabaseHealth, error) {
 		return health, err
 	}
 	health.Pool = databasePoolStats(sqlDB.Stats())
+	readSQLDB := readerSQLDB
+	if readSQLDB == nil {
+		readSQLDB = sqlDB
+	}
+	health.ReaderPool = databasePoolStats(readSQLDB.Stats())
 	health.DatabaseBytes, health.WALBytes = databaseFileSizes(dsn)
 	health.FreeDiskBytes = databaseFreeDiskBytes(dsn)
 
@@ -81,7 +87,7 @@ func InspectDatabase(ctx context.Context, dsn string) (DatabaseHealth, error) {
 	health.FreePageCount, _ = queryIntPragma(probeCtx, sqlDB, "freelist_count")
 	health.ReusableBytes = health.PageSizeBytes * health.FreePageCount
 
-	health.ReadProbe = probeDatabaseRead(probeCtx, sqlDB)
+	health.ReadProbe = probeDatabaseRead(probeCtx, readSQLDB)
 	health.WriteProbe = probeDatabaseWrite(probeCtx, sqlDB)
 	health.Healthy = health.ReadProbe.OK && health.WriteProbe.OK
 	return health, nil

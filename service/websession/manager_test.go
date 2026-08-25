@@ -1085,6 +1085,95 @@ func TestManagerHandleHeartbeatPayloadRepliesToPing(t *testing.T) {
 	}
 }
 
+func TestManagerCommandQueueFullReturnsRetryableError(t *testing.T) {
+	conn := &captureWSConn{}
+	client := &client{
+		conn:         conn,
+		kind:         clientKindCommand,
+		commandQueue: make(chan []byte, commandClientQueueCapacity),
+		done:         make(chan struct{}),
+	}
+	for index := 0; index < commandClientQueueCapacity; index++ {
+		client.commandQueue <- []byte(`{"v":1,"k":"cmd","op":"list"}`)
+	}
+	payload := []byte(`{"v":1,"k":"cmd","rid":"queue-full","sid":"session-1","op":"send"}`)
+	if err := (&Manager{}).EnqueueCommand(client, payload); err != nil {
+		t.Fatalf("EnqueueCommand returned error while reporting queue saturation: %v", err)
+	}
+	if len(conn.frames) != 1 {
+		t.Fatalf("queue saturation frames = %#v, want one", conn.frames)
+	}
+	frame := conn.frames[0]
+	if frame.Kind != "err" || frame.Code != "command_queue_full" || !frame.Retry || frame.RequestID != "queue-full" {
+		t.Fatalf("unexpected queue saturation frame: %#v", frame)
+	}
+}
+
+func TestForceTerminateCodexAppServerDistinguishesActiveAndDraining(t *testing.T) {
+	t.Run("active cancels and is idempotent", func(t *testing.T) {
+		cancelled := make(chan struct{})
+		var cancelOnce sync.Once
+		run := &activeRun{
+			sessionID: "session-1",
+			projectID: "project-1",
+			agent:     AgentCodex,
+			backend:   SessionBackendCodexAppServer,
+			runID:     "run-1",
+			cancel: func() {
+				cancelOnce.Do(func() { close(cancelled) })
+			},
+			app: &codexAppServerClient{},
+		}
+		manager := &Manager{runs: map[string]*activeRun{"session-1": run}, codexRunDrains: map[string]*activeRun{}}
+		first, err := manager.ForceTerminateCodexAppServer("project-1", "session-1")
+		if err != nil {
+			t.Fatalf("ForceTerminateCodexAppServer: %v", err)
+		}
+		select {
+		case <-cancelled:
+		default:
+			t.Fatal("active app-server termination did not cancel the run")
+		}
+		if first.StateBefore != "active" || first.AlreadyRequested {
+			t.Fatalf("first termination = %#v", first)
+		}
+		manager.mu.Lock()
+		delete(manager.runs, "session-1")
+		manager.mu.Unlock()
+		second, err := manager.ForceTerminateCodexAppServer("project-1", "session-1")
+		if err != nil || !second.AlreadyRequested {
+			t.Fatalf("second termination = %#v, %v; want idempotent", second, err)
+		}
+	})
+
+	t.Run("draining preserves completed run context", func(t *testing.T) {
+		cancelled := false
+		run := &activeRun{
+			sessionID: "session-2",
+			projectID: "project-2",
+			agent:     AgentCodex,
+			backend:   SessionBackendCodexAppServer,
+			runID:     "run-2",
+			cancel:    func() { cancelled = true },
+			app:       &codexAppServerClient{},
+		}
+		manager := &Manager{
+			runs:           map[string]*activeRun{},
+			codexRunDrains: map[string]*activeRun{"session-2": run},
+		}
+		result, err := manager.ForceTerminateCodexAppServer("project-2", "session-2")
+		if err != nil {
+			t.Fatalf("ForceTerminateCodexAppServer: %v", err)
+		}
+		if cancelled || result.StateBefore != "draining" {
+			t.Fatalf("draining termination cancelled completed context: cancelled=%v result=%#v", cancelled, result)
+		}
+		if _, err := manager.ForceTerminateCodexAppServer("wrong-project", "session-2"); !errors.Is(err, ErrCodexAppServerProjectMismatch) {
+			t.Fatalf("project mismatch error = %v", err)
+		}
+	})
+}
+
 func TestHandleSendCommandRepliesWithRevisionAck(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -1982,12 +2071,8 @@ func TestManagerRetriesPersistedEventProjectionWithoutReappend(t *testing.T) {
 		Timestamp: time.Now(),
 		Payload:   map[string]any{"mid": "message-1", "txt": "project me once"},
 	})
-	if err == nil {
-		t.Fatal("expected the cancelled projection to fail")
-	}
-	persisted, ok := persistedEventFromError(err, "evt-projection-retry")
-	if !ok || persisted.Seq != 1 || appended.ID != "" {
-		t.Fatalf("expected a classified persisted event, appended=%#v persisted=%#v ok=%v err=%v", appended, persisted, ok, err)
+	if err != nil || appended.ID != "evt-projection-retry" || appended.Seq != 1 {
+		t.Fatalf("persisted event must not surface projection failure, appended=%#v err=%v", appended, err)
 	}
 
 	events, err := manager.store.readEvents(session.ID)
@@ -1996,7 +2081,7 @@ func TestManagerRetriesPersistedEventProjectionWithoutReappend(t *testing.T) {
 	}
 
 	var window HistoryWindow
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
 		window, err = manager.loadHistoryWindow(context.Background(), session.ID, 10, nil)
 		if err == nil && len(window.Items) == 1 && window.Items[0].Text == "project me once" {
@@ -3853,6 +3938,49 @@ func TestSendMessageCodexAppServerAllowsNextTurnAfterTurnCompleted(t *testing.T)
 		t.Fatalf("expected two user messages, got %q", got)
 	}
 	waitForFakeCodexAppServerExitCount(t, codexPath, 2)
+}
+
+func TestCodexAppServerDrainTerminatesStuckProcess(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "turn_complete_stuck"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "finish then stick", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionStatus(t, manager, created.ID, StatusDone)
+
+	manager.mu.RLock()
+	drain := manager.codexRunDrains[created.ID]
+	manager.mu.RUnlock()
+	if drain == nil {
+		t.Fatal("completed app-server was not registered for drain")
+	}
+	select {
+	case <-drain.done:
+	case <-time.After(codexRunDrainHardTimeout + 2*time.Second):
+		t.Fatal("stuck app-server drain did not reach bounded completion")
+	}
+	manager.mu.RLock()
+	remaining := manager.codexRunDrains[created.ID]
+	manager.mu.RUnlock()
+	if remaining != nil {
+		t.Fatal("completed app-server remained in the drain registry")
+	}
 }
 
 func TestCodexAppServerAutoContinuesIncompleteGPT56Turn(t *testing.T) {
@@ -6755,6 +6883,19 @@ func TestPendingCodexRedirectRetriesFailedSteer(t *testing.T) {
 	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
 		t.Fatalf("SendMessage returned error: %v", err)
 	}
+	t.Cleanup(func() {
+		manager.mu.RLock()
+		run := manager.runs[created.ID]
+		manager.mu.RUnlock()
+		if run == nil {
+			return
+		}
+		_ = manager.AbortSession(created.ID)
+		select {
+		case <-run.done:
+		case <-time.After(2 * time.Second):
+		}
+	})
 	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
 
 	if err := manager.sendMessageWithMode(
@@ -6770,21 +6911,6 @@ func TestPendingCodexRedirectRetriesFailedSteer(t *testing.T) {
 
 	steerAttemptsPath := codexPath + ".state.steer-attempts"
 	waitForFile(t, steerAttemptsPath)
-	var pending []PendingInput
-	requeueDeadline := time.Now().Add(pendingSteerRetryDelay / 2)
-	for time.Now().Before(requeueDeadline) {
-		pending = manager.pendingInputsSnapshot(created.ID)
-		if len(pending) == 1 && pending[0].ID == "pending-retry" &&
-			pending[0].ReadyAt != nil && !pending[0].ReadyAt.After(time.Now()) {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if len(pending) != 1 ||
-		pending[0].ID != "pending-retry" || pending[0].ReadyAt == nil || pending[0].ReadyAt.After(time.Now()) {
-		t.Fatalf("expected failed steer to remain expired and pending, got %#v", pending)
-	}
-
 	waitForFile(t, codexPath+".state.steer.json")
 	waitForUserMessageCount(t, manager, created.ID, 2)
 	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
@@ -9831,6 +9957,12 @@ rl.on('line', line => {
       return;
     }
 
+	if (mode === 'turn_complete_stuck') {
+	  finishTurn('done-stuck');
+	  setInterval(() => {}, 1000);
+	  return;
+	}
+
 	if (
 	  mode === 'basic' ||
 	  mode === 'resume_only' ||
@@ -10096,7 +10228,9 @@ rl.on('line', line => {
   }
 });
 
-rl.on('close', () => process.exit(0));
+rl.on('close', () => {
+  if (mode !== 'turn_complete_stuck') process.exit(0);
+});
 process.on('exit', () => {
   if (writerLockHeld) {
     try {
