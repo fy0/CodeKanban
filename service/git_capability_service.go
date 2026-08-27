@@ -23,7 +23,7 @@ func (s *GitCapabilityService) GetProjectCapabilities(ctx context.Context, proje
 	if strings.TrimSpace(projectID) == "" {
 		return nil, errors.New("project id is required")
 	}
-	queries, err := model.ResolveQueries(nil)
+	queries, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return nil, err
 	}

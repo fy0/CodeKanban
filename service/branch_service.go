@@ -128,6 +128,7 @@ func (s *BranchService) CreateBranch(ctx context.Context, projectID, name, base 
 		)
 		return err
 	}
+	defer invalidateGitScanRoots(project.Path)
 
 	if createWorktree {
 		worktreeService := NewWorktreeService()
@@ -233,6 +234,7 @@ func (s *BranchService) DeleteBranch(ctx context.Context, projectID, name string
 		)
 		return err
 	}
+	invalidateGitScanRoots(project.Path)
 
 	s.invalidateCache(projectID)
 	logger.Info("branch deleted",
@@ -303,6 +305,7 @@ func (s *BranchService) MergeBranch(ctx context.Context, worktreeID, sourceBranc
 		return nil, model.ErrWorktreeDirty
 	}
 
+	defer invalidateGitScanRoots(project.Path, worktree.Path)
 	if err := repo.MergeBranch(worktree.Path, source, strategy); err != nil {
 		if git.IsConflictError(err) {
 			conflicts := repo.GetConflictFiles(worktree.Path)
@@ -388,7 +391,7 @@ func (s *BranchService) refreshBranches(ctx context.Context, worktreeService *Wo
 }
 
 func (s *BranchService) getProject(ctx context.Context, projectID string) (*model.Project, error) {
-	q, err := model.ResolveQueries(nil)
+	q, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return nil, err
 	}

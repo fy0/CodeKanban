@@ -262,6 +262,7 @@ import {
 } from '@/components/changes/gitChangesBehavior';
 import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
 import { createGitChangesLoadController } from '@/components/changes/gitChangesLoadController';
+import { AdaptiveGitRefreshLoop } from '@/components/changes/adaptiveGitRefresh';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import DockedNotificationSidebar from '@/components/workspace/DockedNotificationSidebar.vue';
@@ -329,7 +330,6 @@ const ignoreUntracked = useStorage<boolean>(
 );
 const changesBadgeSummary = ref<GitChangesBadgeSummary | null>(null);
 const changesSummaryScopeId = ref('');
-let changesSummaryTimer: number | null = null;
 const changesSummaryScopeController = createGitChangesLoadController();
 const changesSummaryLoadController = createGitChangesLoadController();
 const canShowChangesSummaryBadge = computed(() =>
@@ -338,6 +338,16 @@ const canShowChangesSummaryBadge = computed(() =>
 const shouldTrackChangesSummary = computed(() =>
   shouldLoadWorkspaceChangesSummary(props.projectId, changesTabDisabled.value, activeTab.value)
 );
+const changesSummaryRefreshLoop = new AdaptiveGitRefreshLoop({
+  mode: 'background',
+  enabled: () => shouldTrackChangesSummary.value,
+  refresh: async () => {
+    const previousToken = changesBadgeSummary.value?.changeToken ?? '';
+    await loadChangesSummary();
+    const nextToken = changesBadgeSummary.value?.changeToken ?? '';
+    return { changed: Boolean(nextToken && previousToken !== nextToken) };
+  },
+});
 
 function syncWorkspaceRouteTab(tab: WorkspaceTab) {
   if (isWorkspaceRouteTabQuerySynced(route.query, tab)) {
@@ -403,7 +413,8 @@ watch(
       return;
     }
     changesSummaryLoadController.cancel();
-    await loadChangesSummary();
+    await loadChangesSummary({ fresh: true });
+    changesSummaryRefreshLoop.reset();
   }
 );
 
@@ -720,10 +731,7 @@ function toggleRightSidebar() {
 }
 
 function stopChangesSummaryTimer() {
-  if (changesSummaryTimer !== null && typeof window !== 'undefined') {
-    window.clearInterval(changesSummaryTimer);
-  }
-  changesSummaryTimer = null;
+  changesSummaryRefreshLoop.stop();
 }
 
 function clearChangesBadgeSummary() {
@@ -771,7 +779,7 @@ async function initializeChangesSummaryTracking() {
   }
 }
 
-async function loadChangesSummary() {
+async function loadChangesSummary(options: { fresh?: boolean } = {}) {
   if (!canShowChangesSummaryBadge.value) {
     clearChangesBadgeSummary();
     return;
@@ -792,6 +800,7 @@ async function loadChangesSummary() {
     const fastSummary = await fileManagerApi.changesSummary(props.projectId, scopeId, {
       includeUntracked: !ignoreUntracked.value,
       withStats: false,
+      fresh: options.fresh,
       signal: loadHandle.signal,
     });
     if (!changesSummaryLoadController.isCurrent(loadHandle)) {
@@ -831,6 +840,7 @@ async function loadChangesSummary() {
       includeUntracked: !ignoreUntracked.value,
       withStats: true,
       timeoutMs: CHANGES_SUMMARY_STATS_TIMEOUT_MS,
+      fresh: options.fresh,
       signal: loadHandle.signal,
     });
     if (!changesSummaryLoadController.isCurrent(loadHandle)) {
@@ -879,9 +889,7 @@ function startChangesSummaryTimer() {
   if (typeof window === 'undefined' || !shouldTrackChangesSummary.value) {
     return;
   }
-  changesSummaryTimer = window.setInterval(() => {
-    void loadChangesSummary();
-  }, 10_000);
+  changesSummaryRefreshLoop.start();
 }
 
 const handleEnsureExpandedEvent = (payload?: { projectId?: string }) => {

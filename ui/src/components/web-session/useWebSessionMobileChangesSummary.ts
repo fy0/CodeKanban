@@ -12,9 +12,9 @@ import {
   type GitChangesBadgeSummary,
 } from '@/components/changes/gitChangesSummary';
 import { createGitChangesLoadController } from '@/components/changes/gitChangesLoadController';
+import { AdaptiveGitRefreshLoop } from '@/components/changes/adaptiveGitRefresh';
 import { gitOperationAvailable } from '@/utils/projectGitCapability';
 
-const REFRESH_INTERVAL_MS = 10_000;
 const STATS_TIMEOUT_MS = 5_000;
 
 type Translate = (key: string) => string;
@@ -41,7 +41,6 @@ export function useWebSessionMobileChangesSummary({
   const scopeId = ref('');
   const scopeController = createGitChangesLoadController();
   const loadController = createGitChangesLoadController();
-  let refreshTimer: number | null = null;
 
   const canLoad = computed(() => {
     const currentProjectId = toValue(projectId);
@@ -53,6 +52,16 @@ export function useWebSessionMobileChangesSummary({
       !projectStore.projectDetailLoading &&
       gitOperationAvailable(projectStore.gitCapabilities, 'status', projectStore.selectedWorktreeId)
     );
+  });
+  const refreshLoop = new AdaptiveGitRefreshLoop({
+    mode: 'background',
+    enabled: () => canLoad.value,
+    refresh: async () => {
+      const previousToken = summary.value?.changeToken ?? '';
+      await load();
+      const nextToken = summary.value?.changeToken ?? '';
+      return { changed: Boolean(nextToken && previousToken !== nextToken) };
+    },
   });
 
   const display = computed(() => {
@@ -83,10 +92,7 @@ export function useWebSessionMobileChangesSummary({
   });
 
   function stopTimer() {
-    if (refreshTimer != null && typeof window !== 'undefined') {
-      window.clearInterval(refreshTimer);
-    }
-    refreshTimer = null;
+    refreshLoop.stop();
   }
 
   function reset() {
@@ -122,7 +128,7 @@ export function useWebSessionMobileChangesSummary({
     }
   }
 
-  async function load() {
+  async function load(options: { fresh?: boolean } = {}) {
     if (
       !canLoad.value ||
       (typeof document !== 'undefined' && document.visibilityState === 'hidden')
@@ -140,6 +146,7 @@ export function useWebSessionMobileChangesSummary({
       const fastSummary = await fileManagerApi.changesSummary(currentProjectId, currentScopeId, {
         includeUntracked: !ignoreUntracked.value,
         withStats: false,
+        fresh: options.fresh,
         signal: loadHandle.signal,
       });
       if (!loadController.isCurrent(loadHandle)) {
@@ -175,6 +182,7 @@ export function useWebSessionMobileChangesSummary({
         includeUntracked: !ignoreUntracked.value,
         withStats: true,
         timeoutMs: STATS_TIMEOUT_MS,
+        fresh: options.fresh,
         signal: loadHandle.signal,
       });
       if (!loadController.isCurrent(loadHandle)) {
@@ -209,9 +217,7 @@ export function useWebSessionMobileChangesSummary({
     if (typeof window === 'undefined' || !canLoad.value) {
       return;
     }
-    refreshTimer = window.setInterval(() => {
-      void load();
-    }, REFRESH_INTERVAL_MS);
+    refreshLoop.start();
   }
 
   async function initialize() {
@@ -249,7 +255,7 @@ export function useWebSessionMobileChangesSummary({
 
   watch(ignoreUntracked, () => {
     loadController.cancel();
-    void load();
+    void load({ fresh: true }).finally(() => refreshLoop.reset());
   });
 
   onScopeDispose(() => {
@@ -265,6 +271,6 @@ export function useWebSessionMobileChangesSummary({
     statusText,
     visible,
     label,
-    refresh: load,
+    refresh: () => load({ fresh: true }),
   };
 }

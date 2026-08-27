@@ -218,6 +218,79 @@ func TestRuntimeCapabilityCacheReturnsStaleAndRefreshesOnce(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigColdRequestWarmsCapabilitiesInBackground(t *testing.T) {
+	manager := &Manager{}
+	binaryStarted := make(chan struct{})
+	piStarted := make(chan struct{})
+	modelsStarted := make(chan struct{})
+	releaseBinary := make(chan struct{})
+	releasePi := make(chan struct{})
+	releaseModels := make(chan struct{})
+	manager.runtimeCapabilityProbes = runtimeCapabilityProbeHooks{
+		codexBinary: func() (CodexRuntimeConfig, error) {
+			close(binaryStarted)
+			<-releaseBinary
+			return CodexRuntimeConfig{HasCodex: true, HasClaudeCode: true, SupportsWebSession: true}, nil
+		},
+		codexModels: func() ([]CodexModelInfo, error) {
+			close(modelsStarted)
+			<-releaseModels
+			return []CodexModelInfo{{Model: "background-model"}}, nil
+		},
+		pi: func() (piRuntimeProbeResult, error) {
+			close(piStarted)
+			<-releasePi
+			return piRuntimeProbeResult{installed: true, compatible: true}, nil
+		},
+	}
+
+	startedAt := time.Now()
+	cold := manager.GetWebSessionRuntimeConfigWithModels()
+	if elapsed := time.Since(startedAt); elapsed > 100*time.Millisecond {
+		t.Fatalf("cold runtime config blocked for %s", elapsed)
+	}
+	if !cold.CapabilitiesRefreshing {
+		t.Fatal("cold runtime config did not report background refresh")
+	}
+	select {
+	case <-binaryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Codex binary background probe did not start")
+	}
+	select {
+	case <-piStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Pi background probe did not start")
+	}
+	close(releaseBinary)
+	close(releasePi)
+	waitForCapabilityCacheIdle(t, &manager.codexContextWindow.bins)
+	waitForCapabilityCacheIdle(t, &manager.piProbe)
+
+	withBinaries := manager.GetWebSessionRuntimeConfigWithModels()
+	if !withBinaries.HasCodex || !withBinaries.HasClaudeCode || !withBinaries.HasPi {
+		t.Fatalf("background binary results were not published: %#v", withBinaries)
+	}
+	if !withBinaries.CapabilitiesRefreshing {
+		t.Fatal("cold model catalog did not report background refresh")
+	}
+	select {
+	case <-modelsStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Codex model background probe did not start")
+	}
+	close(releaseModels)
+	waitForCapabilityCacheIdle(t, &manager.codexContextWindow.models)
+
+	ready := manager.GetWebSessionRuntimeConfigWithModels()
+	if ready.CapabilitiesRefreshing {
+		t.Fatal("completed runtime config still reports background refresh")
+	}
+	if len(ready.Models) != 1 || ready.Models[0].Model != "background-model" {
+		t.Fatalf("background model result was not published: %#v", ready.Models)
+	}
+}
+
 func TestPiProbeFailureUsesBackoff(t *testing.T) {
 	manager := &Manager{}
 	var calls atomic.Int32

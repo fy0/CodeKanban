@@ -95,13 +95,14 @@ type PiModelInfo struct {
 }
 
 type WebSessionRuntimeConfig struct {
-	Agents              map[Agent]AgentCapability `json:"agents"`
-	Model               string                    `json:"model,omitempty"`
-	ContextWindowTokens int64                     `json:"contextWindowTokens"`
-	CompactLimitTokens  int64                     `json:"compactLimitTokens"`
-	Source              ContextWindowSource       `json:"source"`
-	Models              []CodexModelInfo          `json:"models"`
-	PiModels            []PiModelInfo             `json:"piModels"`
+	Agents                 map[Agent]AgentCapability `json:"agents"`
+	CapabilitiesRefreshing bool                      `json:"capabilitiesRefreshing"`
+	Model                  string                    `json:"model,omitempty"`
+	ContextWindowTokens    int64                     `json:"contextWindowTokens"`
+	CompactLimitTokens     int64                     `json:"compactLimitTokens"`
+	Source                 ContextWindowSource       `json:"source"`
+	Models                 []CodexModelInfo          `json:"models"`
+	PiModels               []PiModelInfo             `json:"piModels"`
 	// Legacy top-level fields are retained for one compatibility cycle.
 	HasCodex             bool    `json:"hasCodex"`
 	HasClaudeCode        bool    `json:"hasClaudeCode"`
@@ -380,7 +381,7 @@ func (m *Manager) SupportsPiSessionTree() bool {
 }
 
 func (m *Manager) GetWebSessionRuntimeConfigWithModels() WebSessionRuntimeConfig {
-	return m.getWebSessionRuntimeConfigWithModels(false)
+	return m.getWebSessionRuntimeConfigWithModelsBackground()
 }
 
 func (m *Manager) RefreshWebSessionRuntimeConfigWithModels() WebSessionRuntimeConfig {
@@ -392,6 +393,23 @@ func (m *Manager) getWebSessionRuntimeConfigWithModels(force bool) WebSessionRun
 	if config.HasCodex {
 		config.Models = m.getCodexModelCatalog(force)
 	}
+	return config
+}
+
+func (m *Manager) getWebSessionRuntimeConfigWithModelsBackground() WebSessionRuntimeConfig {
+	config := m.loadCodexContextConfig(false)
+	var binaryRefreshing bool
+	config, binaryRefreshing = m.applyBinaryCapabilitiesBackground(config)
+	var piRefreshing bool
+	config, piRefreshing = m.applyPiRuntimeCapabilitiesBackground(config)
+	modelsRefreshing := false
+	if config.HasCodex {
+		config.Models, modelsRefreshing = m.getCodexModelCatalogBackground()
+	} else if config.Models == nil {
+		config.Models = []CodexModelInfo{}
+	}
+	config.CapabilitiesRefreshing = binaryRefreshing || piRefreshing || modelsRefreshing
+	config.Agents = runtimeAgentCapabilities(config)
 	return config
 }
 
@@ -417,6 +435,25 @@ func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig, force bool)
 		cloneCodexBinaryConfig,
 		m.probeCodexBinaryCapabilities,
 	)
+	return mergeCodexBinaryCapabilities(config, binaryConfig)
+}
+
+func (m *Manager) applyBinaryCapabilitiesBackground(config CodexRuntimeConfig) (CodexRuntimeConfig, bool) {
+	config.WebSessionMinVersion = ""
+	config.MultiAgentV2MinVersion = multiAgentV2MinCodexVersion.String()
+	config.GoalModeMinVersion = goalModeMinCodexVersion.String()
+	if m == nil {
+		return config, false
+	}
+	binaryConfig, refreshing := m.codexContextWindow.bins.getBackground(
+		runtimeCapabilityCachePolicy{successTTL: codexBinaryCapabilityCacheTTL},
+		cloneCodexBinaryConfig,
+		m.probeCodexBinaryCapabilities,
+	)
+	return mergeCodexBinaryCapabilities(config, binaryConfig), refreshing
+}
+
+func mergeCodexBinaryCapabilities(config, binaryConfig CodexRuntimeConfig) CodexRuntimeConfig {
 	config.HasCodex = binaryConfig.HasCodex
 	config.HasClaudeCode = binaryConfig.HasClaudeCode
 	config.CodexVersion = binaryConfig.CodexVersion
@@ -478,6 +515,17 @@ func (m *Manager) getCodexModelCatalog(force bool) []CodexModelInfo {
 	}
 	return m.codexContextWindow.models.get(
 		force,
+		runtimeCapabilityCachePolicy{successTTL: codexModelCatalogCacheTTL},
+		cloneCodexModelCatalog,
+		m.probeCodexModelCatalog,
+	)
+}
+
+func (m *Manager) getCodexModelCatalogBackground() ([]CodexModelInfo, bool) {
+	if m == nil {
+		return []CodexModelInfo{}, false
+	}
+	return m.codexContextWindow.models.getBackground(
 		runtimeCapabilityCachePolicy{successTTL: codexModelCatalogCacheTTL},
 		cloneCodexModelCatalog,
 		m.probeCodexModelCatalog,

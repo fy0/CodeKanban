@@ -79,6 +79,7 @@ describe('project recent ordering', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -124,5 +125,21 @@ describe('project recent ordering', () => {
     expect(store.projects[0].lastAccessedAt).toBe(accessedProject.lastAccessedAt);
     await Promise.resolve();
     expect(store.projects[0].lastAccessedAt).toBeNull();
+  });
+
+  it('throttles repeated access writes for the same project', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-14T00:00:00.000Z'));
+    const store = useProjectStore();
+    const project = makeProject({ id: 'project-throttle', name: 'Throttle' });
+    markAccessMock.mockResolvedValue(project);
+
+    store.addRecentProject(project.id);
+    store.addRecentProject(project.id);
+    expect(markAccessMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    store.addRecentProject(project.id);
+    expect(markAccessMock).toHaveBeenCalledTimes(2);
   });
 });

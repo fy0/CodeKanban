@@ -215,6 +215,7 @@ import {
   resolveRetainedGitChangeEntry,
 } from '@/components/changes/gitChangesBehavior';
 import { createGitChangesLoadController } from '@/components/changes/gitChangesLoadController';
+import { AdaptiveGitRefreshLoop } from '@/components/changes/adaptiveGitRefresh';
 import {
   buildGitChangesBadgeSummary,
   chooseGitChangesScope,
@@ -363,7 +364,12 @@ const totalDeletions = computed(() =>
       ? visibleSummary.value.deletions
       : null
 );
-let refreshTimer: number | null = null;
+const gitRefreshLoop = new AdaptiveGitRefreshLoop({
+  mode: 'foreground',
+  enabled: () =>
+    Boolean(props.isActive && gitFeaturesAvailable.value && props.projectId && activeScopeId.value),
+  refresh: async () => ({ changed: await checkForChangesUpdate() }),
+});
 
 function chooseScope(
   scopeList: FileManagerScope[],
@@ -377,7 +383,7 @@ function chooseScope(
   });
 }
 
-async function ensureLoaded(options?: { scopeId?: string }) {
+async function ensureLoaded(options?: { scopeId?: string; fresh?: boolean }) {
   changesUpdateCheckController.cancel();
   if (!props.projectId || !props.isActive) {
     changesLoadController.cancel();
@@ -410,6 +416,7 @@ async function ensureLoaded(options?: { scopeId?: string }) {
 
     const result = await fileManagerApi.listChanges(props.projectId, scope.id, {
       ...buildGitChangesRequestOptions(ignoreUntracked.value),
+      fresh: options?.fresh,
       signal: loadHandle.signal,
     });
     if (!changesLoadController.isCurrent(loadHandle)) {
@@ -513,10 +520,7 @@ function handleMobilePreviewPopState() {
 }
 
 function stopRefreshTimer() {
-  if (refreshTimer !== null && typeof window !== 'undefined') {
-    window.clearInterval(refreshTimer);
-  }
-  refreshTimer = null;
+  gitRefreshLoop.stop();
 }
 
 function startRefreshTimer() {
@@ -529,19 +533,19 @@ function startRefreshTimer() {
   ) {
     return;
   }
-  refreshTimer = window.setInterval(() => {
-    void checkForChangesUpdate();
-  }, 10_000);
+  gitRefreshLoop.start();
 }
 
 async function reloadChanges() {
   changesUpdateCheckController.cancel();
   await ensureLoaded({
     scopeId: activeScopeId.value,
+    fresh: true,
   });
+  gitRefreshLoop.reset();
 }
 
-async function checkForChangesUpdate() {
+async function checkForChangesUpdate(): Promise<boolean> {
   if (
     !props.projectId ||
     !props.isActive ||
@@ -550,7 +554,7 @@ async function checkForChangesUpdate() {
     pendingChangesUpdate.value ||
     panelLoading.value
   ) {
-    return;
+    return false;
   }
 
   const loadHandle = changesUpdateCheckController.begin();
@@ -560,16 +564,16 @@ async function checkForChangesUpdate() {
       signal: loadHandle.signal,
     });
     if (!changesUpdateCheckController.isCurrent(loadHandle)) {
-      return;
+      return false;
     }
-    pendingChangesUpdate.value = hasPendingGitChangesUpdate(
-      changesResult.value.changeToken,
-      result.changeToken
-    );
+    const changed = hasPendingGitChangesUpdate(changesResult.value.changeToken, result.changeToken);
+    pendingChangesUpdate.value = changed;
+    return changed;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      return;
+      return false;
     }
+    throw error;
   } finally {
     if (changesUpdateCheckController.isCurrent(loadHandle)) {
       changesUpdateCheckController.release(loadHandle);

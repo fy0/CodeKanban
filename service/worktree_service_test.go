@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -141,6 +143,102 @@ func TestWorktreeServiceDeleteAndSync(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected manual worktree to be synced into database")
+	}
+}
+
+func TestWorktreeServiceSyncWorktreesSkipsUnchangedRows(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	repoPath := createProjectTestRepo(t)
+	project, err := (&model.ProjectService{}).CreateProject(context.Background(), model.CreateProjectParams{
+		Name: "No-op Sync Project",
+		Path: repoPath,
+	})
+	if err != nil {
+		t.Fatalf("create project failed: %v", err)
+	}
+
+	svc := NewWorktreeService()
+	if err := svc.SyncWorktrees(context.Background(), project.Id); err != nil {
+		t.Fatalf("initial SyncWorktrees returned error: %v", err)
+	}
+	before, err := svc.ListWorktrees(context.Background(), project.Id)
+	if err != nil || len(before) == 0 {
+		t.Fatalf("load worktrees before no-op sync: count=%d err=%v", len(before), err)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	if err := svc.SyncWorktrees(context.Background(), project.Id); err != nil {
+		t.Fatalf("no-op SyncWorktrees returned error: %v", err)
+	}
+	after, err := svc.ListWorktrees(context.Background(), project.Id)
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("load worktrees after no-op sync: before=%d after=%d err=%v", len(before), len(after), err)
+	}
+	for index := range before {
+		if !before[index].UpdatedAt.Equal(after[index].UpdatedAt) {
+			t.Fatalf("unchanged worktree %s was updated: before=%s after=%s", before[index].Id, before[index].UpdatedAt, after[index].UpdatedAt)
+		}
+	}
+}
+
+func TestWorktreeServiceSyncWorktreesSingleflightsByProject(t *testing.T) {
+	svc := NewWorktreeService()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	svc.syncWorktreesHook = func(ctx context.Context, projectID string) error {
+		if projectID != "project-1" {
+			return errors.New("unexpected project")
+		}
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	const requestCount = 16
+	start := make(chan struct{})
+	errorsByRequest := make(chan error, requestCount)
+	var ready sync.WaitGroup
+	var wait sync.WaitGroup
+	ready.Add(requestCount)
+	wait.Add(requestCount)
+	for range requestCount {
+		go func() {
+			defer wait.Done()
+			ready.Done()
+			<-start
+			errorsByRequest <- svc.SyncWorktrees(context.Background(), "project-1")
+		}()
+	}
+	ready.Wait()
+	close(start)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("sync runner did not start")
+	}
+	time.Sleep(30 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("concurrent sync started %d runners, want 1", got)
+	}
+	close(release)
+	wait.Wait()
+	close(errorsByRequest)
+	for err := range errorsByRequest {
+		if err != nil {
+			t.Fatalf("concurrent SyncWorktrees returned error: %v", err)
+		}
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("concurrent sync completed with %d runners, want 1", got)
 	}
 }
 

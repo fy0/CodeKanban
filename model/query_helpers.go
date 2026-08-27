@@ -30,3 +30,20 @@ func resolveQueries(q *Queries) (*Queries, error) {
 func ResolveQueries(q *Queries) (*Queries, error) {
 	return resolveQueries(q)
 }
+
+// ResolveReadQueries returns SQLC queries backed by the read-only pool. An
+// explicit query set is preserved so callers inside a transaction keep their
+// transaction-scoped consistency.
+func ResolveReadQueries(q *Queries) (*Queries, error) {
+	if q != nil {
+		return q, nil
+	}
+	target, err := getReaderQueries()
+	if err != nil {
+		if errors.Is(err, ErrSQLCNotReady) {
+			return nil, ErrDBNotInitialized
+		}
+		return nil, err
+	}
+	return target, nil
+}

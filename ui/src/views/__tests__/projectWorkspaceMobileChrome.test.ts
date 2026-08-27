@@ -55,6 +55,11 @@ describe('project workspace mobile chrome', () => {
     expect(projectWorkspaceSource).toMatch(
       /\.mobile-bottom-nav \.nav-count-badge--changes\s*\{[^}]*background:\s*#f59e0b;/s
     );
-    expect(projectWorkspaceSource).toContain('MOBILE_GIT_STATUS_REFRESH_INTERVAL_MS = 10_000');
+    expect(projectWorkspaceSource).toContain('new AdaptiveGitRefreshLoop({');
+    expect(projectWorkspaceSource).toContain("mode: 'background'");
+    expect(projectWorkspaceSource).toContain(
+      'mobileGitStatusRefreshLoop.start({ immediate: true })'
+    );
+    expect(projectWorkspaceSource).not.toContain('window.setInterval');
   });
 });

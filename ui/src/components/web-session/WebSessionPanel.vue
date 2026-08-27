@@ -3889,6 +3889,9 @@ const activeAttachmentPreview = ref<{
 const runtimeConfig = ref<WebSessionRuntimeConfig | null>(null);
 const codexRuntimeConfig = runtimeConfig;
 const codexRuntimeConfigReady = ref(false);
+let runtimeConfigRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let runtimeConfigRetryDelayMs = 500;
+let runtimeConfigLoadGeneration = 0;
 const codexSkills = ref<CodexSkillSummary[]>([]);
 const codexSkillsLoading = ref(false);
 const codexSkillsLoaded = ref(false);
@@ -14901,13 +14904,49 @@ function handleTabDragEnd(event: SortableEvent) {
 }
 
 async function loadCodexRuntimeConfig(force = false) {
+  const generation = ++runtimeConfigLoadGeneration;
+  if (force) {
+    clearRuntimeConfigRetry();
+    runtimeConfigRetryDelayMs = 500;
+  }
   try {
-    codexRuntimeConfig.value = await webSessionApi.runtimeConfig({ force });
+    const config = await webSessionApi.runtimeConfig({ force });
+    if (generation !== runtimeConfigLoadGeneration) {
+      return;
+    }
+    codexRuntimeConfig.value = config;
+    if (!force && config.capabilitiesRefreshing) {
+      scheduleRuntimeConfigRetry();
+    } else {
+      clearRuntimeConfigRetry();
+      runtimeConfigRetryDelayMs = 500;
+    }
   } catch (error) {
+    if (generation !== runtimeConfigLoadGeneration) {
+      return;
+    }
     codexRuntimeConfig.value = null;
     console.warn('[Web Session] Failed to load runtime config', error);
   } finally {
-    codexRuntimeConfigReady.value = true;
+    if (generation === runtimeConfigLoadGeneration) {
+      codexRuntimeConfigReady.value = true;
+    }
+  }
+}
+
+function scheduleRuntimeConfigRetry() {
+  clearRuntimeConfigRetry();
+  runtimeConfigRetryTimer = window.setTimeout(() => {
+    runtimeConfigRetryTimer = null;
+    void loadCodexRuntimeConfig();
+  }, runtimeConfigRetryDelayMs);
+  runtimeConfigRetryDelayMs = Math.min(runtimeConfigRetryDelayMs * 2, 5_000);
+}
+
+function clearRuntimeConfigRetry() {
+  if (runtimeConfigRetryTimer != null) {
+    window.clearTimeout(runtimeConfigRetryTimer);
+    runtimeConfigRetryTimer = null;
   }
 }
 
@@ -15558,6 +15597,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearRuntimeConfigRetry();
   clearComposerSelectorHoverCloseTimer('model');
   clearComposerSelectorHoverCloseTimer('reasoning');
   if (!pendingTimelinePositionRestore.value) {

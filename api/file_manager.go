@@ -85,6 +85,10 @@ func (c *fileManagerController) handleListChanges(ctx *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(http.StatusBadRequest, "invalid withStats")
 	}
+	fresh, err := parseBoolQuery(ctx.Query("fresh"))
+	if err != nil {
+		return fiber.NewError(http.StatusBadRequest, "invalid fresh")
+	}
 
 	var timeout time.Duration
 	if raw := strings.TrimSpace(ctx.Query("timeoutMs")); raw != "" {
@@ -107,6 +111,7 @@ func (c *fileManagerController) handleListChanges(ctx *fiber.Ctx) error {
 	item, err := c.service.ListChanges(ctx.UserContext(), projectID, scopeID, filemanager.ListChangesOptions{
 		IncludeUntracked: &includeUntracked,
 		WithStats:        &withStats,
+		Fresh:            fresh,
 		Timeout:          timeout,
 		MaxEntries:       maxEntries,
 	})
@@ -129,6 +134,10 @@ func (c *fileManagerController) handleChangesSummary(ctx *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(http.StatusBadRequest, "invalid withStats")
 	}
+	fresh, err := parseBoolQuery(ctx.Query("fresh"))
+	if err != nil {
+		return fiber.NewError(http.StatusBadRequest, "invalid fresh")
+	}
 
 	var timeout time.Duration
 	if raw := strings.TrimSpace(ctx.Query("timeoutMs")); raw != "" {
@@ -142,6 +151,7 @@ func (c *fileManagerController) handleChangesSummary(ctx *fiber.Ctx) error {
 	item, err := c.service.ChangesSummary(ctx.UserContext(), projectID, scopeID, filemanager.ChangesSummaryOptions{
 		IncludeUntracked: includeUntracked,
 		WithStats:        withStats,
+		Fresh:            fresh,
 		StatsTimeout:     timeout,
 	})
 	if err != nil {

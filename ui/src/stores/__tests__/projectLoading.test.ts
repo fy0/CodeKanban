@@ -3,11 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Project } from '@/types/models';
 
-const { getMock, listMock, refreshCommitInfoMock, worktreeListMock } = vi.hoisted(() => ({
+const {
+  getMock,
+  gitCapabilitiesMock,
+  listMock,
+  refreshCommitInfoMock,
+  worktreeListMock,
+  worktreeSyncMock,
+} = vi.hoisted(() => ({
   getMock: vi.fn(),
+  gitCapabilitiesMock: vi.fn(),
   listMock: vi.fn(),
   refreshCommitInfoMock: vi.fn(),
   worktreeListMock: vi.fn(),
+  worktreeSyncMock: vi.fn(),
 }));
 
 vi.mock('@/api/project', () => ({
@@ -16,6 +25,7 @@ vi.mock('@/api/project', () => ({
     create: vi.fn(),
     delete: vi.fn(),
     get: getMock,
+    gitCapabilities: gitCapabilitiesMock,
     list: listMock,
     markAccess: vi.fn(),
     update: vi.fn(),
@@ -29,7 +39,7 @@ vi.mock('@/api/project', () => ({
     delete: vi.fn(),
     list: worktreeListMock,
     refreshCommitInfo: refreshCommitInfoMock,
-    sync: vi.fn(),
+    sync: worktreeSyncMock,
   },
 }));
 
@@ -77,11 +87,15 @@ describe('project store loading states', () => {
     setActivePinia(createPinia());
     vi.stubGlobal('localStorage', createStorageMock());
     getMock.mockReset();
+    gitCapabilitiesMock.mockReset();
     listMock.mockReset();
     refreshCommitInfoMock.mockReset();
     worktreeListMock.mockReset();
+    worktreeSyncMock.mockReset();
     worktreeListMock.mockResolvedValue([]);
     refreshCommitInfoMock.mockResolvedValue([]);
+    gitCapabilitiesMock.mockResolvedValue(null);
+    worktreeSyncMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -135,5 +149,57 @@ describe('project store loading states', () => {
     expect(store.projectsLoading).toBe(false);
     expect(store.projectDetailLoading).toBe(false);
     expect(store.loading).toBe(false);
+  });
+
+  it('singleflights concurrent project list requests', async () => {
+    let resolveList: ((value: { items: Project[]; total: number }) => void) | null = null;
+    listMock.mockImplementation(
+      () =>
+        new Promise<{ items: Project[]; total: number }>(resolve => {
+          resolveList = resolve;
+        })
+    );
+
+    const store = useProjectStore();
+    const first = store.fetchProjects();
+    const second = store.fetchProjects();
+
+    expect(listMock).toHaveBeenCalledTimes(1);
+    resolveList?.({ items: [makeProject({ id: 'shared', name: 'Shared' })], total: 1 });
+    await Promise.all([first, second]);
+    expect(store.projects.map(project => project.id)).toEqual(['shared']);
+  });
+
+  it('does not let an older project response replace a newer selection', async () => {
+    const oldProject = makeProject({ id: 'old', name: 'Old' });
+    const newProject = makeProject({ id: 'new', name: 'New' });
+    const projectResolvers = new Map<string, (value: Project) => void>();
+    const worktreeResolvers = new Map<string, (value: []) => void>();
+    getMock.mockImplementation(
+      (id: string) =>
+        new Promise<Project>(resolve => {
+          projectResolvers.set(id, resolve);
+        })
+    );
+    worktreeListMock.mockImplementation(
+      (id: string) =>
+        new Promise<[]>(resolve => {
+          worktreeResolvers.set(id, resolve);
+        })
+    );
+
+    const store = useProjectStore();
+    const oldLoad = store.fetchProject(oldProject.id);
+    const newLoad = store.fetchProject(newProject.id);
+
+    projectResolvers.get(newProject.id)?.(newProject);
+    worktreeResolvers.get(newProject.id)?.([]);
+    await newLoad;
+    expect(store.currentProject?.id).toBe(newProject.id);
+
+    projectResolvers.get(oldProject.id)?.(oldProject);
+    worktreeResolvers.get(oldProject.id)?.([]);
+    await oldLoad;
+    expect(store.currentProject?.id).toBe(newProject.id);
   });
 });

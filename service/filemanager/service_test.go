@@ -420,6 +420,41 @@ func TestChangesSummarySkipsUntrackedInFastCountAndCompletesStats(t *testing.T) 
 	}
 }
 
+func TestRenameInvalidatesChangesSummaryCache(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	service, err := NewService(Config{DataDir: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	clean, err := service.ChangesSummary(context.Background(), projectID, "", ChangesSummaryOptions{
+		IncludeUntracked: true,
+	})
+	if err != nil {
+		t.Fatalf("warm ChangesSummary returned error: %v", err)
+	}
+	if clean.Count != 0 {
+		t.Fatalf("initial change count = %d, want 0", clean.Count)
+	}
+
+	if _, err := service.Rename(context.Background(), projectID, "", "README.md", "RENAMED.md"); err != nil {
+		t.Fatalf("Rename returned error: %v", err)
+	}
+	afterRename, err := service.ChangesSummary(context.Background(), projectID, "", ChangesSummaryOptions{
+		IncludeUntracked: true,
+	})
+	if err != nil {
+		t.Fatalf("ChangesSummary after rename returned error: %v", err)
+	}
+	if afterRename.Count == 0 {
+		t.Fatal("rename reused the cached clean Git summary")
+	}
+}
+
 func TestStatusOnlyChangesRequestsDoNotRunDiffStats(t *testing.T) {
 	cleanup := initFileManagerTestDB(t)
 	defer cleanup()

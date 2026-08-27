@@ -62,6 +62,32 @@ func (m *Manager) applyPiRuntimeCapabilitiesWithRefresh(
 	}
 
 	probe := m.getPiRuntimeProbeWithRefresh(force)
+	return mergePiRuntimeCapabilities(config, probe)
+}
+
+func (m *Manager) applyPiRuntimeCapabilitiesBackground(
+	config WebSessionRuntimeConfig,
+) (WebSessionRuntimeConfig, bool) {
+	config.PiMinVersion = piMinVersion
+	if m == nil {
+		config.Agents = runtimeAgentCapabilities(config)
+		return config, false
+	}
+	probe, refreshing := m.piProbe.getBackground(
+		runtimeCapabilityCachePolicy{
+			successTTL:     piProbeSuccessCacheTTL,
+			failureBackoff: piProbeFailureCacheTTL,
+		},
+		clonePiRuntimeProbeResult,
+		m.probePiRuntimeCapabilities,
+	)
+	return mergePiRuntimeCapabilities(config, probe), refreshing
+}
+
+func mergePiRuntimeCapabilities(
+	config WebSessionRuntimeConfig,
+	probe piRuntimeProbeResult,
+) WebSessionRuntimeConfig {
 	config.HasPi = probe.installed
 	config.PiVersion = probe.version
 	config.PiRPCCompatible = probe.compatible

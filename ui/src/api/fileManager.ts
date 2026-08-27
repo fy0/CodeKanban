@@ -147,6 +147,7 @@ export const fileManagerApi = {
       withStats?: boolean;
       timeoutMs?: number;
       maxEntries?: number;
+      fresh?: boolean;
       signal?: AbortSignal;
     }
   ): Promise<FileManagerChangesResult> {
@@ -154,6 +155,9 @@ export const fileManagerApi = {
     params.set('scopeId', scopeId);
     params.set('includeUntracked', String(options?.includeUntracked ?? true));
     params.set('withStats', String(options?.withStats ?? true));
+    if (options?.fresh) {
+      params.set('fresh', 'true');
+    }
     if (typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs)) {
       params.set('timeoutMs', String(Math.max(0, Math.trunc(options.timeoutMs))));
     }
@@ -207,6 +211,7 @@ export const fileManagerApi = {
       includeUntracked?: boolean;
       withStats?: boolean;
       timeoutMs?: number;
+      fresh?: boolean;
       signal?: AbortSignal;
     }
   ): Promise<FileManagerChangesSummaryResult> {
@@ -217,6 +222,9 @@ export const fileManagerApi = {
     }
     if (options?.withStats) {
       params.set('withStats', 'true');
+    }
+    if (options?.fresh) {
+      params.set('fresh', 'true');
     }
     if (typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs)) {
       params.set('timeoutMs', String(Math.max(0, Math.trunc(options.timeoutMs))));

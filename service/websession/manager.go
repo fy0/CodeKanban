@@ -2619,7 +2619,7 @@ func (m *Manager) MoveSession(ctx context.Context, sessionID, prevSessionID, nex
 	}
 
 	var summary SessionSummary
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := m.observedTransaction(ctx, db, "move_session", func(tx *gorm.DB) error {
 		var moving tables.WebSessionTable
 		if err := tx.First(&moving, "id = ?", sessionID).Error; err != nil {
 			return err
@@ -2674,7 +2674,11 @@ func (m *Manager) MoveSession(ctx context.Context, sessionID, prevSessionID, nex
 
 		summary = m.mapSessionSummary(moving)
 		return nil
-	})
+	},
+		zap.String("sessionId", sessionID),
+		zap.String("previousSessionId", prevSessionID),
+		zap.String("nextSessionId", nextSessionID),
+	)
 	if err != nil {
 		return SessionSummary{}, err
 	}
@@ -5512,7 +5516,7 @@ func (m *Manager) projectPersistedEventDatabase(
 	working.cachedItem = nil
 	working.timingItem = nil
 	working.subAgent = nil
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := m.observedTransaction(ctx, db, "project_persisted_event", func(tx *gorm.DB) error {
 		event := working.event
 		if event.Type == "sub_agent_state" {
 			agent, changed, err := m.applySubAgentStateEventDB(ctx, tx, sessionID, event)
@@ -5553,7 +5557,11 @@ func (m *Manager) projectPersistedEventDatabase(
 		}
 		working.stage = eventProjectionBroadcast
 		return nil
-	})
+	},
+		zap.String("sessionId", sessionID),
+		zap.String("eventType", working.event.Type),
+		zap.Int64("eventSequence", working.event.Seq),
+	)
 	if err != nil {
 		return err
 	}

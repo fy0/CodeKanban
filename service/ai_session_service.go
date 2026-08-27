@@ -164,6 +164,15 @@ type AISessionSummary struct {
 // First call returns recent (24h) sessions quickly, then background scans older files.
 func (s *AISessionService) GetProjectAISessions(ctx context.Context, projectPath string) (*ProjectAISessions, error) {
 	ctx = ensureContext(ctx)
+	projectPath = filepath.Clean(projectPath)
+	key := model.NormalizePathCase(projectPath)
+	return projectAISessionRequests.do(ctx, key, func(taskCtx context.Context) (*ProjectAISessions, error) {
+		return s.loadProjectAISessions(taskCtx, projectPath)
+	})
+}
+
+func (s *AISessionService) loadProjectAISessions(ctx context.Context, projectPath string) (*ProjectAISessions, error) {
+	ctx = ensureContext(ctx)
 	logger := s.logger(ctx)
 
 	logger.Info("GetProjectAISessions called",

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"code-kanban/model"
@@ -20,6 +21,14 @@ import (
 // WorktreeService 协调 git worktree 与数据库之间的 CRUD 操作。
 type WorktreeService struct {
 	asyncStatusRefresh bool
+	syncMu             sync.Mutex
+	syncFlights        map[string]*worktreeSyncFlight
+	syncWorktreesHook  func(context.Context, string) error
+}
+
+type worktreeSyncFlight struct {
+	done chan struct{}
+	err  error
 }
 
 // CreateWorktreeOptions 创建 Worktree 时的选项参数。
@@ -36,6 +45,7 @@ type CreateWorktreeOptions struct {
 func NewWorktreeService() *WorktreeService {
 	return &WorktreeService{
 		asyncStatusRefresh: true,
+		syncFlights:        make(map[string]*worktreeSyncFlight),
 	}
 }
 
@@ -58,7 +68,7 @@ func (s *WorktreeService) CreateWorktree(
 		ctx = context.Background()
 	}
 
-	q, err := model.ResolveQueries(nil)
+	readQ, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +79,7 @@ func (s *WorktreeService) CreateWorktree(
 		return nil, fmt.Errorf("branch name is required")
 	}
 
-	project, err := q.ProjectGetByID(ctx, projectID)
+	project, err := readQ.ProjectGetByID(ctx, projectID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, model.ErrWorktreeNotFound
@@ -104,6 +114,12 @@ func (s *WorktreeService) CreateWorktree(
 	}
 
 	if err := gitRepo.AddWorktree(worktreePath, targetBranch, false); err != nil {
+		return nil, err
+	}
+	defer invalidateGitScanRoots(project.Path, worktreePath)
+	q, err := model.ResolveQueries(nil)
+	if err != nil {
+		_ = gitRepo.RemoveWorktree(worktreePath, true)
 		return nil, err
 	}
 
@@ -176,7 +192,7 @@ func (s *WorktreeService) ListWorktrees(ctx context.Context, projectID string) (
 		ctx = context.Background()
 	}
 
-	q, err := model.ResolveQueries(nil)
+	q, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +206,7 @@ func (s *WorktreeService) GetWorktree(ctx context.Context, id string) (*model.Wo
 		ctx = context.Background()
 	}
 
-	q, err := model.ResolveQueries(nil)
+	q, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +227,7 @@ func (s *WorktreeService) DeleteWorktree(ctx context.Context, id string, force, 
 		ctx = context.Background()
 	}
 
-	q, err := model.ResolveQueries(nil)
+	readQ, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return err
 	}
@@ -224,13 +240,14 @@ func (s *WorktreeService) DeleteWorktree(ctx context.Context, id string, force, 
 		return model.ErrWorktreeIsMain
 	}
 
-	project, err := q.ProjectGetByID(ctx, worktree.ProjectId)
+	project, err := readQ.ProjectGetByID(ctx, worktree.ProjectId)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return model.ErrWorktreeNotFound
 		}
 		return err
 	}
+	defer invalidateGitScanRoots(project.Path, worktree.Path)
 
 	// 检查项目路径是否存在
 	var gitRepo *git.GitRepo
@@ -279,6 +296,10 @@ func (s *WorktreeService) DeleteWorktree(ctx context.Context, id string, force, 
 	}
 
 	now := time.Now()
+	q, err := model.ResolveQueries(nil)
+	if err != nil {
+		return err
+	}
 	_, err = q.WorktreeSoftDelete(ctx, &model.WorktreeSoftDeleteParams{
 		DeletedAt: &now,
 		UpdatedAt: now,
@@ -293,7 +314,7 @@ func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) 
 		ctx = context.Background()
 	}
 
-	q, err := model.ResolveQueries(nil)
+	readQ, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +324,7 @@ func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) 
 		return nil, err
 	}
 
-	project, err := q.ProjectGetByID(ctx, worktree.ProjectId)
+	project, err := readQ.ProjectGetByID(ctx, worktree.ProjectId)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, model.ErrProjectNotFound
@@ -314,9 +335,18 @@ func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) 
 		return worktree, nil
 	}
 
-	status, err := git.GetWorktreeStatus(worktree.Path)
+	status, metrics, err := git.ScanWorktreeStatus(ctx, worktree.Path, false)
 	if err != nil {
 		return nil, err
+	}
+	if metrics.QueueWait+metrics.Execution >= 2*time.Second {
+		utils.Logger().Warn("slow worktree status scan",
+			zap.String("worktreeId", worktree.Id),
+			zap.Duration("queueWait", metrics.QueueWait),
+			zap.Duration("gitExecution", metrics.Execution),
+			zap.Bool("cacheHit", metrics.CacheHit),
+			zap.Bool("sharedFlight", metrics.Shared),
+		)
 	}
 
 	now := time.Now()
@@ -342,7 +372,22 @@ func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) 
 	stagedVal := int64(status.Staged)
 	untrackedVal := int64(status.Untracked)
 	conflictsVal := int64(status.Conflicted)
+	if optionalInt64Equals(worktree.StatusAhead, aheadVal) &&
+		optionalInt64Equals(worktree.StatusBehind, behindVal) &&
+		optionalInt64Equals(worktree.StatusModified, modifiedVal) &&
+		optionalInt64Equals(worktree.StatusStaged, stagedVal) &&
+		optionalInt64Equals(worktree.StatusUntracked, untrackedVal) &&
+		optionalInt64Equals(worktree.StatusConflicts, conflictsVal) &&
+		optionalStringsEqual(worktree.HeadCommit, headPtr) &&
+		optionalStringsEqual(worktree.HeadCommitMessage, headMessagePtr) &&
+		optionalTimesEqual(worktree.HeadCommitDate, headDatePtr) {
+		return worktree, nil
+	}
 
+	q, err := model.ResolveQueries(nil)
+	if err != nil {
+		return nil, err
+	}
 	updated, err := q.WorktreeUpdateStatus(ctx, &model.WorktreeUpdateStatusParams{
 		UpdatedAt:         now,
 		StatusAhead:       &aheadVal,
@@ -370,7 +415,7 @@ func (s *WorktreeService) RefreshAllWorktrees(ctx context.Context, projectID str
 		ctx = context.Background()
 	}
 
-	q, err := model.ResolveQueries(nil)
+	q, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -421,17 +466,65 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return model.ErrWorktreeNotFound
+	}
 
-	q, err := model.ResolveQueries(nil)
+	s.syncMu.Lock()
+	if s.syncFlights == nil {
+		s.syncFlights = make(map[string]*worktreeSyncFlight)
+	}
+	if flight, ok := s.syncFlights[projectID]; ok {
+		s.syncMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-flight.done:
+			return flight.err
+		}
+	}
+	flight := &worktreeSyncFlight{done: make(chan struct{})}
+	s.syncFlights[projectID] = flight
+	s.syncMu.Unlock()
+
+	taskCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	syncWorktrees := s.syncWorktrees
+	if s.syncWorktreesHook != nil {
+		syncWorktrees = s.syncWorktreesHook
+	}
+	go func() {
+		defer cancel()
+		flight.err = syncWorktrees(taskCtx, projectID)
+		s.syncMu.Lock()
+		delete(s.syncFlights, projectID)
+		close(flight.done)
+		s.syncMu.Unlock()
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-flight.done:
+		return flight.err
+	}
+}
+
+func (s *WorktreeService) syncWorktrees(ctx context.Context, projectID string) error {
+	readQ, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return err
 	}
 
-	project, err := q.ProjectGetByID(ctx, projectID)
+	project, err := readQ.ProjectGetByID(ctx, projectID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return model.ErrWorktreeNotFound
 		}
+		return err
+	}
+	dbWorktrees, err := readQ.WorktreeListByProject(ctx, projectID)
+	if err != nil {
 		return err
 	}
 
@@ -452,11 +545,6 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 		return err
 	}
 
-	dbWorktrees, err := s.ListWorktrees(ctx, projectID)
-	if err != nil {
-		return err
-	}
-
 	gitByPath := make(map[string]git.WorktreeInfo, len(gitWorktrees))
 	for _, wt := range gitWorktrees {
 		gitByPath[model.NormalizePathCase(wt.Path)] = wt
@@ -468,6 +556,9 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 	}
 
 	now := time.Now()
+	updates := make([]*model.WorktreeUpdateMetadataParams, 0)
+	creates := make([]*model.WorktreeCreateParams, 0)
+	deletes := make([]*model.WorktreeSoftDeleteParams, 0)
 	for normPath, gitWT := range gitByPath {
 		if existing, ok := dbByPath[normPath]; ok {
 			var headPtr *string
@@ -480,17 +571,21 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 			if branchName == "" {
 				branchName = existing.BranchName
 			}
+			if existing.BranchName == branchName &&
+				optionalStringsEqual(existing.HeadCommit, headPtr) &&
+				existing.IsMain == gitWT.IsMain &&
+				existing.IsBare == gitWT.IsBare {
+				continue
+			}
 
-			if err := q.WorktreeUpdateMetadata(ctx, &model.WorktreeUpdateMetadataParams{
+			updates = append(updates, &model.WorktreeUpdateMetadataParams{
 				UpdatedAt:  now,
 				BranchName: branchName,
 				HeadCommit: headPtr,
 				IsMain:     gitWT.IsMain,
 				IsBare:     gitWT.IsBare,
 				Id:         existing.Id,
-			}); err != nil {
-				return err
-			}
+			})
 			continue
 		}
 
@@ -500,7 +595,7 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 			headPtr = &commit
 		}
 		zeroVal := int64(0)
-		if _, err := q.WorktreeCreate(ctx, &model.WorktreeCreateParams{
+		creates = append(creates, &model.WorktreeCreateParams{
 			Id:              utils.NewID(),
 			CreatedAt:       now,
 			UpdatedAt:       now,
@@ -517,25 +612,67 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 			StatusUntracked: &zeroVal,
 			StatusConflicts: &zeroVal,
 			StatusUpdatedAt: nil,
-		}); err != nil {
-			return err
-		}
+		})
 	}
 
 	for normPath, dbWT := range dbByPath {
 		if _, ok := gitByPath[normPath]; ok {
 			continue
 		}
-		if _, err := q.WorktreeSoftDelete(ctx, &model.WorktreeSoftDeleteParams{
+		deletes = append(deletes, &model.WorktreeSoftDeleteParams{
 			DeletedAt: &now,
 			UpdatedAt: now,
 			Id:        dbWT.Id,
-		}); err != nil {
-			return err
-		}
+		})
 	}
 
-	return nil
+	if len(updates) == 0 && len(creates) == 0 && len(deletes) == 0 {
+		return nil
+	}
+	return model.Transaction(ctx, func(q *model.Queries) error {
+		for _, params := range updates {
+			if err := q.WorktreeUpdateMetadata(ctx, params); err != nil {
+				return err
+			}
+		}
+		for _, params := range creates {
+			if _, err := q.WorktreeCreate(ctx, params); err != nil {
+				return err
+			}
+		}
+		for _, params := range deletes {
+			if _, err := q.WorktreeSoftDelete(ctx, params); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func optionalStringsEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func optionalInt64Equals(value *int64, expected int64) bool {
+	return value != nil && *value == expected
+}
+
+func optionalTimesEqual(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
+}
+
+func invalidateGitScanRoots(paths ...string) {
+	for _, path := range paths {
+		if strings.TrimSpace(path) != "" {
+			git.InvalidateFileScans(path)
+		}
+	}
 }
 
 // CommitWorktree 暂存 worktree 中的所有更改并使用指定消息创建提交。
@@ -549,7 +686,7 @@ func (s *WorktreeService) CommitWorktree(ctx context.Context, id, message string
 		return nil, fmt.Errorf("commit message is required")
 	}
 
-	q, err := model.ResolveQueries(nil)
+	q, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -587,6 +724,7 @@ func (s *WorktreeService) CommitWorktree(ctx context.Context, id, message string
 		}
 		return nil, err
 	}
+	git.InvalidateFileScans(worktree.Path)
 
 	updated, err := s.RefreshWorktreeStatus(ctx, id)
 	if err != nil {

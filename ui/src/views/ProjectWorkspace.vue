@@ -281,6 +281,7 @@ import {
 } from '@/utils/workspaceRoute';
 import { gitOperationAvailable } from '@/utils/projectGitCapability';
 import { createLongPressTracker } from '@/utils/longPress';
+import { AdaptiveGitRefreshLoop } from '@/components/changes/adaptiveGitRefresh';
 import {
   PROJECT_SIDEBAR_DEFAULT_WIDTH,
   clampProjectSidebarWidth,
@@ -308,7 +309,6 @@ const WORKSPACE_MOBILE_MAX_WIDTH = 900;
 const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
 const WORKTREE_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-worktree-sidebar-width';
 const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project';
-const MOBILE_GIT_STATUS_REFRESH_INTERVAL_MS = 10_000;
 
 const route = useRoute();
 const router = useRouter();
@@ -339,8 +339,11 @@ const mobileProjectsViewRef = ref<HTMLElement | null>(null);
 const mobileProjectSourceView = ref<MobileProjectSourceView | ''>('');
 const mobileRouteSyncPaused = ref(false);
 let mobileWebSessionComposerFocusFrame: number | null = null;
-let mobileGitStatusRefreshTimer: number | null = null;
-let mobileGitStatusRefreshPending = false;
+const mobileGitStatusRefreshLoop = new AdaptiveGitRefreshLoop({
+  mode: 'background',
+  enabled: canRefreshMobileGitStatus,
+  refresh: refreshMobileGitStatus,
+});
 
 const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
 
@@ -680,10 +683,7 @@ watch(
 );
 
 function stopMobileGitStatusRefresh() {
-  if (mobileGitStatusRefreshTimer != null) {
-    window.clearInterval(mobileGitStatusRefreshTimer);
-    mobileGitStatusRefreshTimer = null;
-  }
+  mobileGitStatusRefreshLoop.stop();
 }
 
 function canRefreshMobileGitStatus() {
@@ -697,20 +697,31 @@ function canRefreshMobileGitStatus() {
 }
 
 async function refreshMobileGitStatus() {
-  if (
-    !canRefreshMobileGitStatus() ||
-    mobileGitStatusRefreshPending ||
-    (typeof document !== 'undefined' && document.visibilityState === 'hidden')
-  ) {
-    return;
+  if (!canRefreshMobileGitStatus()) {
+    return { changed: false };
   }
+  const target =
+    projectStore.selectedWorktree ??
+    projectStore.worktrees.find(worktree => worktree.isMain) ??
+    projectStore.worktrees[0];
+  if (!target) {
+    return { changed: false };
+  }
+  const previousToken = worktreeStatusToken(target);
+  const updated = await projectStore.refreshWorktreeStatus(target.id);
+  return { changed: worktreeStatusToken(updated) !== previousToken };
+}
 
-  mobileGitStatusRefreshPending = true;
-  try {
-    await projectStore.refreshWorktreeCommitInfo(currentProjectId.value);
-  } finally {
-    mobileGitStatusRefreshPending = false;
-  }
+function worktreeStatusToken(worktree: Worktree) {
+  return [
+    worktree.headCommit ?? '',
+    worktree.statusAhead ?? 0,
+    worktree.statusBehind ?? 0,
+    worktree.statusModified ?? 0,
+    worktree.statusStaged ?? 0,
+    worktree.statusUntracked ?? 0,
+    worktree.statusConflicts ?? 0,
+  ].join(':');
 }
 
 watch(
@@ -720,6 +731,7 @@ watch(
       currentProjectId.value,
       projectStore.currentProject?.id,
       projectStore.projectDetailLoading,
+      projectStore.selectedWorktreeId,
       gitOperationAvailable(projectStore.gitCapabilities, 'status'),
     ] as const,
   () => {
@@ -727,9 +739,7 @@ watch(
     if (!canRefreshMobileGitStatus() || typeof window === 'undefined') {
       return;
     }
-    mobileGitStatusRefreshTimer = window.setInterval(() => {
-      void refreshMobileGitStatus();
-    }, MOBILE_GIT_STATUS_REFRESH_INTERVAL_MS);
+    mobileGitStatusRefreshLoop.start({ immediate: true });
   },
   { immediate: true }
 );

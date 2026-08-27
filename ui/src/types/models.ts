@@ -426,6 +426,7 @@ export interface WebSessionPiModelInfo {
 
 export interface WebSessionRuntimeConfig {
   agents?: Partial<Record<WebSessionAgent, WebSessionAgentCapability>>;
+  capabilitiesRefreshing?: boolean;
   model?: string;
   contextWindowTokens: number;
   compactLimitTokens: number;

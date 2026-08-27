@@ -111,6 +111,7 @@ type uploadMeta struct {
 type resolvedListChangesOptions struct {
 	includeUntracked bool
 	withStats        bool
+	fresh            bool
 	timeout          time.Duration
 	maxEntries       int
 }
@@ -434,12 +435,20 @@ func (s *Service) ListChanges(
 	scopeID string,
 	options ListChangesOptions,
 ) (*ChangesResult, error) {
-	scope, err := s.scopeByID(ctx, projectID, scopeID)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resolved := normalizeListChangesOptions(options)
+	requestCtx, cancel := context.WithTimeout(ctx, resolved.timeout)
+	defer cancel()
+
+	dbStarted := time.Now()
+	scope, err := s.scopeByID(requestCtx, projectID, scopeID)
+	dbDuration := time.Since(dbStarted)
 	if err != nil {
 		return nil, err
 	}
 
-	resolved := normalizeListChangesOptions(options)
 	result := &ChangesResult{
 		Scope:             scope,
 		Entries:           []ChangeEntry{},
@@ -453,25 +462,14 @@ func (s *Service) ListChanges(
 		return result, nil
 	}
 
-	requestCtx, cancel := context.WithTimeout(ctx, resolved.timeout)
-	defer cancel()
-
-	var statusResult git.FileStatusResult
-	if resolved.withStats {
-		statusResult, err = git.ListFileStatusesLimitedContext(
-			requestCtx,
-			scope.RootPath,
-			resolved.includeUntracked,
-			resolved.maxEntries,
-		)
-	} else {
-		statusResult, err = git.ListFileStatusesFastContext(
-			requestCtx,
-			scope.RootPath,
-			resolved.includeUntracked,
-			resolved.maxEntries,
-		)
+	scanOptions := git.FileScanOptions{
+		IncludeUntracked: resolved.includeUntracked,
+		MaxEntries:       resolved.maxEntries,
+		Fast:             !resolved.withStats,
+		Fresh:            resolved.fresh,
 	}
+	statusResult, scanMetrics, err := git.ScanFileStatuses(requestCtx, scope.RootPath, scanOptions)
+	s.logGitScan("list-changes", "status", dbDuration, scanMetrics, err)
 	result.ChangeToken = statusResult.ChangeToken
 	if statusResult.Truncated {
 		result.Truncated = true
@@ -514,7 +512,14 @@ func (s *Service) ListChanges(
 		return result, nil
 	}
 
-	diffStats, err := git.GenerateDiffStatsAgainstHEADContext(requestCtx, scope.RootPath, statuses)
+	diffStats, statsMetrics, err := git.ScanDiffStats(
+		requestCtx,
+		scope.RootPath,
+		statuses,
+		statusResult.ChangeToken,
+		scanOptions,
+	)
+	s.logGitScan("list-changes", "stats", 0, statsMetrics, err)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			result.StatsTimedOut = true
@@ -551,7 +556,19 @@ func (s *Service) ChangesSummary(
 	scopeID string,
 	options ChangesSummaryOptions,
 ) (*ChangesSummaryResult, error) {
-	scope, err := s.scopeByID(ctx, projectID, scopeID)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := options.StatsTimeout
+	if timeout <= 0 {
+		timeout = defaultChangesSummaryTimeout
+	}
+	statusCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	dbStarted := time.Now()
+	scope, err := s.scopeByID(statusCtx, projectID, scopeID)
+	dbDuration := time.Since(dbStarted)
 	if err != nil {
 		return nil, err
 	}
@@ -570,32 +587,16 @@ func (s *Service) ChangesSummary(
 		return result, nil
 	}
 
-	timeout := options.StatsTimeout
-	if timeout <= 0 {
-		timeout = defaultChangesSummaryTimeout
+	scanOptions := git.FileScanOptions{
+		IncludeUntracked: options.IncludeUntracked,
+		Fast:             true,
+		Fresh:            options.Fresh,
 	}
-	statusCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	var statusResult git.FileStatusResult
-	if options.WithStats {
-		statusResult, err = git.ListFileStatusesLimitedContext(
-			statusCtx,
-			scope.RootPath,
-			options.IncludeUntracked,
-			0,
-		)
-	} else {
-		statusResult, err = git.ListFileStatusesFastContext(
-			statusCtx,
-			scope.RootPath,
-			options.IncludeUntracked,
-			0,
-		)
-	}
+	statusResult, scanMetrics, err := git.ScanFileStatuses(statusCtx, scope.RootPath, scanOptions)
+	s.logGitScan("changes-summary", "status", dbDuration, scanMetrics, err)
 	result.ChangeToken = statusResult.ChangeToken
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			result.StatsTimedOut = true
 			return result, nil
 		}
@@ -621,9 +622,16 @@ func (s *Service) ChangesSummary(
 		statusList = append(statusList, status)
 	}
 
-	diffStats, err := git.GenerateDiffStatsAgainstHEADContext(statusCtx, scope.RootPath, statusList)
+	diffStats, statsMetrics, err := git.ScanDiffStats(
+		statusCtx,
+		scope.RootPath,
+		statusList,
+		statusResult.ChangeToken,
+		scanOptions,
+	)
+	s.logGitScan("changes-summary", "stats", 0, statsMetrics, err)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			result.StatsTimedOut = true
 			return result, nil
 		}
@@ -645,6 +653,31 @@ func (s *Service) ChangesSummary(
 	result.Deletions = &deletions
 	result.StatsComplete = true
 	return result, nil
+}
+
+func (s *Service) logGitScan(
+	operation,
+	stage string,
+	dbDuration time.Duration,
+	metrics git.FileScanMetrics,
+	err error,
+) {
+	fields := []zap.Field{
+		zap.String("operation", operation),
+		zap.String("stage", stage),
+		zap.Duration("dbRead", dbDuration),
+		zap.Duration("queueWait", metrics.QueueWait),
+		zap.Duration("gitExecution", metrics.Execution),
+		zap.Bool("cacheHit", metrics.CacheHit),
+		zap.Bool("sharedFlight", metrics.Shared),
+	}
+	total := dbDuration + metrics.QueueWait + metrics.Execution
+	if err != nil || total >= 2*time.Second {
+		fields = append(fields, zap.Error(err))
+		s.logger.Warn("slow git scan stage", fields...)
+		return
+	}
+	s.logger.Debug("git scan stage", fields...)
 }
 
 func (s *Service) Diff(ctx context.Context, projectID, scopeID, path string) (*DiffResult, error) {
@@ -770,6 +803,7 @@ func (s *Service) CreateDirectory(ctx context.Context, projectID, scopeID, paren
 	if err := os.Mkdir(targetAbs, 0o755); err != nil {
 		return nil, err
 	}
+	git.InvalidateFileScans(scope.RootPath)
 
 	stat, err := os.Stat(targetAbs)
 	if err != nil {
@@ -818,6 +852,7 @@ func (s *Service) Rename(ctx context.Context, projectID, scopeID, path, newName 
 	if err := os.Rename(absPath, targetAbs); err != nil {
 		return nil, err
 	}
+	git.InvalidateFileScans(scope.RootPath)
 
 	stat, err := os.Lstat(targetAbs)
 	if err != nil {
@@ -897,6 +932,9 @@ func (s *Service) Delete(ctx context.Context, projectID, scopeID string, paths [
 			Path: toSlashPath(normalizedPath),
 			Name: info.Name(),
 		})
+	}
+	if len(result.Succeeded) > 0 {
+		git.InvalidateFileScans(scope.RootPath)
 	}
 	return result, nil
 }
@@ -1193,6 +1231,7 @@ func (s *Service) CompleteUpload(ctx context.Context, projectID, uploadID string
 		if err := os.Rename(meta.PartPath, targetAbs); err != nil {
 			return err
 		}
+		git.InvalidateFileScans(scope.RootPath)
 		_ = os.Remove(s.uploadMetaPath(uploadID))
 
 		stat, err := os.Stat(targetAbs)
@@ -1227,7 +1266,7 @@ func (s *Service) CancelUpload(projectID, uploadID string) error {
 }
 
 func (s *Service) loadProjectScopes(ctx context.Context, projectID string) (*model.Project, []*model.Worktree, error) {
-	q, err := model.ResolveQueries(nil)
+	q, err := model.ResolveReadQueries(nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1453,6 +1492,7 @@ func normalizeListChangesOptions(options ListChangesOptions) resolvedListChanges
 	result := resolvedListChangesOptions{
 		includeUntracked: true,
 		withStats:        true,
+		fresh:            options.Fresh,
 		timeout:          options.Timeout,
 		maxEntries:       options.MaxEntries,
 	}
@@ -1613,6 +1653,9 @@ func (s *Service) bulkTransfer(ctx context.Context, projectID, scopeID string, s
 			Path: toSlashPath(targetRel),
 			Name: filepath.Base(targetRel),
 		})
+	}
+	if len(result.Succeeded) > 0 {
+		git.InvalidateFileScans(scope.RootPath)
 	}
 	return result, nil
 }

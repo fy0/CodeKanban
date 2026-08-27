@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.uber.org/zap"
 
 	"code-kanban/api/h"
 	"code-kanban/model"
@@ -94,20 +93,6 @@ func registerWorktreeRoutes(group *huma.Group, cfg *utils.AppConfig) {
 			ProjectID string `path:"projectId"`
 		},
 	) (*h.ItemsResponse[*model.Worktree], error) {
-		if err := worktreeSvc.SyncWorktrees(ctx, input.ProjectID); err != nil {
-			switch {
-			case errors.Is(err, model.ErrDBNotInitialized):
-				return nil, huma.Error503ServiceUnavailable("database is not initialized")
-			case errors.Is(err, model.ErrWorktreeNotFound):
-				return nil, huma.Error404NotFound("project not found")
-			default:
-				utils.Logger().Warn("failed to sync worktrees before list",
-					zap.Error(err),
-					zap.String("projectId", input.ProjectID),
-				)
-			}
-		}
-
 		worktrees, err := worktreeSvc.ListWorktrees(ctx, input.ProjectID)
 		if err != nil {
 			if errors.Is(err, model.ErrDBNotInitialized) {
@@ -214,11 +199,15 @@ func registerWorktreeRoutes(group *huma.Group, cfg *utils.AppConfig) {
 		input *struct {
 			ProjectID string `path:"projectId"`
 		},
-	) (*h.MessageResponse, error) {
+	) (*h.MessageItemsResponse[*model.Worktree], error) {
 		if err := worktreeSvc.SyncWorktrees(ctx, input.ProjectID); err != nil {
 			return nil, mapWorktreeError(err)
 		}
-		resp := h.NewMessageResponse("worktrees synced successfully")
+		worktrees, err := worktreeSvc.ListWorktrees(ctx, input.ProjectID)
+		if err != nil {
+			return nil, mapWorktreeError(err)
+		}
+		resp := h.NewMessageItemsResponse("worktrees synced successfully", worktrees)
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {

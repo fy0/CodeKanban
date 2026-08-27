@@ -17,6 +17,7 @@ var (
 	readerDB       *gorm.DB
 	readerSQLDB    *sql.DB
 	defaultQueries *Queries
+	readerQueries  *Queries
 
 	// ErrSQLCNotReady indicates sqlc helpers have not been initialized.
 	ErrSQLCNotReady = errors.New("model: sql queries are not initialized")
@@ -40,6 +41,7 @@ func InitWithDSN(dsn string, logLevel int, autoMigrate bool) error {
 		db = nil
 		sqlDB = nil
 		defaultQueries = nil
+		readerQueries = nil
 		return err
 	}
 	if readerDB == nil {
@@ -51,7 +53,13 @@ func InitWithDSN(dsn string, logLevel int, autoMigrate bool) error {
 		readerDB = nil
 		sqlDB = nil
 		defaultQueries = nil
+		readerQueries = nil
 		return err
+	}
+	if readerSQLDB == sqlDB {
+		readerQueries = defaultQueries
+	} else {
+		readerQueries = New(readerSQLDB)
 	}
 	return nil
 }
@@ -68,6 +76,7 @@ func DBClose() {
 	sqlDB = nil
 	readerSQLDB = nil
 	defaultQueries = nil
+	readerQueries = nil
 }
 
 func GetDB() *gorm.DB {
@@ -147,4 +156,14 @@ func getDefaultQueries() (*Queries, error) {
 		return nil, err
 	}
 	return defaultQueries, nil
+}
+
+func getReaderQueries() (*Queries, error) {
+	if err := ensureQueriesReady(); err != nil {
+		return nil, err
+	}
+	if readerQueries == nil {
+		return nil, ErrSQLCNotReady
+	}
+	return readerQueries, nil
 }

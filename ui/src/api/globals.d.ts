@@ -732,6 +732,20 @@ export interface ItemsResponseWorktreeBody {
    */
   items: Worktree[] | null;
 }
+export interface MessageItemsResponseWorktreeBody {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  /**
+   * 响应列表
+   */
+  items: Worktree[] | null;
+  /**
+   * 提示信息
+   */
+  message: string;
+}
 export interface ProjectTable {
   createdAt: string;
   defaultBranch: string;
@@ -1888,20 +1902,22 @@ declare global {
        * type Response = {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
+       *   // 响应列表
+       *   items: Worktree[] | null
        *   // 提示信息
        *   message: string
        * }
        * ```
        */
       syncByProject<
-        Config extends Alova2MethodConfig<MessageResponseBody> & {
+        Config extends Alova2MethodConfig<MessageItemsResponseWorktreeBody> & {
           pathParams: {
             projectId: string;
           };
         },
       >(
         config: Config
-      ): Alova2Method<MessageResponseBody, 'worktree.syncByProject', Config>;
+      ): Alova2Method<MessageItemsResponseWorktreeBody, 'worktree.syncByProject', Config>;
       /**
        * ---
        *

@@ -62,6 +62,23 @@ func NewMessageItemResponse[T any](message string, item T) *MessageItemResponse[
 	return resp
 }
 
+// MessageItemsResponse 同时返回提示信息与实体列表。
+type MessageItemsResponse[T any] struct {
+	Status int `json:"-"`
+	Body   struct {
+		Message string `json:"message" doc:"提示信息"`
+		Items   []T    `json:"items" doc:"响应列表"`
+	} `json:"body"`
+}
+
+// NewMessageItemsResponse 构造消息 + 实体列表返回。
+func NewMessageItemsResponse[T any](message string, items []T) *MessageItemsResponse[T] {
+	resp := &MessageItemsResponse[T]{}
+	resp.Body.Message = message
+	resp.Body.Items = items
+	return resp
+}
+
 // PaginatedResponse 通用分页返回结构。
 type PaginatedResponse[T any] struct {
 	Status int `json:"-"`

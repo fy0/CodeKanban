@@ -120,6 +120,7 @@ type ChangesResult struct {
 type ListChangesOptions struct {
 	IncludeUntracked *bool
 	WithStats        *bool
+	Fresh            bool
 	Timeout          time.Duration
 	MaxEntries       int
 }
@@ -127,6 +128,7 @@ type ListChangesOptions struct {
 type ChangesSummaryOptions struct {
 	IncludeUntracked bool
 	WithStats        bool
+	Fresh            bool
 	StatsTimeout     time.Duration
 }
 

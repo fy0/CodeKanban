@@ -15,6 +15,7 @@ import (
 	"code-kanban/model"
 	"code-kanban/model/tables"
 
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -281,7 +282,7 @@ func (m *Manager) ensureCompactGroupHistorySourceKeyDB(
 		return nil
 	}
 
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return m.observedTransaction(ctx, db, "ensure_compact_group_source_key", func(tx *gorm.DB) error {
 		var rows []tables.WebSessionItemTable
 		query := tx.Where("web_session_id = ? AND item_kind = ?", sessionID, "tool")
 		if sourceThreadID = strings.TrimSpace(sourceThreadID); sourceThreadID != "" {
@@ -399,7 +400,11 @@ func (m *Manager) ensureCompactGroupHistorySourceKeyDB(
 			}
 		}
 		return nil
-	})
+	},
+		zap.String("sessionId", sessionID),
+		zap.String("sourceThreadId", sourceThreadID),
+		zap.String("groupId", groupID),
+	)
 }
 
 func (m *Manager) replaceSessionHistoryCache(
@@ -413,7 +418,7 @@ func (m *Manager) replaceSessionHistoryCache(
 	if db == nil {
 		return model.ErrDBNotInitialized
 	}
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return m.observedTransaction(ctx, db, "replace_history_cache", func(tx *gorm.DB) error {
 		var existing tables.WebSessionTable
 		if err := tx.Select("id").First(&existing, "id = ?", session.ID).Error; err != nil {
 			return err
@@ -445,7 +450,12 @@ func (m *Manager) replaceSessionHistoryCache(
 			}
 		}
 		return nil
-	})
+	},
+		zap.String("sessionId", session.ID),
+		zap.Int("turnCount", len(turns)),
+		zap.Int("itemCount", len(items)),
+		zap.Int("updateFieldCount", len(updates)),
+	)
 }
 
 func (m *Manager) loadHistoryWindow(

@@ -2,8 +2,10 @@ package model
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestInspectDatabaseReportsConfiguredSQLiteHealth(t *testing.T) {
@@ -46,6 +48,26 @@ func TestInspectDatabaseReportsConfiguredSQLiteHealth(t *testing.T) {
 	}
 	if !health.ReadProbe.OK || !health.WriteProbe.OK {
 		t.Fatalf("probes are not healthy: read=%#v write=%#v", health.ReadProbe, health.WriteProbe)
+	}
+}
+
+func TestProjectReadsDoNotWaitForWriterConnection(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "reader-isolation.db")
+	if err := InitWithDSN(dsn, 0, true); err != nil {
+		t.Fatalf("InitWithDSN: %v", err)
+	}
+	t.Cleanup(DBClose)
+
+	tx, err := sqlDB.BeginTx(context.Background(), &sql.TxOptions{})
+	if err != nil {
+		t.Fatalf("begin writer transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if _, err := NewProjectService().ListProjects(ctx); err != nil {
+		t.Fatalf("reader-backed project list waited for writer connection: %v", err)
 	}
 }
 

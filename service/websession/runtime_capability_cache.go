@@ -68,6 +68,29 @@ func (c *runtimeCapabilityCache[T]) get(
 	return c.snapshot(clone)
 }
 
+func (c *runtimeCapabilityCache[T]) getBackground(
+	policy runtimeCapabilityCachePolicy,
+	clone func(T) T,
+	probe func() (T, error),
+) (T, bool) {
+	now := time.Now()
+	c.mu.Lock()
+	cached := clone(c.value)
+	if c.loaded && now.Before(c.expiresAt) {
+		c.mu.Unlock()
+		return cached, false
+	}
+	if c.inFlight != nil {
+		c.mu.Unlock()
+		return cached, true
+	}
+	flight := &runtimeCapabilityFlight{done: make(chan struct{})}
+	c.inFlight = flight
+	c.mu.Unlock()
+	go c.refresh(flight, policy, clone, probe)
+	return cached, true
+}
+
 func (c *runtimeCapabilityCache[T]) snapshot(clone func(T) T) T {
 	c.mu.Lock()
 	defer c.mu.Unlock()

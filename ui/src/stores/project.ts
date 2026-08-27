@@ -7,6 +7,7 @@ import type { EditorPreference } from '@/stores/settings';
 import { gitOperationAvailable } from '@/utils/projectGitCapability';
 
 const DEFAULT_MAX_RECENT_PROJECTS = 10;
+const ACCESS_TOUCH_THROTTLE_MS = 60_000;
 
 // 优先级类型定义：1-5级，数字越大优先级越高
 export type ProjectPriority = 1 | 2 | 3 | 4 | 5;
@@ -20,6 +21,9 @@ export const useProjectStore = defineStore('project', () => {
   const projectDetailLoading = ref(false);
   const loading = computed(() => projectsLoading.value || projectDetailLoading.value);
   const selectedWorktreeId = ref<string | null>(null);
+  let projectsFlight: Promise<void> | null = null;
+  let projectLoadGeneration = 0;
+  const accessTouchedAt = new Map<string, number>();
 
   const hasProjects = computed(() => projects.value.length > 0);
 
@@ -53,13 +57,30 @@ export const useProjectStore = defineStore('project', () => {
   });
 
   async function fetchProjects(options: { silent?: boolean } = {}) {
+    if (projectsFlight) {
+      if (!options.silent) {
+        projectsLoading.value = true;
+      }
+      try {
+        await projectsFlight;
+      } finally {
+        if (!options.silent) {
+          projectsLoading.value = false;
+        }
+      }
+      return;
+    }
     if (!options.silent) {
       projectsLoading.value = true;
     }
-    try {
+    projectsFlight = (async () => {
       const result = await projectApi.list();
       replaceProjectList(result.items);
+    })();
+    try {
+      await projectsFlight;
     } finally {
+      projectsFlight = null;
       if (!options.silent) {
         projectsLoading.value = false;
       }
@@ -67,6 +88,7 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   async function fetchProject(id: string) {
+    const generation = ++projectLoadGeneration;
     projectDetailLoading.value = true;
     try {
       // Clear stale worktrees immediately when switching projects to avoid
@@ -76,11 +98,21 @@ export const useProjectStore = defineStore('project', () => {
         worktrees.value = [];
         gitCapabilities.value = null;
       }
-      currentProject.value = await projectApi.get(id);
+      const [project, nextWorktrees] = await Promise.all([
+        projectApi.get(id),
+        worktreeApi.list(id),
+      ]);
+      if (generation !== projectLoadGeneration) {
+        return;
+      }
+      currentProject.value = project;
+      worktrees.value = nextWorktrees;
       selectedWorktreeId.value = null;
-      await fetchWorktrees(id);
+      void reconcileProjectWorktrees(id, generation);
     } finally {
-      projectDetailLoading.value = false;
+      if (generation === projectLoadGeneration) {
+        projectDetailLoading.value = false;
+      }
     }
   }
 
@@ -116,12 +148,29 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   async function fetchWorktrees(projectId: string) {
-    worktrees.value = await worktreeApi.list(projectId);
+    const nextWorktrees = await worktreeApi.list(projectId);
+    if (currentProject.value?.id === projectId) {
+      worktrees.value = nextWorktrees;
+    }
     if (currentProject.value?.id === projectId) {
       await fetchGitCapabilities(projectId);
     }
-    if (gitOperationAvailable(gitCapabilities.value, 'status')) {
-      void refreshWorktreeCommitInfo(projectId);
+  }
+
+  async function reconcileProjectWorktrees(projectId: string, generation: number) {
+    await fetchGitCapabilities(projectId);
+    try {
+      const synced = await worktreeApi.sync(projectId);
+      if (generation !== projectLoadGeneration || currentProject.value?.id !== projectId) {
+        return;
+      }
+      if (!Array.isArray(synced)) {
+        return;
+      }
+      worktrees.value = synced;
+      await fetchGitCapabilities(projectId);
+    } catch (error) {
+      console.warn('Failed to sync worktrees', error);
     }
   }
 
@@ -159,6 +208,14 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
+  async function refreshWorktreeStatus(worktreeId: string) {
+    const updated = await worktreeApi.refreshStatus(worktreeId);
+    if (currentProject.value?.id === updated.projectId) {
+      updateWorktreeInList(worktreeId, updated);
+    }
+    return updated;
+  }
+
   async function createWorktree(
     projectId: string,
     payload: {
@@ -170,9 +227,7 @@ export const useProjectStore = defineStore('project', () => {
     }
   ) {
     const worktree = await worktreeApi.create(projectId, payload);
-    // 创建成功后立即刷新列表，确保 UI 能及时更新
     await fetchWorktrees(projectId);
-    await fetchProject(projectId);
     return worktree;
   }
 
@@ -189,8 +244,11 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   async function syncWorktrees(projectId: string) {
-    await worktreeApi.sync(projectId);
-    await fetchWorktrees(projectId);
+    const synced = await worktreeApi.sync(projectId);
+    if (currentProject.value?.id === projectId) {
+      worktrees.value = synced;
+      await fetchGitCapabilities(projectId);
+    }
   }
 
   async function openInExplorer(path: string) {
@@ -210,12 +268,19 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   function addRecentProject(projectId: string) {
+    const now = Date.now();
+    const lastTouchedAt = accessTouchedAt.get(projectId) ?? 0;
+    if (now - lastTouchedAt < ACCESS_TOUCH_THROTTLE_MS) {
+      return;
+    }
+    accessTouchedAt.set(projectId, now);
     void projectApi
       .markAccess(projectId)
       .then(project => {
         updateProjectInList(project);
       })
       .catch(error => {
+        accessTouchedAt.delete(projectId);
         console.warn('Failed to record project access:', error);
         void fetchProjects({ silent: true });
       });
@@ -283,6 +348,7 @@ export const useProjectStore = defineStore('project', () => {
     fetchWorktrees,
     fetchGitCapabilities,
     refreshWorktreeCommitInfo,
+    refreshWorktreeStatus,
     createWorktree,
     deleteWorktree,
     updateWorktreeInList,

@@ -180,7 +180,7 @@ func (s *ProjectService) GetProject(ctx context.Context, id string) (*Project, e
 		ctx = context.Background()
 	}
 
-	q, err := resolveQueries(nil)
+	q, err := ResolveReadQueries(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (s *ProjectService) ListProjects(ctx context.Context) ([]*Project, error) {
 		ctx = context.Background()
 	}
 
-	q, err := resolveQueries(nil)
+	q, err := ResolveReadQueries(nil)
 	if err != nil {
 		return nil, err
 	}

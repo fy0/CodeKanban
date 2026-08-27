@@ -154,6 +154,17 @@ export const worktreeApi = {
     return body.items ?? [];
   },
 
+  async refreshStatus(worktreeId: string): Promise<Worktree> {
+    const body =
+      (await http
+        .Post<ItemResponse<Worktree>>(`/worktrees/${worktreeId}/refresh-status`, {})
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to refresh worktree status');
+    }
+    return body.item;
+  },
+
   async create(
     projectId: string,
     data: {
@@ -185,8 +196,12 @@ export const worktreeApi = {
     await http.Post(`/worktrees/${id}?force=${force}&deleteBranch=${deleteBranch}`, {}).send();
   },
 
-  async sync(projectId: string): Promise<void> {
-    await http.Post(`/projects/${projectId}/sync-worktrees`, {}).send();
+  async sync(projectId: string): Promise<Worktree[]> {
+    const body =
+      (await http
+        .Post<{ items?: Worktree[] }>(`/projects/${projectId}/sync-worktrees`, {})
+        .send()) ?? {};
+    return body.items ?? [];
   },
 };
 
