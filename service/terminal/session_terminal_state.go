@@ -356,10 +356,6 @@ func terminalCellModeHas(mode, flag int16) bool {
 	return mode&flag == flag
 }
 
-func buildTerminalSnapshotSGR(cell TerminalStateCell) string {
-	return buildTerminalSnapshotSGRFromColors(cell.Mode, terminalSnapshotDefaultColor(cell.FG, cell.FGDefault), terminalSnapshotDefaultColor(cell.BG, cell.BGDefault))
-}
-
 func buildTerminalSnapshotSGRFromGlyph(cell vt10x.Glyph) string {
 	return buildTerminalSnapshotSGRFromColors(cell.Mode, cell.FG, cell.BG)
 }
@@ -420,13 +416,6 @@ func buildTerminalSnapshotSGRFromColors(mode int16, fg, bg vt10x.Color) string {
 	}
 
 	return fmt.Sprintf("\x1b[%sm", joinTerminalSGRCodes(codes))
-}
-
-func terminalSnapshotDefaultColor(value uint32, isDefault bool) vt10x.Color {
-	if !isDefault {
-		return vt10x.Color(value)
-	}
-	return vt10x.DefaultFG
 }
 
 func joinTerminalSGRCodes(codes []any) string {

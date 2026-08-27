@@ -172,9 +172,7 @@ describe('webSessionComposerPaste', () => {
 
     expect(plan?.images).toHaveLength(0);
     expect(plan?.unavailableImageCount).toBe(1);
-    expect(plan?.unavailableImages).toEqual([
-      'file:///C:/Temp/msohtmlclip1/image001.png',
-    ]);
+    expect(plan?.unavailableImages).toEqual(['file:///C:/Temp/msohtmlclip1/image001.png']);
     expect(renderWebSessionComposerPastePlan(plan!)).toBe(`Inspect ${FAILURE_MARKER} please`);
     expect(renderWebSessionComposerPastePlan(plan!, [], [], ['[Image #1]'])).toBe(
       'Inspect [Image #1] please'

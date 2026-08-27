@@ -12,10 +12,13 @@ export function isCurrentProjectSelection(
   currentProjectId: string | null | undefined,
   targetProjectId: string
 ): boolean {
-  const normalizedCurrentProjectId = typeof currentProjectId === 'string' ? currentProjectId.trim() : '';
+  const normalizedCurrentProjectId =
+    typeof currentProjectId === 'string' ? currentProjectId.trim() : '';
   const normalizedTargetProjectId = targetProjectId.trim();
 
-  return Boolean(normalizedCurrentProjectId) && normalizedCurrentProjectId === normalizedTargetProjectId;
+  return (
+    Boolean(normalizedCurrentProjectId) && normalizedCurrentProjectId === normalizedTargetProjectId
+  );
 }
 
 export function buildProjectBrowserRouteQuery(

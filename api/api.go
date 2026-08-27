@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -209,6 +210,11 @@ func mountStatic(app *fiber.App, cfg *utils.AppConfig, assets embed.FS, logger *
 		return nil
 	})
 
+	// Fiber v2's filesystem middleware leaks the directory handle when it
+	// replaces an opened directory with its index file. Serve the mount root
+	// directly so custom UI directories remain replaceable on Windows.
+	app.Get(mountPath, serveStaticIndex(fs))
+
 	app.Use(mountPath, filesystem.New(filesystem.Config{
 		Root:       fs,
 		PathPrefix: "static",
@@ -216,6 +222,23 @@ func mountStatic(app *fiber.App, cfg *utils.AppConfig, assets embed.FS, logger *
 		MaxAge:     staticAssetMaxAgeSeconds,
 		Browse:     false,
 	}))
+}
+
+func serveStaticIndex(fs http.FileSystem) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		file, err := fs.Open("/static/index.html")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = file.Close() }()
+
+		contents, err := io.ReadAll(file)
+		if err != nil {
+			return err
+		}
+		c.Type("html", "utf-8")
+		return c.Send(contents)
+	}
 }
 
 func normalizeStaticMountPath(mountPath string) string {

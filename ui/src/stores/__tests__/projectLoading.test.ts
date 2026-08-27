@@ -92,7 +92,7 @@ describe('project store loading states', () => {
     let resolveList: ((value: { items: Project[]; total: number }) => void) | null = null;
     listMock.mockImplementation(
       () =>
-        new Promise<{ items: Project[]; total: number }>((resolve) => {
+        new Promise<{ items: Project[]; total: number }>(resolve => {
           resolveList = resolve;
         })
     );
@@ -117,7 +117,7 @@ describe('project store loading states', () => {
     let resolveProject: ((value: Project) => void) | null = null;
     getMock.mockImplementation(
       () =>
-        new Promise<Project>((resolve) => {
+        new Promise<Project>(resolve => {
           resolveProject = resolve;
         })
     );

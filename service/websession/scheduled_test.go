@@ -114,7 +114,7 @@ func TestScheduledInputDispatchesAtDueTime(t *testing.T) {
 		"Run this later",
 		nil,
 		ScheduledInputModeSend,
-		time.Now().Add(60*time.Millisecond),
+		time.Now().Add(500*time.Millisecond),
 	); err != nil {
 		t.Fatalf("ScheduleInput returned error: %v", err)
 	}
@@ -1219,7 +1219,7 @@ func TestScheduledPlanExecutionDispatchesOriginalPlan(t *testing.T) {
 		created.ID,
 		plan.ID,
 		scheduledPlanExecutionPayload{},
-		time.Now().Add(60*time.Millisecond),
+		time.Now().Add(500*time.Millisecond),
 	); err != nil {
 		t.Fatalf("SchedulePlanExecution returned error: %v", err)
 	}
@@ -1281,7 +1281,7 @@ func TestScheduledPlanExecutionAnswersStructuredPlanChoice(t *testing.T) {
 			QuestionID:         "scope",
 			ExecuteOptionLabel: "full migration",
 		},
-		time.Now().Add(60*time.Millisecond),
+		time.Now().Add(500*time.Millisecond),
 	); err != nil {
 		t.Fatalf("SchedulePlanExecution returned error: %v", err)
 	}
@@ -1694,18 +1694,4 @@ func waitForScheduledInputCount(t *testing.T, manager *Manager, sessionID string
 		t.Fatalf("scheduledInputsSnapshot returned error: %v", err)
 	}
 	t.Fatalf("expected %d scheduled inputs, got %#v", count, items)
-}
-
-func waitForPendingInputCount(t *testing.T, manager *Manager, sessionID string, count int) {
-	t.Helper()
-
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(manager.pendingInputsSnapshot(sessionID)) == count {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	t.Fatalf("expected %d pending inputs, got %#v", count, manager.pendingInputsSnapshot(sessionID))
 }

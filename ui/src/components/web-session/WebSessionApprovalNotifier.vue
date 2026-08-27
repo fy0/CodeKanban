@@ -144,5 +144,3 @@ onUnmounted(() => {
   activeNotifications.clear();
 });
 </script>
-
-<template></template>

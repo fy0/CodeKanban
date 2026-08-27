@@ -8,15 +8,15 @@ export { useReq, useInit, FORCE } from './composable';
 export class ApiError extends Error {
   public status: number;
   public statusText: string;
-  public data: any;
+  public data: unknown;
 
-  constructor(status: number, statusText: string, data: any) {
+  constructor(status: number, statusText: string, data: unknown) {
+    const detail =
+      data && typeof data === 'object' && 'detail' in data
+        ? Reflect.get(data, 'detail')
+        : undefined;
     const message =
-      typeof data === 'object' && data?.detail
-        ? data.detail
-        : typeof data === 'string'
-          ? data
-          : statusText;
+      typeof detail === 'string' && detail ? detail : typeof data === 'string' ? data : statusText;
     super(message);
     this.name = 'ApiError';
     this.status = status;
@@ -41,7 +41,7 @@ export const alovaInstance = createAlova({
   responded: async (response, method) => {
     if (!response.ok) {
       const responseText = await response.text();
-      let data;
+      let data: unknown;
 
       try {
         data = JSON.parse(responseText);
@@ -49,7 +49,7 @@ export const alovaInstance = createAlova({
         data = responseText;
       }
 
-      const requestURL = String((method as any).url || '');
+      const requestURL = String(method.url || '');
       if (response.status === 401 && !requestURL.includes('/api/v1/auth/')) {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
@@ -61,17 +61,6 @@ export const alovaInstance = createAlova({
       }
 
       throw new ApiError(response.status, response.statusText, data);
-    }
-
-    const responseType = (method as any).config?.responseType;
-    if (responseType === 'blob') {
-      return response.blob();
-    }
-    if (responseType === 'arraybuffer') {
-      return response.arrayBuffer();
-    }
-    if (responseType === 'text') {
-      return response.text();
     }
 
     const contentType = response.headers.get('content-type') || '';
@@ -103,5 +92,5 @@ mountApis(Apis);
 export default Apis;
 export { Apis };
 
-// @ts-ignore
+// @ts-expect-error Generated declarations are re-exported as a module for API consumers.
 export * from './globals.d.ts';

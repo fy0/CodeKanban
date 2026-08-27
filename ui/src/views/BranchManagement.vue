@@ -365,6 +365,7 @@ import { extractItem } from '@/api/response';
 import BranchListItem from '@/components/branch/BranchListItem.vue';
 import { useHotkeys } from '@/composables/useHotkeys';
 import { gitOperationAvailable, gitOperationEngine } from '@/utils/projectGitCapability';
+import { getErrorMessage } from '@/utils/errorHandler';
 
 const route = useRoute();
 const router = useRouter();
@@ -398,7 +399,7 @@ const branchListReq = useReq(
     Apis.branch.list({
       pathParams: { projectId },
       ...(force ? { params: { force: true } } : {}),
-    } as any),
+    } as Parameters<typeof Apis.branch.list>[0]),
   { cacheFor: 60000 }
 );
 
@@ -553,8 +554,8 @@ async function initializeProject(id: string) {
       return;
     }
     await reloadBranches(true);
-  } catch (error: any) {
-    branchError.value = error?.message ?? t('branch.loadProjectFailed');
+  } catch (error) {
+    branchError.value = getErrorMessage(error, t('branch.loadProjectFailed'));
   }
 }
 
@@ -571,8 +572,8 @@ async function reloadBranches(force = false) {
     } else {
       await branchListReq.send(currentProjectId.value);
     }
-  } catch (error: any) {
-    branchError.value = error?.message ?? t('branch.fetchBranchesFailed');
+  } catch (error) {
+    branchError.value = getErrorMessage(error, t('branch.fetchBranchesFailed'));
   }
 }
 
@@ -659,9 +660,10 @@ async function submitCreateBranch() {
     if (createForm.createWorktree) {
       await projectStore.fetchWorktrees(currentProjectId.value);
     }
-  } catch (error: any) {
-    if (error?.message) {
-      message.error(error.message);
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+    if (errorMessage) {
+      message.error(errorMessage);
     }
   }
 }
@@ -692,8 +694,8 @@ async function handleDeleteBranch(branch: BranchInfo) {
         message.success(t('branch.branchDeleted'));
         await reloadBranches(true);
         await projectStore.fetchWorktrees(currentProjectId.value);
-      } catch (error: any) {
-        message.error(error?.message ?? t('branch.deleteFailed'));
+      } catch (error) {
+        message.error(getErrorMessage(error, t('branch.deleteFailed')));
       }
     },
   });
@@ -716,8 +718,8 @@ async function handleCreateWorktree(branch: BranchInfo) {
     await projectStore.fetchWorktrees(currentProjectId.value);
     await reloadBranches(true);
     message.success(t('branch.worktreeCreated'));
-  } catch (error: any) {
-    message.error(error?.message ?? t('branch.createWorktreeFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('branch.createWorktreeFailed')));
   }
 }
 
@@ -798,8 +800,8 @@ async function submitMerge() {
         message.warning(payload.message || t('branch.hasConflicts'));
       }
     }
-  } catch (error: any) {
-    message.error(error?.message ?? t('branch.mergeFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('branch.mergeFailed')));
   }
 }
 
@@ -818,8 +820,8 @@ async function refreshMergeStatus() {
       projectStore.updateWorktreeInList(mergeForm.worktreeId, updated);
     }
     message.success(t('branch.worktreeStatusRefreshed'));
-  } catch (error: any) {
-    message.error(error?.message ?? t('branch.refreshFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('branch.refreshFailed')));
   }
 }
 

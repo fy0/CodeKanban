@@ -142,9 +142,10 @@ func mustSystemDailyTipTestRequest(
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("app.Test failed: %v", err)
 	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	return resp
 }

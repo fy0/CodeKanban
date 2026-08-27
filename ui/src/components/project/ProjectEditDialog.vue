@@ -96,6 +96,7 @@ import PiProjectTrustDialog from '@/components/project/PiProjectTrustDialog.vue'
 import { useProjectStore } from '@/stores/project';
 import type { Project, ProjectAgentTrustStatus } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
+import { getErrorMessage } from '@/utils/errorHandler';
 
 const { t } = useLocale();
 
@@ -183,7 +184,7 @@ async function loadPiTrust(projectId: string) {
     if (props.project?.id === projectId) {
       piTrustStatus.value = status;
     }
-  } catch (error) {
+  } catch {
     if (props.project?.id === projectId) {
       piTrustStatus.value = null;
       message.error(t('project.piTrustLoadFailed'));
@@ -219,7 +220,7 @@ function confirmRevokePiTrust() {
           piTrustStatus.value = status;
         }
         message.success(t('project.piTrustRevoked'));
-      } catch (error) {
+      } catch {
         message.error(t('project.piTrustRevokeFailed'));
         return false;
       } finally {
@@ -246,9 +247,10 @@ async function handleUpdate() {
     message.success(t('message.projectUpdated'));
     emit('success', project);
     visible.value = false;
-  } catch (error: any) {
-    if (error?.message) {
-      message.error(error.message);
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+    if (errorMessage) {
+      message.error(errorMessage);
     }
     return false;
   } finally {

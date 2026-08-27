@@ -14,6 +14,14 @@ import {
 
 const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
 const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
+const webSessionTimelineStylePath = fileURLToPath(
+  new URL('../styles/webSessionPanelTimeline.css', import.meta.url)
+);
+const webSessionTimelineStyleSource = readFileSync(webSessionTimelineStylePath, 'utf8');
+const webSessionMessageEditDialogPath = fileURLToPath(
+  new URL('../WebSessionMessageEditDialog.vue', import.meta.url)
+);
+const webSessionMessageEditDialogSource = readFileSync(webSessionMessageEditDialogPath, 'utf8');
 
 const blocks: WebSessionUserMessageNavigationBlock[] = [
   { key: 'user-1', kind: 'user' },
@@ -213,17 +221,19 @@ describe('webSessionUserMessageNavigation', () => {
     expect(webSessionPanelSource).toContain(
       'class="user-message-navigation-button user-message-edit-button"'
     );
-    expect(webSessionPanelSource).toContain("t('webSession.editUserMessageWorkspaceWarning')");
+    expect(webSessionMessageEditDialogSource).toContain(
+      "t('webSession.editUserMessageWorkspaceWarning')"
+    );
   });
 
   it('keeps the controls compact and makes unavailable directions visibly quieter', () => {
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionTimelineStyleSource).toMatch(
       /\.user-message-navigation\s*\{[^}]*gap:\s*0;[^}]*height:\s*20px;/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionTimelineStyleSource).toMatch(
       /\.user-message-navigation-button\s*\{[^}]*width:\s*20px !important;[^}]*height:\s*20px !important;/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionTimelineStyleSource).toMatch(
       /\.user-message-navigation-button:disabled:not\(\.n-button--loading\)\s*\{[^}]*opacity:\s*0\.18 !important;/s
     );
   });
@@ -235,13 +245,13 @@ describe('webSessionUserMessageNavigation', () => {
     expect(webSessionPanelSource).toContain('v-if="timelineNavigationControlsExpanded"');
     expect(webSessionPanelSource).toContain('name="timeline-navigation-reveal"');
     expect(webSessionPanelSource).toContain('class="timeline-navigation-activation-zone"');
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionTimelineStyleSource).toMatch(
       /\.timeline-navigation-reveal-zone\s*\{[^}]*flex:\s*0 0 118px;[^}]*width:\s*118px;[^}]*min-width:\s*118px;/s
     );
     expect(webSessionPanelSource).toMatch(
       /v-if="!timelineNavigationControlsExpanded"\s+type="button"\s+class="timeline-navigation-activation-zone"/
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionTimelineStyleSource).toMatch(
       /\.timeline-navigation-activation-zone\s*\{[^}]*width:\s*100%;[^}]*height:\s*28px;/s
     );
     expect(webSessionPanelSource).toContain('@mouseenter="handleTimelineNavigationPointerEnter"');
@@ -255,9 +265,11 @@ describe('webSessionUserMessageNavigation', () => {
 
     const startIndex = webSessionPanelSource.indexOf('async function jumpToTimelineStart()');
     const endIndex = webSessionPanelSource.indexOf('async function jumpToTimelineEnd()');
-    const searchTimerIndex = webSessionPanelSource.indexOf('function clearTimelineSearchTimer()');
+    const loadSearchHistoryIndex = webSessionPanelSource.indexOf(
+      'async function loadEarlierTimelineSearchHistory('
+    );
     const startFunction = webSessionPanelSource.slice(startIndex, endIndex);
-    const endFunction = webSessionPanelSource.slice(endIndex, searchTimerIndex);
+    const endFunction = webSessionPanelSource.slice(endIndex, loadSearchHistoryIndex);
 
     expect(startFunction).toContain("afterCursor: '0'");
     expect(startFunction).toContain('container.scrollTop = 0');
@@ -266,10 +278,10 @@ describe('webSessionUserMessageNavigation', () => {
     expect(endFunction).toContain('syncScrollToBottom()');
     expect(endFunction).not.toContain("behavior: 'smooth'");
     expect(webSessionPanelSource).toContain('!getCurrentTimelineEdgeWindow()');
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionTimelineStyleSource).toMatch(
       /\.timeline-navigation-button\s*\{[^}]*width:\s*28px !important;[^}]*height:\s*28px !important;/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionTimelineStyleSource).toMatch(
       /\.timeline-navigation-reveal-enter-from,[\s\S]*?max-width:\s*0;[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*translateX\(8px\);/
     );
   });

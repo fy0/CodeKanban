@@ -171,6 +171,7 @@ func TestGetSessionConversationBySessionIDResolvesMissingCodexCache(t *testing.T
 
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 
 	projectPath := filepath.Join(t.TempDir(), "project")
 	if err := os.MkdirAll(projectPath, 0o755); err != nil {
@@ -221,6 +222,7 @@ func TestGetSessionConversationBySessionIDUsesExistingCodexCache(t *testing.T) {
 
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 
 	projectPath := filepath.Join(t.TempDir(), "project")
 	if err := os.MkdirAll(projectPath, 0o755); err != nil {
@@ -342,7 +344,9 @@ func TestGetSessionConversationBySessionIDReturnsNotFoundWithoutRollout(t *testi
 	cleanup := initTestDB(t)
 	defer cleanup()
 
-	t.Setenv("HOME", t.TempDir())
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 
 	svc := NewAISessionService()
 	_, err := svc.GetSessionConversationBySessionID(

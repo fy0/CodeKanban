@@ -71,18 +71,6 @@ func decodeJSONText(raw string, target any) {
 	_ = json.Unmarshal([]byte(raw), target)
 }
 
-func parseHistoryCursorValue(cursor string) (*int64, error) {
-	cursor = strings.TrimSpace(cursor)
-	if cursor == "" {
-		return nil, nil
-	}
-	value, err := strconv.ParseInt(cursor, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-	return &value, nil
-}
-
 func historyItemCursor(items []HistoryItem, hasMore bool) string {
 	if !hasMore || len(items) == 0 {
 		return ""
@@ -172,14 +160,6 @@ func historyToolSourceKey(toolKey string) string {
 	return "tool:" + normalized
 }
 
-func (m *Manager) nextHistoryOrderIndex(ctx context.Context, sessionID string) (int64, error) {
-	db := model.GetDB()
-	if db == nil {
-		return 0, model.ErrDBNotInitialized
-	}
-	return m.nextHistoryOrderIndexDB(ctx, db, sessionID)
-}
-
 func (m *Manager) nextHistoryOrderIndexDB(ctx context.Context, db *gorm.DB, sessionID string) (int64, error) {
 	var maxValue int64
 	if err := db.WithContext(ctx).
@@ -224,29 +204,6 @@ func (m *Manager) appendHistoryItemDB(
 		return HistoryItem{}, err
 	}
 	return mapHistoryItemRowWithSession(row, sessionID), nil
-}
-
-func (m *Manager) upsertHistoryItemBySourceID(
-	ctx context.Context,
-	sessionID string,
-	sourceItemID string,
-	mutate func(*HistoryItem),
-) (HistoryItem, error) {
-	return m.upsertHistoryItemBySourceIdentity(ctx, sessionID, "", sourceItemID, mutate)
-}
-
-func (m *Manager) upsertHistoryItemBySourceIdentity(
-	ctx context.Context,
-	sessionID string,
-	sourceThreadID string,
-	sourceItemID string,
-	mutate func(*HistoryItem),
-) (HistoryItem, error) {
-	db := model.GetDB()
-	if db == nil {
-		return HistoryItem{}, model.ErrDBNotInitialized
-	}
-	return m.upsertHistoryItemBySourceIdentityDB(ctx, db, sessionID, sourceThreadID, sourceItemID, mutate)
 }
 
 func (m *Manager) upsertHistoryItemBySourceIdentityDB(
@@ -308,20 +265,6 @@ func (m *Manager) upsertHistoryItemBySourceIdentityDB(
 		return HistoryItem{}, updateErr
 	}
 	return mapHistoryItemRowWithSession(row, sessionID), nil
-}
-
-func (m *Manager) ensureCompactGroupHistorySourceKey(
-	ctx context.Context,
-	sessionID string,
-	sourceThreadID string,
-	sourceKey string,
-	groupID string,
-) error {
-	db := model.GetDB()
-	if db == nil {
-		return model.ErrDBNotInitialized
-	}
-	return m.ensureCompactGroupHistorySourceKeyDB(ctx, db, sessionID, sourceThreadID, sourceKey, groupID)
 }
 
 func (m *Manager) ensureCompactGroupHistorySourceKeyDB(

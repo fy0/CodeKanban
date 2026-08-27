@@ -64,7 +64,8 @@ export default defineConfig({
           if (tag && operationId.toLowerCase().startsWith(tag.toLowerCase())) {
             // 去除前缀并将首字母小写
             const withoutPrefix = operationId.substring(tag.length);
-            apiDescriptor.operationId = withoutPrefix.charAt(0).toLowerCase() + withoutPrefix.slice(1);
+            apiDescriptor.operationId =
+              withoutPrefix.charAt(0).toLowerCase() + withoutPrefix.slice(1);
           }
         }
 
@@ -75,9 +76,9 @@ export default defineConfig({
         // }
 
         return apiDescriptor;
-      }
-    }
-  ]
+      },
+    },
+  ],
 
   /**
    * extension only

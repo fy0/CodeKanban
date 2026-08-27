@@ -32,7 +32,8 @@ const DAILY_TIPS_ZH_CN: readonly DailyTipDefinition[] = [
   {
     id: 'shortcuts',
     title: '善用快捷键切换工作区',
-    description: '会在最近访问的两个工作区标签之间切换；如果你只访问过一个标签，则默认在终端和会话之间切换。',
+    description:
+      '会在最近访问的两个工作区标签之间切换；如果你只访问过一个标签，则默认在终端和会话之间切换。',
   },
   {
     id: 'editor',

@@ -1,43 +1,32 @@
-# ui
+# CodeKanban UI
 
-This template should help get you started developing with Vue 3 in Vite.
+Vue 3 frontend for CodeKanban. The production bundle is embedded by the Go application.
 
-## Recommended IDE Setup
-
-[VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
-
-## Type Support for `.vue` Imports in TS
-
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
+## Setup
 
 ```sh
 pnpm install
 ```
 
-### Compile and Hot-Reload for Development
+## Commands
 
 ```sh
+# Development server
 pnpm dev
-```
 
-Development requests to `/api` are proxied by reading the backend address from `../config.yaml` first,
-then `../data/config.yaml`, preferring `domain` and falling back to `serveAt`.
-If neither file provides an address, the proxy falls back to `http://127.0.0.1:3007`.
-
-### Type-Check, Compile and Minify for Production
-
-```sh
+# Type-check and production build
 pnpm build
-```
 
-### Lint with [ESLint](https://eslint.org/)
-
-```sh
+# Run Oxlint followed by ESLint without modifying files
 pnpm lint
+
+# Apply safe lint fixes
+pnpm lint:fix
+
+# Run type-checking, linting, and tests
+pnpm check
 ```
+
+The development proxy reads the backend address from `../config.yaml`, then
+`../data/config.yaml`. It prefers `domain`, falls back to `serveAt`, and finally uses
+`http://127.0.0.1:3007`.

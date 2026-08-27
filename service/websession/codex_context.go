@@ -304,10 +304,6 @@ func (m *Manager) getCodexRuntimeConfig(force bool) CodexRuntimeConfig {
 	return m.applyCodexRuntimeCapabilitiesWithRefresh(config, force)
 }
 
-func (m *Manager) applyCodexRuntimeCapabilities(config CodexRuntimeConfig) CodexRuntimeConfig {
-	return m.applyCodexRuntimeCapabilitiesWithRefresh(config, false)
-}
-
 func (m *Manager) applyCodexRuntimeCapabilitiesWithRefresh(
 	config CodexRuntimeConfig,
 	force bool,

@@ -31,7 +31,7 @@ const { isMobile, windowWidth } = useResponsive();
 
 const drawerPlacement = computed(() => (isMobile.value ? 'bottom' : 'right'));
 const drawerWidth = computed(() => {
-  const target = Math.round(windowWidth.value * 0.70);
+  const target = Math.round(windowWidth.value * 0.7);
   return Math.max(650, Math.min(900, target));
 });
 const drawerHeight = computed(() => '100vh');

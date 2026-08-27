@@ -9,6 +9,15 @@ const webSessionComposerEditorPath = fileURLToPath(
 );
 const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
 const webSessionComposerEditorSource = readFileSync(webSessionComposerEditorPath, 'utf8');
+const webSessionComposerStylePath = fileURLToPath(
+  new URL('../styles/webSessionPanelComposer.css', import.meta.url)
+);
+const webSessionResponsiveStylePath = fileURLToPath(
+  new URL('../styles/webSessionPanelResponsive.css', import.meta.url)
+);
+const webSessionComposerStyleSource = readFileSync(webSessionComposerStylePath, 'utf8');
+const webSessionResponsiveStyleSource = readFileSync(webSessionResponsiveStylePath, 'utf8');
+const webSessionComposerStyles = `${webSessionComposerStyleSource}\n${webSessionResponsiveStyleSource}`;
 
 describe('webSession mobile composer', () => {
   it('uses a plain-text Tiptap editor without the legacy textarea', () => {
@@ -31,7 +40,7 @@ describe('webSession mobile composer', () => {
   });
 
   it('lets the editor row count control mobile input height', () => {
-    expect(webSessionPanelSource).not.toMatch(
+    expect(webSessionComposerStyles).not.toMatch(
       /\.composer-input-shell\.is-mobile\s*\{[^}]*min-height:/s
     );
   });
@@ -51,8 +60,8 @@ describe('webSession mobile composer', () => {
 
   it('uses compact mobile composer controls', () => {
     expect(webSessionPanelSource).toMatch(/'is-mobile': isMobile/);
-    expect(webSessionPanelSource).toMatch(/\.composer\.is-mobile\s*\{[^}]*padding:\s*6px 8px;/s);
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(/\.composer\.is-mobile\s*\{[^}]*padding:\s*6px 8px;/s);
+    expect(webSessionComposerStyles).toMatch(
       /\.composer\.is-mobile \.composer-icon-btn-mobile\s*\{[^}]*width:\s*36px;[^}]*height:\s*36px;/s
     );
   });
@@ -105,7 +114,7 @@ describe('webSession mobile composer', () => {
   });
 
   it('uses compact square single-line mobile summary chips', () => {
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-toggle-chip\s*\{[^}]*border-radius:\s*4px;[^}]*white-space:\s*nowrap;/s
     );
   });
@@ -120,16 +129,16 @@ describe('webSession mobile composer', () => {
     expect(webSessionPanelSource).toMatch(
       /v-if="!isMobileComposerSettingsExpanded"\s+class="composer-mobile-toggle-copy"/
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-toolbar\.is-settings-expanded\s*\{[^}]*position:\s*absolute;[^}]*right:\s*8px;[^}]*width:\s*auto;/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-summary\.is-expanded\s*\{[^}]*flex:\s*0 0 36px;[^}]*width:\s*36px;/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-toggle\.is-compact\s*\{[^}]*width:\s*36px;[^}]*height:\s*34px;[^}]*justify-content:\s*center;/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /@media \(max-width:\s*359px\)[\s\S]*grid-template-columns:\s*38px minmax\(0, 96px\) minmax\(0, 72px\) minmax\(0, 1fr\);/
     );
   });
@@ -144,16 +153,16 @@ describe('webSession mobile composer', () => {
   });
 
   it('leaves intentional space after both mobile settings rows', () => {
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /grid-template-columns:\s*38px minmax\(0, 118px\) minmax\(0, 96px\) minmax\(0, 1fr\);/
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-config\.is-mobile \.composer-mode-row\s*\{[^}]*width:\s*auto;[^}]*justify-self:\s*start;/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-config\.is-mobile \.composer-mode-switch\s*\{[^}]*width:\s*112px;/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-config\.is-mobile \.permission-select\s*\{[^}]*width:\s*132px;/s
     );
   });
@@ -161,7 +170,7 @@ describe('webSession mobile composer', () => {
   it('uses an icon-only square composer collapse control', () => {
     expect(webSessionPanelSource).not.toContain('composer-mobile-panel-toggle-text');
     expect(webSessionPanelSource).not.toContain('composer-mobile-panel-toggle-shell');
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-panel-toggle\s*\{[^}]*width:\s*36px;[^}]*height:\s*34px;[^}]*border-radius:\s*8px;/s
     );
 
@@ -171,13 +180,13 @@ describe('webSession mobile composer', () => {
       /\.composer-mobile-panel-toggle:hover,[\s\S]*?\.composer-mobile-panel-toggle:active\s*\{[^}]*\}/s,
     ];
     for (const blockPattern of flatPanelToggleBlocks) {
-      expect(webSessionPanelSource.match(blockPattern)?.[0]).not.toContain('box-shadow');
+      expect(webSessionComposerStyles.match(blockPattern)?.[0]).not.toContain('box-shadow');
     }
   });
 
   it('embeds both mobile disclosure controls in one toolbar', () => {
     expect(webSessionPanelSource).toContain('class="composer-mobile-toolbar"');
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-toolbar\s*\{[^}]*width:\s*100%;[^}]*display:\s*flex;[^}]*gap:\s*6px;/s
     );
     expect(webSessionPanelSource).toMatch(
@@ -193,10 +202,10 @@ describe('webSession mobile composer', () => {
     expect(webSessionPanelSource).toContain("'webSession.pendingQueueCount'");
     expect(webSessionPanelSource).toContain("'webSession.scheduledCount'");
     expect(webSessionPanelSource).toContain('buildWebSessionMobilePendingSummary(');
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-pending-summary\s*\{[^}]*flex:\s*1;[^}]*display:\s*flex;/s
     );
-    expect(webSessionPanelSource).toContain('.composer-mobile-pending-chip.mode-scheduled');
+    expect(webSessionComposerStyles).toContain('.composer-mobile-pending-chip.mode-scheduled');
   });
 
   it('keeps lower composer content outside the inline toggle toolbar', () => {
@@ -217,13 +226,13 @@ describe('webSession mobile composer', () => {
   });
 
   it('reverses the square panel arrow while preserving the settings disclosure arrow', () => {
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-panel-toggle-arrow\s*\{[^}]*transform:\s*rotate\(0deg\);/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-panel-toggle-arrow\.is-collapsed\s*\{[^}]*transform:\s*rotate\(180deg\);/s
     );
-    expect(webSessionPanelSource).toMatch(
+    expect(webSessionComposerStyles).toMatch(
       /\.composer-mobile-toggle-arrow\.is-open\s*\{[^}]*transform:\s*rotate\(180deg\);/s
     );
   });

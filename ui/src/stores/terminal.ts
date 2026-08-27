@@ -96,13 +96,13 @@ export type ServerMessage = {
   snapshotCompressionEnabled?: boolean;
   snapshotIncrementalEnabled?: boolean;
   snapshot?: TerminalRemoteSnapshot;
-	metadata?: {
+  metadata?: {
     title?: string;
     processPid?: number;
     processStatus?: string;
     processHasChildren?: boolean;
-		runningCommand?: string;
-		aiAssistant?: {
+    runningCommand?: string;
+    aiAssistant?: {
       type: string;
       name: string;
       displayName: string;
@@ -131,9 +131,9 @@ export type TerminalCreateOptions = {
   worktreeId?: string;
   workingDir?: string;
   title?: string;
-	rows?: number;
-	cols?: number;
-	/** 插入到指定 sessionId 之后，用于复制标签时保持位置 */
+  rows?: number;
+  cols?: number;
+  /** 插入到指定 sessionId 之后，用于复制标签时保持位置 */
   insertAfterSessionId?: string;
 };
 
@@ -575,9 +575,9 @@ export const useTerminalStore = defineStore('terminal', () => {
   let globalLoadToken = 0;
   const projectLoadTokens = new Map<string, number>();
   const emitter = new EventEmitter();
-	const cachedCounts = reactive(new Map<string, number>());
-	const projectConnectionRefCounts = reactive(new Map<string, number>());
-	const settingsStore = useSettingsStore();
+  const cachedCounts = reactive(new Map<string, number>());
+  const projectConnectionRefCounts = reactive(new Map<string, number>());
+  const settingsStore = useSettingsStore();
   // Buffer for WebSocket messages when no listener is attached
   // This prevents data loss when TerminalViewport is unmounted but WebSocket is still active
   const messageBuffers = new Map<string, BufferedTerminalMessage[]>();
@@ -1125,7 +1125,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       rows: options.rows ?? 0,
       cols: options.cols ?? 0,
     };
-	if (options.insertAfterSessionId) {
+    if (options.insertAfterSessionId) {
       payload.insertAfterSessionId = options.insertAfterSessionId;
     }
     const response = await Apis.terminalSession
@@ -1266,7 +1266,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     return sendRenderModePreference(sessionId);
   }
 
-  function send(sessionId: string, message: any): boolean {
+  function send(sessionId: string, message: unknown): boolean {
     const socket = sockets.get(sessionId);
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(message));
@@ -1445,12 +1445,11 @@ export const useTerminalStore = defineStore('terminal', () => {
     bucket[index] = {
       ...bucket[index],
       connectionRole: role,
-      connectionRenderMode:
-        hasAttachedSocket(sessionId)
-          ? currentConnectionMode
-          : role === 'mirror'
-            ? 'snapshot'
-            : sanitizeTerminalRenderMode(bucket[index].renderMode),
+      connectionRenderMode: hasAttachedSocket(sessionId)
+        ? currentConnectionMode
+        : role === 'mirror'
+          ? 'snapshot'
+          : sanitizeTerminalRenderMode(bucket[index].renderMode),
     };
     record.tab = bucket[index];
     return record.tab;
@@ -1951,7 +1950,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   function reconcileSessions(projectId: string, sessions: TerminalSession[]) {
     const bucket = ensureBucket(projectId);
     const incomingIds = new Set(sessions.map(session => session.id));
-    for (const tab of [...bucket]) {
+    for (const tab of bucket.slice()) {
       if (!incomingIds.has(tab.id)) {
         disconnectTab(tab.id, true);
       }

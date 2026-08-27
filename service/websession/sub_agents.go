@@ -230,19 +230,6 @@ func historyItemUpdatesSubAgentActivity(item HistoryItem) bool {
 	return !(item.ItemType == "note" && strings.TrimSpace(stringValue(item.Payload["code"])) == "transport_retrying")
 }
 
-func (m *Manager) applySubAgentHistoryItem(
-	ctx context.Context,
-	session tables.WebSessionTable,
-	event Event,
-	item HistoryItem,
-) (WebSessionSubAgent, bool, error) {
-	db := model.GetDB()
-	if db == nil {
-		return WebSessionSubAgent{}, false, model.ErrDBNotInitialized
-	}
-	return m.applySubAgentHistoryItemDB(ctx, db, session, event, item)
-}
-
 func (m *Manager) applySubAgentHistoryItemDB(
 	ctx context.Context,
 	db *gorm.DB,
@@ -275,22 +262,6 @@ func (m *Manager) applySubAgentHistoryItemDB(
 	}
 	event.Payload = payload
 	return m.applySubAgentStateEventDB(ctx, db, session.ID, event)
-}
-
-func (m *Manager) applySubAgentStateEvent(
-	ctx context.Context,
-	sessionID string,
-	event Event,
-) (WebSessionSubAgent, bool, error) {
-	threadID := strings.TrimSpace(firstNonEmpty(stringValue(event.Payload["threadId"]), event.ThreadID))
-	if threadID == "" {
-		return WebSessionSubAgent{}, false, nil
-	}
-	db := model.GetDB()
-	if db == nil {
-		return WebSessionSubAgent{}, false, model.ErrDBNotInitialized
-	}
-	return m.applySubAgentStateEventDB(ctx, db, sessionID, event)
 }
 
 func (m *Manager) applySubAgentStateEventDB(

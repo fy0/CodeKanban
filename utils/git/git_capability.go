@@ -688,11 +688,6 @@ func setOperationEngine(engines *OperationEngines, operation GitOperation, engin
 	}
 }
 
-func (r *GitRepo) requireCapability(worktreePath string, operation GitOperation) error {
-	_, err := r.effectiveEngine(worktreePath, operation)
-	return err
-}
-
 func (r *GitRepo) requireEngine(worktreePath string, operation GitOperation) (Engine, error) {
 	return r.effectiveEngine(worktreePath, operation)
 }

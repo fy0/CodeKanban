@@ -56,9 +56,8 @@ func NewVersionChecker(currentVersion, packageName string) *VersionChecker {
 func (vc *VersionChecker) CheckAsync() {
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				// 防止版本检查崩溃影响主程序
-			}
+			// 防止版本检查崩溃影响主程序
+			_ = recover()
 		}()
 		vc.Check()
 	}()

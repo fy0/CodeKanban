@@ -43,7 +43,7 @@ class FakeWebSocket {
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event: unknown) => void) | null = null;
 
   constructor(url: string) {
     this.url = url;
@@ -54,7 +54,7 @@ class FakeWebSocket {
     });
   }
 
-  addEventListener(type: string, listener: (...args: any[]) => void) {
+  addEventListener(type: string, listener: (event: unknown) => void) {
     if (type === 'open') this.onopen = listener;
     if (type === 'message') this.onmessage = listener;
     if (type === 'error') this.onerror = listener;
@@ -65,7 +65,7 @@ class FakeWebSocket {
 
   close() {
     this.readyState = FakeWebSocket.CLOSED;
-    this.onclose?.();
+    this.onclose?.({});
   }
 }
 

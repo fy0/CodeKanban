@@ -8,8 +8,37 @@ import (
 	"testing"
 	"time"
 
+	"code-kanban/model/tables"
+
 	"go.uber.org/zap"
 )
+
+func TestSessionMessagingAvailabilityDoesNotProbeUnrelatedAgents(t *testing.T) {
+	manager := &Manager{}
+	var codexCalls atomic.Int32
+	var piCalls atomic.Int32
+	manager.runtimeCapabilityProbes = runtimeCapabilityProbeHooks{
+		codexBinary: func() (CodexRuntimeConfig, error) {
+			codexCalls.Add(1)
+			return CodexRuntimeConfig{HasCodex: true}, nil
+		},
+		pi: func() (piRuntimeProbeResult, error) {
+			piCalls.Add(1)
+			return piRuntimeProbeResult{installed: true, compatible: true}, nil
+		},
+	}
+
+	err := manager.ensureSessionMessagingAvailable(tables.WebSessionTable{Agent: string(AgentCodex)})
+	if err != nil {
+		t.Fatalf("Codex availability check returned error: %v", err)
+	}
+	if codexCalls.Load() != 1 {
+		t.Fatalf("Codex probe calls = %d, want 1", codexCalls.Load())
+	}
+	if piCalls.Load() != 0 {
+		t.Fatalf("Pi probe calls = %d, want 0", piCalls.Load())
+	}
+}
 
 func TestRuntimeCapabilityProvidersSingleflightColdRequests(t *testing.T) {
 	tests := []struct {

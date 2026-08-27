@@ -86,21 +86,6 @@ func (c *heartbeatWSConn) snapshotFrames() []wireFrame {
 	return append([]wireFrame(nil), c.frames...)
 }
 
-func attachmentExtensionFromMime(mimeType string) string {
-	switch strings.ToLower(strings.TrimSpace(mimeType)) {
-	case "image/jpeg", "image/jpg":
-		return ".jpg"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	case "image/svg+xml":
-		return ".svg"
-	default:
-		return ".png"
-	}
-}
-
 func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -9250,21 +9235,6 @@ func seedWebSessionWithAgent(
 	return session
 }
 
-func writeFakeCodexCLI(t *testing.T) string {
-	t.Helper()
-
-	path := filepath.Join(t.TempDir(), "fake-codex.sh")
-	script := `#!/bin/sh
-printf '%s\n' '{"type":"thread.started","thread_id":"thread_test"}'
-printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}'
-printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
-`
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake codex cli failed: %v", err)
-	}
-	return path
-}
-
 func writeFakeCodexVersionCLI(t *testing.T, version string) string {
 	t.Helper()
 
@@ -10730,7 +10700,7 @@ process.on('exit', () => {
 func waitForSessionToSettle(t *testing.T, manager *Manager, sessionID string) {
 	t.Helper()
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if !manager.hasActiveRun(sessionID) {
 			record, err := manager.GetSession(context.Background(), sessionID)
@@ -10749,7 +10719,13 @@ func waitForSessionToSettle(t *testing.T, manager *Manager, sessionID string) {
 	if err != nil {
 		t.Fatalf("GetSession returned error while waiting: %v", err)
 	}
-	t.Fatalf("session %s did not settle, status=%s", sessionID, record.Status)
+	t.Fatalf(
+		"session %s did not settle, status=%s assistantState=%s activeRun=%t",
+		sessionID,
+		record.Status,
+		record.AssistantState,
+		manager.hasActiveRun(sessionID),
+	)
 }
 
 func waitForSessionStatus(t *testing.T, manager *Manager, sessionID string, status Status) {

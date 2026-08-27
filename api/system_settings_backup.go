@@ -26,18 +26,6 @@ type settingsBackupImportWebSessionManager interface {
 	RefreshDeveloperConfig()
 }
 
-type settingsBackupExportResponse struct {
-	Body struct {
-		Item utils.SettingsBackupFile `json:"item"`
-	} `json:"body"`
-}
-
-type settingsBackupPreviewResponse struct {
-	Body struct {
-		Item utils.SettingsBackupPreviewResult `json:"item"`
-	} `json:"body"`
-}
-
 func registerSystemSettingsBackupRoutes(
 	group *huma.Group,
 	cfg *utils.AppConfig,

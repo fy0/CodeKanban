@@ -51,10 +51,6 @@ type piProbeResponse struct {
 	Success bool   `json:"success"`
 }
 
-func (m *Manager) applyPiRuntimeCapabilities(config WebSessionRuntimeConfig) WebSessionRuntimeConfig {
-	return m.applyPiRuntimeCapabilitiesWithRefresh(config, false)
-}
-
 func (m *Manager) applyPiRuntimeCapabilitiesWithRefresh(
 	config WebSessionRuntimeConfig,
 	force bool,

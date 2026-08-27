@@ -47,22 +47,3 @@ func GetDataDir() string {
 
 // isDevMode 检查是否是开发模式
 // 通过检查当前工作目录下是否存在 go.mod 文件判断
-func isDevMode() bool {
-	_, err := os.Stat("go.mod")
-	return err == nil
-}
-
-// containsNodeModules 检查路径中是否包含 node_modules
-func containsNodeModules(path string) bool {
-	for path != "." && path != "/" && path != "" {
-		if filepath.Base(path) == "node_modules" {
-			return true
-		}
-		path = filepath.Dir(path)
-		// Windows 路径检查
-		if len(path) == 3 && path[1] == ':' && path[2] == '\\' {
-			break
-		}
-	}
-	return false
-}

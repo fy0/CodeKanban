@@ -182,6 +182,7 @@ import type { MergeResult, Worktree } from '@/types/models';
 import type { EditorPreference } from '@/stores/settings';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, EDITOR_LABEL_MAP } from '@/constants/editor';
 import { gitOperationAvailable } from '@/utils/projectGitCapability';
+import { getErrorMessage } from '@/utils/errorHandler';
 
 const emit = defineEmits<{
   'open-terminal': [payload: Worktree];
@@ -402,8 +403,8 @@ async function handleRefreshAll() {
     // 最后重新获取列表以确保 UI 显示最新的状态
     await projectStore.fetchWorktrees(projectStore.currentProject.id);
     message.success(t('worktree.allWorktreesRefreshed'));
-  } catch (error: any) {
-    message.error(error?.message ?? t('branch.refreshFailed'), {
+  } catch (error) {
+    message.error(getErrorMessage(error, t('branch.refreshFailed')), {
       duration: 0,
       closable: true,
       keepAliveOnHover: true,
@@ -419,8 +420,8 @@ async function handleRefresh(id: string) {
       projectStore.updateWorktreeInList(id, updated);
     }
     message.success(t('worktree.statusRefreshed'));
-  } catch (error: any) {
-    message.error(error?.message ?? t('branch.refreshFailed'), {
+  } catch (error) {
+    message.error(getErrorMessage(error, t('branch.refreshFailed')), {
       duration: 0,
       closable: true,
       keepAliveOnHover: true,
@@ -455,8 +456,8 @@ async function performDeleteWorktree(
   try {
     await projectStore.deleteWorktree(worktree.id, force, deleteBranch);
     message.success(t('worktree.worktreeDeleted'));
-  } catch (error: any) {
-    const errorMessage = extractErrorMessage(error);
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
     if (!force && shouldOfferForceDeletion(errorMessage)) {
       deletingWorktreeId.value = null;
       dialog.warning({
@@ -480,19 +481,6 @@ async function performDeleteWorktree(
   }
 }
 
-function extractErrorMessage(error: any): string {
-  if (!error) {
-    return '';
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  if (typeof error.message === 'string') {
-    return error.message;
-  }
-  return '';
-}
-
 function shouldOfferForceDeletion(message: string): boolean {
   if (!message) {
     return false;
@@ -510,8 +498,8 @@ function shouldOfferForceDeletion(message: string): boolean {
 async function handleOpenExplorer(path: string) {
   try {
     await projectStore.openInExplorer(path);
-  } catch (error: any) {
-    message.error(error?.message ?? t('worktree.openExplorerFailed'), {
+  } catch (error) {
+    message.error(getErrorMessage(error, t('worktree.openExplorerFailed')), {
       duration: 0,
       closable: true,
       keepAliveOnHover: true,
@@ -540,8 +528,8 @@ async function handleOpenEditor(payload: { worktree: Worktree; editor: EditorPre
     );
     const label = EDITOR_LABEL_MAP[editor] ?? t('worktree.editor');
     message.success(t('worktree.openedInEditor', { editor: label }));
-  } catch (error: any) {
-    message.error(error?.message ?? t('worktree.openEditorFailed'), {
+  } catch (error) {
+    message.error(getErrorMessage(error, t('worktree.openEditorFailed')), {
       duration: 0,
       closable: true,
       keepAliveOnHover: true,
@@ -658,8 +646,8 @@ async function submitCommit() {
     }
     message.success(t('worktree.commitSuccess'));
     closeCommitDialog();
-  } catch (error: any) {
-    message.error(error?.message ?? t('worktree.commitFailed'), {
+  } catch (error) {
+    message.error(getErrorMessage(error, t('worktree.commitFailed')), {
       duration: 0,
       closable: true,
       keepAliveOnHover: true,
@@ -702,8 +690,8 @@ async function confirmBranchOperation() {
       })
     );
     closeBranchOperation();
-  } catch (error: any) {
-    message.error(error?.message ?? t('common.error'), {
+  } catch (error) {
+    message.error(getErrorMessage(error, t('common.error')), {
       duration: 0,
       closable: true,
       keepAliveOnHover: true,

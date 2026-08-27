@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
 const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
+const scheduledSendDialogPath = fileURLToPath(
+  new URL('../WebSessionScheduledSendDialog.vue', import.meta.url)
+);
+const scheduledSendDialogSource = readFileSync(scheduledSendDialogPath, 'utf8');
 
 describe('webSession scheduled input management', () => {
   it('opens an accessible details popover with contextual actions', () => {
@@ -18,10 +22,10 @@ describe('webSession scheduled input management', () => {
   });
 
   it('reuses the scheduling dialog for message and plan edits', () => {
-    expect(webSessionPanelSource).toContain("'edit_message'");
-    expect(webSessionPanelSource).toContain("'edit_plan'");
+    expect(scheduledSendDialogSource).toContain("'edit_message'");
+    expect(scheduledSendDialogSource).toContain("'edit_plan'");
     expect(webSessionPanelSource).toContain('webSessionStore.updateScheduledInput');
-    expect(webSessionPanelSource).toContain('scheduledAttachmentsPreserved');
+    expect(scheduledSendDialogSource).toContain('scheduledAttachmentsPreserved');
   });
 
   it('only confirms immediate delivery when interrupting an active message run', () => {

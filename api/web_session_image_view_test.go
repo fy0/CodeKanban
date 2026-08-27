@@ -34,7 +34,7 @@ func TestWebSessionImageViewPreviewServesAbsolutePath(t *testing.T) {
 		"/api/v1/web-sessions/image-view?path="+url.QueryEscape(filePath),
 		nil,
 	)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestWebSessionImageViewPreviewResolvesRelativePathWithCwd(t *testing.T) {
 		"/api/v1/web-sessions/image-view?path="+url.QueryEscape(relativePath)+"&cwd="+url.QueryEscape(cwd),
 		nil,
 	)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestWebSessionImageViewPreviewRejectsNonImageFiles(t *testing.T) {
 		"/api/v1/web-sessions/image-view?path="+url.QueryEscape(filePath),
 		nil,
 	)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestWebSessionImageViewPreviewReturnsNotFoundForMissingFiles(t *testing.T) 
 		"/api/v1/web-sessions/image-view?path="+url.QueryEscape(filePath),
 		nil,
 	)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestWebSessionImageViewPreviewReturnsNotFoundForMissingFiles(t *testing.T) 
 func TestWebSessionImageViewPreviewRejectsEmptyPath(t *testing.T) {
 	app := newWebSessionImageViewTestApp()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/web-sessions/image-view", nil)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("app.Test returned error: %v", err)
 	}

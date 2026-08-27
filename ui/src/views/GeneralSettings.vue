@@ -1918,7 +1918,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref, watch, type Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useEventListener, useDebounceFn, useStorage } from '@vueuse/core';
@@ -1991,7 +1991,6 @@ import {
   createThemeMaintenanceWarningController,
   createThemeSelectionController,
 } from '@/utils/themeMaintenanceWarning';
-import Apis from '@/api';
 import { http } from '@/api/http';
 import { webSessionApi } from '@/api/webSession';
 import { useReq, useInit } from '@/api/composable';
@@ -2648,28 +2647,6 @@ function clearSettingsSectionHighlight() {
     highlightResetTimer = null;
   }
   highlightedSettingsSection.value = null;
-}
-
-async function scrollToSettingsSection(section: SettingsSectionId, highlight = false) {
-  await nextTick();
-  const element = settingsSectionRefs.get(section);
-  if (element) {
-    element.scrollIntoView({
-      block: 'start',
-      behavior: isMobile.value ? 'auto' : 'smooth',
-    });
-  }
-  if (!highlight) {
-    return;
-  }
-  highlightedSettingsSection.value = section;
-  if (highlightResetTimer) {
-    clearTimeout(highlightResetTimer);
-  }
-  highlightResetTimer = setTimeout(() => {
-    highlightedSettingsSection.value = null;
-    highlightResetTimer = null;
-  }, 2400);
 }
 
 async function handlePresetThemeChange(value: string) {
@@ -3599,13 +3576,6 @@ const primaryColor = computed({
   },
 });
 
-const bodyColor = computed({
-  get: () => theme.value.bodyColor,
-  set: value => {
-    settingsStore.applyCustomTheme({ bodyColor: value || '#f7f8fa' });
-  },
-});
-
 const surfaceColor = computed({
   get: () => theme.value.surfaceColor,
   set: value => {
@@ -3619,13 +3589,6 @@ const fallbackTextColor = computed(() => {
   }
   const bodyHex = ensureHexWithHash(theme.value.bodyColor || '#ffffff');
   return getReadableTextColor(bodyHex);
-});
-
-const textColor = computed({
-  get: () => theme.value.textColor || fallbackTextColor.value,
-  set: value => {
-    settingsStore.applyCustomTheme({ textColor: value || '#333333' });
-  },
 });
 
 const previewPanelStyle = computed(() => {
@@ -3699,7 +3662,11 @@ const pageTitleInput = ref(pageTitle.value);
 const pageTitleOriginal = ref(pageTitle.value);
 const pageTitleError = computed(() => {
   const value = pageTitleInput.value.trim();
-  if (/[\u0000-\u001f\u007f-\u009f]/u.test(value)) {
+  const hasControlCharacter = Array.from(value).some(character => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+  });
+  if (hasControlCharacter) {
     return t('settings.pageTitleControlCharacterError');
   }
   if (Array.from(value).length > 64) {
@@ -3930,12 +3897,12 @@ function normalizeSvgSize(svg: string, sizePx: number) {
 }
 
 const terminalQuickActionIconButtons = computed(() => {
-  const agentOptions: {
+  const agentOptions: Array<{
     label: string;
     value: TerminalQuickActionIcon;
     svg?: string;
-    icon?: any;
-  }[] = [
+    icon?: Component;
+  }> = [
     {
       label: t('settings.terminalQuickActionIconClaude'),
       value: 'claude',
@@ -3960,7 +3927,11 @@ const terminalQuickActionIconButtons = computed(() => {
     { label: t('settings.terminalQuickActionIconCopilot'), value: 'copilot', icon: LogoGithub },
   ];
 
-  const genericOptions: { label: string; value: TerminalQuickActionIcon; icon: any }[] = [
+  const genericOptions: Array<{
+    label: string;
+    value: TerminalQuickActionIcon;
+    icon: Component;
+  }> = [
     {
       label: t('settings.terminalQuickActionIconTerminal'),
       value: 'terminal',
@@ -4098,16 +4069,17 @@ const terminalThemeValue = computed({
 
 // 终端字体设置
 const fontFamilyOptions = computed(() => {
-  const options = TERMINAL_FONT_OPTIONS.map(opt => ({
-    label: opt.value === '' ? t('settings.terminalFontDefault') : opt.label,
-    value: opt.value,
-  }));
+  const options: Array<{ label: string; value: string; disabled?: boolean }> =
+    TERMINAL_FONT_OPTIONS.map(opt => ({
+      label: opt.value === '' ? t('settings.terminalFontDefault') : opt.label,
+      value: opt.value,
+    }));
   // 添加自定义输入提示
   options.push({
     label: `── ${t('settings.terminalFontCustomHint')} ──`,
     value: '__custom_hint__',
     disabled: true,
-  } as any);
+  });
   return options;
 });
 
@@ -4371,8 +4343,6 @@ watch(
   }
 );
 
-const hasSearchQuery = computed(() => settingsSearchQuery.value.trim().length > 0);
-
 // 搜索相关的函数
 function highlightMatchText(text: string, query: string): string {
   const normalizedQuery = query.trim();
@@ -4466,7 +4436,6 @@ function updateSearchHighlights() {
       labelElement.setAttribute('data-original-text', originalText);
     }
 
-    const labelText = originalText;
     const normalizedSearchKey = normalizeSearchText(searchKey);
     const formText = normalizeSearchText(formItem.textContent || '');
     const sectionElement = formItem.closest('.settings-card-shell') as HTMLElement | null;

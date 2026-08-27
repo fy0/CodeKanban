@@ -200,13 +200,13 @@ function buildGroupedCompactToolBlock(group: WebSessionBlock[], groupId: string)
 
   projected.key = `${projectedKeyPrefix(projected)}${groupId}`;
   projected.payload = {
-    ...(projected.payload ?? {}),
+    ...projected.payload,
     groupItems: mergedGroupItems,
   };
   projected.tool = {
     ...projected.tool,
     meta: {
-      ...(projected.tool.meta ?? {}),
+      ...projected.tool.meta,
       commandGroup: nextCommandGroup,
     },
     commandGroup: nextCommandGroup,

@@ -350,10 +350,18 @@ const visibleSummary = computed(() =>
   summarizeGitChangesEntries(changesResult.value?.entries ?? [], ignoreUntracked.value)
 );
 const totalAdditions = computed(() =>
-  !changesResult.value ? 0 : changesResult.value.statsComplete ? visibleSummary.value.additions : null
+  !changesResult.value
+    ? 0
+    : changesResult.value.statsComplete
+      ? visibleSummary.value.additions
+      : null
 );
 const totalDeletions = computed(() =>
-  !changesResult.value ? 0 : changesResult.value.statsComplete ? visibleSummary.value.deletions : null
+  !changesResult.value
+    ? 0
+    : changesResult.value.statsComplete
+      ? visibleSummary.value.deletions
+      : null
 );
 let refreshTimer: number | null = null;
 
@@ -400,14 +408,10 @@ async function ensureLoaded(options?: { scopeId?: string }) {
       return;
     }
 
-    const result = await fileManagerApi.listChanges(
-      props.projectId,
-      scope.id,
-      {
-        ...buildGitChangesRequestOptions(ignoreUntracked.value),
-        signal: loadHandle.signal,
-      }
-    );
+    const result = await fileManagerApi.listChanges(props.projectId, scope.id, {
+      ...buildGitChangesRequestOptions(ignoreUntracked.value),
+      signal: loadHandle.signal,
+    });
     if (!changesLoadController.isCurrent(loadHandle)) {
       return;
     }

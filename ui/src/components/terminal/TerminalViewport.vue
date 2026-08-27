@@ -214,8 +214,9 @@ let pendingServerResize: PendingServerResize | null = null;
  * True Color 前景色格式: \x1b[38;2;R;G;Bm 或 \x1b[38;2;R;G;B;...m
  * True Color 背景色格式: \x1b[48;2;R;G;Bm 或 \x1b[48;2;R;G;B;...m
  */
-const TRUE_COLOR_FG_BLACK_REGEX = /\x1b\[38;2;0;0;0([;m])/g;
-const TRUE_COLOR_BG_BLACK_REGEX = /\x1b\[48;2;0;0;0([;m])/g;
+const ANSI_ESCAPE = String.fromCharCode(0x1b);
+const TRUE_COLOR_FG_BLACK_REGEX = new RegExp(`${ANSI_ESCAPE}\\[38;2;0;0;0([;m])`, 'g');
+const TRUE_COLOR_BG_BLACK_REGEX = new RegExp(`${ANSI_ESCAPE}\\[48;2;0;0;0([;m])`, 'g');
 const TRUE_COLOR_FG_BLACK_REPLACEMENT = '\x1b[38;2;74;74;74$1'; // #4a4a4a
 const TRUE_COLOR_BG_BLACK_REPLACEMENT = '\x1b[48;2;40;40;40$1'; // #282828 - 背景用更深的灰
 

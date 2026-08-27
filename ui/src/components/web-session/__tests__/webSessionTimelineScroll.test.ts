@@ -13,6 +13,9 @@ import {
 } from '@/components/web-session/webSessionTimelineScroll';
 
 const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
+const webSessionTimelineStylePath = fileURLToPath(
+  new URL('../styles/webSessionPanelTimeline.css', import.meta.url)
+);
 
 describe('webSessionTimelineScroll', () => {
   it('leaves bottom follow mode when the user scrolls upward from the bottom', () => {
@@ -213,7 +216,7 @@ describe('webSessionTimelineScroll', () => {
   });
 
   it('opts the runtime strip out of browser scroll anchoring', () => {
-    const source = readFileSync(webSessionPanelPath, 'utf8');
+    const source = readFileSync(webSessionTimelineStylePath, 'utf8');
 
     expect(source).toMatch(/\.runtime-strip\s*\{[^}]*overflow-anchor:\s*none;/s);
   });

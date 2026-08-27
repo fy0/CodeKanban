@@ -701,22 +701,6 @@ func normalizeWebSessionQuickInputItems(items []string, limit int) []string {
 	return normalized
 }
 
-// WriteConfig 会将当前配置写回磁盘，写入的是启动时实际加载的配置文件路径。
-// Deprecated: 推荐使用 UpdateConfig 进行原子更新，避免并发修改问题。
-func WriteConfig(config *AppConfig) error {
-	configMu.Lock()
-	defer configMu.Unlock()
-
-	// 使用 ReadConfig 时实际加载的配置路径
-	// 确保写入与读取的是同一个文件
-	if activeConfigPath == "" {
-		// 如果 ReadConfig 尚未调用，回退到数据目录
-		dataDir := GetDataDir()
-		activeConfigPath = fmt.Sprintf("%s/config.yaml", dataDir)
-	}
-	return writeConfigToPathLocked(config, activeConfigPath)
-}
-
 // UpdateConfig 提供原子更新配置的能力，在锁内完成"修改+写盘"操作。
 // modifier 函数接收当前配置指针，可直接修改其字段。
 // 修改完成后自动持久化到磁盘。

@@ -1,5 +1,3 @@
-<template></template>
-
 <script setup lang="ts">
 import { computed, onBeforeUnmount, watch } from 'vue';
 import { useRouter } from 'vue-router';

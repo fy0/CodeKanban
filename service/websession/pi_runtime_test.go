@@ -78,8 +78,7 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 			"message": map[string]any{"role": role, "content": []any{map[string]any{"type": "text", "text": text}}},
 		})
 	}
-	finishPR5 := func() {}
-	finishPR5 = func() {
+	finishPR5 := func() {
 		if pr5Finished || !pr5Active || !pr5InputAnswered || !pr5Steered || !pr5FollowedUp {
 			return
 		}

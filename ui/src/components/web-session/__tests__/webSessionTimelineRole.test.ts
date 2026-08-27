@@ -32,6 +32,8 @@ describe('webSessionTimelineRole', () => {
   });
 
   it('does not label an unknown source thread as a known Agent', () => {
-    expect(resolveWebSessionTimelineSubAgent('thread-unknown', 'thread-root', new Map())).toBeNull();
+    expect(
+      resolveWebSessionTimelineSubAgent('thread-unknown', 'thread-root', new Map())
+    ).toBeNull();
   });
 });

@@ -69,7 +69,8 @@
                   在工作区(Worktrees)卡片中点击「打开终端」按钮，会自动打开终端并切换到该工作区目录。
                 </n-text>
                 <n-text depth="3">
-                  现在你可以根据不同工作内容开启多个终端，分别运行 AI 编程工具，并将终端标题改成当前用途，以免混淆。
+                  现在你可以根据不同工作内容开启多个终端，分别运行 AI
+                  编程工具，并将终端标题改成当前用途，以免混淆。
                 </n-text>
                 <n-text depth="3">
                   终端窗口的快捷键是 `
@@ -82,7 +83,6 @@
                 </n-text>
               </n-space>
             </n-step>
-
           </n-steps>
         </n-tab-pane>
 
@@ -116,14 +116,14 @@
               </n-space>
             </n-step>
 
-
             <n-step title="启动终端，开始工作">
               <n-space vertical>
                 <n-text depth="3">
                   在工作区(Worktrees)卡片中点击「打开终端」按钮，会自动打开终端并切换到该工作区目录。
                 </n-text>
                 <n-text depth="3">
-                  现在你可以根据不同工作内容开启多个终端，分别运行 AI 编程工具，并将终端标题改成当前用途，以免混淆。
+                  现在你可以根据不同工作内容开启多个终端，分别运行 AI
+                  编程工具，并将终端标题改成当前用途，以免混淆。
                 </n-text>
                 <n-text depth="3">
                   终端窗口的快捷键是 `
@@ -146,7 +146,6 @@
                 </n-text>
               </n-space>
             </n-step>
-
           </n-steps>
         </n-tab-pane>
       </n-tabs>
@@ -223,7 +222,6 @@
             </n-alert>
           </n-space>
         </n-collapse-item>
-
 
         <n-collapse-item title="集成终端" name="terminal">
           <n-space vertical>
@@ -421,7 +419,6 @@
                 <n-space vertical size="small">
                   <n-text depth="3">
                     从 develop 分支创建新的功能分支 feature/xxx，并为其创建工作区。
-
                   </n-text>
                 </n-space>
               </n-step>

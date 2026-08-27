@@ -24,10 +24,3 @@ func NormalizePathCase(path string) string {
 	}
 	return clean
 }
-
-func derefInt64(ptr *int64) int64 {
-	if ptr == nil {
-		return 0
-	}
-	return *ptr
-}

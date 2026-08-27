@@ -255,14 +255,6 @@ func historyAnswerEntries(raw map[string]any, questions []toolRequestQuestion) [
 	return result
 }
 
-func (m *Manager) userInputRequestQuestions(ctx context.Context, sessionID string, itemID string) []toolRequestQuestion {
-	db := model.GetDB()
-	if db == nil {
-		return nil
-	}
-	return m.userInputRequestQuestionsDB(ctx, db, sessionID, itemID)
-}
-
 func (m *Manager) userInputRequestQuestionsDB(
 	ctx context.Context,
 	db *gorm.DB,

@@ -1,5 +1,9 @@
 <template>
-  <div class="transfer-progress-dialog" :class="{ 'is-error': tone === 'error' }" :style="cardStyle">
+  <div
+    class="transfer-progress-dialog"
+    :class="{ 'is-error': tone === 'error' }"
+    :style="cardStyle"
+  >
     <span class="transfer-progress-message">{{ message }}</span>
     <span v-if="detail" class="transfer-progress-detail">{{ detail }}</span>
     <div v-if="normalizedProgress !== null" class="transfer-progress-track">

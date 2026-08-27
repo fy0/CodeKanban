@@ -527,13 +527,6 @@ func (m *Manager) findWorkTimingAnchorDB(
 	return &item, nil
 }
 
-func validateWorkTimingState(record tables.WebSessionRunTimingTable) error {
-	if strings.TrimSpace(record.WebSessionID) == "" || strings.TrimSpace(record.RunID) == "" {
-		return fmt.Errorf("work timing identity is required")
-	}
-	return nil
-}
-
 func (m *Manager) reapplyWorkTimingAnnotationsDB(
 	ctx context.Context,
 	tx *gorm.DB,

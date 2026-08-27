@@ -102,7 +102,7 @@ describe('web session composer submission', () => {
       'async function startPendingEdit(item: WebSessionPendingInput)',
       'function scheduledModeLabel('
     );
-    const clearHandlerSource = sourceBetween(
+    const removeHandlerSource = sourceBetween(
       'async function handleRemovePendingInput(pendingId: string)',
       'async function handleRemoveScheduledInput('
     );
@@ -117,7 +117,7 @@ describe('web session composer submission', () => {
     );
     expect(pendingHandlerSource).toContain('item.nativeQueued');
     expect(pendingHandlerSource).toContain('const currentItems = localPendingInputs.value;');
-    expect(clearHandlerSource).toContain('localPendingInputs.value.length === 0');
+    expect(removeHandlerSource).toContain("item.nativeQueued || item.status === 'persisting'");
   });
 
   it('does not reactivate a session after creation or catch-up becomes stale', () => {

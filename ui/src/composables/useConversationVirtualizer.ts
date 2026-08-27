@@ -61,15 +61,14 @@ export function useConversationVirtualizer<T extends ConversationVirtualItem>({
   });
 
   const heights = computed(() => {
-    measuredVersion.value;
+    void measuredVersion.value;
     return items.value.map((item, index) => {
       return measuredHeights.get(item.key) ?? estimateHeight(item, index);
     });
   });
 
   const offsets = computed(() => {
-    const nextOffsets = new Array(items.value.length + 1);
-    nextOffsets[0] = 0;
+    const nextOffsets = Array.from({ length: items.value.length + 1 }, () => 0);
     const currentHeights = heights.value;
     for (let index = 0; index < currentHeights.length; index += 1) {
       nextOffsets[index + 1] = nextOffsets[index] + currentHeights[index];

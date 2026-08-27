@@ -261,8 +261,6 @@ onMounted(() => {
     return;
   }
 
-  if (canLoadProtectedContent.value) {
-  }
   if (canLoadProtectedContent.value && projectStore.projects.length === 0) {
     void projectStore.fetchProjects({ silent: true }).catch(error => {
       console.error('[App] Failed to preload projects for browser title status', error);

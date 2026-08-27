@@ -1488,8 +1488,8 @@ function resolveSubAgentSummary(
   return extractToolSummary({
     kind: 'sub_agent_tool_call',
     in: {
-      ...(output ?? {}),
-      ...(input ?? {}),
+      ...output,
+      ...input,
     },
     meta,
     out: typeof output === 'string' ? output : undefined,
@@ -1577,15 +1577,6 @@ function normalizeLiveSubAgents(
       startedAt: known?.startedAt ?? startedAt,
     };
   });
-}
-
-function activeSubAgentIDsForBlock(
-  block: WebSessionBlock,
-  registry: Map<string, WebSessionLiveSubAgent>
-) {
-  return normalizeLiveSubAgents(block, registry)
-    .map(agent => String(agent.id ?? '').trim())
-    .filter(Boolean);
 }
 
 function applyAssistantNamedSubAgents(
@@ -1799,69 +1790,6 @@ function getRetryClearingProgressTimestamp(
     return null;
   }
   return getBlockFreshnessTimestamp(block);
-}
-
-function parseUserInputQuestions(value: unknown): WebSessionUserInputQuestion[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .map(item => {
-      const record = asRecord(item);
-      if (!record) {
-        return null;
-      }
-      return {
-        id: String(record.id ?? record.question ?? record.header ?? ''),
-        header: String(record.header ?? ''),
-        question: String(record.question ?? ''),
-        multiSelect: record.multiSelect === true,
-        isOther: record.isOther === true,
-        isSecret: record.isSecret === true,
-        options: Array.isArray(record.options)
-          ? record.options
-              .map(option => {
-                const optionRecord = asRecord(option);
-                if (!optionRecord) {
-                  return null;
-                }
-                return {
-                  label: String(optionRecord.label ?? ''),
-                  description: String(optionRecord.description ?? ''),
-                };
-              })
-              .filter((option): option is WebSessionUserInputOption => Boolean(option))
-          : [],
-      };
-    })
-    .filter((question): question is WebSessionUserInputQuestion => Boolean(question));
-}
-
-function summarizeUserInputPrompt(payload: Record<string, unknown>) {
-  const explicit = String(payload.txt ?? '').trim();
-  if (explicit) {
-    return explicit;
-  }
-  const questions = parseUserInputQuestions(payload.qs);
-  const lines = questions
-    .map(question => question.question.trim() || question.header.trim())
-    .filter(Boolean);
-  return lines.length > 0 ? lines.join('\n') : 'Additional input is required.';
-}
-
-function summarizeUserInputAnswer(payload: Record<string, unknown>) {
-  const answers = asRecord(payload.ans);
-  if (!answers) {
-    return 'Submitted requested input';
-  }
-  const parts = Object.values(answers)
-    .flatMap(value => (Array.isArray(value) ? value : []))
-    .map(value => String(value).trim())
-    .filter(Boolean);
-  if (parts.length === 0) {
-    return 'Submitted requested input';
-  }
-  return parts.join(', ');
 }
 
 function buildUserInputAnswerEntries(
@@ -2568,7 +2496,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     const nextDraftState = { ...pendingInputEditDraftStateByProject.value };
-    const nextProjectDrafts = { ...(nextDraftState[normalizedProjectId] ?? {}) };
+    const nextProjectDrafts = { ...nextDraftState[normalizedProjectId] };
     if (Object.keys(drafts).length > 0) {
       nextProjectDrafts[normalizedSessionId] = drafts;
       nextDraftState[normalizedProjectId] = nextProjectDrafts;

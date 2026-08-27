@@ -99,7 +99,6 @@
                 </n-text>
               </n-space>
             </n-step>
-
           </n-steps>
         </n-tab-pane>
 
@@ -137,7 +136,6 @@
               </n-space>
             </n-step>
 
-
             <n-step title="Start Terminal and Begin Work">
               <n-space vertical>
                 <n-text depth="3">
@@ -171,7 +169,6 @@
                 </n-text>
               </n-space>
             </n-step>
-
           </n-steps>
         </n-tab-pane>
       </n-tabs>
@@ -269,7 +266,6 @@
             </n-alert>
           </n-space>
         </n-collapse-item>
-
 
         <n-collapse-item title="Integrated Terminal" name="terminal">
           <n-space vertical>

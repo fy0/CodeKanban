@@ -64,6 +64,7 @@ import type { Project } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 import DirectoryPickerDialog from '@/components/common/DirectoryPickerDialog.vue';
+import { getErrorMessage } from '@/utils/errorHandler';
 
 const { t } = useLocale();
 
@@ -229,9 +230,10 @@ async function handleCreate() {
     message.success(t('message.projectCreated'));
     visible.value = false;
     emit('success', project);
-  } catch (error: any) {
-    if (error?.message) {
-      message.error(error.message);
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+    if (errorMessage) {
+      message.error(errorMessage);
     }
     return false;
   } finally {

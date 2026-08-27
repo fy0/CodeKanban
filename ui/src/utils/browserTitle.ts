@@ -18,11 +18,7 @@ function formatSummaryBadge(summary: BrowserTitleSummary) {
   return `[${summary.working}/${summary.blocking}/${summary.unreadCompleted}]`;
 }
 
-export function formatBrowserTabTitle({
-  summary,
-  appName,
-  projectName,
-}: BrowserTabTitleOptions) {
+export function formatBrowserTabTitle({ summary, appName, projectName }: BrowserTabTitleOptions) {
   const normalizedProjectName = normalizeProjectName(projectName);
   const hasSummary = summary.working + summary.blocking + summary.unreadCompleted > 0;
 

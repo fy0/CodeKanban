@@ -374,14 +374,7 @@ function walkHtmlNode(
     return;
   }
   if (isImageNode(node)) {
-    appendResolvedImage(
-      node,
-      segments,
-      images,
-      remoteImages,
-      unavailableImages,
-      pendingFiles
-    );
+    appendResolvedImage(node, segments, images, remoteImages, unavailableImages, pendingFiles);
     return;
   }
   if (tagName === 'br') {
@@ -394,14 +387,7 @@ function walkHtmlNode(
     appendText(segments, '\n');
   }
   for (const child of Array.from(node.childNodes)) {
-    walkHtmlNode(
-      child,
-      segments,
-      images,
-      remoteImages,
-      unavailableImages,
-      pendingFiles
-    );
+    walkHtmlNode(child, segments, images, remoteImages, unavailableImages, pendingFiles);
   }
   if (tagName === 'td' || tagName === 'th') {
     appendText(segments, '\t');
@@ -507,8 +493,7 @@ export function renderWebSessionComposerPastePlan(
             ? remoteImageReplacements[segment.remoteImageIndex] ||
               plan.remoteImages[segment.remoteImageIndex] ||
               plan.failureMarker
-            : unavailableImageReplacements[segment.unavailableImageIndex] ||
-              plan.failureMarker;
+            : unavailableImageReplacements[segment.unavailableImageIndex] || plan.failureMarker;
       return ` ${replacement} `;
     })
     .join('');

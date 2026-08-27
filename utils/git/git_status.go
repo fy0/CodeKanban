@@ -3,7 +3,6 @@ package git
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -299,11 +298,4 @@ func firstLine(msg string) string {
 
 func filepathSlash(path string) string {
 	return strings.ReplaceAll(path, "\\", "/")
-}
-
-func statusSummary(status *WorktreeStatus) string {
-	if status == nil {
-		return ""
-	}
-	return fmt.Sprintf("modified=%d staged=%d untracked=%d conflicted=%d", status.Modified, status.Staged, status.Untracked, status.Conflicted)
 }

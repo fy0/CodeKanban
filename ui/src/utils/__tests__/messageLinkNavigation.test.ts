@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  resolveCopyableAbsoluteHref,
-  resolveNavigableHref,
-} from '@/utils/messageLinkNavigation';
+import { resolveCopyableAbsoluteHref, resolveNavigableHref } from '@/utils/messageLinkNavigation';
 
 const BASE_URL = 'http://127.0.0.1:6022/home/dev/CodeKanban/ui/';
 
@@ -15,8 +12,9 @@ describe('messageLinkNavigation', () => {
   });
 
   it('resolves same-origin relative paths with fragments', () => {
-    expect(resolveNavigableHref('/home/dev/CodeKanban/ui/src/stores/webSession.ts#L1539', BASE_URL))
-      .toBe('http://127.0.0.1:6022/home/dev/CodeKanban/ui/src/stores/webSession.ts#L1539');
+    expect(
+      resolveNavigableHref('/home/dev/CodeKanban/ui/src/stores/webSession.ts#L1539', BASE_URL)
+    ).toBe('http://127.0.0.1:6022/home/dev/CodeKanban/ui/src/stores/webSession.ts#L1539');
   });
 
   it('rejects empty and hash-only links', () => {
@@ -38,7 +36,9 @@ describe('messageLinkNavigation', () => {
     expect(resolveCopyableAbsoluteHref('https://example.com/docs')).toBe(
       'https://example.com/docs'
     );
-    expect(resolveCopyableAbsoluteHref('/home/dev/CodeKanban/ui/src/stores/webSession.ts')).toBeNull();
+    expect(
+      resolveCopyableAbsoluteHref('/home/dev/CodeKanban/ui/src/stores/webSession.ts')
+    ).toBeNull();
     expect(resolveCopyableAbsoluteHref('mailto:test@example.com')).toBeNull();
     expect(resolveCopyableAbsoluteHref('')).toBeNull();
   });

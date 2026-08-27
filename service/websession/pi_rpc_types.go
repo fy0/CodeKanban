@@ -33,24 +33,6 @@ type piRPCState struct {
 	SessionName   string `json:"sessionName"`
 }
 
-type piRPCModel struct {
-	Provider      string   `json:"provider"`
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Reasoning     bool     `json:"reasoning"`
-	Input         []string `json:"input"`
-	ContextWindow int64    `json:"contextWindow"`
-	MaxTokens     int64    `json:"maxTokens"`
-}
-
-type piRPCAvailableModels struct {
-	Models []piRPCModel `json:"models"`
-}
-
-type piRPCAvailableThinkingLevels struct {
-	Levels []string `json:"levels"`
-}
-
 type piRPCSetModelResult struct {
 	Provider string `json:"provider"`
 	ID       string `json:"id"`

@@ -113,16 +113,6 @@ func (m *Manager) registerPiRuntimeTerminator(
 	m.piRuntimeMu.Unlock()
 }
 
-func (m *Manager) unregisterPiRuntimeTerminator(sessionID string) {
-	if m == nil {
-		return
-	}
-	m.piRuntimeMu.Lock()
-	delete(m.piRuntimeTerminators, strings.TrimSpace(sessionID))
-	m.piRuntimeMu.Unlock()
-}
-
-// StopSessionPiRuntime terminates a registered Pi process, including an idle one.
 func (m *Manager) StopSessionPiRuntime(sessionID string) {
 	if m == nil {
 		return

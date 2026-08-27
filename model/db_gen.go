@@ -36,9 +36,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.accessTokenRefreshStmt, err = db.PrepareContext(ctx, accessTokenRefresh); err != nil {
 		return nil, fmt.Errorf("error preparing query AccessTokenRefresh: %w", err)
 	}
-	if q.getOneStmt, err = db.PrepareContext(ctx, getOne); err != nil {
-		return nil, fmt.Errorf("error preparing query GetOne: %w", err)
-	}
 	if q.projectClearAccessStmt, err = db.PrepareContext(ctx, projectClearAccess); err != nil {
 		return nil, fmt.Errorf("error preparing query ProjectClearAccess: %w", err)
 	}
@@ -134,11 +131,6 @@ func (q *Queries) Close() error {
 	if q.accessTokenRefreshStmt != nil {
 		if cerr := q.accessTokenRefreshStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing accessTokenRefreshStmt: %w", cerr)
-		}
-	}
-	if q.getOneStmt != nil {
-		if cerr := q.getOneStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getOneStmt: %w", cerr)
 		}
 	}
 	if q.projectClearAccessStmt != nil {
@@ -304,7 +296,6 @@ type Queries struct {
 	accessTokenDeleteAllByUserIdStmt  *sql.Stmt
 	accessTokenGetByIdStmt            *sql.Stmt
 	accessTokenRefreshStmt            *sql.Stmt
-	getOneStmt                        *sql.Stmt
 	projectClearAccessStmt            *sql.Stmt
 	projectCreateStmt                 *sql.Stmt
 	projectGetByIDStmt                *sql.Stmt
@@ -339,7 +330,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		accessTokenDeleteAllByUserIdStmt:  q.accessTokenDeleteAllByUserIdStmt,
 		accessTokenGetByIdStmt:            q.accessTokenGetByIdStmt,
 		accessTokenRefreshStmt:            q.accessTokenRefreshStmt,
-		getOneStmt:                        q.getOneStmt,
 		projectClearAccessStmt:            q.projectClearAccessStmt,
 		projectCreateStmt:                 q.projectCreateStmt,
 		projectGetByIDStmt:                q.projectGetByIDStmt,

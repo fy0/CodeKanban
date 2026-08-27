@@ -6,13 +6,7 @@ import type { TerminalSession } from '@/types/models';
 const TERMINAL_SESSION_POLL_MS = 5000;
 
 function normalizeProjectIds(projectIds: string[]) {
-  return Array.from(
-    new Set(
-      projectIds
-        .map(projectId => projectId.trim())
-        .filter(Boolean)
-    )
-  ).sort();
+  return Array.from(new Set(projectIds.map(projectId => projectId.trim()).filter(Boolean))).sort();
 }
 
 function normalizeSession(projectId: string, session: TerminalSession): TerminalSession {

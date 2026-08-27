@@ -32,8 +32,7 @@ export function createRuntimeConfigRequestLoader<T>(
       );
     }
 
-    let request: Promise<T>;
-    request = Promise.resolve()
+    const request = Promise.resolve()
       .then(() => fetchConfig(force))
       .then(value => {
         cached = {

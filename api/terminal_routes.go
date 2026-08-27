@@ -37,12 +37,11 @@ const (
 )
 
 type terminalController struct {
-	cfg            *utils.AppConfig
-	manager        *terminal.Manager
-	worktreeSvc    *service.WorktreeService
-	logger         *zap.Logger
-	upgrader       websocket.Upgrader
-	wsPathTemplate string
+	cfg         *utils.AppConfig
+	manager     *terminal.Manager
+	worktreeSvc *service.WorktreeService
+	logger      *zap.Logger
+	upgrader    websocket.Upgrader
 }
 
 func registerTerminalRoutes(app *fiber.App, group *huma.Group, cfg *utils.AppConfig, manager *terminal.Manager, logger *zap.Logger) {

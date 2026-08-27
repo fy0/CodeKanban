@@ -83,6 +83,7 @@ import { RefreshOutline } from '@vicons/ionicons5';
 import { http } from '@/api/http';
 import { useLocale } from '@/composables/useLocale';
 import { useProjectStore } from '@/stores/project';
+import { getErrorMessage } from '@/utils/errorHandler';
 
 type GitEnginePreference = 'auto' | 'builtin' | 'system';
 
@@ -161,8 +162,8 @@ async function probe() {
   probing.value = true;
   try {
     await load(true);
-  } catch (error: any) {
-    message.error(error?.message ?? t('settings.gitProbeFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('settings.gitProbeFailed')));
   } finally {
     probing.value = false;
   }
@@ -185,16 +186,16 @@ async function save() {
       await projectStore.fetchGitCapabilities(projectStore.currentProject.id);
     }
     message.success(t('settings.gitSettingsSaved'));
-  } catch (error: any) {
-    message.error(error?.message ?? t('common.error'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('common.error')));
   } finally {
     saving.value = false;
   }
 }
 
 onMounted(() => {
-  void load().catch((error: any) => {
-    message.error(error?.message ?? t('common.error'));
+  void load().catch(error => {
+    message.error(getErrorMessage(error, t('common.error')));
   });
 });
 </script>

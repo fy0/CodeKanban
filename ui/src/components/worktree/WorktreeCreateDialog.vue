@@ -52,6 +52,7 @@ import { useProjectStore } from '@/stores/project';
 import type { Worktree } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
 import { gitOperationAvailable } from '@/utils/projectGitCapability';
+import { getErrorMessage } from '@/utils/errorHandler';
 
 const { t } = useLocale();
 
@@ -168,8 +169,8 @@ async function handleCreate() {
     emit('success', worktree);
     // 返回 true 让 Naive UI 自动关闭对话框
     return true;
-  } catch (error: any) {
-    message.error(error?.message ?? t('worktree.createFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('worktree.createFailed')));
     return false;
   } finally {
     loading.value = false;

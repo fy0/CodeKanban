@@ -64,31 +64,6 @@ func (m *Manager) removeSessionEventState(sessionID string, state *sessionEventS
 	}
 }
 
-func (m *Manager) clearSessionEventState(sessionID string) {
-	m.eventStatesMu.Lock()
-	state := m.eventStates[sessionID]
-	delete(m.eventStates, sessionID)
-	m.eventStatesMu.Unlock()
-	if state == nil {
-		return
-	}
-	state.mu.Lock()
-	if state.timer != nil {
-		state.timer.Stop()
-	}
-	if state.projectionTimer != nil {
-		state.projectionTimer.Stop()
-	}
-	state.pending = nil
-	state.timer = nil
-	state.timerGeneration++
-	state.projectionRetries = nil
-	state.projectionTimer = nil
-	state.projectionTimerGeneration++
-	state.closed = false
-	state.mu.Unlock()
-}
-
 func (m *Manager) queueEventProjectionRetryLocked(
 	sessionID string,
 	state *sessionEventState,

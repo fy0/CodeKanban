@@ -51,33 +51,42 @@ func EnsureAuthConfig(cfg *AppConfig) error {
 	if cfg == nil {
 		return nil
 	}
-	cfg.Auth = SanitizeAuthConfig(cfg.Auth)
 
-	changed := false
+	var frontendSalt string
+	var tokenSecret string
 	if strings.TrimSpace(cfg.Auth.FrontendSalt) == "" {
 		value, err := NewAuthFrontendSalt()
 		if err != nil {
 			return err
 		}
-		cfg.Auth.FrontendSalt = value
-		changed = true
+		frontendSalt = value
 	}
 	if strings.TrimSpace(cfg.Auth.TokenSecret) == "" {
 		value, err := NewAuthTokenSecret()
 		if err != nil {
 			return err
 		}
-		cfg.Auth.TokenSecret = value
-		changed = true
+		tokenSecret = value
 	}
 
-	cfg.Auth.sessionDuration = 0
-	_ = cfg.Auth.SessionDuration()
-
-	if !changed {
+	if frontendSalt == "" && tokenSecret == "" {
+		cfg.Auth = SanitizeAuthConfig(cfg.Auth)
+		cfg.Auth.sessionDuration = 0
+		_ = cfg.Auth.SessionDuration()
 		return nil
 	}
-	return WriteConfig(cfg)
+
+	return UpdateConfig(cfg, func(current *AppConfig) {
+		current.Auth = SanitizeAuthConfig(current.Auth)
+		if strings.TrimSpace(current.Auth.FrontendSalt) == "" {
+			current.Auth.FrontendSalt = frontendSalt
+		}
+		if strings.TrimSpace(current.Auth.TokenSecret) == "" {
+			current.Auth.TokenSecret = tokenSecret
+		}
+		current.Auth.sessionDuration = 0
+		_ = current.Auth.SessionDuration()
+	})
 }
 
 func RotateAuthTokenSecret(cfg *AppConfig) error {

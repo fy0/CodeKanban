@@ -10,8 +10,97 @@ on:
   workflow_dispatch:
 
 jobs:
+  frontend:
+    name: Frontend quality and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: 'ui/pnpm-lock.yaml'
+
+      - name: Install frontend dependencies
+        working-directory: ./ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint frontend
+        working-directory: ./ui
+        run: pnpm lint
+
+      - name: Type-check frontend
+        working-directory: ./ui
+        run: pnpm type-check
+
+      - name: Test frontend
+        working-directory: ./ui
+        run: pnpm test
+
+      - name: Build frontend
+        working-directory: ./ui
+        run: pnpm build-only
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: ui/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  node-tests:
+    name: Node SDK and CLI tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Test Node SDK and CLI
+        run: node --test packages/node-sdk/test/*.test.js packages/codekanban-cli/test/*.test.js
+
+  go-quality:
+    name: Go quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+
+      - name: Test Go packages
+        run: go test -count=1 -p 1 ./...
+
+      - name: Vet Go packages
+        run: go vet ./...
+
   build:
     name: Build for ${{ matrix.platform }}
+    needs: [frontend, node-tests, go-quality]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -60,31 +149,15 @@ jobs:
           go-version: '1.25.x'
           cache: true
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-          cache-dependency-path: 'ui/pnpm-lock.yaml'
-
-      - name: Install frontend dependencies
-        working-directory: ./ui
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend
-        working-directory: ./ui
-        run: pnpm build
-
-      - name: Copy frontend dist to static
+      - name: Clear embedded frontend
         shell: bash
-        run: |
-          rm -rf static/*
-          cp -r ui/dist/* static/
+        run: rm -rf static/*
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: static
 
       - name: Extract version info
         id: version

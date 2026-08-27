@@ -5,11 +5,10 @@ import { buildWebSessionMobilePendingSummary } from '@/components/web-session/we
 describe('webSessionMobilePendingSummary', () => {
   it('shows a delayed summary when there are no next-step or queued inputs', () => {
     expect(
-      buildWebSessionMobilePendingSummary([], [
-        { status: 'scheduled' },
-        { status: 'failed' },
-        { status: 'expired' },
-      ])
+      buildWebSessionMobilePendingSummary(
+        [],
+        [{ status: 'scheduled' }, { status: 'failed' }, { status: 'expired' }]
+      )
     ).toEqual([{ kind: 'scheduled', count: 1 }]);
   });
 

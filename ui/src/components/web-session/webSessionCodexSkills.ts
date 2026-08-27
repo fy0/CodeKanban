@@ -148,7 +148,7 @@ export function insertCodexSkillTokenAtCursor(
   const prefix = normalizedText.slice(0, safeStart);
   const suffix = normalizedText.slice(safeEnd);
   const needsLeadingSpace =
-    prefix.length > 0 && !/[\s(\[{'"`]/.test(prefix[prefix.length - 1] || '');
+    prefix.length > 0 && !/[\s([{'"`]/.test(prefix[prefix.length - 1] || '');
   const needsTrailingSpace = suffix.length > 0 && !/[\s)\]}.,!?;:'"`]/.test(suffix[0] || '');
   const insertedText = `${needsLeadingSpace ? ' ' : ''}${token}${needsTrailingSpace ? ' ' : ''}`;
 

@@ -139,16 +139,21 @@ go build -ldflags="-s -w" -trimpath -o CodeKanban
 - 空闲终端列表 / 待交互终端列表。
 
 
-## ???? Codex Skill Bundle
+## 可安装的 Codex 技能包
 
-????????? `codekanban-cli` ???? Codex skill bundle????????????????????????????
+本仓库提供一个围绕统一公共 CLI `codekanban-cli` 构建的 Codex 技能包。需要在其他机器上使用 CodeKanban 技能工作流时，无需复制整个仓库即可安装。
 
-??????
+JavaScript 包结构：
 
-- ???????`http://127.0.0.1:3007`
-- ????????`printf '%s' '<PASSWORD>' | codekanban-cli auth save-token --password-stdin`
-- ??????`codekanban-cli --base-url http://192.168.1.50:3007 session list --path /repo`
-- ????????Windows `%APPDATA%\codekanban-cli\session.json`?macOS/Linux `$XDG_CONFIG_HOME/codekanban-cli/session.json` ? `~/.config/codekanban-cli/session.json`
+- `packages/node-sdk`：供 JavaScript 集成使用的纯 SDK
+- `packages/codekanban-cli`：唯一对外发布的 CLI，也是打包后 Codex 技能的维护位置
+- `packages/codekanban-cli/skills/codekanban-cli`：仓库提供的 Codex 技能源码
 
-?????????????????????????????????? `codekanban-cli`?
-??? CLI ? skills ?????? Codex ????????
+关键默认值：
+
+- 默认服务地址：`http://127.0.0.1:3007`
+- 首次配置认证：`printf '%s' '<PASSWORD>' | codekanban-cli auth save-token --password-stdin`
+- 指定其他服务地址：`codekanban-cli --base-url http://192.168.1.50:3007 session list --path /repo`
+- 认证文件位置：Windows 为 `%APPDATA%\codekanban-cli\session.json`；macOS/Linux 为 `$XDG_CONFIG_HOME/codekanban-cli/session.json` 或 `~/.config/codekanban-cli/session.json`
+
+离线安装包会安装一个 CLI 包并复制一个 Codex 技能。安装 CLI 和技能后，请重启 Codex，使新技能被正确发现。

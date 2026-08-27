@@ -13,8 +13,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const cacheSyncReadTimeout = 10 * time.Second
-
 func syncedToolStatus(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "completed", "success", "succeeded", "done":
@@ -799,23 +797,4 @@ func (m *Manager) refreshSessionSourceStates(
 	// Passive "source is newer than cache" polling was removed because it mostly
 	// added noisy stale markers while sessions were actively running.
 	return records
-}
-
-func (m *Manager) syncSessionIfCacheMissing(
-	ctx context.Context,
-	session tables.WebSessionTable,
-) error {
-	if session.NativeSessionID == nil || strings.TrimSpace(*session.NativeSessionID) == "" {
-		return nil
-	}
-	if normalizeAgent(Agent(session.Agent)) != AgentCodex {
-		return nil
-	}
-	if session.ItemCount > 0 {
-		return nil
-	}
-	timeoutCtx, cancel := context.WithTimeout(ctx, cacheSyncReadTimeout)
-	defer cancel()
-	_, err := m.syncSessionFromSource(timeoutCtx, session.ID, m.defaultCodexSyncMode(), false, false)
-	return err
 }

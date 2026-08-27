@@ -437,7 +437,7 @@ import {
 import type { HTMLAttributes } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
-import { useDialog, useMessage, NIcon, NInput, NButton, NSpace, NTooltip } from 'naive-ui';
+import { useDialog, useMessage, NIcon, NInput, NButton, NTooltip } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
 import {
   ChevronBackOutline,
@@ -486,7 +486,6 @@ import {
 import {
   TERMINAL_SNAPSHOT_INTERVAL_OPTIONS,
   formatTerminalSnapshotInterval,
-  type TerminalRenderMode,
 } from '@/constants/terminalRenderMode';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { useLocale } from '@/composables/useLocale';
@@ -502,6 +501,7 @@ import {
   calculateCardTabIndicatorStyle,
   hiddenCardTabIndicatorStyle,
 } from '@/utils/cardTabIndicator';
+import { getErrorMessage } from '@/utils/errorHandler';
 
 const props = defineProps<{
   projectId: string;
@@ -582,7 +582,7 @@ function renderProjectBadge(badge: ProjectBadge) {
         fontSize: '10px',
         fontWeight: '700',
         lineHeight: '1',
-      } as any,
+      },
     },
     badge.label
   );
@@ -613,8 +613,6 @@ const expanded = ref(true);
 const panelHeight = ref(470);
 const panelLeft = ref(220);
 const panelRight = ref(170);
-const panelBottom = ref(12);
-const mobilePanelTop = ref(15);
 const autoResize = useStorage('terminal-auto-resize', true);
 const sendResizeOnSwitch = useStorage('terminal-send-resize-on-switch', true);
 const showBranchFilter = useStorage('terminal-show-branch-filter', true);
@@ -622,7 +620,6 @@ const panelSize = reactive({
   width: 0,
   height: 0,
 });
-const isResizing = ref(false);
 const shouldAutoFocusTerminal = ref(true);
 const developerConfigStore = useDeveloperConfigStore();
 const { config: developerConfigState } = storeToRefs(developerConfigStore);
@@ -948,11 +945,6 @@ const createTerminalOptionsWithHeader = computed<DropdownOption[]>(() => {
   ];
 });
 
-const MIN_HEIGHT = 40; // 只保留一条缝
-const MAX_HEIGHT = 800;
-const MIN_MARGIN = 12;
-const MAX_MARGIN_PERCENT = 0.4; // 最大边距占窗口宽度的40%
-const MIN_PANEL_WIDTH = 375; // 终端面板最小宽度
 const DUPLICATE_SUFFIX = computed(() => t('terminal.duplicateSuffix'));
 const MAX_TAB_TITLE_WIDTH = 160;
 const TAB_LABEL_EXTRA_SPACE = 40;
@@ -1600,12 +1592,6 @@ const scheduleResizeAll = useDebounceFn(() => {
   }
 }, 150);
 
-const scheduleActiveTabResize = useDebounceFn((tabId: string) => {
-  if (autoResize.value && expanded.value && tabId) {
-    emitter.emit(`terminal-resize-${tabId}`);
-  }
-}, 150);
-
 useResizeObserver(panelRef, entries => {
   const entry = entries[0];
   if (!entry) {
@@ -1670,336 +1656,6 @@ watch(
   },
   { flush: 'post' }
 );
-
-type ToggleOptions = {
-  skipFocus?: boolean;
-};
-
-function isToggleOptions(value: unknown): value is ToggleOptions {
-  return Boolean(value && typeof value === 'object' && 'skipFocus' in value);
-}
-
-function toggleExpanded(arg?: ToggleOptions | MouseEvent) {
-  const options = isToggleOptions(arg) ? arg : undefined;
-  const willExpand = !expanded.value;
-  if (willExpand) {
-    shouldAutoFocusTerminal.value = !options?.skipFocus;
-  } else {
-    emitter.emit('terminal-blur-all');
-  }
-  expanded.value = !expanded.value;
-  // 展开时触发 resize，确保终端尺寸正确
-  if (expanded.value) {
-    nextTick(() => {
-      scheduleResizeAll();
-    });
-  }
-}
-
-function ensureExpanded(options?: ToggleOptions) {
-  if (expanded.value) {
-    return;
-  }
-  toggleExpanded(options);
-}
-
-function expand(options?: ToggleOptions) {
-  if (!expanded.value) {
-    toggleExpanded(options);
-  }
-}
-
-function collapse() {
-  if (expanded.value) {
-    toggleExpanded();
-  }
-}
-
-type EnsureExpandedEvent = ToggleOptions & { projectId?: string };
-
-function startResize(event: MouseEvent) {
-  if (!expanded.value) return;
-
-  event.preventDefault();
-  isResizing.value = true;
-
-  const startY = event.clientY;
-  const startHeight = panelHeight.value;
-  const windowHeight = window.innerHeight;
-
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!isResizing.value) return;
-
-    const deltaY = startY - e.clientY;
-    // 限制在边界内：高度不能小于0，顶部不能超出屏幕
-    const maxHeight = windowHeight - panelBottom.value;
-    const newHeight = Math.max(0, Math.min(maxHeight, startHeight + deltaY));
-    panelHeight.value = newHeight;
-
-    // 拖动时实时调整终端大小（使用节流函数）
-    scheduleResizeAll();
-  };
-
-  const handleMouseUp = () => {
-    isResizing.value = false;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-
-    // 拖动结束后再调整一次，确保精确
-    scheduleResizeAll();
-  };
-
-  document.addEventListener('mousemove', handleMouseMove);
-  document.addEventListener('mouseup', handleMouseUp);
-  document.body.style.cursor = 'ns-resize';
-  document.body.style.userSelect = 'none';
-}
-
-// 移动端触摸拖动调整高度
-function startMobileResize(event: TouchEvent) {
-  if (!expanded.value || !isMobile.value) return;
-
-  const touch = event.touches[0];
-  const startY = touch.clientY;
-  const startTop = mobilePanelTop.value;
-  const windowHeight = window.innerHeight;
-
-  const handleTouchMove = (e: TouchEvent) => {
-    const currentTouch = e.touches[0];
-    const deltaY = currentTouch.clientY - startY;
-    // 计算新的顶部位置 (vh)
-    const deltaVh = (deltaY / windowHeight) * 100;
-    // 限制范围: 10vh - 70vh
-    const newTop = Math.max(10, Math.min(70, startTop + deltaVh));
-    mobilePanelTop.value = newTop;
-    scheduleResizeAll();
-  };
-
-  const handleTouchEnd = () => {
-    document.removeEventListener('touchmove', handleTouchMove);
-    document.removeEventListener('touchend', handleTouchEnd);
-    scheduleResizeAll();
-  };
-
-  document.addEventListener('touchmove', handleTouchMove, { passive: true });
-  document.addEventListener('touchend', handleTouchEnd);
-}
-
-function startResizeLeft(event: MouseEvent) {
-  if (!expanded.value) return;
-
-  event.preventDefault();
-  isResizing.value = true;
-
-  const startX = event.clientX;
-  const startLeft = panelLeft.value;
-  const windowWidth = window.innerWidth;
-  const maxMargin = windowWidth * MAX_MARGIN_PERCENT;
-
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!isResizing.value) return;
-
-    const deltaX = e.clientX - startX;
-    // 限制在边界内：不能小于0，也不能让面板宽度为负
-    const maxLeft = windowWidth - panelRight.value;
-    const newLeft = Math.max(0, Math.min(maxLeft, startLeft + deltaX));
-
-    panelLeft.value = newLeft;
-
-    // 拖动时实时调整终端大小（使用节流函数）
-    scheduleResizeAll();
-  };
-
-  const handleMouseUp = () => {
-    isResizing.value = false;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-
-    // 拖动结束后再调整一次，确保精确
-    scheduleResizeAll();
-  };
-
-  document.addEventListener('mousemove', handleMouseMove);
-  document.addEventListener('mouseup', handleMouseUp);
-  document.body.style.cursor = 'ew-resize';
-  document.body.style.userSelect = 'none';
-}
-
-function startResizeRight(event: MouseEvent) {
-  if (!expanded.value) return;
-
-  event.preventDefault();
-  isResizing.value = true;
-
-  const startX = event.clientX;
-  const startRight = panelRight.value;
-  const windowWidth = window.innerWidth;
-  const maxMargin = windowWidth * MAX_MARGIN_PERCENT;
-
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!isResizing.value) return;
-
-    const deltaX = startX - e.clientX;
-    // 限制在边界内：不能小于0，也不能让面板宽度为负
-    const maxRight = windowWidth - panelLeft.value;
-    const newRight = Math.max(0, Math.min(maxRight, startRight + deltaX));
-
-    panelRight.value = newRight;
-
-    // 拖动时实时调整终端大小（使用节流函数）
-    scheduleResizeAll();
-  };
-
-  const handleMouseUp = () => {
-    isResizing.value = false;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-
-    // 拖动结束后再调整一次，确保精确
-    scheduleResizeAll();
-  };
-
-  document.addEventListener('mousemove', handleMouseMove);
-  document.addEventListener('mouseup', handleMouseUp);
-  document.body.style.cursor = 'ew-resize';
-  document.body.style.userSelect = 'none';
-}
-
-function startResizeBottom(event: MouseEvent) {
-  if (!expanded.value) return;
-
-  event.preventDefault();
-  isResizing.value = true;
-
-  const startY = event.clientY;
-  const startHeight = panelHeight.value;
-  const startBottom = panelBottom.value;
-  const windowHeight = window.innerHeight;
-
-  // 固定顶部位置（从屏幕底部算起）
-  const fixedTopPosition = startBottom + startHeight;
-
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!isResizing.value) return;
-
-    // 向上拖动底部手柄 -> deltaY为负 -> bottom增加（底部向上移）
-    // 向下拖动底部手柄 -> deltaY为正 -> bottom减小（底部向下移）
-    const deltaY = e.clientY - startY;
-    // 限制在边界内：bottom不能小于0，也不能让高度为负
-    const maxBottom = fixedTopPosition;
-    let newBottom = Math.max(0, Math.min(maxBottom, startBottom - deltaY));
-
-    // 根据固定的顶部位置计算新高度
-    const newHeight = fixedTopPosition - newBottom;
-
-    panelBottom.value = newBottom;
-    panelHeight.value = newHeight;
-
-    // 拖动时实时调整终端大小（使用节流函数）
-    scheduleResizeAll();
-  };
-
-  const handleMouseUp = () => {
-    isResizing.value = false;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-
-    // 拖动结束后再调整一次，确保精确
-    scheduleResizeAll();
-  };
-
-  document.addEventListener('mousemove', handleMouseMove);
-  document.addEventListener('mouseup', handleMouseUp);
-  document.body.style.cursor = 'ns-resize';
-  document.body.style.userSelect = 'none';
-}
-
-const isDragging = ref(false);
-const DRAG_THRESHOLD = 5; // 鼠标移动超过这个距离才算拖动
-
-function startPanelDrag(event: MouseEvent) {
-  if (!expanded.value) return;
-
-  // 全屏模式下不允许拖动
-  if (isFullscreen.value) {
-    return;
-  }
-
-  event.preventDefault();
-  event.stopPropagation();
-
-  const startX = event.clientX;
-  const startY = event.clientY;
-  const startLeft = panelLeft.value;
-  const startRight = panelRight.value;
-  const startBottom = panelBottom.value;
-  const windowWidth = window.innerWidth;
-  const windowHeight = window.innerHeight;
-  const maxMargin = windowWidth * MAX_MARGIN_PERCENT;
-
-  let hasMoved = false;
-
-  const handleMouseMove = (e: MouseEvent) => {
-    const deltaX = e.clientX - startX;
-    const deltaY = e.clientY - startY;
-
-    // 检查是否超过拖动阈值
-    if (!hasMoved && (Math.abs(deltaX) > DRAG_THRESHOLD || Math.abs(deltaY) > DRAG_THRESHOLD)) {
-      hasMoved = true;
-      isDragging.value = true;
-      document.body.style.cursor = 'move';
-      document.body.style.userSelect = 'none';
-    }
-
-    if (!isDragging.value) return;
-
-    const deltaYInverted = startY - e.clientY; // Y轴向上为正
-
-    // 计算新的位置 - 限制有效的deltaX，确保不超出边界
-    // 左边界限制：newLeft >= 0 => deltaX >= -startLeft
-    // 右边界限制：newRight >= 0 => deltaX <= startRight
-    const effectiveDeltaX = Math.max(-startLeft, Math.min(startRight, deltaX));
-
-    const newLeft = startLeft + effectiveDeltaX;
-    const newRight = startRight - effectiveDeltaX;
-
-    // 底部边界：不能小于0，顶部不能超出屏幕
-    const maxBottom = windowHeight - panelHeight.value;
-    const newBottom = Math.max(0, Math.min(maxBottom, startBottom + deltaYInverted));
-
-    panelLeft.value = newLeft;
-    panelRight.value = newRight;
-    panelBottom.value = newBottom;
-
-    // 拖动时实时调整终端大小（使用节流函数）
-    scheduleResizeAll();
-  };
-
-  const handleMouseUp = (e: MouseEvent) => {
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
-
-    if (hasMoved) {
-      // 拖动结束后再调整一次，确保精确
-      scheduleResizeAll();
-    }
-
-    isDragging.value = false;
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-  };
-
-  document.addEventListener('mousemove', handleMouseMove);
-  document.addEventListener('mouseup', handleMouseUp);
-}
 
 // 处理创建终端按钮点击 - 如果只有一个分支，直接创建
 function handleCreateTerminalClick() {
@@ -2071,8 +1727,8 @@ async function openEditorForTab(tab: TerminalTabState | null, editor: EditorPref
     );
     const label = EDITOR_LABEL_MAP[editor] ?? t('worktree.editor');
     message.success(t('worktree.openedInEditor', { editor: label }));
-  } catch (error: any) {
-    message.error(error?.message ?? t('worktree.openEditorFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('worktree.openEditorFailed')));
   }
 }
 
@@ -2282,8 +1938,8 @@ async function handleRunQuickAction(action: TerminalQuickAction) {
 
     scheduleResizeAll();
     message.success(t('terminal.quickActionTriggered', { name: action.name }));
-  } catch (error: any) {
-    message.error(error?.message ?? t('terminal.quickActionFailed', { name: action.name }));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('terminal.quickActionFailed', { name: action.name })));
   }
 }
 
@@ -2312,13 +1968,13 @@ async function openTerminal(options: TerminalCreateOptions): Promise<string | un
       scheduleResizeAll();
     }, 400);
     return sessionId;
-  } catch (error: any) {
-    message.error(error?.message ?? t('terminal.createFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('terminal.createFailed')));
   }
 }
 
 // Handle resume session from AI Session History dialog
-async function handleResumeSession(claudeSessionId: string, sessionType: string) {
+async function handleResumeSession(claudeSessionId: string) {
   if (!props.projectId) {
     message.warning(t('terminal.pleaseSelectProject'));
     return;
@@ -2376,8 +2032,8 @@ async function handleResumeSession(claudeSessionId: string, sessionType: string)
     }, 1500);
 
     scheduleResizeAll();
-  } catch (error: any) {
-    message.error(error?.message ?? t('terminal.createFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('terminal.createFailed')));
   }
 }
 
@@ -2416,8 +2072,8 @@ async function performClose(sessionId: string): Promise<boolean> {
     await closeSession(sessionId);
     message.success(t('terminal.terminalClosed'));
     return true;
-  } catch (error: any) {
-    message.error(error?.message ?? t('terminal.closeFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('terminal.closeFailed')));
     disconnectTab(sessionId);
     return false;
   }
@@ -2691,8 +2347,8 @@ async function browseDirectory(tab: TerminalTabState) {
   }
   try {
     await projectStore.openInExplorer(path);
-  } catch (error: any) {
-    message.error(error?.message ?? t('worktree.openExplorerFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('worktree.openExplorerFailed')));
   }
 }
 
@@ -2794,7 +2450,7 @@ function promptCloseRightTabs(tab: TerminalTabState) {
       for (const rightTab of rightTabs) {
         try {
           await closeSession(rightTab.id);
-        } catch (error: any) {
+        } catch (error) {
           console.error('Failed to close tab:', rightTab.id, error);
         }
       }
@@ -2818,8 +2474,8 @@ async function duplicateTab(tab: TerminalTabState) {
       insertAfterSessionId: tab.id,
     });
     message.success(t('terminal.duplicateSuccess'));
-  } catch (error: any) {
-    message.error(error?.message ?? t('terminal.duplicateFailed'));
+  } catch (error) {
+    message.error(getErrorMessage(error, t('terminal.duplicateFailed')));
   }
 }
 
@@ -2863,8 +2519,8 @@ function promptRenameTab(tab: TerminalTabState) {
         await renameSession(tab.id, nextTitle);
         message.success(t('terminal.renameSuccess'));
         return true;
-      } catch (error: any) {
-        message.error(error?.message ?? t('terminal.renameFailed'));
+      } catch (error) {
+        message.error(getErrorMessage(error, t('terminal.renameFailed')));
         return false;
       }
     },

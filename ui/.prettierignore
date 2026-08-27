@@ -1,0 +1,8 @@
+dist*/
+coverage/
+pnpm-lock.yaml
+src/api/apiDefinitions.ts
+src/api/createApis.ts
+src/api/globals.d.ts
+auto-imports.d.ts
+components.d.ts

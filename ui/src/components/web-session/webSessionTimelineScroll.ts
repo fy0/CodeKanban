@@ -117,8 +117,7 @@ export function resolveWebSessionMobileComposerScrollState(
   const clientHeight = Math.max(0, metrics.clientHeight);
 
   if (
-    Math.abs(clientHeight - previous.lastClientHeight) >
-    WEB_SESSION_TIMELINE_SCROLL_UP_EPSILON_PX
+    Math.abs(clientHeight - previous.lastClientHeight) > WEB_SESSION_TIMELINE_SCROLL_UP_EPSILON_PX
   ) {
     return {
       action: 'none',

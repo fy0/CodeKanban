@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
 const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
+const webSessionTimelineStylePath = fileURLToPath(
+  new URL('../styles/webSessionPanelTimeline.css', import.meta.url)
+);
+const webSessionTimelineStyleSource = readFileSync(webSessionTimelineStylePath, 'utf8');
 
 describe('web session user input option styles', () => {
   it('exposes selected and disabled state classes for single and multi-select options', () => {
@@ -22,9 +26,9 @@ describe('web session user input option styles', () => {
   });
 
   it('keeps the option card states scoped to the pending user input surface', () => {
-    expect(webSessionPanelSource).toContain('.user-input-option.is-selected');
-    expect(webSessionPanelSource).toContain('.user-input-option:focus-within');
-    expect(webSessionPanelSource).toContain('.user-input-option.is-disabled');
-    expect(webSessionPanelSource).toContain('.history-option-row');
+    expect(webSessionTimelineStyleSource).toContain('.user-input-option.is-selected');
+    expect(webSessionTimelineStyleSource).toContain('.user-input-option:focus-within');
+    expect(webSessionTimelineStyleSource).toContain('.user-input-option.is-disabled');
+    expect(webSessionTimelineStyleSource).toContain('.history-option-row');
   });
 });

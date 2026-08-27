@@ -3,9 +3,7 @@ import { fileURLToPath, URL } from 'node:url';
 
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
-import vueJsx from '@vitejs/plugin-vue-jsx';
 import tailwindcss from '@tailwindcss/vite';
-// import vueDevTools from 'vite-plugin-vue-devtools'
 import AutoImport from 'unplugin-auto-import/vite';
 import { NaiveUiResolver } from 'unplugin-vue-components/resolvers';
 import Components from 'unplugin-vue-components/vite';
@@ -79,7 +77,6 @@ const resolveApiProxyTarget = () => {
 
 const apiProxyTarget = resolveApiProxyTarget();
 
-// https://vite.dev/config/
 export default defineConfig({
   base: './',
   server: {
@@ -103,9 +100,7 @@ export default defineConfig({
   },
   plugins: [
     vue(),
-    vueJsx(),
     ...tailwindcss(),
-    // vueDevTools(),
     AutoImport({
       imports: [
         {
@@ -125,11 +120,15 @@ export default defineConfig({
       },
       {
         find: 'highlight.js/lib/core',
-        replacement: fileURLToPath(new URL('./node_modules/highlight.js/es/core.js', import.meta.url)),
+        replacement: fileURLToPath(
+          new URL('./node_modules/highlight.js/es/core.js', import.meta.url)
+        ),
       },
       {
         find: 'highlight.js/lib/languages',
-        replacement: fileURLToPath(new URL('./node_modules/highlight.js/es/languages', import.meta.url)),
+        replacement: fileURLToPath(
+          new URL('./node_modules/highlight.js/es/languages', import.meta.url)
+        ),
       },
     ],
   },

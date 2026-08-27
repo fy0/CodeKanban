@@ -69,7 +69,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, h, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useStorage } from '@vueuse/core';
 import { NIcon, NInput, NTooltip, type DropdownOption } from 'naive-ui';
@@ -97,6 +97,7 @@ import TerminalSidebarRow, {
   type TerminalSidebarRowView,
 } from '@/components/terminal/TerminalSidebarRow.vue';
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
+import { getErrorMessage } from '@/utils/errorHandler';
 
 const props = defineProps<{ projectId: string }>();
 const { t, locale } = useLocale();
@@ -248,7 +249,7 @@ const actionOptions = computed<DropdownOption[]>(() => [
 ]);
 
 function hIcon(icon: unknown) {
-  return h(NIcon, null, { default: () => h(icon as any) });
+  return h(NIcon, null, { default: () => h(icon as Component) });
 }
 
 type TerminalSidebarEntry = { projectId: string; tab: TerminalTabState };
@@ -364,8 +365,8 @@ function promptRename(projectId: string, tab: TerminalTabState) {
         await renameSession(projectId, tab.id, title);
         message.success(t('terminal.renameSuccess'));
         return true;
-      } catch (error: any) {
-        message.error(error?.message ?? t('terminal.renameFailed'));
+      } catch (error) {
+        message.error(getErrorMessage(error, t('terminal.renameFailed')));
         return false;
       }
     },
@@ -393,8 +394,8 @@ async function handleRowAction(row: TerminalSidebarRowView, key: string | number
         insertAfterSessionId: tab.id,
       });
       message.success(t('terminal.duplicateSuccess'));
-    } catch (error: any) {
-      message.error(error?.message ?? t('terminal.duplicateFailed'));
+    } catch (error) {
+      message.error(getErrorMessage(error, t('terminal.duplicateFailed')));
     }
     return;
   }

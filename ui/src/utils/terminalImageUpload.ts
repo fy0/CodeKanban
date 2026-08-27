@@ -32,18 +32,6 @@ function padTimestamp(value: number) {
   return String(value).padStart(2, '0');
 }
 
-function arrayBufferToBase64(buffer: ArrayBuffer) {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = '';
-
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-
-  return window.btoa(binary);
-}
-
 function resolveImageExtension(contentType?: string) {
   const normalized = contentType?.trim().toLowerCase();
   if (!normalized) {

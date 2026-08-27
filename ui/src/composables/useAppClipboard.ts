@@ -23,7 +23,9 @@ export function useAppClipboard() {
     }
 
     if (!clipboard.isSupported.value) {
-      message.error(options.unsupportedMessage ?? options.failureMessage ?? t('terminal.copyFailed'));
+      message.error(
+        options.unsupportedMessage ?? options.failureMessage ?? t('terminal.copyFailed')
+      );
       return false;
     }
 

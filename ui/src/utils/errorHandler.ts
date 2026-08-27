@@ -1,18 +1,27 @@
 import { useMessage } from 'naive-ui';
 
+export function getErrorMessage(error: unknown, fallback = ''): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error) {
+    return error;
+  }
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = Reflect.get(error, 'message');
+    if (typeof message === 'string' && message) {
+      return message;
+    }
+  }
+  return fallback;
+}
+
 export function setupErrorHandler() {
   const message = useMessage();
   const handler = (event: PromiseRejectionEvent) => {
     const reason = event.reason;
-    if (reason && typeof reason === 'object' && typeof reason.message === 'string') {
-      message.error(reason.message);
-    } else if (typeof reason === 'string') {
-      message.error(reason);
-    } else {
-      message.error('操作失败，请稍后重试');
-    }
+    message.error(getErrorMessage(reason, '操作失败，请稍后重试'));
     if (import.meta.env.DEV) {
-      // eslint-disable-next-line no-console
       console.error('Unhandled promise rejection:', reason);
     }
   };

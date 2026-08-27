@@ -174,46 +174,6 @@ func previousEventLineStart(file *os.File, lineEnd int64) (int64, error) {
 	return 0, nil
 }
 
-func (s *store) readWindow(sessionID string, limit int, beforeSeq *int64) (HistoryWindow, error) {
-	if limit <= 0 {
-		limit = 80
-	}
-	events, err := s.readEvents(sessionID)
-	if err != nil {
-		return HistoryWindow{}, err
-	}
-
-	total := len(events)
-	filtered := events
-	if beforeSeq != nil {
-		filtered = make([]Event, 0, len(events))
-		for _, event := range events {
-			if event.Seq < *beforeSeq {
-				filtered = append(filtered, event)
-			}
-		}
-	}
-
-	if len(filtered) <= limit {
-		return HistoryWindow{
-			Events:       filtered,
-			HasMore:      false,
-			BeforeCursor: "",
-			Total:        total,
-		}, nil
-	}
-
-	start := len(filtered) - limit
-	window := filtered[start:]
-	hasMore := start > 0
-	return HistoryWindow{
-		Events:       window,
-		HasMore:      hasMore,
-		BeforeCursor: historyCursor(window, hasMore),
-		Total:        total,
-	}, nil
-}
-
 func (s *store) deleteSessionFiles(sessionID string) error {
 	target, err := s.deletableSessionDir(sessionID)
 	if err != nil {

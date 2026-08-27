@@ -645,12 +645,6 @@ function toggleSession(session: AISessionSummary) {
   }
 }
 
-function formatTime(dateStr: string | null) {
-  if (!dateStr) return '-';
-  const date = new Date(dateStr);
-  return date.toLocaleString();
-}
-
 function getTimeAgo(dateStr: string | null) {
   if (!dateStr) return '';
   return useTimeAgo(new Date(dateStr)).value;

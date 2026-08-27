@@ -1,16 +1,11 @@
 import { computed, ref } from 'vue';
 import type { ConversationWindowState } from '@/components/common/ConversationViewer.vue';
-import type {
-  ConversationMessage,
-  ConversationWindowResponse as ConversationWindowModel,
-} from '@/types/models';
+import type { ConversationWindowResponse as ConversationWindowModel } from '@/types/models';
 
-type ConversationWindowLoader = (
-  options?: {
-    beforeCursor?: string;
-    limit?: number;
-  }
-) => Promise<ConversationWindowModel>;
+type ConversationWindowLoader = (options?: {
+  beforeCursor?: string;
+  limit?: number;
+}) => Promise<ConversationWindowModel>;
 
 const DEFAULT_LIMIT = 80;
 

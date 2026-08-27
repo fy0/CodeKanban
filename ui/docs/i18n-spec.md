@@ -36,9 +36,9 @@ import enUS from './locales/en-US';
 export type MessageSchema = typeof zhCN;
 
 const i18n = createI18n<[MessageSchema], 'zh-CN' | 'en-US'>({
-  legacy: false,              // 使用 Composition API
-  locale: initialLocale,      // 初始语言
-  fallbackLocale: 'zh-CN',    // 回退语言
+  legacy: false, // 使用 Composition API
+  locale: initialLocale, // 初始语言
+  fallbackLocale: 'zh-CN', // 回退语言
   messages: {
     'zh-CN': zhCN,
     'en-US': enUS,
@@ -50,7 +50,7 @@ const i18n = createI18n<[MessageSchema], 'zh-CN' | 'en-US'>({
 
 1. **自动语言检测**
    - 检测浏览器语言（`navigator.languages`）
-   - 优先匹配中文（zh-*）和英文（en-*）
+   - 优先匹配中文（zh-_）和英文（en-_）
    - 检测到的语言自动保存到 `localStorage`
 
 2. **语言持久化**
@@ -85,6 +85,7 @@ export function useLocale() {
 ```
 
 **功能：**
+
 - `locale`: 当前语言（响应式）
 - `setLocale`: 设置语言
 - `toggleLocale`: 在中英文之间切换
@@ -134,17 +135,19 @@ const { t, locale, setLocale, toggleLocale } = useLocale();
 翻译文本支持插值：
 
 **定义翻译：**
+
 ```typescript
 // zh-CN.ts
 export default {
   branch: {
     totalCount: '共 {count} 个',
     defaultBranchLabel: '{branch} (默认)',
-  }
-}
+  },
+};
 ```
 
 **使用：**
+
 ```typescript
 <template>
   <p>{{ t('branch.totalCount', { count: 10 }) }}</p>
@@ -153,6 +156,7 @@ export default {
 ```
 
 **渲染结果：**
+
 - `共 10 个`
 - `main (默认)`
 
@@ -188,31 +192,37 @@ const confirmDelete = () => {
 
 ```typescript
 export default {
-  common: {           // 通用词汇
+  common: {
+    // 通用词汇
     confirm: '确认',
     cancel: '取消',
     save: '保存',
     // ...
   },
-  nav: {              // 导航
+  nav: {
+    // 导航
     settings: '总设置',
     guide: '使用指引',
     // ...
   },
-  project: {          // 项目相关
+  project: {
+    // 项目相关
     title: '项目列表',
     createProject: '创建项目',
     // ...
   },
-  branch: {           // 分支相关
+  branch: {
+    // 分支相关
     title: '分支管理',
     createBranch: '创建分支',
     // ...
   },
-  task: {             // 任务相关
+  task: {
+    // 任务相关
     title: '任务',
     addTask: '添加任务',
-    status: {         // 嵌套结构
+    status: {
+      // 嵌套结构
       todo: '待办',
       inProgress: '进行中',
       // ...
@@ -223,16 +233,26 @@ export default {
       // ...
     },
   },
-  worktree: { /* ... */ },
-  terminal: { /* ... */ },
-  notepad: { /* ... */ },
-  settings: { /* ... */ },
-  message: {          // 提示消息
+  worktree: {
+    /* ... */
+  },
+  terminal: {
+    /* ... */
+  },
+  notepad: {
+    /* ... */
+  },
+  settings: {
+    /* ... */
+  },
+  message: {
+    // 提示消息
     saveSuccess: '保存成功',
     saveFailed: '保存失败',
     // ...
   },
-  validation: {       // 验证消息
+  validation: {
+    // 验证消息
     projectNameRequired: '请输入项目名称',
     // ...
   },
@@ -242,15 +262,17 @@ export default {
 ### 命名规范
 
 1. **使用驼峰命名法**
+
    ```typescript
-   createProject: '创建项目'  // ✅ 正确
-   create_project: '创建项目' // ❌ 错误
+   createProject: '创建项目'; // ✅ 正确
+   create_project: '创建项目'; // ❌ 错误
    ```
 
 2. **语义化命名**
+
    ```typescript
-   deleteConfirm: '确定要删除吗？'          // ✅ 清晰
-   msg1: '确定要删除吗？'                    // ❌ 不清晰
+   deleteConfirm: '确定要删除吗？'; // ✅ 清晰
+   msg1: '确定要删除吗？'; // ❌ 不清晰
    ```
 
 3. **相关项分组**
@@ -351,7 +373,7 @@ const i18n = createI18n<[MessageSchema], 'zh-CN' | 'en-US' | 'ja-JP'>({
   messages: {
     'zh-CN': zhCN,
     'en-US': enUS,
-    'ja-JP': jaJP,  // 添加新语言
+    'ja-JP': jaJP, // 添加新语言
   },
 });
 
@@ -364,7 +386,7 @@ function detectBrowserLocale(): 'zh-CN' | 'en-US' | 'ja-JP' {
 
     if (lowercaseLang.startsWith('zh')) return 'zh-CN';
     if (lowercaseLang.startsWith('en')) return 'en-US';
-    if (lowercaseLang.startsWith('ja')) return 'ja-JP';  // 添加日语检测
+    if (lowercaseLang.startsWith('ja')) return 'ja-JP'; // 添加日语检测
   }
 
   return 'zh-CN';
@@ -447,10 +469,10 @@ const localeOptions = [
 
 ```typescript
 // ✅ 正确
-deleteConfirm: '确定要删除吗？'
+deleteConfirm: '确定要删除吗？';
 
 // ❌ 过于冗长
-deleteConfirm: '您确定要删除这个项目吗？删除后将无法恢复，请谨慎操作。'
+deleteConfirm: '您确定要删除这个项目吗？删除后将无法恢复，请谨慎操作。';
 ```
 
 ### 3. 避免在翻译中包含 HTML
@@ -504,17 +526,25 @@ const formattedDate = dayjs(date).format('YYYY-MM-DD HH:mm:ss');
 ```typescript
 // ✅ 正确 - 所有语言都有
 // zh-CN.ts
-myModule: { newKey: '新功能' }
+myModule: {
+  newKey: '新功能';
+}
 
 // en-US.ts
-myModule: { newKey: 'New Feature' }
+myModule: {
+  newKey: 'New Feature';
+}
 
 // ❌ 错误 - en-US 缺少翻译
 // zh-CN.ts
-myModule: { newKey: '新功能' }
+myModule: {
+  newKey: '新功能';
+}
 
 // en-US.ts
-myModule: { /* newKey 缺失 */ }
+myModule: {
+  /* newKey 缺失 */
+}
 ```
 
 ### 7. 使用 TypeScript 类型检查
@@ -523,10 +553,18 @@ myModule: { /* newKey 缺失 */ }
 
 ```typescript
 // 这会产生类型错误，因为键不存在
-{{ t('nonexistent.key') }}  // ❌ TypeScript 错误
+{
+  {
+    t('nonexistent.key');
+  }
+} // ❌ TypeScript 错误
 
 // 正确的键会有自动补全
-{{ t('common.confirm') }}   // ✅ 有自动补全提示
+{
+  {
+    t('common.confirm');
+  }
+} // ✅ 有自动补全提示
 ```
 
 ---
@@ -536,6 +574,7 @@ myModule: { /* newKey 缺失 */ }
 ### Q1: 翻译未生效？
 
 **检查：**
+
 1. 翻译键是否正确
 2. 是否在所有语言文件中都添加了该键
 3. 组件是否正确使用 `useI18n` 或 `useLocale`
@@ -569,6 +608,7 @@ dayjs.locale(newLocale === 'zh-CN' ? 'zh-cn' : 'en');
 对于较长的文本，考虑：
 
 1. **拆分为多个键**
+
    ```typescript
    guide: {
      step1: '第一步：创建项目',
@@ -578,14 +618,14 @@ dayjs.locale(newLocale === 'zh-CN' ? 'zh-cn' : 'en');
    ```
 
 2. **使用 Markdown 组件**（如果项目有 Markdown 渲染器）
+
    ```typescript
    guideContent: `
      ## 快速开始
-
      1. 创建项目
      2. 配置分支
      3. 开始开发
-   `
+   `;
    ```
 
 ### Q5: 如何测试不同语言？

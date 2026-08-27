@@ -97,8 +97,9 @@ terminal:
 	if item.Payload.Server.TerminalShell == nil {
 		t.Fatal("expected terminal shell payload")
 	}
-	if got := item.Payload.Server.TerminalShell.Shell; strings.TrimSpace(got) != "/bin/sh" {
-		t.Fatalf("terminal shell = %q, want /bin/sh", got)
+	wantShell := strings.TrimSpace(utils.CurrentPlatformShell(cfg.Terminal.Shell))
+	if got := strings.TrimSpace(item.Payload.Server.TerminalShell.Shell); got != wantShell {
+		t.Fatalf("terminal shell = %q, want %q", got, wantShell)
 	}
 	if item.Payload.Server.AuthAccess == nil {
 		t.Fatal("expected auth access payload")
@@ -305,6 +306,7 @@ terminal:
 	terminalStub := &settingsBackupTerminalManagerStub{}
 	webSessionStub := &settingsBackupWebSessionManagerStub{}
 	app := newSystemSettingsBackupTestApp(t, cfg, terminalStub, webSessionStub)
+	importedShell := strings.TrimSpace(utils.CurrentPlatformShell(cfg.Terminal.Shell))
 
 	backup := utils.SettingsBackupFile{
 		BackupSchemaVersion: utils.SettingsBackupSchemaVersion,
@@ -343,8 +345,8 @@ terminal:
 					GlobalDirNamePattern: "{projectName}-custom",
 				}),
 				TerminalShell: loPtr(utils.SettingsBackupShellConfig{
-					Platform: "linux",
-					Shell:    "/bin/sh",
+					Platform: runtimePlatform(),
+					Shell:    importedShell,
 				}),
 				AuthAccess: loPtr(utils.AuthAccessConfig{
 					AccessRules: utils.AuthAccessRulesConfig{
@@ -381,14 +383,14 @@ terminal:
 	if !cfg.Developer.EnableTerminalScrollback {
 		t.Fatalf("developer config not applied: %#v", cfg.Developer)
 	}
-	if got := strings.TrimSpace(utils.CurrentPlatformShell(cfg.Terminal.Shell)); got != "/bin/sh" {
-		t.Fatalf("current platform shell = %q, want /bin/sh", got)
+	if got := strings.TrimSpace(utils.CurrentPlatformShell(cfg.Terminal.Shell)); got != importedShell {
+		t.Fatalf("current platform shell = %q, want %q", got, importedShell)
 	}
 	if terminalStub.scrollbackEnabled != true {
 		t.Fatal("expected terminal scrollback hot reload")
 	}
-	if strings.TrimSpace(utils.CurrentPlatformShell(terminalStub.shellConfig)) != "/bin/sh" {
-		t.Fatalf("hot reloaded shell = %q, want /bin/sh", utils.CurrentPlatformShell(terminalStub.shellConfig))
+	if got := strings.TrimSpace(utils.CurrentPlatformShell(terminalStub.shellConfig)); got != importedShell {
+		t.Fatalf("hot reloaded shell = %q, want %q", got, importedShell)
 	}
 	if webSessionStub.refreshCount != 1 {
 		t.Fatalf("web session refresh count = %d, want 1", webSessionStub.refreshCount)
@@ -584,9 +586,10 @@ func mustSystemSettingsBackupRequest(
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("app.Test failed: %v", err)
 	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	return resp
 }

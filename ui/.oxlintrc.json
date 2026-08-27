@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": [
+    "dist*/**",
+    "coverage/**",
+    "src/api/apiDefinitions.ts",
+    "src/api/createApis.ts",
+    "src/api/globals.d.ts"
+  ]
+}

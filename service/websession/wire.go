@@ -692,13 +692,7 @@ func mapWireHistoryItem(item HistoryItem) wireHistItem {
 	}
 	attachments := make([]wireHistoryAttach, 0, len(item.Attachments))
 	for _, attachment := range item.Attachments {
-		attachments = append(attachments, wireHistoryAttach{
-			ID:   attachment.ID,
-			Name: attachment.Name,
-			Mime: attachment.Mime,
-			Size: attachment.Size,
-			Path: attachment.Path,
-		})
+		attachments = append(attachments, wireHistoryAttach(attachment))
 	}
 	return wireHistItem{
 		ID:             item.ID,

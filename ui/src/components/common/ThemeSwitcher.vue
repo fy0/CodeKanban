@@ -75,7 +75,9 @@ const renderCheckIcon = () => h(NIcon, null, { default: () => h(CheckmarkOutline
 
 // 获取主题选项（使用 composable）
 const baseThemeOptions = useThemeOptions();
-const resolvedTrigger = computed(() => props.trigger ?? (props.quickToggleOnClick ? 'hover' : 'click'));
+const resolvedTrigger = computed(
+  () => props.trigger ?? (props.quickToggleOnClick ? 'hover' : 'click')
+);
 
 // 下拉菜单选项
 const themeOptions = computed<DropdownOption[]>(() => {

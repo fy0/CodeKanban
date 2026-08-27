@@ -541,11 +541,3 @@ func hasClaudeAnswerValues(answers map[string][]string) bool {
 	}
 	return false
 }
-
-func (m *Manager) claudeControlAvailable(run *activeRun) bool {
-	if run == nil {
-		return false
-	}
-	pending, ok := run.pendingServerRequest()
-	return ok && strings.TrimSpace(pending.ControlRequestID) != ""
-}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"embed"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -65,6 +66,11 @@ func newMountedStaticTestApp(t *testing.T, webURL string) *fiber.App {
 
 	app := fiber.New()
 	mountStatic(app, cfg, embed.FS{}, zap.NewNop())
+	t.Cleanup(func() {
+		if err := app.Shutdown(); err != nil {
+			t.Errorf("shutdown test app: %v", err)
+		}
+	})
 	return app
 }
 
@@ -126,9 +132,16 @@ func mustTestRequest(t *testing.T, app *fiber.App, method, target string) *http.
 	if err != nil {
 		t.Fatalf("new request %s %s: %v", method, target, err)
 	}
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("app.Test %s %s: %v", method, target, err)
+	}
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		_ = resp.Body.Close()
+		t.Fatalf("drain response %s %s: %v", method, target, err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("close response %s %s: %v", method, target, err)
 	}
 	return resp
 }

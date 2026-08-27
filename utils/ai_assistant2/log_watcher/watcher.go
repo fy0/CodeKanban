@@ -434,9 +434,7 @@ func (w *LogWatcher) processFile(file *os.File, isInitial bool) error {
 	w.linesRead += linesProcessed
 	w.lastCheckTime = time.Now()
 
-	for _, msg := range newMessages {
-		w.userMessages = append(w.userMessages, msg)
-	}
+	w.userMessages = append(w.userMessages, newMessages...)
 	w.mu.Unlock()
 
 	// Emit events for new messages (only if not initial read)
