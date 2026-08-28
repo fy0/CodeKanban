@@ -2011,8 +2011,7 @@
   color: var(--app-text-primary, var(--app-text-color, #111827));
   transition:
     border-color 0.16s ease,
-    background-color 0.16s ease,
-    box-shadow 0.16s ease;
+    background-color 0.16s ease;
 }
 
 .user-input-option:hover:not(.is-disabled) {
@@ -2045,7 +2044,6 @@
     var(--web-session-approval-bg, var(--app-accent-soft, rgba(59, 105, 169, 0.1))) 70%,
     var(--app-surface-raised, var(--app-surface-color, #fff))
   );
-  box-shadow: inset 3px 0 0 var(--web-session-approval-accent, var(--n-primary-color));
 }
 
 .user-input-option.is-disabled {
@@ -2057,6 +2055,22 @@
 .user-input-option :deep(.n-checkbox) {
   align-items: flex-start;
   min-width: 0;
+}
+
+/* Avoid leaving the marker between transition frames when a suspended tab resumes. */
+.user-input-option :deep(.n-radio__dot),
+.user-input-option :deep(.n-radio__dot::before) {
+  transition: none;
+}
+
+.user-input-option.is-selected :deep(.n-radio__dot) {
+  background-color: var(--n-color-active);
+}
+
+.user-input-option.is-selected :deep(.n-radio__dot::before) {
+  opacity: 1;
+  background-color: var(--n-dot-color-active);
+  transform: scale(1);
 }
 
 .user-input-option :deep(.n-radio__label),

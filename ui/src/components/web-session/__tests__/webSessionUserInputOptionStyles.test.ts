@@ -31,4 +31,21 @@ describe('web session user input option styles', () => {
     expect(webSessionTimelineStyleSource).toContain('.user-input-option.is-disabled');
     expect(webSessionTimelineStyleSource).toContain('.history-option-row');
   });
+
+  it('renders the selected radio marker without suspended transitions', () => {
+    expect(webSessionTimelineStyleSource).toMatch(
+      /\.user-input-option :deep\(\.n-radio__dot\),\s*\.user-input-option :deep\(\.n-radio__dot::before\)\s*{\s*transition: none;\s*}/
+    );
+    expect(webSessionTimelineStyleSource).toMatch(
+      /\.user-input-option\.is-selected :deep\(\.n-radio__dot\)\s*{\s*background-color: var\(--n-color-active\);\s*}/
+    );
+    expect(webSessionTimelineStyleSource).toMatch(
+      /\.user-input-option\.is-selected :deep\(\.n-radio__dot::before\)\s*{\s*opacity: 1;\s*background-color: var\(--n-dot-color-active\);\s*transform: scale\(1\);\s*}/
+    );
+  });
+
+  it('does not add an inset accent line to the selected option card', () => {
+    expect(webSessionTimelineStyleSource).not.toContain('box-shadow: inset 3px 0 0');
+    expect(webSessionTimelineStyleSource).not.toContain('box-shadow 0.16s ease');
+  });
 });
