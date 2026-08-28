@@ -2,6 +2,7 @@ package model
 
 import (
 	"reflect"
+	"time"
 
 	"code-kanban/model/tables"
 	"code-kanban/utils"
@@ -47,7 +48,39 @@ func DBMigrate(autoMigrate bool) {
 		}
 	}
 
+	backfillStartedAt := time.Now()
+	backfilledRows, err := backfillWebSessionItemCommandGroupIDs()
+	if err != nil {
+		logger.Error("web session command group id backfill failed", zap.Error(err))
+		panic(err)
+	}
+	if backfilledRows > 0 {
+		logger.Info("web session command group ids backfilled",
+			zap.Int64("rowCount", backfilledRows),
+			zap.Duration("duration", time.Since(backfillStartedAt)),
+		)
+	}
+
 	logger.Info("database migration finished")
+}
+
+func backfillWebSessionItemCommandGroupIDs() (int64, error) {
+	if db == nil {
+		return 0, ErrDBNotInitialized
+	}
+
+	result := db.Exec(`
+		UPDATE web_session_items
+		SET command_group_id = CASE
+			WHEN json_valid(tool_json) THEN COALESCE(
+				NULLIF(TRIM(CAST(json_extract(tool_json, '$.commandGroup.id') AS TEXT)), ''),
+				''
+			)
+			ELSE ''
+		END
+		WHERE command_group_id IS NULL
+	`)
+	return result.RowsAffected, result.Error
 }
 
 func dropRemovedKanbanArtifacts(logger *zap.Logger) {

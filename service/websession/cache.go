@@ -136,6 +136,11 @@ func applyHistoryItemToRow(row *tables.WebSessionItemTable, sessionID string, it
 	row.SourceThreadID = item.SourceThreadID
 	row.SourceTurnID = item.SourceTurnID
 	row.SourceItemID = item.SourceItemID
+	commandGroupID := ""
+	if item.Tool != nil && item.Tool.CommandGroup != nil {
+		commandGroupID = strings.TrimSpace(item.Tool.CommandGroup.ID)
+	}
+	row.CommandGroupID = ptr(commandGroupID)
 	row.RunID = item.RunID
 	row.RunDurationMs = item.RunDurationMs
 	row.RunOutcome = string(item.RunOutcome)
@@ -284,7 +289,12 @@ func (m *Manager) ensureCompactGroupHistorySourceKeyDB(
 
 	return m.observedTransaction(ctx, db, "ensure_compact_group_source_key", func(tx *gorm.DB) error {
 		var rows []tables.WebSessionItemTable
-		query := tx.Where("web_session_id = ? AND item_kind = ?", sessionID, "tool")
+		query := tx.Where(
+			"web_session_id = ? AND command_group_id = ? AND item_kind = ?",
+			sessionID,
+			groupID,
+			"tool",
+		)
 		if sourceThreadID = strings.TrimSpace(sourceThreadID); sourceThreadID != "" {
 			query = query.Where("source_thread_id = ?", sourceThreadID)
 		} else {
@@ -301,7 +311,7 @@ func (m *Manager) ensureCompactGroupHistorySourceKeyDB(
 			item HistoryItem
 		}
 
-		candidates := make([]candidateRow, 0)
+		candidates := make([]candidateRow, 0, len(rows))
 		for _, row := range rows {
 			item := mapHistoryItemRowWithSession(row, sessionID)
 			if item.Tool == nil || !isCompactToolKind(item.Tool.Kind) {

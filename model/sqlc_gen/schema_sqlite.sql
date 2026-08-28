@@ -1,7 +1,7 @@
 -- 数据库建表语句
--- 生成时间: 2026-08-13 05:37:01
+-- 生成时间: 2026-08-29 04:27:57
 -- 数据库方言: sqlite
--- 总共 106 条语句
+-- 总共 107 条语句
 
 
 CREATE TABLE "users" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"nickname" text,"avatar" text,"brief" text,"username" text NOT NULL,"password" text NOT NULL,"salt" text NOT NULL,"disabled" numeric NOT NULL DEFAULT false,PRIMARY KEY ("id"));
@@ -89,7 +89,7 @@ CREATE INDEX "idx_web_session_turn_order" ON "web_session_turns"("web_session_id
 CREATE INDEX "idx_web_session_turns_deleted_at" ON "web_session_turns"("deleted_at");
 
 
-CREATE TABLE "web_session_items" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"web_turn_id" text,"source_thread_id" text,"source_turn_id" text,"source_item_id" text,"order_index" integer NOT NULL,"run_id" text,"run_duration_ms" integer,"run_outcome" text,"item_kind" text NOT NULL,"item_type" text NOT NULL,"role" text,"status" text,"level" text,"text" text,"done" boolean NOT NULL DEFAULT false,"timestamp" datetime,"observed_at" datetime,"attachments_json" text,"tool_json" text,"detail_json" text,"payload_json" text,PRIMARY KEY ("id"));
+CREATE TABLE "web_session_items" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"web_turn_id" text,"source_thread_id" text,"source_turn_id" text,"source_item_id" text,"command_group_id" text,"order_index" integer NOT NULL,"run_id" text,"run_duration_ms" integer,"run_outcome" text,"item_kind" text NOT NULL,"item_type" text NOT NULL,"role" text,"status" text,"level" text,"text" text,"done" boolean NOT NULL DEFAULT false,"timestamp" datetime,"observed_at" datetime,"attachments_json" text,"tool_json" text,"detail_json" text,"payload_json" text,PRIMARY KEY ("id"));
 CREATE INDEX "idx_web_session_items_observed_at" ON "web_session_items"("observed_at");
 CREATE INDEX "idx_web_session_items_timestamp" ON "web_session_items"("timestamp");
 CREATE INDEX "idx_web_session_items_item_type" ON "web_session_items"("item_type");
@@ -99,6 +99,7 @@ CREATE INDEX "idx_web_session_items_source_turn_id" ON "web_session_items"("sour
 CREATE INDEX "idx_web_session_items_source_thread_id" ON "web_session_items"("source_thread_id");
 CREATE INDEX "idx_web_session_items_web_turn_id" ON "web_session_items"("web_turn_id");
 CREATE INDEX "idx_web_session_items_web_session_id" ON "web_session_items"("web_session_id");
+CREATE INDEX "idx_web_session_item_group" ON "web_session_items"("web_session_id","command_group_id","source_thread_id","order_index");
 CREATE INDEX "idx_web_session_item_run" ON "web_session_items"("web_session_id","run_id");
 CREATE INDEX "idx_web_session_item_source" ON "web_session_items"("web_session_id","source_thread_id","source_item_id");
 CREATE INDEX "idx_web_session_item_order" ON "web_session_items"("web_session_id","order_index");

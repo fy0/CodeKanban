@@ -2,8 +2,13 @@ package websession
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"code-kanban/model"
 
 	"go.uber.org/zap"
 )
@@ -265,6 +270,155 @@ func TestApplyEventToHistoryCacheCanonicalizesCommandExecutionGroupRows(t *testi
 	}
 	if got := len(decodeHistoryGroupItems(grouped.Payload)); got != 3 {
 		t.Fatalf("expected 3 command group detail items, got %d", got)
+	}
+}
+
+func TestCompactGroupHistoryLookupUsesGroupIndex(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	var plan []struct {
+		Detail string `gorm:"column:detail"`
+	}
+	if err := model.GetDB().Raw(`
+		EXPLAIN QUERY PLAN
+		SELECT * FROM web_session_items
+		WHERE web_session_id = ?
+			AND command_group_id = ?
+			AND item_kind = ?
+			AND source_thread_id = ?
+			AND deleted_at IS NULL
+		ORDER BY order_index ASC
+	`, "session-1", "cmdgrp_one", "tool", "thread-1").Scan(&plan).Error; err != nil {
+		t.Fatalf("explain compact group lookup: %v", err)
+	}
+
+	details := make([]string, 0, len(plan))
+	for _, row := range plan {
+		details = append(details, row.Detail)
+		if strings.Contains(row.Detail, "idx_web_session_item_group") {
+			return
+		}
+	}
+	t.Fatalf("compact group lookup did not use group index: %s", strings.Join(details, "; "))
+}
+
+func TestProjectPersistedCompactGroupsAcrossFiveSessions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	const sessionCount = 5
+	const groupID = "cmdgrp_shared"
+	type projection struct {
+		sessionID string
+		retry     eventProjectionRetry
+	}
+	projections := make([]projection, 0, sessionCount)
+	for index := range sessionCount {
+		session := seedWebSession(t, project.ID, fmt.Sprintf("Concurrent Projection %d", index+1), float64(index+1)*1000)
+		previousToolID := fmt.Sprintf("cmd-%d-previous", index+1)
+		nextToolID := fmt.Sprintf("cmd-%d-next", index+1)
+		if _, err := manager.appendHistoryItem(context.Background(), session.ID, testGroupedCompactHistoryItem(
+			"tool:"+previousToolID,
+			1,
+			previousToolID,
+			groupID,
+			"command_execution",
+			"pwd",
+			[]CommandExecutionGroupItem{
+				testCompactGroupDetail(previousToolID, "command_execution", "pwd", time.UnixMilli(1_000)),
+			},
+		)); err != nil {
+			t.Fatalf("append initial grouped item for session %d: %v", index+1, err)
+		}
+
+		event := Event{
+			ID:        "evt-" + nextToolID,
+			Seq:       2,
+			Type:      "tool_end",
+			Timestamp: time.UnixMilli(2_000),
+			Payload: map[string]any{
+				"tid":  nextToolID,
+				"kind": "command_execution",
+				"in":   map[string]any{"command": "git status"},
+				"out":  "clean",
+				"ok":   true,
+				"meta": map[string]any{
+					"kind":     "command_execution",
+					"title":    "CommandExecution",
+					"subtitle": "git status",
+					"commandGroup": map[string]any{
+						"id":           groupID,
+						"count":        2,
+						"latestToolId": nextToolID,
+						"compacted":    true,
+					},
+				},
+			},
+		}
+		projections = append(projections, projection{
+			sessionID: session.ID,
+			retry: eventProjectionRetry{
+				record: *session,
+				event:  event,
+				stage:  eventProjectionDatabase,
+			},
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := make(chan struct{})
+	errors := make(chan error, sessionCount)
+	var wait sync.WaitGroup
+	for index := range projections {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			projection := &projections[index]
+			if err := manager.projectPersistedEventDatabase(ctx, projection.sessionID, &projection.retry); err != nil {
+				errors <- fmt.Errorf("session %s: %w", projection.sessionID, err)
+			}
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+
+	for _, projection := range projections {
+		if projection.retry.stage != eventProjectionBroadcast {
+			t.Fatalf("session %s projection stage = %d, want %d", projection.sessionID, projection.retry.stage, eventProjectionBroadcast)
+		}
+		snapshot, err := manager.Snapshot(context.Background(), projection.sessionID, 10)
+		if err != nil {
+			t.Fatalf("Snapshot for session %s: %v", projection.sessionID, err)
+		}
+		if len(snapshot.History.Items) != 1 {
+			t.Fatalf("session %s history item count = %d, want 1", projection.sessionID, len(snapshot.History.Items))
+		}
+		grouped := snapshot.History.Items[0]
+		if grouped.SourceItemID == nil || *grouped.SourceItemID != historyToolSourceKey(groupID) {
+			t.Fatalf("session %s canonical source item id = %v, want %q", projection.sessionID, grouped.SourceItemID, historyToolSourceKey(groupID))
+		}
+		if grouped.Tool == nil || grouped.Tool.CommandGroup == nil || grouped.Tool.CommandGroup.Count != 2 {
+			t.Fatalf("session %s command group = %#v, want count 2", projection.sessionID, grouped.Tool)
+		}
+		if got := len(decodeHistoryGroupItems(grouped.Payload)); got != 2 {
+			t.Fatalf("session %s group item count = %d, want 2", projection.sessionID, got)
+		}
 	}
 }
 
