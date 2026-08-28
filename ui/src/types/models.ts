@@ -97,6 +97,7 @@ export interface TerminalSession {
   processStatus?: 'idle' | 'busy' | 'unknown';
   processHasChildren?: boolean;
   runningCommand?: string;
+  metadataCapturedAt?: string;
   traffic?: {
     upstreamBytes: number;
     downstreamBytes: number;

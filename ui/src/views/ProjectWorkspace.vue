@@ -210,6 +210,7 @@
       v-if="isMobileLayout"
       :project-id="currentProjectId"
       :is-mobile="true"
+      :is-active="mobileActiveView === 'terminal'"
       :hidden="mobileActiveView !== 'terminal'"
     />
     <ProjectEditDialog

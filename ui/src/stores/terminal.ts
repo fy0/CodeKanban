@@ -102,6 +102,7 @@ export type ServerMessage = {
     processStatus?: string;
     processHasChildren?: boolean;
     runningCommand?: string;
+    capturedAt?: string;
     aiAssistant?: {
       type: string;
       name: string;
@@ -1745,6 +1746,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       processStatus: metadata.processStatus as 'idle' | 'busy' | 'unknown' | undefined,
       processHasChildren: metadata.processHasChildren,
       runningCommand: metadata.runningCommand,
+      metadataCapturedAt: metadata.capturedAt,
       aiAssistant: metadata.aiAssistant,
       title: typeof nextTitle === 'string' ? nextTitle : bucket[index].title,
     };

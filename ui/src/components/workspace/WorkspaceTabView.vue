@@ -202,7 +202,7 @@
       <div v-show="activeTab === 'terminal'" class="tab-pane terminal-pane">
         <div class="terminal-split">
           <div class="terminal-main">
-            <TerminalPanel :project-id="projectId" />
+            <TerminalPanel :project-id="projectId" :is-active="activeTab === 'terminal'" />
           </div>
           <DockedNotificationSidebar v-if="isRightSidebarVisible" :project-id="projectId" />
         </div>

@@ -53,10 +53,11 @@ type SessionSnapshot struct {
 	Encoding      string
 	TerminalModes *TerminalModesSnapshot `json:"terminalModes,omitempty"`
 	// Process information
-	ProcessPID         int32  `json:"processPid,omitempty"`
-	ProcessStatus      string `json:"processStatus,omitempty"`
-	ProcessHasChildren bool   `json:"processHasChildren,omitempty"`
-	RunningCommand     string `json:"runningCommand,omitempty"`
+	ProcessPID         int32     `json:"processPid,omitempty"`
+	ProcessStatus      string    `json:"processStatus,omitempty"`
+	ProcessHasChildren bool      `json:"processHasChildren,omitempty"`
+	RunningCommand     string    `json:"runningCommand,omitempty"`
+	MetadataCapturedAt time.Time `json:"metadataCapturedAt,omitempty"`
 	// AI Assistant information
 	AIAssistant *ai_assistant2.AIAssistantInfo `json:"aiAssistant"`
 	Traffic     *SessionTrafficStats           `json:"traffic,omitempty"`
@@ -86,6 +87,7 @@ type SessionMetadata struct {
 	ProcessHasChildren bool                           `json:"processHasChildren,omitempty"`
 	RunningCommand     string                         `json:"runningCommand,omitempty"`
 	AIAssistant        *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
+	CapturedAt         time.Time                      `json:"capturedAt"`
 }
 
 type TerminalStateCell struct {
@@ -150,13 +152,12 @@ type sessionSubscriber struct {
 const (
 	subscriberBufferSize = 128
 
-	// Metadata polling interval levels
-	MetadataIntervalShort  = 2 * time.Second  // Active usage
-	MetadataIntervalMedium = 10 * time.Second // Moderate inactivity
-	MetadataIntervalLong   = 50 * time.Second // Extended inactivity
+	MetadataIntervalShort  = 2 * time.Second
+	MetadataIntervalMedium = 10 * time.Second
+	MetadataIntervalLong   = 60 * time.Second
 
-	// Number of ticks before moving to the next interval level
-	intervalDowngradeThreshold = 5
+	metadataInteractionHotWindow = 15 * time.Second
+	metadataOutputWarmWindow     = 30 * time.Second
 )
 
 // Session encapsulates a PTY-backed terminal command.
@@ -223,11 +224,11 @@ type Session struct {
 	shellEventCallback func(shellIntegrationEvent)
 	shellIntegration   shellIntegrationState
 
-	// Metadata polling interval tracking
-	metaIntervalMu       sync.RWMutex
-	metaIntervalLevel    int           // 0=short, 1=medium, 2=long
-	metaIntervalTicks    int           // ticks since last user interaction
-	metaIntervalNotifyCh chan struct{} // channel to notify interval change
+	metaIntervalMu        sync.Mutex
+	metaInterval          time.Duration
+	metaIntervalNotifyCh  chan struct{}
+	metaLastInteractionAt atomic.Int64
+	metaLastOutputAt      atomic.Int64
 }
 
 // SessionParams collects the data required to bootstrap a session.
@@ -306,6 +307,7 @@ func NewSession(params SessionParams) (*Session, error) {
 		scrollbackLimit:    scrollbackLimit,
 		subscribers:        make(map[string]*sessionSubscriber),
 		shellEventCallback: params.OnShellEvent,
+		metaInterval:       MetadataIntervalShort,
 	}
 	session.terminalStateEnabled.Store(params.EnableTerminalStateSnapshot && runtime.GOOS != "windows")
 	session.shellIntegration.family = params.ShellIntegration.Family
@@ -329,6 +331,7 @@ func NewSession(params SessionParams) (*Session, error) {
 	session.status.Store(SessionStatusStarting)
 	session.err.Store(sessionError{})
 	session.Touch()
+	session.metaLastInteractionAt.Store(session.createdAt.UnixNano())
 
 	return session, nil
 }
@@ -412,6 +415,7 @@ func (s *Session) consumePTY(ctx context.Context) {
 		n, err := reader.Read(buffer)
 		if n > 0 {
 			s.Touch()
+			s.recordMetadataOutputActivity()
 			normalized := s.NormalizeOutput(buffer[:n])
 			if len(normalized) > 0 {
 				normalized = s.stripShellIntegrationSequences(normalized)
@@ -433,129 +437,159 @@ func (s *Session) consumePTY(ctx context.Context) {
 }
 
 func (s *Session) monitorMetadata(ctx context.Context) {
-	// Initialize interval notification channel
+	notifyCh := make(chan struct{}, 1)
 	s.metaIntervalMu.Lock()
-	s.metaIntervalNotifyCh = make(chan struct{}, 1)
+	s.metaIntervalNotifyCh = notifyCh
+	interval := s.metaInterval
+	if interval <= 0 {
+		interval = MetadataIntervalShort
+		s.metaInterval = interval
+	}
 	s.metaIntervalMu.Unlock()
 
-	ticker := time.NewTicker(MetadataIntervalShort)
-	defer ticker.Stop()
+	timer := time.NewTimer(interval)
+	defer func() {
+		timer.Stop()
+		s.metaIntervalMu.Lock()
+		if s.metaIntervalNotifyCh == notifyCh {
+			s.metaIntervalNotifyCh = nil
+		}
+		s.metaIntervalMu.Unlock()
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.metaIntervalNotifyCh:
-			// Interval level changed, reset ticker
-			ticker.Stop()
-			ticker = time.NewTicker(s.getCurrentMetadataInterval())
-		case <-ticker.C:
-			s.checkAndBroadcastMetadata()
-			s.advanceIntervalTick()
+		case <-notifyCh:
+			resetMetadataTimer(timer, s.currentMetadataInterval())
+		case <-timer.C:
+			metadata := s.checkAndBroadcastMetadata()
+			timer.Reset(s.updateMetadataIntervalAfterSample(metadata, time.Now()))
 		}
 	}
 }
 
-// getCurrentMetadataInterval returns the current metadata polling interval based on level
-func (s *Session) getCurrentMetadataInterval() time.Duration {
-	s.metaIntervalMu.RLock()
-	level := s.metaIntervalLevel
-	s.metaIntervalMu.RUnlock()
-
-	switch level {
-	case 0:
-		return MetadataIntervalShort
-	case 1:
-		return MetadataIntervalMedium
-	default:
-		return MetadataIntervalLong
+func resetMetadataTimer(timer *time.Timer, interval time.Duration) {
+	if interval <= 0 {
+		interval = MetadataIntervalLong
 	}
-}
-
-// advanceIntervalTick increments the tick counter and potentially downgrades interval level
-func (s *Session) advanceIntervalTick() {
-	s.metaIntervalMu.Lock()
-	defer s.metaIntervalMu.Unlock()
-
-	s.metaIntervalTicks++
-
-	// Check if we should downgrade to a longer interval
-	if s.metaIntervalTicks >= intervalDowngradeThreshold && s.metaIntervalLevel < 2 {
-		s.metaIntervalLevel++
-		s.metaIntervalTicks = 0
-
-		// Notify the monitor loop to reset ticker
+	if !timer.Stop() {
 		select {
-		case s.metaIntervalNotifyCh <- struct{}{}:
+		case <-timer.C:
 		default:
 		}
 	}
+	timer.Reset(interval)
 }
 
-// resetMetadataInterval resets the polling interval to the shortest level (called on user interaction)
-func (s *Session) resetMetadataInterval() {
+func (s *Session) currentMetadataInterval() time.Duration {
 	s.metaIntervalMu.Lock()
+	defer s.metaIntervalMu.Unlock()
+	if s.metaInterval <= 0 {
+		return MetadataIntervalLong
+	}
+	return s.metaInterval
+}
 
-	if s.metaIntervalLevel == 0 && s.metaIntervalTicks == 0 {
-		// Already at shortest level with no ticks, nothing to do
+func (s *Session) updateMetadataIntervalAfterSample(
+	metadata *SessionMetadata,
+	now time.Time,
+) time.Duration {
+	s.metaIntervalMu.Lock()
+	defer s.metaIntervalMu.Unlock()
+	s.metaInterval = s.metadataIntervalFor(metadata, now)
+	return s.metaInterval
+}
+
+func (s *Session) metadataIntervalFor(metadata *SessionMetadata, now time.Time) time.Duration {
+	if metadataActivityRecent(s.metaLastInteractionAt.Load(), now, metadataInteractionHotWindow) {
+		return MetadataIntervalShort
+	}
+	if metadata != nil && (metadata.ProcessHasChildren || metadata.ProcessStatus == "busy") {
+		return MetadataIntervalMedium
+	}
+	if metadataActivityRecent(s.metaLastOutputAt.Load(), now, metadataOutputWarmWindow) {
+		return MetadataIntervalMedium
+	}
+	return MetadataIntervalLong
+}
+
+func metadataActivityRecent(timestamp int64, now time.Time, window time.Duration) bool {
+	if timestamp <= 0 {
+		return false
+	}
+	return now.Sub(time.Unix(0, timestamp)) <= window
+}
+
+func (s *Session) requestMetadataInterval(interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	s.metaIntervalMu.Lock()
+	if s.metaInterval > 0 && s.metaInterval <= interval {
 		s.metaIntervalMu.Unlock()
 		return
 	}
-
-	s.metaIntervalLevel = 0
-	s.metaIntervalTicks = 0
+	s.metaInterval = interval
 	notifyCh := s.metaIntervalNotifyCh
 	s.metaIntervalMu.Unlock()
-
-	// Notify the monitor loop to reset ticker
-	if notifyCh != nil {
-		select {
-		case notifyCh <- struct{}{}:
-		default:
-		}
+	if notifyCh == nil {
+		return
+	}
+	select {
+	case notifyCh <- struct{}{}:
+	default:
 	}
 }
 
-func (s *Session) checkAndBroadcastMetadata() {
+func (s *Session) recordMetadataInput() {
+	s.metaLastInteractionAt.Store(time.Now().UnixNano())
+	s.requestMetadataInterval(MetadataIntervalShort)
+}
+
+func (s *Session) recordMetadataOutputActivity() {
+	now := time.Now()
+	previous := s.metaLastOutputAt.Swap(now.UnixNano())
+	if previous <= 0 || now.Sub(time.Unix(0, previous)) > metadataOutputWarmWindow {
+		s.requestMetadataInterval(MetadataIntervalMedium)
+	}
+}
+
+func (s *Session) checkAndBroadcastMetadata() *SessionMetadata {
 	pid := s.getPID()
 	if pid <= 0 {
-		return
+		return nil
 	}
 
+	runtimeSnapshot := process.GetRuntimeSnapshot(pid)
 	metadata := &SessionMetadata{
 		ProcessPID:         pid,
-		ProcessStatus:      process.GetProcessStatus(pid),
-		ProcessHasChildren: process.IsProcessBusy(pid),
+		ProcessStatus:      runtimeSnapshot.Status,
+		ProcessHasChildren: runtimeSnapshot.HasNonShellChild,
 		Title:              s.Title(),
+		CapturedAt:         runtimeSnapshot.CapturedAt,
 	}
 
-	if metadata.ProcessHasChildren {
-		if cmd := process.GetForegroundCommand(pid); cmd != "" {
-			metadata.RunningCommand = cmd
-
-			metadata.AIAssistant = ai_assistant2.ToAIAssistantInfo(
-				ai_assistant2.DetectFromCommand(cmd),
-			)
-
-		}
+	if metadata.ProcessHasChildren && runtimeSnapshot.ForegroundCommand != "" {
+		metadata.RunningCommand = runtimeSnapshot.ForegroundCommand
+		metadata.AIAssistant = ai_assistant2.ToAIAssistantInfo(
+			ai_assistant2.DetectFromCommand(runtimeSnapshot.ForegroundCommand),
+		)
 	}
 
-	// Check if metadata changed
-	s.metaMu.RLock()
-	lastMeta := s.lastMetadata
-	s.metaMu.RUnlock()
+	s.metaMu.Lock()
+	changed := s.metadataChanged(s.lastMetadata, metadata)
+	s.lastMetadata = metadata
+	s.metaMu.Unlock()
 
-	if s.metadataChanged(lastMeta, metadata) {
-		s.metaMu.Lock()
-		s.lastMetadata = metadata
-		s.metaMu.Unlock()
-
-		// Broadcast metadata change
+	if changed {
 		s.broadcast(StreamEvent{
 			Type:     StreamEventMetadata,
 			Metadata: metadata,
 		})
 	}
+	return metadata
 }
 
 func (s *Session) metadataChanged(old, new *SessionMetadata) bool {
@@ -612,7 +646,7 @@ func (s *Session) Write(p []byte) (int, error) {
 
 	payload := s.prepareInput(p)
 	s.Touch()
-	s.resetMetadataInterval() // User input resets polling to short interval
+	s.recordMetadataInput()
 	return writer.Write(payload)
 }
 
@@ -644,7 +678,6 @@ func (s *Session) Resize(cols, rows int) error {
 	s.resizeTerminalState(cols, rows)
 
 	s.Touch()
-	s.resetMetadataInterval() // User interaction resets polling to short interval
 
 	return nil
 }
@@ -666,7 +699,6 @@ func (s *Session) ForceRedraw() error {
 	}
 
 	s.Touch()
-	s.resetMetadataInterval()
 	return nil
 }
 
@@ -691,9 +723,7 @@ func (s *Session) Subscribe(ctx context.Context) (*SessionStream, error) {
 
 	// 立即发送当前 metadata 快照，确保新订阅者能获取到当前状态
 	// 避免因订阅时序问题错过早期的状态变化事件
-	s.metaMu.RLock()
-	currentMeta := cloneSessionMetadata(s.lastMetadata)
-	s.metaMu.RUnlock()
+	currentMeta := s.metadataSnapshot()
 	if currentMeta != nil {
 		select {
 		case subscriber.ch <- StreamEvent{Type: StreamEventMetadata, Metadata: currentMeta}:
@@ -959,29 +989,27 @@ func (s *Session) Snapshot() SessionSnapshot {
 		Encoding:      s.encName,
 		TerminalModes: s.TerminalModesSnapshot(),
 	}
-	pid := s.getPID()
+	snapshot.ProcessPID = s.getPID()
 	s.mu.RUnlock()
 
-	// Get process information
-	if pid > 0 {
-		snapshot.ProcessPID = pid
-		snapshot.ProcessStatus = process.GetProcessStatus(pid)
-		snapshot.ProcessHasChildren = process.IsProcessBusy(pid)
-
-		// Get foreground command if there are children
-		if snapshot.ProcessHasChildren {
-			if cmd := process.GetForegroundCommand(pid); cmd != "" {
-				snapshot.RunningCommand = cmd
-				snapshot.AIAssistant = ai_assistant2.ToAIAssistantInfo(
-					ai_assistant2.DetectFromCommand(cmd),
-				)
-			}
-		}
+	if metadata := s.metadataSnapshot(); metadata != nil {
+		snapshot.ProcessPID = metadata.ProcessPID
+		snapshot.ProcessStatus = metadata.ProcessStatus
+		snapshot.ProcessHasChildren = metadata.ProcessHasChildren
+		snapshot.RunningCommand = metadata.RunningCommand
+		snapshot.AIAssistant = metadata.AIAssistant
+		snapshot.MetadataCapturedAt = metadata.CapturedAt
 	}
 
 	snapshot.Traffic = s.TrafficStatsSnapshot()
 
 	return snapshot
+}
+
+func (s *Session) metadataSnapshot() *SessionMetadata {
+	s.metaMu.RLock()
+	defer s.metaMu.RUnlock()
+	return cloneSessionMetadata(s.lastMetadata)
 }
 
 // getPID returns the shell process PID, or 0 if not available.

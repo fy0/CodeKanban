@@ -954,9 +954,17 @@ func (c *terminalController) viewFromSnapshot(snapshot terminal.SessionSnapshot)
 		ProcessStatus:      snapshot.ProcessStatus,
 		ProcessHasChildren: snapshot.ProcessHasChildren,
 		RunningCommand:     snapshot.RunningCommand,
+		MetadataCapturedAt: terminalMetadataCapturedAt(snapshot.MetadataCapturedAt),
 		AIAssistant:        snapshot.AIAssistant,
 		Traffic:            snapshot.Traffic,
 	}
+}
+
+func terminalMetadataCapturedAt(capturedAt time.Time) *time.Time {
+	if capturedAt.IsZero() {
+		return nil
+	}
+	return &capturedAt
 }
 
 func (c *terminalController) resolveWorkingDir(root, user string) (string, error) {
@@ -1056,6 +1064,7 @@ type terminalSessionView struct {
 	ProcessStatus      string                         `json:"processStatus,omitempty"`
 	ProcessHasChildren bool                           `json:"processHasChildren,omitempty"`
 	RunningCommand     string                         `json:"runningCommand,omitempty"`
+	MetadataCapturedAt *time.Time                     `json:"metadataCapturedAt,omitempty"`
 	AIAssistant        *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
 	Traffic            *terminal.SessionTrafficStats  `json:"traffic,omitempty"`
 }

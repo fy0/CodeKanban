@@ -7,13 +7,14 @@ import (
 
 	gocache "github.com/patrickmn/go-cache"
 	"github.com/shirou/gopsutil/v4/process"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
-	// processCache caches process query results to avoid repeated expensive system calls
-	processCache = gocache.New(3*time.Second, 10*time.Second)
+	runtimeSnapshotCache = gocache.New(time.Second, 10*time.Second)
 	// queryTimeout is the maximum time to wait for a process query
-	queryTimeout = 2 * time.Second
+	queryTimeout      = 2 * time.Second
+	runtimeQueryGroup singleflight.Group
 )
 
 // ProcessInfo contains basic information about a process.
@@ -25,6 +26,70 @@ type ProcessInfo struct {
 	HasChildren   bool    `json:"hasChildren"`
 	ChildrenCount int     `json:"childrenCount"`
 	Children      []int32 `json:"children,omitempty"`
+}
+
+// RuntimeSnapshot contains the process-tree state needed by terminal metadata.
+type RuntimeSnapshot struct {
+	PID               int32
+	Status            string
+	HasNonShellChild  bool
+	ForegroundCommand string
+	CapturedAt        time.Time
+}
+
+// GetRuntimeSnapshot returns one cached, singleflighted inspection of a process tree.
+func GetRuntimeSnapshot(pid int32) RuntimeSnapshot {
+	if pid <= 0 {
+		return RuntimeSnapshot{PID: pid, Status: "unknown", CapturedAt: time.Now()}
+	}
+
+	cacheKey := fmt.Sprintf("runtime_%d", pid)
+	if cached, found := runtimeSnapshotCache.Get(cacheKey); found {
+		return cached.(RuntimeSnapshot)
+	}
+
+	value, _, _ := runtimeQueryGroup.Do(cacheKey, func() (any, error) {
+		if cached, found := runtimeSnapshotCache.Get(cacheKey); found {
+			return cached.(RuntimeSnapshot), nil
+		}
+		snapshot := inspectRuntimeSnapshot(pid)
+		runtimeSnapshotCache.Set(cacheKey, snapshot, gocache.DefaultExpiration)
+		return snapshot, nil
+	})
+	if snapshot, ok := value.(RuntimeSnapshot); ok {
+		return snapshot
+	}
+	return RuntimeSnapshot{PID: pid, Status: "unknown", CapturedAt: time.Now()}
+}
+
+func inspectRuntimeSnapshot(pid int32) RuntimeSnapshot {
+	result := make(chan RuntimeSnapshot, 1)
+	go func() {
+		snapshot := RuntimeSnapshot{PID: pid, Status: "unknown"}
+		proc, err := process.NewProcess(pid)
+		if err == nil {
+			if _, statusErr := proc.Status(); statusErr == nil {
+				snapshot.HasNonShellChild, snapshot.ForegroundCommand = findNonShellDescendant(pid, 0, 5)
+				if snapshot.HasNonShellChild {
+					snapshot.Status = "busy"
+				} else {
+					snapshot.Status = "idle"
+				}
+			}
+		}
+		if isShellCommand(snapshot.ForegroundCommand) {
+			snapshot.ForegroundCommand = ""
+		}
+		snapshot.CapturedAt = time.Now()
+		result <- snapshot
+	}()
+
+	select {
+	case snapshot := <-result:
+		return snapshot
+	case <-time.After(queryTimeout):
+		return RuntimeSnapshot{PID: pid, Status: "unknown", CapturedAt: time.Now()}
+	}
 }
 
 // GetProcessInfo retrieves information about a process by PID.
@@ -74,44 +139,6 @@ func GetProcessInfo(pid int32) *ProcessInfo {
 	return info
 }
 
-// GetForegroundCommand attempts to get the foreground process command.
-// For a shell, this recursively searches the process tree to find the actual
-// running command (handles multi-layer shell structure like PowerShell).
-// Returns the command line of the running command, or empty string if not found.
-// Note: This may not work reliably for Git Bash where child processes detach.
-func GetForegroundCommand(pid int32) string {
-	if pid <= 0 {
-		return ""
-	}
-
-	// Check cache first
-	cacheKey := fmt.Sprintf("fg_cmd_%d", pid)
-	if cached, found := processCache.Get(cacheKey); found {
-		return cached.(string)
-	}
-
-	// Query with timeout
-	result := make(chan string, 1)
-	go func() {
-		cmd := findForegroundCommandRecursive(pid, 0, 5)
-		if cmd != "" && !isShellCommand(cmd) {
-			result <- cmd
-			return
-		}
-		result <- ""
-	}()
-
-	select {
-	case cmd := <-result:
-		processCache.Set(cacheKey, cmd, gocache.DefaultExpiration)
-		return cmd
-	case <-time.After(queryTimeout):
-		// Timeout - cache empty result to avoid repeated slow queries
-		processCache.Set(cacheKey, "", gocache.DefaultExpiration)
-		return ""
-	}
-}
-
 // isShellCommand checks if a command line represents a shell command.
 func isShellCommand(cmdline string) bool {
 	cmdLower := strings.ToLower(cmdline)
@@ -135,52 +162,39 @@ func isShellCommand(cmdline string) bool {
 	return false
 }
 
-// findForegroundCommandRecursive recursively searches for the actual running command.
-// It skips intermediate shell processes (bash, sh, cmd, powershell) and returns
-// the first non-shell command found in the process tree.
-// Uses gopsutil's Children() which is faster than manual Ppid traversal.
-func findForegroundCommandRecursive(pid int32, depth, maxDepth int) string {
+// findNonShellDescendant returns whether a non-shell child exists and its command line.
+func findNonShellDescendant(pid int32, depth, maxDepth int) (bool, string) {
 	if pid <= 0 || depth >= maxDepth {
-		return ""
+		return false, ""
 	}
 
 	proc, err := process.NewProcess(pid)
 	if err != nil {
-		return ""
+		return false, ""
 	}
 
-	// Use gopsutil's Children() - faster than manual Ppid traversal
 	children, err := proc.Children()
 	if err != nil || len(children) == 0 {
-		return ""
+		return false, ""
 	}
 
-	// Check each child process
+	foundNonShell := false
 	for _, child := range children {
-		cmdline, err := child.Cmdline()
-		if err != nil || cmdline == "" {
+		if !isShellProcess(child) {
+			foundNonShell = true
+			if cmdline, cmdlineErr := child.Cmdline(); cmdlineErr == nil && cmdline != "" {
+				return true, cmdline
+			}
 			continue
 		}
-
-		// If this is not a shell process, return its command line
-		if !isShellProcess(child) {
-			return cmdline
-		}
-
-		// This is a shell process, recurse into its children
-		if result := findForegroundCommandRecursive(child.Pid, depth+1, maxDepth); result != "" {
-			return result
+		if found, cmdline := findNonShellDescendant(child.Pid, depth+1, maxDepth); found {
+			foundNonShell = true
+			if cmdline != "" {
+				return true, cmdline
+			}
 		}
 	}
-
-	// Fallback: return the first child's command line if no non-shell found
-	if len(children) > 0 {
-		if cmdline, err := children[0].Cmdline(); err == nil {
-			return cmdline
-		}
-	}
-
-	return ""
+	return foundNonShell, ""
 }
 
 // isShellProcess checks if a process is an intermediate shell that should be skipped.
@@ -213,116 +227,6 @@ func isShellProcess(proc *process.Process) bool {
 	}
 
 	return false
-}
-
-// IsProcessBusy checks if a process is running a non-shell command.
-// This recursively checks the process tree to handle Git Bash multi-layer structure.
-// Returns true only if there's a non-shell child process running.
-func IsProcessBusy(pid int32) bool {
-	if pid <= 0 {
-		return false
-	}
-
-	// Check cache first
-	cacheKey := fmt.Sprintf("busy_%d", pid)
-	if cached, found := processCache.Get(cacheKey); found {
-		return cached.(bool)
-	}
-
-	// Query with timeout
-	result := make(chan bool, 1)
-	go func() {
-		busy := hasNonShellChild(pid, 0, 5)
-		result <- busy
-	}()
-
-	select {
-	case busy := <-result:
-		processCache.Set(cacheKey, busy, gocache.DefaultExpiration)
-		return busy
-	case <-time.After(queryTimeout):
-		// Timeout - assume not busy
-		processCache.Set(cacheKey, false, gocache.DefaultExpiration)
-		return false
-	}
-}
-
-// hasNonShellChild recursively checks if there's any non-shell child process.
-// Uses gopsutil's Children() which is faster than manual Ppid traversal.
-func hasNonShellChild(pid int32, depth, maxDepth int) bool {
-	if pid <= 0 || depth >= maxDepth {
-		return false
-	}
-
-	proc, err := process.NewProcess(pid)
-	if err != nil {
-		return false
-	}
-
-	children, err := proc.Children()
-	if err != nil || len(children) == 0 {
-		return false
-	}
-
-	for _, child := range children {
-		if !isShellProcess(child) {
-			return true
-		}
-		// Recurse into shell children
-		if hasNonShellChild(child.Pid, depth+1, maxDepth) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// GetProcessStatus returns a simple status string: "idle", "busy", or "unknown".
-// Uses recursive check to handle Git Bash multi-layer shell structure.
-func GetProcessStatus(pid int32) string {
-	if pid <= 0 {
-		return "unknown"
-	}
-
-	// Check cache first
-	cacheKey := fmt.Sprintf("status_%d", pid)
-	if cached, found := processCache.Get(cacheKey); found {
-		return cached.(string)
-	}
-
-	// Query with timeout
-	result := make(chan string, 1)
-	go func() {
-		proc, err := process.NewProcess(pid)
-		if err != nil {
-			result <- "unknown"
-			return
-		}
-
-		// Check if process exists
-		_, err = proc.Status()
-		if err != nil {
-			result <- "unknown"
-			return
-		}
-
-		// Use recursive check for non-shell children
-		if hasNonShellChild(pid, 0, 5) {
-			result <- "busy"
-		} else {
-			result <- "idle"
-		}
-	}()
-
-	select {
-	case status := <-result:
-		processCache.Set(cacheKey, status, gocache.DefaultExpiration)
-		return status
-	case <-time.After(queryTimeout):
-		// Timeout - return unknown
-		processCache.Set(cacheKey, "unknown", gocache.DefaultExpiration)
-		return "unknown"
-	}
 }
 
 // GetDetailedProcessInfo returns comprehensive information about a process and its children.

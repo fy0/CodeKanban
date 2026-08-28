@@ -506,12 +506,14 @@ import { getErrorMessage } from '@/utils/errorHandler';
 const props = defineProps<{
   projectId: string;
   isMobile?: boolean;
+  isActive?: boolean;
   hidden?: boolean;
 }>();
 
 const projectIdRef = toRef(props, 'projectId');
 const isMobile = computed(() => Boolean(props.isMobile));
 const hidden = computed(() => Boolean(props.hidden));
+const shouldPollSessionSnapshots = computed(() => props.isActive !== false && !hidden.value);
 const isDocked = computed(() => true);
 const message = useMessage();
 const dialog = useDialog();
@@ -1482,9 +1484,9 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  projectIdRef,
-  projectId => {
-    if (!projectId) {
+  [projectIdRef, shouldPollSessionSnapshots],
+  ([projectId, shouldPoll]) => {
+    if (!projectId || !shouldPoll) {
       sessionSnapshotStore.releaseScope(terminalSessionSnapshotScopeId);
       return;
     }

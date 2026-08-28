@@ -653,6 +653,7 @@ export interface TerminalSessionView {
   encoding: string;
   id: string;
   lastActive: string;
+  metadataCapturedAt?: string;
   processHasChildren?: boolean;
   processPid?: number;
   processStatus?: string;
