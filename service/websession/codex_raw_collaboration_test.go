@@ -286,7 +286,9 @@ func TestCodexThreadParamsUseUpstreamRawHistoryContract(t *testing.T) {
 		t.Fatalf("thread/start must not send removed persistExtendedHistory: %#v", start)
 	}
 	if config := decodeRawObject(start["config"]); config["features.multi_agent_v2.enabled"] != true ||
-		config["features.multi_agent_v2.tool_namespace"] != "collaboration" {
+		config["features.multi_agent_v2.tool_namespace"] != "collaboration" ||
+		config["shell_environment_policy.inherit"] != "all" ||
+		config["shell_environment_policy.ignore_default_excludes"] != true {
 		t.Fatalf("thread/start must force the V2 collaboration protocol: %#v", start)
 	}
 
@@ -301,7 +303,9 @@ func TestCodexThreadParamsUseUpstreamRawHistoryContract(t *testing.T) {
 		t.Fatalf("thread/resume must not send removed persistExtendedHistory: %#v", resume)
 	}
 	if config := decodeRawObject(resume["config"]); config["features.multi_agent_v2.enabled"] != true ||
-		config["features.multi_agent_v2.tool_namespace"] != "collaboration" {
+		config["features.multi_agent_v2.tool_namespace"] != "collaboration" ||
+		config["shell_environment_policy.inherit"] != "all" ||
+		config["shell_environment_policy.ignore_default_excludes"] != true {
 		t.Fatalf("thread/resume must force the V2 collaboration protocol: %#v", resume)
 	}
 }
@@ -316,18 +320,25 @@ func TestCodexThreadParamsUseCompatibilityContractWithoutMultiAgentV2(t *testing
 	if start["persistExtendedHistory"] != true {
 		t.Fatalf("compatibility thread/start must preserve extended history: %#v", start)
 	}
-	for _, key := range []string{"config", "historyMode", "experimentalRawEvents"} {
+	for _, key := range []string{"historyMode", "experimentalRawEvents"} {
 		if _, ok := start[key]; ok {
 			t.Fatalf("compatibility thread/start must omit %s: %#v", key, start)
 		}
+	}
+	if config := decodeRawObject(start["config"]); config["shell_environment_policy.inherit"] != "all" ||
+		config["shell_environment_policy.ignore_default_excludes"] != true ||
+		config["features.multi_agent_v2.enabled"] != nil {
+		t.Fatalf("compatibility thread/start must only force full environment inheritance: %#v", start)
 	}
 
 	resume := codexThreadResumeParams(session, "thread-1", false)
 	if resume["persistExtendedHistory"] != true {
 		t.Fatalf("compatibility thread/resume must preserve extended history: %#v", resume)
 	}
-	if _, ok := resume["config"]; ok {
-		t.Fatalf("compatibility thread/resume must omit V2 config: %#v", resume)
+	if config := decodeRawObject(resume["config"]); config["shell_environment_policy.inherit"] != "all" ||
+		config["shell_environment_policy.ignore_default_excludes"] != true ||
+		config["features.multi_agent_v2.enabled"] != nil {
+		t.Fatalf("compatibility thread/resume must only force full environment inheritance: %#v", resume)
 	}
 }
 

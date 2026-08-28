@@ -22,6 +22,7 @@ require (
 	github.com/matoous/go-nanoid/v2 v2.1.0
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/patrickmn/go-cache v2.1.0+incompatible
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/samber/lo v1.51.0
 	github.com/sergi/go-diff v1.4.0
 	github.com/shirou/gopsutil/v4 v4.25.10

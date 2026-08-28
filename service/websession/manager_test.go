@@ -10124,28 +10124,41 @@ rl.on('line', line => {
 	    mode === 'verify_compatibility' &&
 	    (!message.params ||
 	      message.params.persistExtendedHistory !== true ||
-	      message.params.config !== undefined ||
+	      !message.params.config ||
+	      message.params.config['shell_environment_policy.inherit'] !== 'all' ||
+	      message.params.config['shell_environment_policy.ignore_default_excludes'] !== true ||
+	      message.params.config['features.multi_agent_v2.enabled'] !== undefined ||
 	      message.params.historyMode !== undefined ||
 	      message.params.experimentalRawEvents !== undefined)
 	  ) {
 	    send({
 	      id: message.id,
-	      error: { message: 'expected compatibility params without multi-agent V2 fields' },
+	      error: { message: 'expected compatibility params with shell environment policy only' },
 	    });
 	    return;
 	  }
 	  if (mode === 'v2_thread_start_fallback') {
-	    if (message.params && message.params.config !== undefined) {
+	    if (
+	      message.params &&
+	      message.params.config &&
+	      message.params.config['features.multi_agent_v2.enabled'] === true
+	    ) {
 	      send({
 	        id: message.id,
 	        error: { message: 'multi-agent V2 thread bootstrap failed' },
 	      });
 	      return;
 	    }
-	    if (!message.params || message.params.persistExtendedHistory !== true) {
+	    if (
+	      !message.params ||
+	      message.params.persistExtendedHistory !== true ||
+	      !message.params.config ||
+	      message.params.config['shell_environment_policy.inherit'] !== 'all' ||
+	      message.params.config['shell_environment_policy.ignore_default_excludes'] !== true
+	    ) {
 	      send({
 	        id: message.id,
-	        error: { message: 'expected compatibility thread params' },
+	        error: { message: 'expected compatibility thread params with shell environment policy' },
 	      });
 	      return;
 	    }

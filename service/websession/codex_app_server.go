@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -270,7 +269,7 @@ type codexTransportRetryInfo struct {
 func startCodexAppServer(ctx context.Context, codexPath, cwd string) (*codexAppServerClient, io.Reader, error) {
 	cmd := exec.CommandContext(ctx, codexPath, "app-server", "--listen", "stdio://")
 	cmd.Dir = cwd
-	cmd.Env = os.Environ()
+	cmd.Env = codexAppServerEnvironment()
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -2907,9 +2906,9 @@ func codexThreadStartParams(session tables.WebSessionTable, supportsMultiAgentV2
 		"model":          strings.TrimSpace(session.Model),
 		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
 		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
+		"config":         codexThreadConfig(supportsMultiAgentV2),
 	}
 	if supportsMultiAgentV2 {
-		params["config"] = codexMultiAgentV2Config()
 		params["historyMode"] = "paginated"
 		params["experimentalRawEvents"] = true
 	} else {
@@ -2929,20 +2928,24 @@ func codexThreadResumeParams(
 		"model":          strings.TrimSpace(session.Model),
 		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
 		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
+		"config":         codexThreadConfig(supportsMultiAgentV2),
 	}
-	if supportsMultiAgentV2 {
-		params["config"] = codexMultiAgentV2Config()
-	} else {
+	if !supportsMultiAgentV2 {
 		params["persistExtendedHistory"] = true
 	}
 	return params
 }
 
-func codexMultiAgentV2Config() map[string]any {
-	return map[string]any{
-		"features.multi_agent_v2.enabled":        true,
-		"features.multi_agent_v2.tool_namespace": codexCollaborationNamespace,
+func codexThreadConfig(supportsMultiAgentV2 bool) map[string]any {
+	config := map[string]any{
+		"shell_environment_policy.inherit":                 "all",
+		"shell_environment_policy.ignore_default_excludes": true,
 	}
+	if supportsMultiAgentV2 {
+		config["features.multi_agent_v2.enabled"] = true
+		config["features.multi_agent_v2.tool_namespace"] = codexCollaborationNamespace
+	}
+	return config
 }
 
 func codexTurnStartParams(
