@@ -12815,14 +12815,15 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
   beginSessionSubmit(draftSessionId, mode === 'redirect' ? 'redirect_message' : 'queue_message');
   clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
   try {
-    if (!(await ensureMessageCapabilityAvailable(session.agent))) {
+    if (!(await ensureMessageCapabilityAvailable(session.agent, { refresh: false }))) {
       return;
     }
     await webSessionStore.sendMessage(
       session.id,
       draftText,
       attachments.map(item => item.id),
-      mode
+      mode,
+      { attachments }
     );
     submissionSucceeded = true;
     recordSubmittedPrompt(draftText, session.projectId || submitProjectId);
@@ -13517,8 +13518,11 @@ function maybeNotifyCodexCompatibilityMode() {
   message.warning(codexCompatibilityModeMessage());
 }
 
-async function ensureMessageCapabilityAvailable(agent: WebSessionAgent) {
-  const config = await refreshRuntimeCapabilities();
+async function ensureMessageCapabilityAvailable(
+  agent: WebSessionAgent,
+  options: { refresh?: boolean } = {}
+) {
+  const config = options.refresh === false ? codexRuntimeConfig.value : await refreshRuntimeCapabilities();
   if (!config) {
     if (agent === 'pi') {
       message.warning(piUnavailableReason.value);

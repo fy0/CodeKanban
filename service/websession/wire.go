@@ -55,24 +55,26 @@ type wireHeartbeatFrame struct {
 }
 
 type wireFrame struct {
-	Version   int                  `json:"v"`
-	Kind      string               `json:"k"`
-	RequestID string               `json:"rid,omitempty"`
-	SessionID string               `json:"sid,omitempty"`
-	Timestamp int64                `json:"ts"`
-	Revision  string               `json:"rev,omitempty"`
-	Operation string               `json:"op,omitempty"`
-	Payload   any                  `json:"p,omitempty"`
-	OK        *int                 `json:"ok,omitempty"`
-	Session   *wireSess            `json:"s,omitempty"`
-	History   *wireHist            `json:"h,omitempty"`
-	Item      *wireHistItem        `json:"i,omitempty"`
-	Pending   []wirePendingInput   `json:"pi,omitempty"`
-	Scheduled []wireScheduledInput `json:"si,omitempty"`
-	SubAgent  *wireSubAgent        `json:"ag,omitempty"`
-	Code      string               `json:"code,omitempty"`
-	Message   string               `json:"msg,omitempty"`
-	Retry     bool                 `json:"retry,omitempty"`
+	Version        int                  `json:"v"`
+	Kind           string               `json:"k"`
+	RequestID      string               `json:"rid,omitempty"`
+	SessionID      string               `json:"sid,omitempty"`
+	Timestamp      int64                `json:"ts"`
+	Revision       string               `json:"rev,omitempty"`
+	PendingEpoch   string               `json:"pe,omitempty"`
+	PendingVersion *uint64              `json:"pv,omitempty"`
+	Operation      string               `json:"op,omitempty"`
+	Payload        any                  `json:"p,omitempty"`
+	OK             *int                 `json:"ok,omitempty"`
+	Session        *wireSess            `json:"s,omitempty"`
+	History        *wireHist            `json:"h,omitempty"`
+	Item           *wireHistItem        `json:"i,omitempty"`
+	Pending        *[]wirePendingInput  `json:"pi,omitempty"`
+	Scheduled      []wireScheduledInput `json:"si,omitempty"`
+	SubAgent       *wireSubAgent        `json:"ag,omitempty"`
+	Code           string               `json:"code,omitempty"`
+	Message        string               `json:"msg,omitempty"`
+	Retry          bool                 `json:"retry,omitempty"`
 }
 
 type wireSess struct {
@@ -319,6 +321,27 @@ func newRevisionAckFrame(requestID, op, sessionID, revision string, payload any)
 	return frame
 }
 
+func applyPendingState(frame *wireFrame, epoch string, version uint64, items []PendingInput) {
+	if frame == nil {
+		return
+	}
+	wireItems := mapWirePendingInputs(items)
+	frame.PendingEpoch = epoch
+	frame.PendingVersion = ptr(version)
+	frame.Pending = &wireItems
+}
+
+func newPendingAckFrame(
+	requestID, op, sessionID, epoch string,
+	version uint64,
+	items []PendingInput,
+	payload any,
+) wireFrame {
+	frame := newAckFrame(requestID, op, sessionID, payload)
+	applyPendingState(&frame, epoch, version, items)
+	return frame
+}
+
 func newErrorFrame(requestID, sessionID, code, message string, retry bool) wireFrame {
 	return wireFrame{
 		Version:   protocolVersion,
@@ -413,15 +436,16 @@ func newSessionFrame(sessionID string, summary SessionSummary) wireFrame {
 	}
 }
 
-func newPendingFrame(sessionID string, items []PendingInput) wireFrame {
-	return wireFrame{
+func newPendingFrame(sessionID, epoch string, version uint64, items []PendingInput) wireFrame {
+	frame := wireFrame{
 		Version:   protocolVersion,
 		Kind:      wireKindEvent,
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
 		Operation: wireOpPending,
-		Pending:   mapWirePendingInputs(items),
 	}
+	applyPendingState(&frame, epoch, version, items)
+	return frame
 }
 
 func newScheduledFrame(sessionID string, items []ScheduledInput) wireFrame {

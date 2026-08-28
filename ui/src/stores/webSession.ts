@@ -574,11 +574,21 @@ export interface WebSessionPendingInput {
   lastError?: string;
   lastErrorCode?: string;
   createdAt: number;
+  localStaged?: boolean;
 }
 
 export const WEB_SESSION_NATIVE_STEER_UNDO_WINDOW_MS = 5_000;
 
 type WebSessionPendingInputMode = WebSessionPendingInput['mode'];
+
+type WebSessionStagedPendingAction = 'send' | 'resume' | 'promote';
+
+type WebSessionStagedPendingInput = WebSessionPendingInput & {
+  localStaged: true;
+  action: WebSessionStagedPendingAction;
+  targetIndex?: number;
+  attachments: WebSessionAttachment[];
+};
 
 export interface WebSessionScheduledInput {
   id: string;
@@ -780,6 +790,7 @@ type PendingActiveCallTimeoutOverride = {
 const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
 const SESSION_DRAFT_STORAGE_KEY = 'kanban-web-session-drafts';
 const PENDING_INPUT_EDIT_DRAFT_STORAGE_KEY = 'kanban-web-session-pending-input-edits';
+const STAGED_PENDING_INPUT_STORAGE_KEY = 'kanban-web-session-staged-pending-inputs';
 const COMMAND_WS_PATH = '/api/v1/web-sessions/ws';
 const EVENTS_WS_PATH = '/api/v1/web-sessions/events';
 const WEB_SESSION_HEARTBEAT_INTERVAL_MS = 15000;
@@ -990,6 +1001,106 @@ function persistPendingInputEditDrafts(
     localStorage.setItem(PENDING_INPUT_EDIT_DRAFT_STORAGE_KEY, JSON.stringify(persisted));
   } catch (error) {
     console.warn('[Web Session] Failed to persist pending input edit drafts', error);
+  }
+}
+
+function normalizeStoredStagedPendingInputs(
+  value: unknown,
+  resetActiveCountdowns = false
+): Record<string, WebSessionStagedPendingInput[]> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const now = Date.now();
+  const result: Record<string, WebSessionStagedPendingInput[]> = {};
+  Object.entries(value).forEach(([sessionId, sessionValue]) => {
+    if (!sessionId.trim() || !Array.isArray(sessionValue)) {
+      return;
+    }
+    const items = sessionValue
+      .map(raw => {
+        if (!isRecord(raw)) {
+          return null;
+        }
+        const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+        const mode = raw.mode === 'queue' ? 'queue' : raw.mode === 'redirect' ? 'redirect' : '';
+        const action = ['send', 'resume', 'promote'].includes(String(raw.action ?? ''))
+          ? (raw.action as WebSessionStagedPendingAction)
+          : '';
+        const text = typeof raw.text === 'string' ? raw.text : '';
+        const attachmentIds = Array.isArray(raw.attachmentIds)
+          ? raw.attachmentIds.map(idValue => String(idValue ?? '').trim()).filter(Boolean)
+          : [];
+        if (!id || !mode || !action || (!text.trim() && attachmentIds.length === 0)) {
+          return null;
+        }
+        const attachments = Array.isArray(raw.attachments)
+          ? raw.attachments
+              .map(item => normalizeStoredAttachment(item))
+              .filter((item): item is WebSessionAttachment => Boolean(item))
+          : [];
+        const failed = raw.status === 'failed';
+        const paused = failed || raw.paused === true;
+        const storedReadyAt = Number(raw.readyAt);
+        return {
+          id,
+          mode,
+          text,
+          attachmentIds,
+          readyAt: paused
+            ? null
+            : resetActiveCountdowns
+              ? now + WEB_SESSION_NATIVE_STEER_UNDO_WINDOW_MS
+              : Number.isFinite(storedReadyAt)
+                ? storedReadyAt
+                : now + WEB_SESSION_NATIVE_STEER_UNDO_WINDOW_MS,
+          paused,
+          status: failed ? ('failed' as const) : undefined,
+          attemptCount:
+            typeof raw.attemptCount === 'number' && Number.isFinite(raw.attemptCount)
+              ? Math.max(0, Math.trunc(raw.attemptCount))
+              : 0,
+          lastError: typeof raw.lastError === 'string' ? raw.lastError : '',
+          lastErrorCode: typeof raw.lastErrorCode === 'string' ? raw.lastErrorCode : '',
+          createdAt:
+            typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt)
+              ? raw.createdAt
+              : now,
+          localStaged: true as const,
+          action,
+          ...(typeof raw.targetIndex === 'number' && Number.isFinite(raw.targetIndex)
+            ? { targetIndex: Math.max(0, Math.trunc(raw.targetIndex)) }
+            : {}),
+          attachments,
+        } as WebSessionStagedPendingInput;
+      })
+      .filter((item): item is WebSessionStagedPendingInput => item != null);
+    if (items.length > 0) {
+      result[sessionId] = items;
+    }
+  });
+  return result;
+}
+
+function loadStoredStagedPendingInputs() {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(STAGED_PENDING_INPUT_STORAGE_KEY);
+    return raw ? normalizeStoredStagedPendingInputs(JSON.parse(raw), true) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistStagedPendingInputs(value: Record<string, WebSessionStagedPendingInput[]>) {
+  try {
+    const persisted = normalizeStoredStagedPendingInputs(value);
+    if (Object.keys(persisted).length === 0) {
+      globalThis.sessionStorage?.removeItem(STAGED_PENDING_INPUT_STORAGE_KEY);
+      return;
+    }
+    globalThis.sessionStorage?.setItem(STAGED_PENDING_INPUT_STORAGE_KEY, JSON.stringify(persisted));
+  } catch (error) {
+    console.warn('[Web Session] Failed to persist staged pending inputs', error);
   }
 }
 
@@ -1859,7 +1970,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
     Record<string, Record<string, WebSessionDraftAttachmentUploadState>>
   >({});
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
+  const stagedPendingInputsBySession = ref<Record<string, WebSessionStagedPendingInput[]>>(
+    loadStoredStagedPendingInputs()
+  );
+  const pendingClockBySession = new Map<string, { epoch: string; version: number }>();
   const pendingInputVersionBySession = new Map<string, number>();
+  const stagedPendingTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>();
   const scheduledInputsBySession = ref<Record<string, WebSessionScheduledInput[]>>({});
   const snapshotApprovalsBySession = ref<Record<string, WebSessionApprovalState>>({});
   const subAgentsBySession = ref<Record<string, WebSessionSubAgent[]>>({});
@@ -2162,7 +2278,20 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function getPendingInputs(sessionId: string) {
-    return pendingInputsBySession.value[sessionId] ?? [];
+    const serverItems = pendingInputsBySession.value[sessionId] ?? [];
+    const stagedItems = stagedPendingInputsBySession.value[sessionId] ?? [];
+    if (stagedItems.length === 0) {
+      return serverItems;
+    }
+    let merged = [...serverItems];
+    stagedItems.forEach(staged => {
+      const existingIndex = merged.findIndex(item => item.id === staged.id);
+      if (existingIndex >= 0) {
+        merged.splice(existingIndex, 1);
+      }
+      merged = insertPendingInput(merged, staged);
+    });
+    return merged;
   }
 
   function getScheduledInputs(sessionId: string) {
@@ -2406,7 +2535,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     summary: WebSessionSummary,
     items: WebSessionBlock[],
     pendingApproval: WebSessionApprovalState | null,
-    pendingInputs: WebSessionPendingInput[],
     scheduledInputs: WebSessionScheduledInput[],
     history: {
       hasMore: boolean;
@@ -2421,7 +2549,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     upsertSession(summary, options);
     setSnapshotApproval(sessionId, pendingApproval);
     resetSessionEvents(sessionId, items);
-    setPendingInputs(sessionId, pendingInputs);
     setScheduledInputs(sessionId, scheduledInputs);
     if (options && Object.prototype.hasOwnProperty.call(options, 'subAgents')) {
       setSubAgents(sessionId, options.subAgents ?? []);
@@ -3600,6 +3727,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     delete nextHistory[sessionId];
     historyBySession.value = nextHistory;
     sessionSync.clear(sessionId);
+    pendingClockBySession.delete(sessionId);
     pendingInputVersionBySession.delete(sessionId);
     pendingAutoRetryOverrides.delete(sessionId);
     pendingAutoRetryDispatchOverrides.delete(sessionId);
@@ -3615,6 +3743,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextPendingInputs = { ...pendingInputsBySession.value };
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
+    setStagedPendingInputs(sessionId, []);
     const nextScheduledInputs = { ...scheduledInputsBySession.value };
     delete nextScheduledInputs[sessionId];
     scheduledInputsBySession.value = nextScheduledInputs;
@@ -3726,6 +3855,110 @@ export const useWebSessionStore = defineStore('web-session', () => {
         (pendingInputVersionBySession.get(sessionId) ?? 0) + 1
       );
     }
+  }
+
+  function applyAuthoritativePendingState(
+    sessionId: string,
+    epochValue: unknown,
+    versionValue: unknown,
+    items: WebSessionPendingInput[]
+  ) {
+    const epoch = typeof epochValue === 'string' ? epochValue.trim() : '';
+    const parsedVersion = Number(versionValue);
+    if (!epoch || !Number.isFinite(parsedVersion) || parsedVersion < 0) {
+      setPendingInputs(sessionId, items);
+      return true;
+    }
+    const version = Math.trunc(parsedVersion);
+    const current = pendingClockBySession.get(sessionId);
+    if (current?.epoch === epoch && version <= current.version) {
+      return false;
+    }
+    pendingClockBySession.set(sessionId, { epoch, version });
+    setPendingInputs(sessionId, items);
+    return true;
+  }
+
+  function normalizeWirePendingInputs(items: WirePendingInput[]) {
+    return items
+      .map(item =>
+        normalizePendingInput({
+          id: item.id,
+          mode: item.m,
+          text: item.txt,
+          attachmentIds: item.atts,
+          readyAt: item.ra,
+          paused: item.ps,
+          nativeQueued: item.nq,
+          status: item.st,
+          attemptCount: item.ac,
+          lastError: item.err,
+          lastErrorCode: item.ec,
+          createdAt: item.ca,
+        })
+      )
+      .filter((item): item is WebSessionPendingInput => item != null);
+  }
+
+  function applyPendingWireFrame(frame: WireFrame) {
+    if (!frame.sid || !Array.isArray(frame.pi)) {
+      return false;
+    }
+    return applyAuthoritativePendingState(
+      frame.sid,
+      frame.pe,
+      frame.pv,
+      normalizeWirePendingInputs(frame.pi)
+    );
+  }
+
+  function stagedPendingTimerKey(sessionId: string, pendingId: string) {
+    return `${sessionId}\u0000${pendingId}`;
+  }
+
+  function clearStagedPendingTimer(sessionId: string, pendingId: string) {
+    const key = stagedPendingTimerKey(sessionId, pendingId);
+    const timer = stagedPendingTimers.get(key);
+    if (timer != null) {
+      globalThis.clearTimeout(timer);
+      stagedPendingTimers.delete(key);
+    }
+  }
+
+  function scheduleStagedPendingInput(sessionId: string, item: WebSessionStagedPendingInput) {
+    clearStagedPendingTimer(sessionId, item.id);
+    if (item.paused || item.status === 'failed' || item.readyAt == null) {
+      return;
+    }
+    const delay = Math.max(0, item.readyAt - Date.now());
+    const key = stagedPendingTimerKey(sessionId, item.id);
+    const timer = globalThis.setTimeout(() => {
+      stagedPendingTimers.delete(key);
+      void dispatchStagedPendingInput(sessionId, item.id);
+    }, delay);
+    stagedPendingTimers.set(key, timer);
+  }
+
+  function setStagedPendingInputs(sessionId: string, items: WebSessionStagedPendingInput[]) {
+    const previous = stagedPendingInputsBySession.value[sessionId] ?? [];
+    previous.forEach(item => {
+      if (!items.some(next => next.id === item.id)) {
+        clearStagedPendingTimer(sessionId, item.id);
+      }
+    });
+    const next = { ...stagedPendingInputsBySession.value };
+    if (items.length === 0) {
+      delete next[sessionId];
+    } else {
+      next[sessionId] = items;
+    }
+    stagedPendingInputsBySession.value = next;
+    persistStagedPendingInputs(next);
+    pendingInputVersionBySession.set(
+      sessionId,
+      (pendingInputVersionBySession.get(sessionId) ?? 0) + 1
+    );
+    items.forEach(item => scheduleStagedPendingInput(sessionId, item));
   }
 
   function setScheduledInputs(sessionId: string, items: WebSessionScheduledInput[]) {
@@ -4942,7 +5175,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
     if (frame.k === 'ack') {
       if (frame.sid) {
-        sessionSync.observe(frame.sid, frame.rev);
+        applyPendingWireFrame(frame);
+        if (frame.rev) {
+          sessionSync.observe(frame.sid, frame.rev);
+        }
       }
       if (frame.op === 'set_ar' && frame.sid) {
         acknowledgePendingAutoRetryOverride(frame.sid, Date.now());
@@ -4958,6 +5194,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (frame.k === 'evt' && frame.sid) {
+      if (frame.op === 'pending') {
+        const previousProjection = getRuntimeProjection(frame.sid);
+        if (applyPendingWireFrame(frame)) {
+          emitStateTransition(frame.sid, previousProjection, getRuntimeProjection(frame.sid));
+        }
+        return;
+      }
       if (frame.op === 'resync_required') {
         const payload = asRecord(frame.p);
         sessionSync.requestHydration(frame.sid, frame.rev, String(payload?.reason ?? '').trim());
@@ -4975,35 +5218,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
           revision: normalizeWebSessionRevision(frame.rev ?? frame.s.rev),
         });
       }
-      if (frame.op === 'pending') {
-        setPendingInputs(
-          frame.sid,
-          Array.isArray(frame.pi)
-            ? frame.pi
-                .map(item =>
-                  normalizePendingInput({
-                    id: item.id,
-                    mode: item.m,
-                    text: item.txt,
-                    attachmentIds: item.atts,
-                    readyAt: item.ra,
-                    paused: item.ps,
-                    nativeQueued: item.nq,
-                    status: item.st,
-                    attemptCount: item.ac,
-                    lastError: item.err,
-                    lastErrorCode: item.ec,
-                    createdAt: item.ca,
-                  })
-                )
-                .filter((item): item is WebSessionPendingInput => item != null)
-            : []
-        );
-        emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
-        sessionSync.markApplied(frame.sid, frame.rev);
-        return;
-      }
-
       if (frame.op === 'scheduled') {
         setScheduledInputs(
           frame.sid,
@@ -5382,6 +5596,152 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await hydrateRuntimeMutation(sessionId, hydration, revision);
   }
 
+  async function runPendingMutationCommand(
+    sessionId: string,
+    op: 'pending_del' | 'pending_update' | 'pending_reorder' | 'pending_clear',
+    payload: Record<string, unknown>
+  ) {
+    return sendCommand(op, sessionId, payload);
+  }
+
+  function pendingCommandNotFound(error: unknown) {
+    return (
+      error instanceof WebSessionCommandError &&
+      error.code === 'not_found' &&
+      error.message === 'pending input not found'
+    );
+  }
+
+  function removeAuthoritativePendingInput(sessionId: string, pendingId: string) {
+    setPendingInputs(
+      sessionId,
+      (pendingInputsBySession.value[sessionId] ?? []).filter(item => item.id !== pendingId)
+    );
+  }
+
+  function createStagedPendingId() {
+    return `pending_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function upsertStagedPendingInput(sessionId: string, item: WebSessionStagedPendingInput) {
+    const current = stagedPendingInputsBySession.value[sessionId] ?? [];
+    const next = current.filter(existing => existing.id !== item.id);
+    next.push(item);
+    setStagedPendingInputs(sessionId, next);
+  }
+
+  function restartStagedPendingInput(
+    item: WebSessionStagedPendingInput,
+    updates: Partial<WebSessionStagedPendingInput> = {}
+  ): WebSessionStagedPendingInput {
+    return {
+      ...item,
+      ...updates,
+      readyAt: Date.now() + WEB_SESSION_NATIVE_STEER_UNDO_WINDOW_MS,
+      paused: false,
+      status: undefined,
+      attemptCount: 0,
+      lastError: '',
+      lastErrorCode: '',
+      localStaged: true,
+    };
+  }
+
+  function stageNewRedirectInput(
+    sessionId: string,
+    text: string,
+    attachmentIds: string[],
+    attachments: WebSessionAttachment[]
+  ) {
+    const now = Date.now();
+    const item: WebSessionStagedPendingInput = {
+      id: createStagedPendingId(),
+      mode: 'redirect',
+      text,
+      attachmentIds: [...attachmentIds],
+      readyAt: now + WEB_SESSION_NATIVE_STEER_UNDO_WINDOW_MS,
+      paused: false,
+      createdAt: now,
+      localStaged: true,
+      action: 'send',
+      attachments: attachments.map(attachment => ({ ...attachment })),
+    };
+    upsertStagedPendingInput(sessionId, item);
+    return item.id;
+  }
+
+  async function dispatchStagedPendingInput(sessionId: string, pendingId: string) {
+    const staged = (stagedPendingInputsBySession.value[sessionId] ?? []).find(
+      item => item.id === pendingId
+    );
+    if (!staged || staged.paused || staged.status === 'failed') {
+      return;
+    }
+    upsertStagedPendingInput(sessionId, {
+      ...staged,
+      readyAt: null,
+      status: 'persisting',
+    });
+    try {
+      switch (staged.action) {
+        case 'resume':
+        case 'promote':
+          const reordered = staged.action === 'promote' || staged.targetIndex != null;
+          if (reordered) {
+            await runPendingMutationCommand(sessionId, 'pending_reorder', {
+              id: staged.id,
+              mode: staged.mode,
+              idx: Math.max(0, Math.trunc(staged.targetIndex ?? 0)),
+            });
+          }
+          if (
+            !reordered ||
+            (pendingInputsBySession.value[sessionId] ?? []).some(item => {
+              return item.id === staged.id && item.paused;
+            })
+          ) {
+            await runPendingMutationCommand(sessionId, 'pending_update', {
+              id: staged.id,
+              paused: false,
+            });
+          }
+          break;
+        default:
+          await sendCommand('send', sessionId, {
+            txt: staged.text,
+            atts: staged.attachmentIds,
+            mode: staged.mode,
+            pid: staged.id,
+          });
+          break;
+      }
+      setStagedPendingInputs(
+        sessionId,
+        (stagedPendingInputsBySession.value[sessionId] ?? []).filter(item => item.id !== staged.id)
+      );
+    } catch (error) {
+      const current = (stagedPendingInputsBySession.value[sessionId] ?? []).find(
+        item => item.id === staged.id
+      );
+      if (!current) {
+        return;
+      }
+      upsertStagedPendingInput(sessionId, {
+        ...current,
+        readyAt: null,
+        paused: true,
+        status: 'failed',
+        attemptCount: (current.attemptCount ?? 0) + 1,
+        lastError: error instanceof Error ? error.message : String(error),
+        lastErrorCode: error instanceof WebSessionCommandError ? error.code : 'send_failed',
+      });
+    }
+  }
+
+  Object.entries(stagedPendingInputsBySession.value).forEach(([sessionId, items]) => {
+    items.forEach(item => scheduleStagedPendingInput(sessionId, item));
+  });
+
   async function reconcileMissingPendingInput(error: unknown) {
     if (
       !(error instanceof WebSessionCommandError) ||
@@ -5752,6 +6112,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
       );
       let result = snapshot;
       let accepted = true;
+      if (Array.isArray(snapshot.pendingInputs)) {
+        applyAuthoritativePendingState(
+          sessionId,
+          snapshot.pendingEpoch,
+          snapshot.pendingVersion,
+          snapshot.pendingInputs
+            .map(item => normalizePendingInput(item))
+            .filter((item): item is WebSessionPendingInput => item != null)
+        );
+      }
       sessionSync.observe(sessionId, responseRevision);
       if (snapshot.unchanged) {
         sessionSync.markHydrated(sessionId, responseRevision);
@@ -5776,11 +6146,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
               ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
               : [],
             normalizePendingApproval(snapshot.pendingApproval),
-            Array.isArray(snapshot.pendingInputs)
-              ? snapshot.pendingInputs
-                  .map(item => normalizePendingInput(item))
-                  .filter((item): item is WebSessionPendingInput => item != null)
-              : [],
             Array.isArray(snapshot.scheduledInputs)
               ? snapshot.scheduledInputs
                   .map(item => normalizeScheduledInput(item))
@@ -5958,45 +6323,37 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (session?.archivedAt) {
       throw new Error('session is archived');
     }
-    const outgoingMessageId = mode
-      ? ''
-      : stageOutgoingMessage(sessionId, text, attachmentIds, options);
-    const beforeState = snapshotRuntimeMutationState(sessionId);
-    let optimisticPendingId = '';
-    if (session?.status === 'running' && mode) {
-      optimisticPendingId = `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      setPendingInputs(
-        sessionId,
-        insertPendingInput(getPendingInputs(sessionId), {
-          id: optimisticPendingId,
-          mode,
-          text,
-          attachmentIds: [...attachmentIds],
-          readyAt:
-            mode === 'redirect' && (session.agent === 'codex' || session.agent === 'pi')
-              ? Date.now() + WEB_SESSION_NATIVE_STEER_UNDO_WINDOW_MS
-              : null,
-          paused: false,
-          createdAt: Date.now(),
-        }),
-        { authoritative: false }
-      );
+    if (mode === 'redirect') {
+      const attachmentMetadata = (options?.attachments ?? []).map(attachment => ({
+        id: attachment.id,
+        name: attachment.name,
+        mime: attachment.mime ?? '',
+        size: attachment.size ?? 0,
+        path: attachment.path ?? '',
+        createdAt: 'createdAt' in attachment ? String(attachment.createdAt ?? '') : '',
+      }));
+      stageNewRedirectInput(sessionId, text, attachmentIds, attachmentMetadata);
+      return;
     }
+    if (mode === 'queue') {
+      await sendCommand('send', sessionId, {
+        txt: text,
+        atts: attachmentIds,
+        mode,
+        pid: createStagedPendingId(),
+      });
+      return;
+    }
+    const outgoingMessageId = stageOutgoingMessage(sessionId, text, attachmentIds, options);
+    const beforeState = snapshotRuntimeMutationState(sessionId);
 
     const payload = {
       txt: text,
       atts: attachmentIds,
-      ...(mode ? { mode, pid: optimisticPendingId } : {}),
     };
     const hydration: RuntimeMutationHydrationOptions = {
       label: 'send',
-      forceSnapshot: Boolean(optimisticPendingId),
       predicate: () => {
-        if (optimisticPendingId) {
-          return (
-            (pendingInputVersionBySession.get(sessionId) ?? 0) > beforeState.pendingInputVersion
-          );
-        }
         const liveState = getLiveState(sessionId);
         if (buildBlocks(sessionId).length > beforeState.blockCount) {
           return true;
@@ -6020,101 +6377,141 @@ export const useWebSessionStore = defineStore('web-session', () => {
       },
     };
 
-    if (outgoingMessageId) {
-      let acknowledgement: WireFrame;
-      try {
-        acknowledgement = await sendCommand('send', sessionId, payload);
-      } catch (error) {
-        if (setOutgoingMessageDeliveryState(sessionId, outgoingMessageId, 'failed')) {
-          throw new WebSessionMessageDeliveryError(outgoingMessageId, error);
-        }
-        return;
-      }
-
-      setOutgoingMessageDeliveryState(sessionId, outgoingMessageId, 'accepted');
-      const revision = normalizeWebSessionRevision(acknowledgement.rev);
-      if (!revision) {
-        console.warn('[Web Session] Accepted send returned no snapshot revision', {
-          sessionId,
-        });
-        return;
-      }
-      try {
-        await hydrateRuntimeMutation(sessionId, hydration, revision);
-      } catch (error) {
-        console.warn('[Web Session] Accepted send hydration failed', {
-          sessionId,
-          error,
-        });
+    let acknowledgement: WireFrame;
+    try {
+      acknowledgement = await sendCommand('send', sessionId, payload);
+    } catch (error) {
+      if (setOutgoingMessageDeliveryState(sessionId, outgoingMessageId, 'failed')) {
+        throw new WebSessionMessageDeliveryError(outgoingMessageId, error);
       }
       return;
     }
 
+    setOutgoingMessageDeliveryState(sessionId, outgoingMessageId, 'accepted');
+    const revision = normalizeWebSessionRevision(acknowledgement.rev);
+    if (!revision) {
+      console.warn('[Web Session] Accepted send returned no snapshot revision', {
+        sessionId,
+      });
+      return;
+    }
     try {
-      await runRuntimeMutationCommand(sessionId, 'send', payload, hydration);
+      await hydrateRuntimeMutation(sessionId, hydration, revision);
     } catch (error) {
-      if (optimisticPendingId) {
-        setPendingInputs(
-          sessionId,
-          getPendingInputs(sessionId).filter(item => item.id !== optimisticPendingId),
-          { authoritative: false }
-        );
-      }
-      throw error;
+      console.warn('[Web Session] Accepted send hydration failed', {
+        sessionId,
+        error,
+      });
     }
   }
 
   async function removePendingInput(sessionId: string, pendingId: string) {
-    await runRuntimeMutationCommand(
-      sessionId,
-      'pending_del',
-      { id: pendingId },
-      {
-        label: 'pending_del',
-        predicate: () => !getPendingInputs(sessionId).some(item => item.id === pendingId),
-      }
+    const staged = (stagedPendingInputsBySession.value[sessionId] ?? []).find(
+      item => item.id === pendingId
     );
+    const authoritative = (pendingInputsBySession.value[sessionId] ?? []).some(
+      item => item.id === pendingId
+    );
+    if (!authoritative && staged) {
+      setStagedPendingInputs(
+        sessionId,
+        (stagedPendingInputsBySession.value[sessionId] ?? []).filter(item => item.id !== pendingId)
+      );
+      return;
+    }
+    try {
+      await runPendingMutationCommand(sessionId, 'pending_del', { id: pendingId });
+    } catch (error) {
+      if (!pendingCommandNotFound(error)) {
+        throw error;
+      }
+      removeAuthoritativePendingInput(sessionId, pendingId);
+    }
+    if (staged) {
+      setStagedPendingInputs(
+        sessionId,
+        (stagedPendingInputsBySession.value[sessionId] ?? []).filter(item => item.id !== pendingId)
+      );
+    }
   }
 
   async function updatePendingInput(sessionId: string, pendingId: string, text: string) {
     const normalizedText = text.trim();
-    await runRuntimeMutationCommand(
+    const staged = (stagedPendingInputsBySession.value[sessionId] ?? []).find(
+      item => item.id === pendingId
+    );
+    if (staged) {
+      upsertStagedPendingInput(
+        sessionId,
+        restartStagedPendingInput(staged, { text: normalizedText })
+      );
+      return;
+    }
+    const item = (pendingInputsBySession.value[sessionId] ?? []).find(
+      entry => entry.id === pendingId
+    );
+    if (!item) {
+      return;
+    }
+    await runPendingMutationCommand(sessionId, 'pending_update', {
+      id: pendingId,
+      txt: normalizedText,
+      paused: true,
+    });
+    upsertStagedPendingInput(
       sessionId,
-      'pending_update',
-      { id: pendingId, txt: normalizedText, paused: false },
-      {
-        label: 'pending_update',
-        predicate: () =>
-          getPendingInputs(sessionId).some(
-            item => item.id === pendingId && item.text === normalizedText && !item.paused
-          ),
-      }
+      restartStagedPendingInput({
+        ...item,
+        text: normalizedText,
+        paused: false,
+        localStaged: true,
+        action: 'resume',
+        attachments: [],
+      })
     );
   }
 
   async function pausePendingInput(sessionId: string, pendingId: string) {
-    await runRuntimeMutationCommand(
-      sessionId,
-      'pending_update',
-      { id: pendingId, paused: true },
-      {
-        label: 'pending_pause',
-        predicate: () =>
-          getPendingInputs(sessionId).some(item => item.id === pendingId && item.paused),
-      }
+    const staged = (stagedPendingInputsBySession.value[sessionId] ?? []).find(
+      item => item.id === pendingId
     );
+    if (staged) {
+      upsertStagedPendingInput(sessionId, {
+        ...staged,
+        readyAt: null,
+        paused: true,
+        status: undefined,
+      });
+      return;
+    }
+    await runPendingMutationCommand(sessionId, 'pending_update', { id: pendingId, paused: true });
   }
 
   async function resumePendingInput(sessionId: string, pendingId: string) {
-    await runRuntimeMutationCommand(
+    const staged = (stagedPendingInputsBySession.value[sessionId] ?? []).find(
+      item => item.id === pendingId
+    );
+    if (staged) {
+      upsertStagedPendingInput(sessionId, restartStagedPendingInput(staged));
+      return;
+    }
+    const item = (pendingInputsBySession.value[sessionId] ?? []).find(
+      entry => entry.id === pendingId
+    );
+    if (!item) {
+      return;
+    }
+    if (!item.paused) {
+      await runPendingMutationCommand(sessionId, 'pending_update', { id: pendingId, paused: true });
+    }
+    upsertStagedPendingInput(
       sessionId,
-      'pending_update',
-      { id: pendingId, paused: false },
-      {
-        label: 'pending_resume',
-        predicate: () =>
-          getPendingInputs(sessionId).some(item => item.id === pendingId && !item.paused),
-      }
+      restartStagedPendingInput({
+        ...item,
+        localStaged: true,
+        action: 'resume',
+        attachments: [],
+      })
     );
   }
 
@@ -6125,37 +6522,65 @@ export const useWebSessionStore = defineStore('web-session', () => {
     index: number
   ) {
     const normalizedIndex = Math.max(0, Math.trunc(index));
-    await runRuntimeMutationCommand(
-      sessionId,
-      'pending_reorder',
-      {
-        id: pendingId,
-        mode,
-        idx: normalizedIndex,
-      },
-      {
-        label: 'pending_reorder',
-        predicate: () => {
-          const partition = getPendingInputs(sessionId).filter(item => item.mode === mode);
-          return partition[normalizedIndex]?.id === pendingId;
-        },
-      }
+    const staged = (stagedPendingInputsBySession.value[sessionId] ?? []).find(
+      item => item.id === pendingId
     );
+    if (staged) {
+      const dispatchImmediately = staged.mode === 'redirect' && mode === 'queue';
+      const nextStaged =
+        mode === 'redirect' || dispatchImmediately
+          ? restartStagedPendingInput(staged, { mode, targetIndex: normalizedIndex })
+          : { ...staged, mode, targetIndex: normalizedIndex };
+      upsertStagedPendingInput(
+        sessionId,
+        dispatchImmediately ? { ...nextStaged, readyAt: null } : nextStaged
+      );
+      if (dispatchImmediately) {
+        await dispatchStagedPendingInput(sessionId, pendingId);
+      }
+      return;
+    }
+    const item = (pendingInputsBySession.value[sessionId] ?? []).find(
+      entry => entry.id === pendingId
+    );
+    if (!item) {
+      return;
+    }
+    if (item.mode === 'queue' && mode === 'redirect') {
+      if (!item.paused) {
+        await runPendingMutationCommand(sessionId, 'pending_update', {
+          id: pendingId,
+          paused: true,
+        });
+      }
+      upsertStagedPendingInput(
+        sessionId,
+        restartStagedPendingInput({
+          ...item,
+          mode: 'redirect',
+          localStaged: true,
+          action: 'promote',
+          targetIndex: normalizedIndex,
+          attachments: [],
+        })
+      );
+      return;
+    }
+    await runPendingMutationCommand(sessionId, 'pending_reorder', {
+      id: pendingId,
+      mode,
+      idx: normalizedIndex,
+    });
   }
 
   async function clearPendingInputs(sessionId: string) {
-    await runRuntimeMutationCommand(
-      sessionId,
-      'pending_clear',
-      {},
-      {
-        label: 'pending_clear',
-        predicate: () =>
-          getPendingInputs(sessionId).every(
-            item => item.nativeQueued || item.status === 'persisting'
-          ),
-      }
+    const hasAuthoritative = (pendingInputsBySession.value[sessionId] ?? []).some(
+      item => !item.nativeQueued && item.status !== 'persisting'
     );
+    if (hasAuthoritative) {
+      await runPendingMutationCommand(sessionId, 'pending_clear', {});
+    }
+    setStagedPendingInputs(sessionId, []);
   }
 
   async function scheduleMessage(

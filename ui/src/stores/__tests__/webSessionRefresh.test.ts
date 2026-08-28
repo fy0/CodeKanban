@@ -248,13 +248,25 @@ async function flushMicrotasks() {
   await Promise.resolve();
 }
 
+async function waitForCommandCount(count: number) {
+  let socket = findSocket('/api/v1/web-sessions/ws');
+  for (let attempt = 0; attempt < 10 && (socket?.sent.length ?? 0) < count; attempt += 1) {
+    await flushMicrotasks();
+    socket = findSocket('/api/v1/web-sessions/ws');
+  }
+  return socket;
+}
+
 describe('webSession loading behavior', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     const localStorage = createStorageMock();
+    const sessionStorage = createStorageMock();
     vi.stubGlobal('localStorage', localStorage);
+    vi.stubGlobal('sessionStorage', sessionStorage);
     vi.stubGlobal('window', {
       localStorage,
+      sessionStorage,
       location: {
         protocol: 'http:',
         host: 'localhost:5173',
@@ -1095,7 +1107,7 @@ describe('webSession loading behavior', () => {
     expect(store.getPendingInputs(session.id)).toEqual([]);
   });
 
-  it('silently reconciles stale pending delete, update, and reorder commands', async () => {
+  it('treats a stale pending delete as idempotent without hydrating runtime state', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
       id: 'session-pending-stale',
@@ -1117,15 +1129,7 @@ describe('webSession loading behavior', () => {
     });
 
     listMock.mockResolvedValue([session]);
-    snapshotMock
-      .mockResolvedValueOnce(snapshotWithPending('pending-delete', 'Delete me'))
-      .mockResolvedValueOnce(snapshotWithPending('pending-update', 'Update me'))
-      .mockResolvedValueOnce(snapshotWithPending('pending-reorder', 'Move me'))
-      .mockResolvedValueOnce({
-        session,
-        history: { items: [], hasMore: false, total: 0 },
-        pendingInputs: [],
-      });
+    snapshotMock.mockResolvedValueOnce(snapshotWithPending('pending-delete', 'Delete me'));
 
     await store.loadSessions(session.projectId);
     await store.loadSessionSnapshot(session.projectId, session.id);
@@ -1159,20 +1163,9 @@ describe('webSession loading behavior', () => {
     const deletePromise = store.removePendingInput(session.id, 'pending-delete');
     await dispatchMissingPendingError('pending_del');
     await expect(deletePromise).resolves.toBeUndefined();
-    expect(store.getPendingInputs(session.id)[0]?.id).toBe('pending-update');
-
-    const updatePromise = store.updatePendingInput(session.id, 'pending-update', 'Updated text');
-    await dispatchMissingPendingError('pending_update');
-    await expect(updatePromise).resolves.toBeUndefined();
-    expect(store.getPendingInputs(session.id)[0]?.id).toBe('pending-reorder');
-
-    const reorderPromise = store.reorderPendingInput(session.id, 'pending-reorder', 'queue', 0);
-    await dispatchMissingPendingError('pending_reorder');
-    await expect(reorderPromise).resolves.toBeUndefined();
-
     expect(store.getPendingInputs(session.id)).toEqual([]);
     expect(store.lastError).toBeNull();
-    expect(snapshotMock).toHaveBeenCalledTimes(4);
+    expect(snapshotMock).toHaveBeenCalledTimes(1);
   });
 
   it('keeps non-stale pending command failures visible', async () => {
@@ -1254,7 +1247,7 @@ describe('webSession loading behavior', () => {
       p: {
         id: 'pending-1',
         txt: 'Updated follow-up',
-        paused: false,
+        paused: true,
       },
     });
 
@@ -1288,10 +1281,18 @@ describe('webSession loading behavior', () => {
     });
 
     await updatePromise;
-    expect(store.getPendingInputs(session.id)[0]?.text).toBe('Updated follow-up');
+    expect(store.getPendingInputs(session.id)[0]).toMatchObject({
+      text: 'Updated follow-up',
+      mode: 'queue',
+      localStaged: true,
+      paused: false,
+    });
+    expect(store.getPendingInputs(session.id)[0]?.readyAt).toBeGreaterThan(Date.now());
   });
 
-  it('pauses and resumes delayed steer inputs through pending updates', async () => {
+  it('pauses server input immediately and resumes it after a local undo window', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse('2026-04-09T10:02:00.000Z'));
     const store = useWebSessionStore();
     const session = makeSession({
       id: 'session-pending-pause',
@@ -1327,8 +1328,7 @@ describe('webSession loading behavior', () => {
     const pausePromise = store.pausePendingInput(session.id, 'pending-1');
     let commandSocket = findSocket('/api/v1/web-sessions/ws');
     for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
-      await Promise.resolve();
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await flushMicrotasks();
       commandSocket = findSocket('/api/v1/web-sessions/ws');
     }
     const eventSocket = findSocket('/api/v1/web-sessions/events');
@@ -1370,15 +1370,17 @@ describe('webSession loading behavior', () => {
       readyAt: null,
     });
 
-    const resumedAt = Date.parse('2026-04-09T10:02:05.000Z');
-    const resumePromise = store.resumePendingInput(session.id, 'pending-1');
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      await Promise.resolve();
-      await new Promise(resolve => setTimeout(resolve, 0));
-      if (commandSocket?.sent.at(-1)?.p?.paused === false) {
-        break;
-      }
-    }
+    const commandCountBeforeResume = commandSocket?.sent.length ?? 0;
+    await store.resumePendingInput(session.id, 'pending-1');
+    expect(commandSocket?.sent).toHaveLength(commandCountBeforeResume);
+    expect(store.getPendingInputs(session.id)[0]).toMatchObject({
+      paused: false,
+      readyAt: Date.parse('2026-04-09T10:02:05.000Z'),
+      localStaged: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushMicrotasks();
     expect(commandSocket?.sent.at(-1)).toMatchObject({
       op: 'pending_update',
       p: { id: 'pending-1', paused: false },
@@ -1394,28 +1396,22 @@ describe('webSession loading behavior', () => {
       ts: Date.now(),
       op: 'pending_update',
       ok: 1,
-    });
-    eventSocket?.dispatch({
-      v: 1,
-      k: 'evt',
-      sid: session.id,
-      ts: Date.now(),
-      op: 'pending',
+      pe: 'process-1',
+      pv: 3,
       pi: [
         {
           id: 'pending-1',
           m: 'redirect',
           txt: 'Steer follow-up',
-          ra: resumedAt,
           ps: false,
           ca: Date.parse('2026-04-09T10:01:00.000Z'),
         },
       ],
     });
-    await resumePromise;
+    await flushMicrotasks();
     expect(store.getPendingInputs(session.id)[0]).toMatchObject({
       paused: false,
-      readyAt: resumedAt,
+      readyAt: null,
     });
   });
 
@@ -1594,7 +1590,7 @@ describe('webSession loading behavior', () => {
     expect(store.getPendingInputs(session.id)).toEqual([]);
   });
 
-  it('shows optimistic pending previews before the backend pending event arrives', async () => {
+  it('sends queued input immediately and applies the pending snapshot from its ack', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
       id: 'session-pending-optimistic',
@@ -1623,13 +1619,7 @@ describe('webSession loading behavior', () => {
 
     const sendPromise = store.sendMessage(session.id, 'Optimistic queued follow-up', [], 'queue');
 
-    const optimistic = store.getPendingInputs(session.id);
-    expect(optimistic).toHaveLength(1);
-    expect(optimistic[0]).toMatchObject({
-      mode: 'queue',
-      text: 'Optimistic queued follow-up',
-      attachmentIds: [],
-    });
+    expect(store.getPendingInputs(session.id)).toEqual([]);
 
     let commandSocket = findSocket('/api/v1/web-sessions/ws');
     for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
@@ -1639,7 +1629,10 @@ describe('webSession loading behavior', () => {
     }
 
     expect(commandSocket).not.toBeNull();
-    expect(commandSocket?.sent.at(-1)).toMatchObject({
+    const command = commandSocket?.sent.at(-1) as
+      | { rid?: string; p?: { pid?: string } }
+      | undefined;
+    expect(command).toMatchObject({
       k: 'cmd',
       sid: session.id,
       op: 'send',
@@ -1647,13 +1640,11 @@ describe('webSession loading behavior', () => {
         txt: 'Optimistic queued follow-up',
         atts: [],
         mode: 'queue',
-        pid: optimistic[0]?.id,
+        pid: expect.any(String),
       },
     });
 
-    const requestId = String(
-      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
-    );
+    const requestId = String(command?.rid ?? '');
     commandSocket?.dispatch({
       v: 1,
       k: 'ack',
@@ -1662,14 +1653,424 @@ describe('webSession loading behavior', () => {
       ts: Date.now(),
       op: 'send',
       ok: 1,
+      pe: 'process-1',
+      pv: 1,
+      pi: [
+        {
+          id: command?.p?.pid,
+          m: 'queue',
+          txt: 'Optimistic queued follow-up',
+          ca: Date.now(),
+        },
+      ],
     });
 
     await sendPromise;
-    expect(snapshotMock).toHaveBeenCalledWith(
-      session.projectId,
-      session.id,
-      expect.objectContaining({ limit: 80, signal: expect.any(AbortSignal) })
+    expect(snapshotMock).not.toHaveBeenCalled();
+    expect(store.getPendingInputs(session.id)).toMatchObject([
+      {
+        id: command?.p?.pid,
+        mode: 'queue',
+        text: 'Optimistic queued follow-up',
+      },
+    ]);
+  });
+
+  it('keeps redirects in session storage for five seconds before sending', async () => {
+    vi.useFakeTimers();
+    const startedAt = Date.parse('2026-08-29T06:00:00.000Z');
+    vi.setSystemTime(startedAt);
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-local-redirect',
+      status: 'running',
+      assistantState: 'working',
+    });
+    const attachment = {
+      id: 'attachment-1',
+      name: 'scope.png',
+      mime: 'image/png',
+      size: 128,
+      path: '/tmp/scope.png',
+      createdAt: '2026-08-29T05:59:00.000Z',
+    };
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    await store.sendMessage(session.id, 'Redirect after undo', [attachment.id], 'redirect', {
+      attachments: [attachment],
+    });
+
+    const staged = store.getPendingInputs(session.id)[0];
+    expect(staged).toMatchObject({
+      mode: 'redirect',
+      text: 'Redirect after undo',
+      readyAt: startedAt + 5_000,
+      localStaged: true,
+    });
+    expect(findSocket('/api/v1/web-sessions/ws')).toBeNull();
+    const stored = JSON.parse(
+      globalThis.sessionStorage.getItem('kanban-web-session-staged-pending-inputs') ?? '{}'
     );
+    expect(stored[session.id][0]).toMatchObject({
+      id: staged?.id,
+      attachments: [{ id: attachment.id, name: attachment.name }],
+    });
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(findSocket('/api/v1/web-sessions/ws')).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    await flushMicrotasks();
+
+    const commandSocket = findSocket('/api/v1/web-sessions/ws');
+    const command = commandSocket?.sent.at(-1) as { rid?: string; p?: { pid?: string } };
+    expect(command).toMatchObject({
+      op: 'send',
+      sid: session.id,
+      p: {
+        txt: 'Redirect after undo',
+        atts: [attachment.id],
+        mode: 'redirect',
+        pid: staged?.id,
+      },
+    });
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: command.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'send',
+      ok: 1,
+      pe: 'process-1',
+      pv: 1,
+      pi: [],
+    });
+    await flushMicrotasks();
+    expect(store.getPendingInputs(session.id)).toEqual([]);
+  });
+
+  it('sends a staged redirect immediately when it is changed to queue', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse('2026-08-29T06:00:00.000Z'));
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-staged-redirect-to-queue',
+      status: 'running',
+      assistantState: 'working',
+    });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    await store.sendMessage(session.id, 'Queue this now', [], 'redirect');
+    const pendingId = store.getPendingInputs(session.id)[0]?.id ?? '';
+    const reorderPromise = store.reorderPendingInput(session.id, pendingId, 'queue', 0);
+    const commandSocket = await waitForCommandCount(1);
+    const command = commandSocket?.sent[0] as { rid?: string } | undefined;
+    expect(command).toMatchObject({
+      op: 'send',
+      sid: session.id,
+      p: {
+        txt: 'Queue this now',
+        mode: 'queue',
+        pid: pendingId,
+      },
+    });
+
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: command?.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'send',
+      ok: 1,
+      pe: 'process-queue',
+      pv: 1,
+      pi: [{ id: pendingId, m: 'queue', txt: 'Queue this now', ca: Date.now() }],
+    });
+    await reorderPromise;
+
+    const queued = store.getPendingInputs(session.id)[0];
+    expect(queued).toMatchObject({ id: pendingId, mode: 'queue' });
+    expect(queued).not.toHaveProperty('localStaged');
+    expect(globalThis.sessionStorage.getItem('kanban-web-session-staged-pending-inputs')).toBe(
+      null
+    );
+  });
+
+  it('restores a paused server queue item when a staged promotion is changed back to queue', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse('2026-08-29T06:00:00.000Z'));
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-staged-promotion-to-queue',
+      status: 'running',
+      assistantState: 'working',
+    });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      revision: '2',
+      pendingEpoch: 'process-restore',
+      pendingVersion: 0,
+      session,
+      history: { items: [], hasMore: false, total: 0 },
+      pendingInputs: [
+        {
+          id: 'pending-restore',
+          mode: 'queue',
+          text: 'Restore me',
+          attachmentIds: [],
+          paused: false,
+          createdAt: '2026-08-29T05:59:00.000Z',
+        },
+      ],
+    });
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    const promotePromise = store.reorderPendingInput(session.id, 'pending-restore', 'redirect', 0);
+    const commandSocket = await waitForCommandCount(1);
+    const pauseCommand = commandSocket?.sent[0] as { rid?: string } | undefined;
+    expect(pauseCommand).toMatchObject({
+      op: 'pending_update',
+      p: { id: 'pending-restore', paused: true },
+    });
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: pauseCommand?.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_update',
+      ok: 1,
+      pe: 'process-restore',
+      pv: 1,
+      pi: [{ id: 'pending-restore', m: 'queue', txt: 'Restore me', ps: true, ca: Date.now() }],
+    });
+    await promotePromise;
+    expect(store.getPendingInputs(session.id)[0]).toMatchObject({
+      id: 'pending-restore',
+      mode: 'redirect',
+      localStaged: true,
+    });
+
+    const restorePromise = store.reorderPendingInput(session.id, 'pending-restore', 'queue', 0);
+    await waitForCommandCount(2);
+    const reorderCommand = commandSocket?.sent[1] as { rid?: string } | undefined;
+    expect(reorderCommand).toMatchObject({
+      op: 'pending_reorder',
+      p: { id: 'pending-restore', mode: 'queue', idx: 0 },
+    });
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: reorderCommand?.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_reorder',
+      ok: 1,
+      pe: 'process-restore',
+      pv: 2,
+      pi: [{ id: 'pending-restore', m: 'queue', txt: 'Restore me', ps: true, ca: Date.now() }],
+    });
+
+    await waitForCommandCount(3);
+    const resumeCommand = commandSocket?.sent[2] as { rid?: string } | undefined;
+    expect(resumeCommand).toMatchObject({
+      op: 'pending_update',
+      p: { id: 'pending-restore', paused: false },
+    });
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: resumeCommand?.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_update',
+      ok: 1,
+      pe: 'process-restore',
+      pv: 3,
+      pi: [{ id: 'pending-restore', m: 'queue', txt: 'Restore me', ca: Date.now() }],
+    });
+    await restorePromise;
+
+    const restored = store.getPendingInputs(session.id)[0];
+    expect(restored).toMatchObject({ id: 'pending-restore', mode: 'queue', paused: false });
+    expect(restored).not.toHaveProperty('localStaged');
+  });
+
+  it('restarts a restored staged redirect with a fresh five-second window', async () => {
+    vi.useFakeTimers();
+    const startedAt = Date.parse('2026-08-29T06:00:00.000Z');
+    vi.setSystemTime(startedAt);
+    const session = makeSession({ id: 'session-restored-redirect' });
+    listMock.mockResolvedValue([session]);
+    const firstStore = useWebSessionStore();
+    await firstStore.loadSessions(session.projectId);
+    await firstStore.sendMessage(session.id, 'Wait after refresh', [], 'redirect');
+    await vi.advanceTimersByTimeAsync(4_000);
+
+    vi.clearAllTimers();
+    setActivePinia(createPinia());
+    const restoredAt = Date.now();
+    const restoredStore = useWebSessionStore();
+    expect(restoredStore.getPendingInputs(session.id)[0]).toMatchObject({
+      text: 'Wait after refresh',
+      readyAt: restoredAt + 5_000,
+      localStaged: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(findSocket('/api/v1/web-sessions/ws')).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    const commandSocket = await waitForCommandCount(1);
+    expect(commandSocket?.sent[0]).toMatchObject({
+      op: 'send',
+      sid: session.id,
+      p: { mode: 'redirect' },
+    });
+  });
+
+  it('dispatches a restored resume before the server baseline is hydrated', async () => {
+    vi.useFakeTimers();
+    const startedAt = Date.parse('2026-08-29T06:00:00.000Z');
+    vi.setSystemTime(startedAt);
+    const sessionId = 'session-restored-resume';
+    globalThis.sessionStorage.setItem(
+      'kanban-web-session-staged-pending-inputs',
+      JSON.stringify({
+        [sessionId]: [
+          {
+            id: 'pending-restored-resume',
+            mode: 'redirect',
+            text: 'Resume after refresh',
+            attachmentIds: [],
+            readyAt: startedAt + 1_000,
+            paused: false,
+            createdAt: startedAt - 1_000,
+            localStaged: true,
+            action: 'resume',
+            attachments: [],
+          },
+        ],
+      })
+    );
+    useWebSessionStore();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    const commandSocket = await waitForCommandCount(1);
+    expect(commandSocket?.sent[0]).toMatchObject({
+      op: 'pending_update',
+      sid: sessionId,
+      p: { id: 'pending-restored-resume', paused: false },
+    });
+  });
+
+  it('keeps a failed staged redirect paused without automatic retries', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse('2026-08-29T06:00:00.000Z'));
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-failed-staged-redirect' });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    await store.sendMessage(session.id, 'Fail once', [], 'redirect');
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    const commandSocket = await waitForCommandCount(1);
+    const command = commandSocket?.sent[0] as { rid?: string } | undefined;
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'err',
+      rid: command?.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'send',
+      code: 'unavailable',
+      msg: 'runtime unavailable',
+    });
+    await flushMicrotasks();
+
+    expect(store.getPendingInputs(session.id)[0]).toMatchObject({
+      mode: 'redirect',
+      paused: true,
+      readyAt: null,
+      status: 'failed',
+      attemptCount: 1,
+      lastError: 'runtime unavailable',
+      lastErrorCode: 'unavailable',
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(commandSocket?.sent).toHaveLength(1);
+  });
+
+  it('continues a staged redirect countdown after switching sessions', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse('2026-08-29T06:00:00.000Z'));
+    const store = useWebSessionStore();
+    const first = makeSession({ id: 'session-countdown-first' });
+    const second = makeSession({ id: 'session-countdown-second' });
+    listMock.mockResolvedValue([first, second]);
+    await store.loadSessions(first.projectId);
+    store.setActiveSession(first.projectId, first.id);
+    await store.sendMessage(first.id, 'Keep counting', [], 'redirect');
+
+    await vi.advanceTimersByTimeAsync(2_500);
+    store.setActiveSession(first.projectId, second.id);
+    await vi.advanceTimersByTimeAsync(2_500);
+    const commandSocket = await waitForCommandCount(1);
+    expect(commandSocket?.sent[0]).toMatchObject({
+      op: 'send',
+      sid: first.id,
+      p: { txt: 'Keep counting', mode: 'redirect' },
+    });
+  });
+
+  it('applies pending clocks independently from durable revisions', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-pending-clock', revision: '9' });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending',
+      pe: 'process-a',
+      pv: 2,
+      pi: [{ id: 'pending-a', m: 'queue', txt: 'A', ca: Date.now() }],
+      rev: '1',
+    });
+    expect(store.getPendingInputs(session.id).map(item => item.id)).toEqual(['pending-a']);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending',
+      pe: 'process-a',
+      pv: 2,
+      pi: [],
+      rev: '99',
+    });
+    expect(store.getPendingInputs(session.id).map(item => item.id)).toEqual(['pending-a']);
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending',
+      pe: 'process-b',
+      pv: 0,
+      pi: [],
+      rev: '1',
+    });
     expect(store.getPendingInputs(session.id)).toEqual([]);
   });
 

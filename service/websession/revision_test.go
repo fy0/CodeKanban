@@ -39,7 +39,8 @@ func TestSessionRevisionAdvancesAtomicallyAndControlsConditionalSnapshots(t *tes
 	if err != nil {
 		t.Fatalf("initial snapshot returned error: %v", err)
 	}
-	if initial.Unchanged || initial.Session == nil || initial.Revision == "" {
+	if initial.Unchanged || initial.Session == nil || initial.Revision == "" ||
+		initial.PendingEpoch == "" || initial.PendingInputs == nil {
 		t.Fatalf("expected a full revisioned snapshot, got %#v", initial)
 	}
 
@@ -52,7 +53,10 @@ func TestSessionRevisionAdvancesAtomicallyAndControlsConditionalSnapshots(t *tes
 	if err != nil {
 		t.Fatalf("conditional snapshot returned error: %v", err)
 	}
-	if !unchanged.Unchanged || unchanged.Revision != initial.Revision || unchanged.Session != nil {
+	if !unchanged.Unchanged || unchanged.Revision != initial.Revision || unchanged.Session != nil ||
+		unchanged.PendingEpoch != initial.PendingEpoch ||
+		unchanged.PendingVersion != initial.PendingVersion || unchanged.PendingInputs == nil ||
+		len(unchanged.PendingInputs) != 0 {
 		t.Fatalf("expected compact unchanged response, got %#v", unchanged)
 	}
 

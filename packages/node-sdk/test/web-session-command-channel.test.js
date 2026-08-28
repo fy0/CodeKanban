@@ -63,6 +63,9 @@ test('WebSessionCommandChannel connect returns a normalized snapshot', async () 
     v: 1,
     k: 'snap',
     sid: 'ws1',
+    rev: 'rev-2',
+    pe: 'process-snapshot',
+    pv: 3,
     ts: 1710000000002,
     s: sampleWireSession(),
     h: {
@@ -94,6 +97,9 @@ test('WebSessionCommandChannel connect returns a normalized snapshot', async () 
 
   const snapshot = await promise;
   assert.equal(snapshot.session.id, 'ws1');
+  assert.equal(snapshot.revision, 'rev-2');
+  assert.equal(snapshot.pendingEpoch, 'process-snapshot');
+  assert.equal(snapshot.pendingVersion, 3);
   assert.equal(snapshot.session.agent, 'codex');
   assert.equal(snapshot.history.items.length, 1);
   assert.equal(snapshot.history.items[0].text, 'hello');
@@ -145,9 +151,16 @@ test('WebSessionCommandChannel updates pending text and pause state', async () =
     ts: 1710000000030,
     op: 'pending_update',
     ok: 1,
+    pe: 'process-pending',
+    pv: 4,
+    pi: [],
   });
 
-  await promise;
+  const acknowledgement = await promise;
+  assert.equal(acknowledgement.revision, null);
+  assert.equal(acknowledgement.pendingEpoch, 'process-pending');
+  assert.equal(acknowledgement.pendingVersion, 4);
+  assert.deepEqual(acknowledgement.pendingInputs, []);
   channel.close();
 });
 

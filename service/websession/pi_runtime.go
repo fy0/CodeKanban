@@ -831,11 +831,11 @@ func requestPiRuntimeControl(client *piRPCClient, command string, payload map[st
 
 func (m *Manager) sendActivePiPendingInput(
 	ctx context.Context,
-	session tables.WebSessionTable,
+	sessionID string,
 	pending PendingInput,
 ) (bool, error) {
 	m.mu.RLock()
-	run := m.runs[session.ID]
+	run := m.runs[sessionID]
 	m.mu.RUnlock()
 	if run == nil || normalizeAgent(run.agent) != AgentPi || run.backend != SessionBackendPiRPC {
 		return false, nil
@@ -844,7 +844,7 @@ func (m *Manager) sendActivePiPendingInput(
 		return false, nil
 	}
 	m.piRuntimeMu.Lock()
-	runtime := m.piRuntimes[session.ID]
+	runtime := m.piRuntimes[sessionID]
 	m.piRuntimeMu.Unlock()
 	if runtime == nil {
 		return false, nil
@@ -852,6 +852,10 @@ func (m *Manager) sendActivePiPendingInput(
 	runtime.mu.Lock()
 	dispatch := runtime.active
 	valid := !runtime.stopped && dispatch != nil && dispatch.run == run
+	var session tables.WebSessionTable
+	if valid {
+		session = dispatch.session
+	}
 	runtime.mu.Unlock()
 	if !valid {
 		return false, nil
@@ -888,14 +892,18 @@ func (m *Manager) sendActivePiPendingInput(
 		return true, err
 	}
 
-	messageID := utils.NewID()
-	if _, err := m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+	messageID := strings.TrimSpace(pending.ID)
+	if messageID == "" {
+		messageID = utils.NewID()
+	}
+	m.markPendingInputDelivered(sessionID, pending)
+	if _, err := m.appendAndBroadcast(context.Background(), sessionID, session, Event{
 		ID: utils.NewID(), Type: "msg_u", RunID: run.runID, ParentID: messageID, Timestamp: time.Now(),
 		Payload: map[string]any{
 			"mid": messageID, "txt": text, "atts": attachmentPayloads(attachments), "piQueueMode": string(pending.Mode),
 		},
 	}); err != nil && m.logger != nil {
-		m.logger.Error("failed to persist Pi queued message", zap.String("sessionId", session.ID), zap.Error(err))
+		m.logger.Error("failed to persist Pi queued message", zap.String("sessionId", sessionID), zap.Error(err))
 	}
 	return true, nil
 }

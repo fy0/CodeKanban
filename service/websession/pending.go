@@ -20,13 +20,14 @@ var (
 	errEmptyPendingInput         = errors.New("message is empty")
 	errPendingInputNotFound      = errors.New("pending input not found")
 	errPendingInputDelivered     = errors.New("pending input was already delivered")
+	errPendingInputIDConflict    = errors.New("pending input id was already used for different content")
 )
 
 const (
-	defaultPendingSteerDelay   = 5 * time.Second
 	pendingSteerRetryDelay     = 500 * time.Millisecond
 	maxPendingSteerRetryDelay  = 5 * time.Second
 	pendingSteerBlockedRecheck = 1 * time.Second
+	maxDeliveredPendingInputs  = 256
 )
 
 type pendingInputUpdate struct {
@@ -203,19 +204,6 @@ func isPiNativePendingSession(record tables.WebSessionTable) bool {
 		effectiveSessionBackend(record) == SessionBackendPiRPC
 }
 
-func (m *Manager) nextPendingSteerReadyAt() time.Time {
-	delay := m.pendingSteerDelay
-	if delay <= 0 {
-		delay = defaultPendingSteerDelay
-	}
-	return time.Now().Add(delay)
-}
-
-func (m *Manager) sessionUsesCodexSteer(sessionID string) bool {
-	record, err := m.GetSession(context.Background(), strings.TrimSpace(sessionID))
-	return err == nil && record.ArchivedAt == nil && isCodexSteerSession(record)
-}
-
 func insertPendingInput(queue []PendingInput, item PendingInput) []PendingInput {
 	if item.Mode != PendingInputModeRedirect {
 		return append(queue, item)
@@ -240,12 +228,83 @@ func (m *Manager) pendingInputsSnapshot(sessionID string) []PendingInput {
 	return clonePendingInputs(m.pendingInputs[sessionID])
 }
 
-func (m *Manager) pendingInputsDisplaySnapshot(sessionID string) []PendingInput {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+func (m *Manager) ensurePendingStateLocked() {
+	if strings.TrimSpace(m.pendingEpoch) == "" {
+		m.pendingEpoch = utils.NewID()
+	}
+	if m.pendingVersions == nil {
+		m.pendingVersions = make(map[string]uint64)
+	}
+	if m.pendingDelivered == nil {
+		m.pendingDelivered = make(map[string]map[string]PendingInput)
+	}
+	if m.pendingDeliveredOrder == nil {
+		m.pendingDeliveredOrder = make(map[string][]string)
+	}
+}
+
+func (m *Manager) bumpPendingVersionLocked(sessionID string) uint64 {
+	m.ensurePendingStateLocked()
+	m.pendingVersions[sessionID]++
+	return m.pendingVersions[sessionID]
+}
+
+func (m *Manager) pendingStateSnapshot(sessionID string) (string, uint64, []PendingInput) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensurePendingStateLocked()
 	local := clonePendingInputs(m.pendingInputs[sessionID])
 	native := clonePendingInputs(m.piNativeQueuedInputs[sessionID])
-	return append(local, native...)
+	items := make([]PendingInput, 0, len(local)+len(native))
+	items = append(items, local...)
+	items = append(items, native...)
+	return m.pendingEpoch, m.pendingVersions[sessionID], items
+}
+
+func (m *Manager) pendingInputsDisplaySnapshot(sessionID string) []PendingInput {
+	_, _, items := m.pendingStateSnapshot(sessionID)
+	return items
+}
+
+func samePendingInputRequest(item PendingInput, text string, attachmentIDs []string, mode PendingInputMode) bool {
+	if item.Mode != mode || item.Text != strings.TrimSpace(text) {
+		return false
+	}
+	wanted := sanitizePendingAttachmentIDs(attachmentIDs)
+	if len(item.AttachmentIDs) != len(wanted) {
+		return false
+	}
+	for index := range wanted {
+		if item.AttachmentIDs[index] != wanted[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Manager) markPendingInputDelivered(sessionID string, item PendingInput) {
+	pendingID := strings.TrimSpace(item.ID)
+	if pendingID == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensurePendingStateLocked()
+	if m.pendingDelivered[sessionID] == nil {
+		m.pendingDelivered[sessionID] = make(map[string]PendingInput)
+	}
+	if _, exists := m.pendingDelivered[sessionID][pendingID]; exists {
+		m.pendingDelivered[sessionID][pendingID] = clonePendingInput(item)
+		return
+	}
+	m.pendingDelivered[sessionID][pendingID] = clonePendingInput(item)
+	order := append(m.pendingDeliveredOrder[sessionID], pendingID)
+	if len(order) > maxDeliveredPendingInputs {
+		oldest := order[0]
+		order = order[1:]
+		delete(m.pendingDelivered[sessionID], oldest)
+	}
+	m.pendingDeliveredOrder[sessionID] = order
 }
 
 func (m *Manager) replacePiNativeQueuedInputs(sessionID string, steering, followUp []string) {
@@ -276,6 +335,7 @@ func (m *Manager) replacePiNativeQueuedInputs(sessionID string, steering, follow
 	} else {
 		m.piNativeQueuedInputs[sessionID] = items
 	}
+	m.bumpPendingVersionLocked(sessionID)
 	m.mu.Unlock()
 	m.broadcastPendingInputs(sessionID)
 }
@@ -284,6 +344,9 @@ func (m *Manager) clearPiNativeQueuedInputs(sessionID string) {
 	m.mu.Lock()
 	hadItems := len(m.piNativeQueuedInputs[sessionID]) > 0
 	delete(m.piNativeQueuedInputs, sessionID)
+	if hadItems {
+		m.bumpPendingVersionLocked(sessionID)
+	}
 	m.mu.Unlock()
 	if hadItems {
 		m.broadcastPendingInputs(sessionID)
@@ -343,13 +406,98 @@ func (m *Manager) queuePendingInputWithReadyAt(
 	}
 
 	m.mu.Lock()
+	m.ensurePendingStateLocked()
+	for _, queued := range m.pendingInputs[sessionID] {
+		if queued.ID != normalizedPendingID {
+			continue
+		}
+		m.mu.Unlock()
+		if !samePendingInputRequest(queued, item.Text, item.AttachmentIDs, item.Mode) {
+			return PendingInput{}, errPendingInputIDConflict
+		}
+		return clonePendingInput(queued), nil
+	}
+	if delivered, ok := m.pendingDelivered[sessionID][normalizedPendingID]; ok {
+		m.mu.Unlock()
+		if !samePendingInputRequest(delivered, item.Text, item.AttachmentIDs, item.Mode) {
+			return PendingInput{}, errPendingInputIDConflict
+		}
+		return clonePendingInput(delivered), nil
+	}
+	item.codexMessageID = normalizedPendingID
 	m.pendingInputs[sessionID] = insertPendingInput(m.pendingInputs[sessionID], item)
+	m.bumpPendingVersionLocked(sessionID)
 	m.mu.Unlock()
 
 	m.cancelPendingInputTimer(sessionID)
 	m.broadcastPendingInputs(sessionID)
 	m.triggerPendingProcessing(sessionID)
 	return clonePendingInput(item), nil
+}
+
+type sendMessageModeResult struct {
+	Pending bool
+}
+
+func (m *Manager) sendMessageWithModeResult(
+	ctx context.Context,
+	sessionID string,
+	text string,
+	attachmentIDs []string,
+	mode PendingInputMode,
+	pendingID string,
+) (sendMessageModeResult, error) {
+	normalizedMode := normalizePendingInputMode(mode)
+	if normalizedMode != "" {
+		m.mu.RLock()
+		run := m.runs[sessionID]
+		m.mu.RUnlock()
+		if run != nil {
+			_, err := m.queuePendingInput(
+				sessionID,
+				text,
+				attachmentIDs,
+				normalizedMode,
+				pendingID,
+			)
+			return sendMessageModeResult{Pending: true}, err
+		}
+	}
+
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return sendMessageModeResult{}, err
+	}
+	if record.ArchivedAt != nil {
+		return sendMessageModeResult{}, errors.New("session is archived")
+	}
+	if err := m.ensureSessionMessagingAvailable(record); err != nil {
+		return sendMessageModeResult{}, err
+	}
+
+	if normalizedMode != "" && (m.hasActiveRun(sessionID) || autoRetryDefersPending(record)) {
+		_, err := m.queuePendingInput(
+			sessionID,
+			text,
+			attachmentIDs,
+			normalizedMode,
+			pendingID,
+		)
+		return sendMessageModeResult{Pending: true}, err
+	}
+
+	err = m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{updateAutoTitle: true})
+	if normalizedMode != "" && err != nil && strings.Contains(strings.ToLower(err.Error()), "already running") {
+		_, queueErr := m.queuePendingInput(
+			sessionID,
+			text,
+			attachmentIDs,
+			normalizedMode,
+			pendingID,
+		)
+		return sendMessageModeResult{Pending: true}, queueErr
+	}
+	return sendMessageModeResult{}, err
 }
 
 func (m *Manager) sendMessageWithMode(
@@ -360,52 +508,7 @@ func (m *Manager) sendMessageWithMode(
 	mode PendingInputMode,
 	pendingID string,
 ) error {
-	record, err := m.GetSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	if record.ArchivedAt != nil {
-		return errors.New("session is archived")
-	}
-	if err := m.ensureSessionMessagingAvailable(record); err != nil {
-		return err
-	}
-
-	normalizedMode := normalizePendingInputMode(mode)
-	if normalizedMode != "" && (m.hasActiveRun(sessionID) || autoRetryDefersPending(record)) {
-		var readyAt *time.Time
-		if normalizedMode == PendingInputModeRedirect && isCodexSteerSession(record) {
-			value := m.nextPendingSteerReadyAt()
-			readyAt = &value
-		}
-		_, err := m.queuePendingInputWithReadyAt(
-			sessionID,
-			text,
-			attachmentIDs,
-			normalizedMode,
-			pendingID,
-			readyAt,
-		)
-		return err
-	}
-
-	err = m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{updateAutoTitle: true})
-	if normalizedMode != "" && err != nil && strings.Contains(strings.ToLower(err.Error()), "already running") {
-		var readyAt *time.Time
-		if normalizedMode == PendingInputModeRedirect && isCodexSteerSession(record) {
-			value := m.nextPendingSteerReadyAt()
-			readyAt = &value
-		}
-		_, queueErr := m.queuePendingInputWithReadyAt(
-			sessionID,
-			text,
-			attachmentIDs,
-			normalizedMode,
-			pendingID,
-			readyAt,
-		)
-		return queueErr
-	}
+	_, err := m.sendMessageWithModeResult(ctx, sessionID, text, attachmentIDs, mode, pendingID)
 	return err
 }
 
@@ -438,6 +541,9 @@ func (m *Manager) removePendingInput(sessionID, pendingID string) bool {
 		delete(m.pendingInputs, sessionID)
 	} else {
 		m.pendingInputs[sessionID] = next
+	}
+	if removed {
+		m.bumpPendingVersionLocked(sessionID)
 	}
 	m.mu.Unlock()
 
@@ -549,11 +655,6 @@ func (m *Manager) updatePendingInput(
 			return PendingInput{}, errEmptyPendingInput
 		}
 	}
-	usesCodexSteer := false
-	if update.Text != nil || (update.Paused != nil && !*update.Paused) {
-		usesCodexSteer = m.sessionUsesCodexSteer(sessionID)
-	}
-
 	m.mu.Lock()
 	queue := m.pendingInputs[sessionID]
 	if len(queue) == 0 {
@@ -584,13 +685,10 @@ func (m *Manager) updatePendingInput(
 			}
 			item.Paused = false
 			item.ReadyAt = nil
-			if item.Mode == PendingInputModeRedirect && usesCodexSteer {
-				value := m.nextPendingSteerReadyAt()
-				item.ReadyAt = &value
-			}
 		}
 		queue[idx] = item
 		m.pendingInputs[sessionID] = queue
+		m.bumpPendingVersionLocked(sessionID)
 		updated := clonePendingInput(item)
 		m.mu.Unlock()
 		m.cancelPendingInputTimer(sessionID)
@@ -627,13 +725,6 @@ func (m *Manager) reorderPendingInput(sessionID, pendingID string, mode PendingI
 		return errPendingInputNotFound
 	}
 
-	var readyAt *time.Time
-	if previousMode != normalizedMode && normalizedMode == PendingInputModeRedirect &&
-		m.sessionUsesCodexSteer(sessionID) {
-		value := m.nextPendingSteerReadyAt()
-		readyAt = &value
-	}
-
 	m.mu.Lock()
 	queue := m.pendingInputs[sessionID]
 	if len(queue) == 0 {
@@ -660,14 +751,11 @@ func (m *Manager) reorderPendingInput(sessionID, pendingID string, mode PendingI
 			resetPendingInputDelivery(&next[itemIndex])
 			next[itemIndex].Paused = false
 			next[itemIndex].ReadyAt = nil
-			if readyAt != nil {
-				value := *readyAt
-				next[itemIndex].ReadyAt = &value
-			}
 			break
 		}
 	}
 	m.pendingInputs[sessionID] = next
+	m.bumpPendingVersionLocked(sessionID)
 	m.mu.Unlock()
 	m.cancelPendingInputTimer(sessionID)
 	return nil
@@ -693,6 +781,9 @@ func (m *Manager) clearPendingInputsForSession(sessionID string) bool {
 	} else {
 		m.pendingInputs[sessionID] = retained
 	}
+	if removed {
+		m.bumpPendingVersionLocked(sessionID)
+	}
 	delete(m.pendingDirty, sessionID)
 	m.mu.Unlock()
 	if !removed {
@@ -706,8 +797,13 @@ func (m *Manager) clearPendingInputsForSession(sessionID string) bool {
 
 func (m *Manager) clearPendingInputs(sessionID string) {
 	m.mu.Lock()
+	hadItems := len(m.pendingInputs[sessionID]) > 0 || len(m.piNativeQueuedInputs[sessionID]) > 0
 	delete(m.pendingInputs, sessionID)
+	delete(m.piNativeQueuedInputs, sessionID)
 	delete(m.pendingDirty, sessionID)
+	if hadItems {
+		m.bumpPendingVersionLocked(sessionID)
+	}
 	m.mu.Unlock()
 	m.cancelPendingInputTimer(sessionID)
 }
@@ -746,6 +842,7 @@ func (m *Manager) claimPendingInput(
 	} else {
 		m.pendingInputs[sessionID] = append([]PendingInput(nil), queue[1:]...)
 	}
+	m.bumpPendingVersionLocked(sessionID)
 	return item, true
 }
 
@@ -760,6 +857,7 @@ func (m *Manager) expireHeadPendingRedirectLocked(sessionID string, now time.Tim
 		readyAt := now
 		queue[0].ReadyAt = &readyAt
 		m.pendingInputs[sessionID] = queue
+		m.bumpPendingVersionLocked(sessionID)
 	}
 	if timer := m.pendingInputTimers[sessionID]; timer != nil {
 		timer.Stop()
@@ -774,28 +872,8 @@ func (m *Manager) prependPendingInput(sessionID string, item PendingInput) {
 	m.mu.Lock()
 	queue := append([]PendingInput(nil), m.pendingInputs[sessionID]...)
 	m.pendingInputs[sessionID] = append([]PendingInput{cloned}, queue...)
+	m.bumpPendingVersionLocked(sessionID)
 	m.mu.Unlock()
-}
-
-func (m *Manager) ensurePendingSteerReadyAt(
-	sessionID string,
-	pendingID string,
-) (time.Time, bool, bool) {
-	readyAt := m.nextPendingSteerReadyAt()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	queue := m.pendingInputs[sessionID]
-	if len(queue) == 0 || queue[0].ID != strings.TrimSpace(pendingID) ||
-		queue[0].Mode != PendingInputModeRedirect || queue[0].Paused {
-		return time.Time{}, false, false
-	}
-	if queue[0].ReadyAt != nil {
-		return *queue[0].ReadyAt, true, false
-	}
-	value := readyAt
-	queue[0].ReadyAt = &value
-	m.pendingInputs[sessionID] = queue
-	return readyAt, true, true
 }
 
 func (m *Manager) cancelPendingInputTimer(sessionID string) {
@@ -885,15 +963,8 @@ func (m *Manager) hasPendingSessionWork(sessionID string) bool {
 }
 
 func (m *Manager) broadcastPendingInputs(sessionID string) {
-	record, err := m.GetSession(context.Background(), sessionID)
-	if err != nil || record.ArchivedAt != nil {
-		return
-	}
-	_ = m.broadcastTransientFrame(
-		context.Background(),
-		sessionID,
-		newPendingFrame(sessionID, m.pendingInputsDisplaySnapshot(sessionID)),
-	)
+	epoch, version, items := m.pendingStateSnapshot(sessionID)
+	m.broadcastFrame(newPendingFrame(sessionID, epoch, version, items))
 }
 
 func (m *Manager) finishPendingProcessing(sessionID string) {
@@ -933,15 +1004,6 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			m.cancelPendingInputTimer(sessionID)
 		}
 
-		record, err := m.GetSession(ctx, sessionID)
-		if err != nil {
-			m.clearPendingInputs(sessionID)
-			return
-		}
-		if record.ArchivedAt != nil {
-			m.clearPendingInputs(sessionID)
-			return
-		}
 		if next.codexSteerReceipt != nil {
 			persistInput, claimed := m.claimPendingInput(sessionID, next.ID, next.Mode, time.Now())
 			if !claimed {
@@ -949,7 +1011,10 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			}
 			m.cancelPendingInputTimer(sessionID)
 			m.broadcastPendingInputs(sessionID)
-			persistErr := m.persistCodexSteerReceipt(ctx, record, persistInput.codexSteerReceipt)
+			record, persistErr := m.GetSession(ctx, sessionID)
+			if persistErr == nil {
+				persistErr = m.persistCodexSteerReceipt(ctx, record, persistInput.codexSteerReceipt)
+			}
 			if persistErr == nil {
 				continue
 			}
@@ -975,12 +1040,12 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			return
 		}
 
-		if m.hasActiveRun(sessionID) {
-			m.mu.RLock()
-			run := m.runs[sessionID]
-			m.mu.RUnlock()
-			if isPiNativePendingSession(record) {
-				if run == nil || run.blocksPiPendingInput() {
+		m.mu.RLock()
+		run := m.runs[sessionID]
+		m.mu.RUnlock()
+		if run != nil {
+			if normalizeAgent(run.agent) == AgentPi && run.backend == SessionBackendPiRPC {
+				if run.blocksPiPendingInput() {
 					return
 				}
 				pending, claimed := m.claimPendingInput(sessionID, next.ID, next.Mode, time.Now())
@@ -989,8 +1054,11 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 				}
 				m.cancelPendingInputTimer(sessionID)
 				m.broadcastPendingInputs(sessionID)
-				handled, sendErr := m.sendActivePiPendingInput(ctx, record, pending)
+				handled, sendErr := m.sendActivePiPendingInput(ctx, sessionID, pending)
 				if sendErr != nil || !handled {
+					if sendErr != nil {
+						pending = failedPendingInput(pending, "pi_pending_send", sendErr)
+					}
 					m.prependPendingInput(sessionID, pending)
 					m.broadcastPendingInputs(sessionID)
 					if sendErr != nil && m.logger != nil {
@@ -1004,22 +1072,12 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 				}
 				continue
 			}
-			if next.Mode != PendingInputModeRedirect || !isCodexSteerSession(record) {
+			if next.Mode != PendingInputModeRedirect || normalizeAgent(run.agent) != AgentCodex ||
+				run.backend != SessionBackendCodexAppServer {
 				return
 			}
-			if run != nil && run.blocksCodexSteerForUserInput() {
+			if run.blocksCodexSteerForUserInput() {
 				m.setPendingInputTimer(sessionID, time.Now().Add(pendingSteerBlockedRecheck))
-				return
-			}
-			if next.ReadyAt == nil {
-				readyAt, found, changed := m.ensurePendingSteerReadyAt(sessionID, next.ID)
-				if !found {
-					continue
-				}
-				if changed {
-					m.broadcastPendingInputs(sessionID)
-				}
-				m.setPendingInputTimer(sessionID, readyAt)
 				return
 			}
 			steerInput, claimed := m.claimPendingInput(sessionID, next.ID, next.Mode, time.Now())
@@ -1033,12 +1091,19 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			}
 			handled, receipt, steerErr := m.steerActiveCodexTurn(
 				ctx,
-				record,
+				sessionID,
 				steerInput.Text,
 				steerInput.AttachmentIDs,
 				steerInput.codexMessageID,
 			)
 			if steerErr != nil || !handled || receipt == nil {
+				if !handled && !m.hasActiveRun(sessionID) {
+					resetPendingInputDelivery(&steerInput)
+					steerInput.ReadyAt = nil
+					m.prependPendingInput(sessionID, steerInput)
+					m.broadcastPendingInputs(sessionID)
+					continue
+				}
 				if steerErr == nil {
 					steerErr = errors.New("active Codex turn is not currently steerable")
 				}
@@ -1070,12 +1135,17 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 				}
 				return
 			}
+			m.markPendingInputDelivered(sessionID, steerInput)
 			steerInput.codexSteerReceipt = receipt
 			steerInput.Status = PendingInputStatusPersisting
 			steerInput.AttemptCount = 0
 			steerInput.LastError = ""
 			steerInput.LastErrorCode = ""
-			if persistErr := m.persistCodexSteerReceipt(ctx, record, receipt); persistErr != nil {
+			record, persistErr := m.GetSession(ctx, sessionID)
+			if persistErr == nil {
+				persistErr = m.persistCodexSteerReceipt(ctx, record, receipt)
+			}
+			if persistErr != nil {
 				steerInput = pendingInputRetry(
 					steerInput,
 					PendingInputStatusPersisting,
@@ -1099,6 +1169,16 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			}
 			continue
 		}
+
+		record, err := m.GetSession(ctx, sessionID)
+		if err != nil {
+			m.clearPendingInputs(sessionID)
+			return
+		}
+		if record.ArchivedAt != nil {
+			m.clearPendingInputs(sessionID)
+			return
+		}
 		if autoRetryDefersPending(record) {
 			return
 		}
@@ -1110,7 +1190,10 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 		m.cancelPendingInputTimer(sessionID)
 		m.broadcastPendingInputs(sessionID)
 
-		if err := m.sendMessageInternal(ctx, sessionID, next.Text, next.AttachmentIDs, sendMessageOptions{updateAutoTitle: true}); err != nil {
+		if err := m.sendMessageInternal(ctx, sessionID, next.Text, next.AttachmentIDs, sendMessageOptions{
+			updateAutoTitle: true,
+			userMessageID:   next.ID,
+		}); err != nil {
 			m.prependPendingInput(sessionID, next)
 			m.broadcastPendingInputs(sessionID)
 			if m.logger != nil {
@@ -1125,6 +1208,7 @@ func (m *Manager) runPendingProcessor(sessionID string) {
 			}
 			return
 		}
+		m.markPendingInputDelivered(sessionID, next)
 	}
 }
 

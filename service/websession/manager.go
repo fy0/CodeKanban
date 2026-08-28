@@ -147,7 +147,10 @@ type Manager struct {
 	scheduledInputTimerSessions map[string]string
 	pendingInputTimers          map[string]*time.Timer
 	pendingInputTimerDeadlines  map[string]time.Time
-	pendingSteerDelay           time.Duration
+	pendingEpoch                string
+	pendingVersions             map[string]uint64
+	pendingDelivered            map[string]map[string]PendingInput
+	pendingDeliveredOrder       map[string][]string
 	scheduledIdleTimer          *time.Timer
 	scheduledIdleSweepMu        sync.Mutex
 	scheduledInputLocks         [64]sync.Mutex
@@ -533,7 +536,10 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		scheduledInputTimerSessions: make(map[string]string),
 		pendingInputTimers:          make(map[string]*time.Timer),
 		pendingInputTimerDeadlines:  make(map[string]time.Time),
-		pendingSteerDelay:           defaultPendingSteerDelay,
+		pendingEpoch:                utils.NewID(),
+		pendingVersions:             make(map[string]uint64),
+		pendingDelivered:            make(map[string]map[string]PendingInput),
+		pendingDeliveredOrder:       make(map[string][]string),
 		pendingInputs:               make(map[string][]PendingInput),
 		piNativeQueuedInputs:        make(map[string][]PendingInput),
 		pendingProcessing:           make(map[string]bool),
@@ -2025,9 +2031,13 @@ func (m *Manager) SnapshotWithAutoSyncIfChanged(
 		}
 	}
 	if known > 0 && known == current && !record.HasUnread && !shouldAutoSyncSnapshot(record, historyTotal) {
+		pendingEpoch, pendingVersion, pendingInputs := m.pendingStateSnapshot(record.ID)
 		return SessionSnapshotResponse{
-			Revision:  formatSnapshotRevision(current),
-			Unchanged: true,
+			Revision:       formatSnapshotRevision(current),
+			PendingEpoch:   pendingEpoch,
+			PendingVersion: pendingVersion,
+			PendingInputs:  pendingInputs,
+			Unchanged:      true,
 		}, nil
 	}
 	snapshot, err := m.SnapshotWithAutoSync(ctx, sessionID, limit)
@@ -2098,11 +2108,14 @@ func (m *Manager) loadSnapshotLocal(
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
+	pendingEpoch, pendingVersion, pendingInputs := m.pendingStateSnapshot(record.ID)
 	return SessionSnapshot{
 		Revision:         summary.Revision,
+		PendingEpoch:     pendingEpoch,
+		PendingVersion:   pendingVersion,
 		Session:          summary,
 		History:          history,
-		PendingInputs:    m.pendingInputsDisplaySnapshot(record.ID),
+		PendingInputs:    pendingInputs,
 		ScheduledInputs:  scheduledInputs,
 		PendingApproval:  m.pendingApprovalSnapshot(record),
 		PendingUserInput: pendingUserInputFromHistory(history.Items),
@@ -3170,7 +3183,8 @@ func (m *Manager) HandleHeartbeatPayload(client *client, payload []byte) (bool, 
 		return true, nil
 	case "focus":
 		client.SetFocusedSessionID(frame.SessionID)
-		return true, nil
+		epoch, version, items := m.pendingStateSnapshot(frame.SessionID)
+		return true, client.send(newPendingFrame(frame.SessionID, epoch, version, items))
 	default:
 		return true, nil
 	}
@@ -3364,6 +3378,23 @@ func (m *Manager) sendMutationAck(
 	return nil
 }
 
+func (m *Manager) sendPendingMutationAck(
+	client *client,
+	frame wireCommandFrame,
+	payload any,
+) error {
+	epoch, version, items := m.pendingStateSnapshot(frame.SessionID)
+	return client.send(newPendingAckFrame(
+		frame.RequestID,
+		frame.Operation,
+		frame.SessionID,
+		epoch,
+		version,
+		items,
+		payload,
+	))
+}
+
 func (m *Manager) handleHistoryCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
 		Limit int `json:"lim"`
@@ -3432,7 +3463,7 @@ func (m *Manager) handlePendingDeleteCommand(client *client, frame wireCommandFr
 	if !m.removePendingInput(frame.SessionID, payload.PendingID) {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", "pending input not found", false))
 	}
-	return m.sendMutationAck(context.Background(), client, frame, nil)
+	return m.sendPendingMutationAck(client, frame, nil)
 }
 
 func (m *Manager) handlePendingUpdateCommand(client *client, frame wireCommandFrame) error {
@@ -3462,8 +3493,7 @@ func (m *Manager) handlePendingUpdateCommand(client *client, frame wireCommandFr
 	}
 	m.broadcastPendingInputs(frame.SessionID)
 	m.triggerPendingProcessing(frame.SessionID)
-	return m.sendMutationAck(
-		context.Background(),
+	return m.sendPendingMutationAck(
 		client,
 		frame,
 		mapWirePendingInputs([]PendingInput{updated})[0],
@@ -3494,12 +3524,12 @@ func (m *Manager) handlePendingReorderCommand(client *client, frame wireCommandF
 	}
 	m.broadcastPendingInputs(frame.SessionID)
 	m.triggerPendingProcessing(frame.SessionID)
-	return m.sendMutationAck(context.Background(), client, frame, nil)
+	return m.sendPendingMutationAck(client, frame, nil)
 }
 
 func (m *Manager) handlePendingClearCommand(client *client, frame wireCommandFrame) error {
 	m.clearPendingInputsForSession(frame.SessionID)
-	return m.sendMutationAck(context.Background(), client, frame, nil)
+	return m.sendPendingMutationAck(client, frame, nil)
 }
 
 func (m *Manager) handleRenameCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -3916,18 +3946,22 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid send payload", false))
 	}
-	if err := m.sendMessageWithMode(
+	result, err := m.sendMessageWithModeResult(
 		ctx,
 		frame.SessionID,
 		payload.Text,
 		payload.Attachments,
 		PendingInputMode(payload.Mode),
 		payload.PendingID,
-	); err != nil {
+	)
+	if err != nil {
 		if errors.Is(err, ErrCodexRunDrainTimeout) {
 			return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "codex_drain_timeout", err.Error(), true))
 		}
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
+	}
+	if result.Pending {
+		return m.sendPendingMutationAck(client, frame, nil)
 	}
 	return m.sendMutationAck(ctx, client, frame, nil)
 }
@@ -4168,7 +4202,10 @@ func (m *Manager) sendMessageInternal(
 	}
 
 	runID := utils.NewID()
-	userMessageID := utils.NewID()
+	userMessageID := strings.TrimSpace(options.userMessageID)
+	if userMessageID == "" {
+		userMessageID = utils.NewID()
+	}
 
 	if _, err := m.appendAndBroadcast(ctx, sessionID, record, Event{
 		ID:        utils.NewID(),
@@ -4276,6 +4313,7 @@ type sendMessageOptions struct {
 	fromAutoRetry      bool
 	continueWorkTiming bool
 	updateAutoTitle    bool
+	userMessageID      string
 }
 
 func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable) error {

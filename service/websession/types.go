@@ -512,6 +512,8 @@ type PendingApproval struct {
 
 type SessionSnapshot struct {
 	Revision         string               `json:"revision"`
+	PendingEpoch     string               `json:"pendingEpoch"`
+	PendingVersion   uint64               `json:"pendingVersion"`
 	Session          SessionSummary       `json:"session"`
 	History          HistoryWindow        `json:"history"`
 	PendingInputs    []PendingInput       `json:"pendingInputs"`
@@ -523,10 +525,12 @@ type SessionSnapshot struct {
 
 type SessionSnapshotResponse struct {
 	Revision         string               `json:"revision"`
+	PendingEpoch     string               `json:"pendingEpoch"`
+	PendingVersion   uint64               `json:"pendingVersion"`
 	Unchanged        bool                 `json:"unchanged"`
 	Session          *SessionSummary      `json:"session,omitempty"`
 	History          *HistoryWindow       `json:"history,omitempty"`
-	PendingInputs    []PendingInput       `json:"pendingInputs,omitempty"`
+	PendingInputs    []PendingInput       `json:"pendingInputs"`
 	ScheduledInputs  []ScheduledInput     `json:"scheduledInputs,omitempty"`
 	PendingApproval  *PendingApproval     `json:"pendingApproval,omitempty"`
 	PendingUserInput *PendingUserInput    `json:"pendingUserInput,omitempty"`
@@ -550,6 +554,8 @@ func NewSessionHydrationTarget(session SessionSummary) SessionHydrationTarget {
 func NewSessionSnapshotResponse(snapshot SessionSnapshot) SessionSnapshotResponse {
 	return SessionSnapshotResponse{
 		Revision:         snapshot.Revision,
+		PendingEpoch:     snapshot.PendingEpoch,
+		PendingVersion:   snapshot.PendingVersion,
 		Session:          &snapshot.Session,
 		History:          &snapshot.History,
 		PendingInputs:    snapshot.PendingInputs,

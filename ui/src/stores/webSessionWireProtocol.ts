@@ -16,6 +16,8 @@ export type WebSessionWireFrame<
   sid?: string;
   ts: number;
   rev?: string;
+  pe?: string;
+  pv?: number;
   op?: string;
   p?: unknown;
   ok?: number;

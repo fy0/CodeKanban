@@ -42,6 +42,9 @@ export class WebSessionEventStream {
     });
 
     this.socket.addEventListener('open', () => {
+      if (this.sessionId && this.socket.readyState === SOCKET_OPEN) {
+        this.socket.send(JSON.stringify(buildWebSessionHeartbeatFrame('focus', this.sessionId)));
+      }
       const payload = {
         type: 'open',
         url: this.url,

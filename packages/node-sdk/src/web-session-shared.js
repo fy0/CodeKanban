@@ -519,6 +519,9 @@ export function normalizeWebSessionSummaryFromWire(value) {
 
 export function normalizeWebSessionSnapshotFromWire(frame) {
   return {
+    revision: trimmedString(frame?.rev),
+    pendingEpoch: trimmedString(frame?.pe),
+    pendingVersion: nullableNumberValue(frame?.pv),
     session: normalizeWebSessionSummaryFromWire(frame?.s),
     history: normalizeWebSessionHistoryWindow(frame?.h),
     pendingInputs: Array.isArray(frame?.pi)
@@ -902,6 +905,9 @@ export function normalizeWebSessionFrame(rawFrame) {
     timestampMs,
     timestamp: timestampMs == null ? null : new Date(timestampMs).toISOString(),
     operation: trimmedString(rawFrame?.op) || null,
+    revision: trimmedString(rawFrame?.rev) || null,
+    pendingEpoch: trimmedString(rawFrame?.pe) || null,
+    pendingVersion: nullableNumberValue(rawFrame?.pv),
     raw: rawFrame,
   };
 
@@ -911,6 +917,9 @@ export function normalizeWebSessionFrame(rawFrame) {
       type: "ack",
       ok: rawFrame?.ok === 1 || rawFrame?.ok === true,
       payload: rawFrame?.p ?? null,
+      pendingInputs: Array.isArray(rawFrame?.pi)
+        ? rawFrame.pi.map(normalizePendingInput).filter(Boolean)
+        : null,
     };
   }
 
@@ -1014,12 +1023,13 @@ export function buildWebSessionCommandFrame({
   };
 }
 
-export function buildWebSessionHeartbeatFrame(operation) {
+export function buildWebSessionHeartbeatFrame(operation, sessionId) {
   return {
     v: WEB_SESSION_PROTOCOL_VERSION,
     k: WEB_SESSION_HEARTBEAT_KIND,
     ts: Date.now(),
     op: ensureString(operation, "operation"),
+    sid: ensureOptionalString(sessionId) || undefined,
   };
 }
 

@@ -1511,13 +1511,13 @@ func codexSteerErrorMetadata(err error) (string, bool) {
 
 func (m *Manager) steerActiveCodexTurn(
 	ctx context.Context,
-	session tables.WebSessionTable,
+	sessionID string,
 	text string,
 	attachmentIDs []string,
 	messageID string,
 ) (bool, *codexSteerReceipt, error) {
 	m.mu.RLock()
-	run := m.runs[session.ID]
+	run := m.runs[sessionID]
 	m.mu.RUnlock()
 	if run == nil || normalizeAgent(run.agent) != AgentCodex || run.backend != SessionBackendCodexAppServer {
 		return false, nil, nil
@@ -1587,7 +1587,7 @@ func (m *Manager) steerActiveCodexTurn(
 	if responseTurnID != "" && responseTurnID != turnID {
 		if m.logger != nil {
 			m.logger.Warn("Codex accepted steer on a different turn",
-				zap.String("sessionId", session.ID),
+				zap.String("sessionId", sessionID),
 				zap.String("expectedTurnId", turnID),
 				zap.String("acceptedTurnId", responseTurnID),
 			)

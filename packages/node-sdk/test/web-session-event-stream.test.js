@@ -68,6 +68,10 @@ test('WebSessionEventStream filters by sessionId and does not duplicate iterator
   assert.equal(openEvent.value.type, 'open');
 
   const socket = FakeWebSocket.instances[0];
+  assert.equal(socket.sent.length, 1);
+  assert.equal(socket.sent[0].k, 'hb');
+  assert.equal(socket.sent[0].op, 'focus');
+  assert.equal(socket.sent[0].sid, 'ws1');
   socket.emitJson(sampleSnapshotFrame('ws2'));
   socket.emitJson(sampleSnapshotFrame('ws1'));
 
@@ -130,6 +134,40 @@ test('WebSessionEventStream waitFor resolves a normalized history item event', a
   assert.equal(event.sessionId, 'ws9');
   assert.equal(event.item.tool.name, 'exec_command');
   assert.equal(event.item.tool.output, '/repo/demo');
+  stream.close();
+});
+
+test('WebSessionEventStream normalizes the pending clock and an empty snapshot', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const stream = new WebSessionEventStream({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/events',
+    WebSocketImpl: FakeWebSocket,
+  });
+  await stream.waitForOpen();
+  const iterator = stream[Symbol.asyncIterator]();
+  await iterator.next();
+
+  FakeWebSocket.instances[0].emitJson({
+    v: 1,
+    k: 'evt',
+    sid: 'ws-pending',
+    ts: 1710000250000,
+    op: 'pending',
+    pe: 'process-epoch-1',
+    pv: 7,
+    pi: [],
+  });
+
+  const event = (await iterator.next()).value;
+  assert.equal(event.type, 'pending');
+  assert.equal(event.revision, null);
+  assert.equal(event.pendingEpoch, 'process-epoch-1');
+  assert.equal(event.pendingVersion, 7);
+  assert.deepEqual(event.pendingInputs, []);
   stream.close();
 });
 

@@ -341,6 +341,8 @@ export type WebSessionSubAgentRecord = {
 
 export type WebSessionSnapshot = {
   revision?: string;
+  pendingEpoch?: string;
+  pendingVersion?: number;
   unchanged?: boolean;
   session?: WebSessionSummary;
   history?: WebSessionHistoryWindow;

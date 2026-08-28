@@ -1155,10 +1155,16 @@ func TestSummaryAndResyncBroadcastsReuseCurrentRevision(t *testing.T) {
 	if after.SnapshotRevision != before.SnapshotRevision {
 		t.Fatalf("broadcasts advanced revision from %d to %d", before.SnapshotRevision, after.SnapshotRevision)
 	}
-	if len(eventConn.frames) != 2 {
-		t.Fatalf("expected summary and resync events, got %#v", eventConn.frames)
+	if len(eventConn.frames) != 3 {
+		t.Fatalf("expected focus pending snapshot, summary, and resync events, got %#v", eventConn.frames)
 	}
-	resync := eventConn.frames[1]
+	pendingFrame := eventConn.frames[0]
+	if pendingFrame.Operation != wireOpPending || pendingFrame.PendingEpoch == "" ||
+		pendingFrame.PendingVersion == nil || pendingFrame.Pending == nil || len(*pendingFrame.Pending) != 0 ||
+		pendingFrame.Revision != "" {
+		t.Fatalf("unexpected focus pending snapshot: %#v", pendingFrame)
+	}
+	resync := eventConn.frames[2]
 	if resync.Kind != "evt" || resync.Operation != "resync_required" ||
 		resync.SessionID != session.ID || resync.Revision != formatSnapshotRevision(before.SnapshotRevision) {
 		t.Fatalf("unexpected resync frame: %#v", resync)
@@ -1450,7 +1456,7 @@ func TestHandleSetAutoRetryDispatchPendingOnFailureCommand(t *testing.T) {
 	}
 }
 
-func TestHandlePendingUpdateCommandRepliesWithRevisionAck(t *testing.T) {
+func TestHandlePendingUpdateCommandRepliesWithPendingClockAck(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -1496,8 +1502,10 @@ func TestHandlePendingUpdateCommandRepliesWithRevisionAck(t *testing.T) {
 	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "pending_update" {
 		t.Fatalf("expected first frame to be pending_update ack, got %#v", conn.frames[0])
 	}
-	if conn.frames[0].Revision == "" {
-		t.Fatalf("expected pending update ack revision, got %#v", conn.frames[0])
+	if conn.frames[0].Revision != "" || conn.frames[0].PendingEpoch == "" ||
+		conn.frames[0].PendingVersion == nil || *conn.frames[0].PendingVersion == 0 ||
+		conn.frames[0].Pending == nil || len(*conn.frames[0].Pending) != 1 {
+		t.Fatalf("expected pending update ack with only the pending clock and snapshot, got %#v", conn.frames[0])
 	}
 	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 1 ||
 		pending[0].Text != "updated draft" || !pending[0].Paused || pending[0].ReadyAt != nil {
@@ -1549,15 +1557,17 @@ func TestHandlePendingReorderCommandMovesAcrossPartitions(t *testing.T) {
 	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "pending_reorder" {
 		t.Fatalf("expected first frame to be pending_reorder ack, got %#v", conn.frames[0])
 	}
-	if conn.frames[0].Revision == "" {
-		t.Fatalf("expected pending reorder ack revision, got %#v", conn.frames[0])
+	if conn.frames[0].Revision != "" || conn.frames[0].PendingEpoch == "" ||
+		conn.frames[0].PendingVersion == nil || *conn.frames[0].PendingVersion == 0 ||
+		conn.frames[0].Pending == nil || len(*conn.frames[0].Pending) != 3 {
+		t.Fatalf("expected pending reorder ack with only the pending clock and snapshot, got %#v", conn.frames[0])
 	}
 	if got := manager.pendingInputsSnapshot(created.ID); len(got) != 3 || got[0].ID != "queue-2" || got[0].Mode != "redirect" || got[1].ID != "redirect-1" || got[2].ID != "queue-1" {
 		t.Fatalf("expected reordered pending inputs, got %#v", got)
 	}
 }
 
-func TestHandlePendingClearCommandRepliesWithRevisionAck(t *testing.T) {
+func TestHandlePendingClearCommandRepliesWithPendingClockAck(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -1599,8 +1609,10 @@ func TestHandlePendingClearCommandRepliesWithRevisionAck(t *testing.T) {
 	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "pending_clear" {
 		t.Fatalf("expected first frame to be pending_clear ack, got %#v", conn.frames[0])
 	}
-	if conn.frames[0].Revision == "" {
-		t.Fatalf("expected pending clear ack revision, got %#v", conn.frames[0])
+	if conn.frames[0].Revision != "" || conn.frames[0].PendingEpoch == "" ||
+		conn.frames[0].PendingVersion == nil || *conn.frames[0].PendingVersion == 0 ||
+		conn.frames[0].Pending == nil || len(*conn.frames[0].Pending) != 0 {
+		t.Fatalf("expected pending clear ack with only the pending clock and empty snapshot, got %#v", conn.frames[0])
 	}
 	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
 		t.Fatalf("expected cleared pending inputs, got %#v", pending)
@@ -1797,8 +1809,8 @@ func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
 		Text:       "delta",
 	}, nil))
 
-	if len(focusedConn.frames) != 1 {
-		t.Fatalf("expected focused client to receive one history frame, got %d", len(focusedConn.frames))
+	if len(focusedConn.frames) != 2 {
+		t.Fatalf("expected focused client to receive focus snapshot and one history frame, got %d", len(focusedConn.frames))
 	}
 	if len(otherConn.frames) != 0 {
 		t.Fatalf("expected unfocused client to receive no history frame, got %d", len(otherConn.frames))
@@ -1812,7 +1824,7 @@ func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
 		Status:    StatusRunning,
 	}))
 
-	if len(focusedConn.frames) != 2 {
+	if len(focusedConn.frames) != 3 {
 		t.Fatalf("expected focused client to receive session summary, got %d frames", len(focusedConn.frames))
 	}
 	if len(otherConn.frames) != 1 {
@@ -4485,7 +4497,6 @@ func TestCodexAppServerIgnoresSubAgentTerminalEventsUntilRootTurnCompletes(t *te
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 20 * time.Millisecond
 
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
@@ -5345,7 +5356,6 @@ func TestCodexSteerRunsBeforeAutoRetryContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 25 * time.Millisecond
 
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID:        project.ID,
@@ -6407,7 +6417,6 @@ func TestPendingCodexRedirectWaitsForUserInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 50 * time.Millisecond
 
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
@@ -6505,7 +6514,6 @@ func TestPendingCodexRedirectSteersWhenAnsweredTurnResumes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 20 * time.Millisecond
 
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
@@ -6974,8 +6982,6 @@ func TestSendMessageWithModeRedirectSteersActiveCodexTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 150 * time.Millisecond
-
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
 		Agent:     AgentCodex,
@@ -7011,16 +7017,6 @@ func TestSendMessageWithModeRedirectSteersActiveCodexTurn(t *testing.T) {
 	}
 
 	steerStatePath := codexPath + ".state.steer.json"
-	pending := manager.pendingInputsSnapshot(created.ID)
-	if len(pending) != 2 || pending[0].Text != "redirected" ||
-		pending[0].Mode != PendingInputModeRedirect || pending[0].ReadyAt == nil || pending[0].Paused ||
-		pending[1].Text != "queued" || pending[1].Mode != PendingInputModeQueue {
-		t.Fatalf("expected delayed redirect before queued input, got %#v", pending)
-	}
-	time.Sleep(40 * time.Millisecond)
-	if _, err := os.Stat(steerStatePath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected no steer before undo window, stat error=%v", err)
-	}
 	waitForFile(t, steerStatePath)
 	steerState, err := os.ReadFile(steerStatePath)
 	if err != nil {
@@ -7081,7 +7077,7 @@ func TestSendMessageWithModeRedirectSteersActiveCodexTurn(t *testing.T) {
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
-func TestAbortSessionForUserExpiresPendingRedirectAndStartsNewTurn(t *testing.T) {
+func TestRedirectStartsNewTurnWhenActiveRunEndsBeforeBackendReceivesIt(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -7094,8 +7090,6 @@ func TestAbortSessionForUserExpiresPendingRedirectAndStartsNewTurn(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 10 * time.Second
-
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
 		Agent:     AgentCodex,
@@ -7108,6 +7102,11 @@ func TestAbortSessionForUserExpiresPendingRedirectAndStartsNewTurn(t *testing.T)
 	}
 	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
 
+	if err := manager.AbortSessionForUser(created.ID); err != nil {
+		t.Fatalf("AbortSessionForUser returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
 	if err := manager.sendMessageWithMode(
 		context.Background(),
 		created.ID,
@@ -7118,19 +7117,7 @@ func TestAbortSessionForUserExpiresPendingRedirectAndStartsNewTurn(t *testing.T)
 	); err != nil {
 		t.Fatalf("sendMessageWithMode returned error: %v", err)
 	}
-	pending := manager.pendingInputsSnapshot(created.ID)
-	if len(pending) != 1 || pending[0].ReadyAt == nil || time.Until(*pending[0].ReadyAt) < 8*time.Second {
-		t.Fatalf("expected a long redirect undo window before stopping, got %#v", pending)
-	}
-	originalReadyAt := *pending[0].ReadyAt
-
-	if err := manager.AbortSessionForUser(created.ID); err != nil {
-		t.Fatalf("AbortSessionForUser returned error: %v", err)
-	}
 	waitForUserMessageCount(t, manager, created.ID, 2)
-	if time.Now().After(originalReadyAt) {
-		t.Fatalf("expected redirect to send before its original deadline %s", originalReadyAt)
-	}
 
 	rawEvents, err := manager.store.readEvents(created.ID)
 	if err != nil {
@@ -7164,7 +7151,6 @@ func TestPendingCodexRedirectRetriesFailedSteer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 50 * time.Millisecond
 
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
@@ -7267,7 +7253,6 @@ func TestPendingCodexRedirectRetriesPersistenceWithoutRepeatingSteer(t *testing.
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 20 * time.Millisecond
 
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
@@ -7363,7 +7348,7 @@ func TestPendingCodexRedirectRetriesPersistenceWithoutRepeatingSteer(t *testing.
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
-func TestPendingCodexRedirectPauseAndEditRestartsUndoWindow(t *testing.T) {
+func TestPendingCodexRedirectEditStaysPausedUntilExplicitResume(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -7376,8 +7361,6 @@ func TestPendingCodexRedirectPauseAndEditRestartsUndoWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 200 * time.Millisecond
-
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
 		Agent:     AgentCodex,
@@ -7395,16 +7378,13 @@ func TestPendingCodexRedirectPauseAndEditRestartsUndoWindow(t *testing.T) {
 	})
 	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
 
-	if err := manager.sendMessageWithMode(
-		context.Background(),
-		created.ID,
-		"original redirect",
-		nil,
-		PendingInputModeRedirect,
-		"pending-edit",
-	); err != nil {
-		t.Fatalf("sendMessageWithMode returned error: %v", err)
-	}
+	manager.mu.Lock()
+	manager.pendingInputs[created.ID] = []PendingInput{{
+		ID: "pending-edit", Mode: PendingInputModeRedirect, Text: "original redirect",
+		Paused: true, CreatedAt: time.Now(), codexMessageID: "pending-edit",
+	}}
+	manager.bumpPendingVersionLocked(created.ID)
+	manager.mu.Unlock()
 
 	paused := true
 	updated, err := manager.updatePendingInput(created.ID, "pending-edit", pendingInputUpdate{
@@ -7425,8 +7405,7 @@ func TestPendingCodexRedirectPauseAndEditRestartsUndoWindow(t *testing.T) {
 	}
 
 	updatedText := "edited redirect"
-	paused = false
-	resumedAt := time.Now()
+	paused = true
 	updated, err = manager.updatePendingInput(created.ID, "pending-edit", pendingInputUpdate{
 		Text:   &updatedText,
 		Paused: &paused,
@@ -7434,15 +7413,24 @@ func TestPendingCodexRedirectPauseAndEditRestartsUndoWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save pending edit: %v", err)
 	}
-	if updated.Paused || updated.ReadyAt == nil || updated.ReadyAt.Before(resumedAt.Add(150*time.Millisecond)) {
-		t.Fatalf("expected save to start a fresh undo window, got %#v", updated)
+	if !updated.Paused || updated.ReadyAt != nil {
+		t.Fatalf("expected edited input to remain safely paused, got %#v", updated)
 	}
 	manager.triggerPendingProcessing(created.ID)
 	time.Sleep(50 * time.Millisecond)
 	if _, err := os.Stat(steerStatePath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected edited input not to steer before its fresh deadline, stat error=%v", err)
+		t.Fatalf("expected edited input not to steer while paused, stat error=%v", err)
 	}
 
+	paused = false
+	updated, err = manager.updatePendingInput(created.ID, "pending-edit", pendingInputUpdate{Paused: &paused})
+	if err != nil {
+		t.Fatalf("resume pending edit: %v", err)
+	}
+	if updated.Paused || updated.ReadyAt != nil {
+		t.Fatalf("expected resumed input to be immediately eligible, got %#v", updated)
+	}
+	manager.triggerPendingProcessing(created.ID)
 	waitForFile(t, steerStatePath)
 	steerState, err := os.ReadFile(steerStatePath)
 	if err != nil {
@@ -7463,7 +7451,7 @@ func TestPendingCodexRedirectPauseAndEditRestartsUndoWindow(t *testing.T) {
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
-func TestPendingCodexRedirectCanBeCanceledDuringUndoWindow(t *testing.T) {
+func TestPausedPendingCodexRedirectCanBeCanceledBeforeResume(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -7476,8 +7464,6 @@ func TestPendingCodexRedirectCanBeCanceledDuringUndoWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 150 * time.Millisecond
-
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
 		Agent:     AgentCodex,
@@ -7495,21 +7481,18 @@ func TestPendingCodexRedirectCanBeCanceledDuringUndoWindow(t *testing.T) {
 	})
 	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
 
-	if err := manager.sendMessageWithMode(
-		context.Background(),
-		created.ID,
-		"cancel this redirect",
-		nil,
-		PendingInputModeRedirect,
-		"pending-cancel",
-	); err != nil {
-		t.Fatalf("sendMessageWithMode returned error: %v", err)
-	}
+	manager.mu.Lock()
+	manager.pendingInputs[created.ID] = []PendingInput{{
+		ID: "pending-cancel", Mode: PendingInputModeRedirect, Text: "cancel this redirect",
+		Paused: true, CreatedAt: time.Now(), codexMessageID: "pending-cancel",
+	}}
+	manager.bumpPendingVersionLocked(created.ID)
+	manager.mu.Unlock()
 	if !manager.removePendingInput(created.ID, "pending-cancel") {
 		t.Fatal("expected pending redirect to be removed")
 	}
 
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	if _, err := os.Stat(codexPath + ".state.steer.json"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected canceled input never to steer, stat error=%v", err)
 	}
@@ -7531,8 +7514,6 @@ func TestPendingCodexRedirectSteersWhenQueueModeChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
-	manager.pendingSteerDelay = 120 * time.Millisecond
-
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID,
 		Agent:     AgentCodex,
@@ -7568,17 +7549,12 @@ func TestPendingCodexRedirectSteersWhenQueueModeChanges(t *testing.T) {
 	); err != nil {
 		t.Fatalf("reorderPendingInput returned error: %v", err)
 	}
-	manager.triggerPendingProcessing(created.ID)
-
 	steerStatePath := codexPath + ".state.steer.json"
 	pending := manager.pendingInputsSnapshot(created.ID)
-	if len(pending) != 1 || pending[0].ReadyAt == nil || pending[0].Paused {
-		t.Fatalf("expected promoted redirect to receive an undo window, got %#v", pending)
+	if len(pending) != 1 || pending[0].ReadyAt != nil || pending[0].Paused {
+		t.Fatalf("expected promoted redirect to be immediately eligible, got %#v", pending)
 	}
-	time.Sleep(30 * time.Millisecond)
-	if _, err := os.Stat(steerStatePath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected promoted redirect not to steer immediately, stat error=%v", err)
-	}
+	manager.triggerPendingProcessing(created.ID)
 	waitForFile(t, steerStatePath)
 	waitForUserMessageCount(t, manager, created.ID, 2)
 	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {

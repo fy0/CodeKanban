@@ -17,7 +17,11 @@ through more than one channel.
 The conditional snapshot response is either:
 
 - a complete snapshot at `revision`; or
-- `{ revision, unchanged: true }` when `knownRevision` is current.
+- `{ revision, pendingEpoch, pendingVersion, pendingInputs, unchanged: true }`
+  when `knownRevision` is current.
+
+Pending state is always included because it has an independent in-memory clock
+and can change without advancing `revision`.
 
 Mutation HTTP responses that require hydration return a target containing
 `session` and `revision`. The client then uses the conditional snapshot endpoint.
@@ -49,6 +53,9 @@ All frames use protocol version `1` and the compact envelope:
   "k": "ack | evt | err | hb",
   "sid": "session-id",
   "rev": "42",
+  "pe": "process-epoch",
+  "pv": 7,
+  "pi": [],
   "ts": 1787664000000,
   "op": "operation",
   "p": {}
@@ -58,9 +65,17 @@ All frames use protocol version `1` and the compact envelope:
 `snap` is not a valid frame kind. The server rejects unsupported protocol
 versions, and the browser rejects unknown versions and frame kinds.
 
-Command acknowledgements contain `rid`, `sid`, and the committed `rev` when the
-session still exists. `goal_get` additionally returns the compact goal value in
-`p.goal`, including `null` when no goal exists.
+Acknowledgement fields depend on the operation:
+
+- durable mutations and a `send` that starts a new turn contain the committed
+  `rev`;
+- `pending_del`, `pending_update`, `pending_reorder`, `pending_clear`, and a
+  queued `send` contain `pe`, `pv`, and the complete `pi` snapshot, with no
+  durable `rev` read or write;
+- read commands return their compact result in `p`. For example, `goal_get`
+  returns `p.goal`, including `null` when no goal exists.
+
+An empty pending queue is encoded as `"pi": []`, not by omitting `pi`.
 
 The event channel may send:
 
@@ -69,6 +84,11 @@ The event channel may send:
 - `pending` and `scheduled`: transient input state;
 - `sub_agent`: one sub-agent registry update;
 - `resync_required`: a lightweight hydration notice.
+
+After opening an event stream for one session, a client sends a
+`{ "k": "hb", "op": "focus", "sid": "..." }` heartbeat. The server immediately
+returns an authoritative `pending` event for that session, including an empty
+queue. The browser repeats this heartbeat when focus changes.
 
 A resync notice contains only the envelope and an optional reason:
 
@@ -92,9 +112,9 @@ A resync notice contains only the envelope and an optional reason:
    write or transaction.
 2. Broadcasting a summary or resync notice reuses that committed revision and
    never performs another SQLite update.
-3. Pending and scheduled state can live outside `web_sessions`. Publishing a
-   changed transient snapshot advances the durable revision exactly once so a
-   reconnect can detect that conditional hydration is required.
+3. Scheduled state remains recoverable through the durable revision. Pending
+   state does not update or read `snapshot_revision`; it uses the independent
+   pending clock described below.
 4. Repairing stale history counters does not advance the revision because it
    fixes metadata for already committed history.
 5. Read-only refreshes, including `goal_get`, do not write or advance the
@@ -111,6 +131,37 @@ The browser tracks three revisions per session:
 Only `hydrated` may be sent as `knownRevision`. Incremental events can advance
 `observed` and `applied`, but they do not prove that the complete baseline is
 current.
+
+## Pending clock
+
+Pending state uses `(pendingEpoch, pendingVersion)` (`pe`, `pv`) independently
+of the durable revision:
+
+1. `pendingEpoch` is generated once per server process.
+2. `pendingVersion` increases monotonically per session whenever its in-memory
+   pending snapshot changes.
+3. A different epoch replaces the client's pending baseline. Within one epoch,
+   only a higher version is applied; duplicate or lower versions are ignored.
+4. Every pending event and pending-only acknowledgement carries the complete
+   `pi` snapshot. Conditional HTTP snapshots carry the same fields, including
+   when the durable snapshot is unchanged.
+
+This lets pending broadcast, focus recovery, and command acknowledgement avoid
+SQLite revision contention while remaining deterministic for clients.
+
+## Redirect undo window
+
+The five-second redirect undo window belongs to the browser, not the server or
+database. A new redirect is staged in per-tab `sessionStorage`; during the
+window the browser does not open the command WebSocket or send the command.
+Queue input is sent immediately.
+
+Editing, resuming, or promoting an existing server item first leaves the
+authoritative item paused, then starts the same local window. Switching sessions
+does not stop its timer. Restoring a tab gives active staged items a fresh five
+seconds. When dispatch fails, the item remains paused with `failed` state and is
+not retried automatically. Stable pending IDs make a resend after a lost ACK
+idempotent within the server process.
 
 ## Resync scheduling
 
