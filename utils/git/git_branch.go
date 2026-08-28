@@ -242,11 +242,19 @@ func (r *GitRepo) CheckoutBranch(name string) error {
 		return err
 	}
 	defer repository.Close()
+	branchRef := plumbing.NewBranchReferenceName(branch)
+	ref, err := repository.Reference(branchRef, true)
+	if err != nil {
+		return mapGoGitError(OperationBranchesWrite, err)
+	}
+	if err := r.ensureBuiltinTreeContentSafe(repository, ref.Hash(), OperationBranchesWrite); err != nil {
+		return err
+	}
 	worktree, err := repository.Worktree()
 	if err != nil {
 		return err
 	}
-	if err := worktree.Checkout(&goGit.CheckoutOptions{Branch: plumbing.NewBranchReferenceName(branch)}); err != nil {
+	if err := worktree.Checkout(&goGit.CheckoutOptions{Branch: branchRef}); err != nil {
 		return mapGoGitError(OperationBranchesWrite, err)
 	}
 	clearCapabilityCache()

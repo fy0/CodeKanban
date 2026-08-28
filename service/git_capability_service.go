@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"code-kanban/model"
 	"code-kanban/utils/git"
 )
 
 type GitCapabilityService struct{}
+
+const gitCapabilityProbeTimeout = 5 * time.Second
 
 func NewGitCapabilityService() *GitCapabilityService {
 	return &GitCapabilityService{}
@@ -34,8 +37,14 @@ func (s *GitCapabilityService) GetProjectCapabilities(ctx context.Context, proje
 		}
 		return nil, err
 	}
+	worktrees, err := queries.WorktreeListByProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
 
-	repository, err := git.DetectRepository(project.Path)
+	probeCtx, cancel := context.WithTimeout(ctx, gitCapabilityProbeTimeout)
+	defer cancel()
+	repository, err := git.DetectRepositoryContext(probeCtx, project.Path)
 	if err != nil {
 		code := git.ErrorCode(err)
 		if code == "" {
@@ -55,7 +64,7 @@ func (s *GitCapabilityService) GetProjectCapabilities(ctx context.Context, proje
 	}
 	defer repository.Close()
 
-	base := repository.Capabilities(project.Path)
+	base := repository.CapabilitiesContext(probeCtx, project.Path)
 	result := &model.GitCapabilityResult{
 		Repository: base.Repository,
 		Mode:       base.Mode,
@@ -64,13 +73,9 @@ func (s *GitCapabilityService) GetProjectCapabilities(ctx context.Context, proje
 		Reasons:    base.Reasons,
 		Worktrees:  []model.GitWorktreeCapabilityResult{},
 	}
-	worktrees, err := queries.WorktreeListByProject(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
 	result.Worktrees = make([]model.GitWorktreeCapabilityResult, 0, len(worktrees))
 	for _, worktree := range worktrees {
-		report := repository.Capabilities(worktree.Path)
+		report := repository.CapabilitiesContext(probeCtx, worktree.Path)
 		result.Worktrees = append(result.Worktrees, model.GitWorktreeCapabilityResult{
 			ID:         worktree.Id,
 			Operations: report.Operations,

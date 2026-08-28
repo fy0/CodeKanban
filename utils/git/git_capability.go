@@ -1,7 +1,6 @@
 package git
 
 import (
-	"bufio"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -128,6 +127,7 @@ const (
 	ErrorCodeSystemGitUnavailable      = "git_system_unavailable"
 	ErrorCodeSystemGitFailed           = "git_system_failed"
 	ErrorCodeMergeConflict             = "git_merge_conflict"
+	ErrorCodeUnsupportedContentFilter  = "unsupported_content_filter"
 )
 
 type OperationError struct {
@@ -313,11 +313,6 @@ func (r *GitRepo) builtinCapabilities(worktreePath string) CapabilityReport {
 	if hasRepositoryLock(r.commonDir, worktreeGitDir) {
 		disableAllWrites()
 		addReason(ErrorCodeRepositoryLocked, "repository lock file is present")
-	}
-
-	if hasUnsupportedFilters(cfg, target) {
-		disableContentWrites()
-		addReason("unsupported_content_filter", "LFS, clean/smudge, encoding, or custom diff attributes are configured")
 	}
 
 	if hasSubmodules(targetRepository, target) {
@@ -586,12 +581,19 @@ func operationUnsupportedError(report CapabilityReport, operation GitOperation) 
 }
 
 func (r *GitRepo) Capabilities(worktreePath string) CapabilityReport {
+	return r.CapabilitiesContext(context.Background(), worktreePath)
+}
+
+func (r *GitRepo) CapabilitiesContext(ctx context.Context, worktreePath string) CapabilityReport {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	target := strings.TrimSpace(worktreePath)
 	if target == "" && r != nil {
 		target = r.Path
 	}
 	builtin := r.builtinCapabilitiesCached(target, false)
-	systemRepository := r != nil && systemGitRepositoryAvailable(context.Background(), target)
+	systemRepository := r != nil && systemGitRepositoryAvailable(ctx, target)
 	report := CapabilityReport{
 		Repository: builtin.Repository || systemRepository || HasRepositoryStructure(target),
 		Mode:       CapabilityModeUnavailable,
@@ -624,8 +626,8 @@ func (r *GitRepo) Capabilities(worktreePath string) CapabilityReport {
 	}
 	if report.Mode == CapabilityModeUnavailable {
 		preferenceNeedsSystem := CurrentEngineSettings().Read == EnginePreferenceSystem || CurrentEngineSettings().Write == EnginePreferenceSystem
-		if preferenceNeedsSystem && !ProbeSystemGit(context.Background(), false).Available {
-			info := ProbeSystemGit(context.Background(), false)
+		if preferenceNeedsSystem && !ProbeSystemGit(ctx, false).Available {
+			info := ProbeSystemGit(ctx, false)
 			report.Reasons = append(report.Reasons, CapabilityReason{Code: ErrorCodeSystemGitUnavailable, Detail: info.Error})
 		} else if len(report.Reasons) == 0 {
 			report.Reasons = append(report.Reasons, builtin.Reasons...)
@@ -790,62 +792,6 @@ func hasRepositoryLock(commonDir, worktreeGitDir string) bool {
 		}
 	}
 	return false
-}
-
-func hasUnsupportedFilters(cfg *config.Config, worktreePath string) bool {
-	if cfg == nil {
-		return true
-	}
-	filterSection := cfg.Raw.Section("filter")
-	for _, subsection := range filterSection.Subsections {
-		if subsection.HasOption("clean") || subsection.HasOption("smudge") || subsection.HasOption("process") || strings.EqualFold(subsection.Option("required"), "true") {
-			return true
-		}
-	}
-	if cfg.Raw.Section("diff").HasOption("external") {
-		return true
-	}
-	if _, err := os.Stat(filepath.Join(worktreePath, ".lfsconfig")); err == nil {
-		return true
-	}
-
-	unsupported := false
-	_ = filepath.WalkDir(worktreePath, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || unsupported {
-			return nil
-		}
-		if entry.IsDir() {
-			if entry.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.Name() != ".gitattributes" {
-			return nil
-		}
-		file, openErr := os.Open(path)
-		if openErr != nil {
-			unsupported = true
-			return nil
-		}
-		defer file.Close()
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := strings.ToLower(strings.TrimSpace(scanner.Text()))
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			if strings.Contains(line, "filter=") || strings.Contains(line, "working-tree-encoding") || strings.Contains(line, "diff=") || strings.Contains(line, "merge=") {
-				unsupported = true
-				break
-			}
-		}
-		if scanner.Err() != nil {
-			unsupported = true
-		}
-		return nil
-	})
-	return unsupported
 }
 
 func hasSubmodules(repository *goGit.Repository, worktreePath string) bool {

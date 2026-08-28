@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	processutil "code-kanban/utils/process"
 )
 
 type Engine string
@@ -19,6 +21,12 @@ const (
 	EngineBuiltin     Engine = "builtin"
 	EngineSystem      Engine = "system"
 	EngineUnavailable Engine = "unavailable"
+
+	systemGitVersionProbeTimeout    = 3 * time.Second
+	systemGitRepositoryProbeTimeout = 3 * time.Second
+	systemGitCommandTimeout         = 30 * time.Second
+	systemGitCancelTimeout          = 500 * time.Millisecond
+	systemGitWaitDelay              = time.Second
 )
 
 type EnginePreference string
@@ -134,7 +142,7 @@ func probeSystemGit(ctx context.Context, configured string) SystemGitInfo {
 		resolved = absolute
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	probeCtx, cancel := withSystemGitTimeout(ctx, systemGitVersionProbeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(probeCtx, resolved, "--version")
 	cmd.Env = buildGitCommandEnv()
@@ -189,6 +197,10 @@ func newSystemGitCommandContext(ctx context.Context, dir string, args ...string)
 		ctx = context.Background()
 	}
 	cmd := exec.CommandContext(ctx, info.Executable, args...)
+	cmd.Cancel = func() error {
+		return cancelSystemGitCommand(cmd)
+	}
+	cmd.WaitDelay = systemGitWaitDelay
 	cmd.Env = buildGitCommandEnv()
 	if strings.TrimSpace(dir) != "" {
 		cmd.Dir = dir
@@ -196,8 +208,33 @@ func newSystemGitCommandContext(ctx context.Context, dir string, args ...string)
 	return cmd, nil
 }
 
+func cancelSystemGitCommand(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return os.ErrProcessDone
+	}
+	treeResult := make(chan error, 1)
+	go func() {
+		treeResult <- processutil.KillProcessTree(int32(cmd.Process.Pid))
+	}()
+	timer := time.NewTimer(systemGitCancelTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-treeResult:
+		if err == nil {
+			return nil
+		}
+	case <-timer.C:
+	}
+	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	return nil
+}
+
 func runSystemGit(ctx context.Context, dir string, operation GitOperation, args ...string) ([]byte, error) {
-	cmd, err := newSystemGitCommandContext(ctx, dir, args...)
+	commandCtx, cancel := withSystemGitTimeout(ctx, systemGitCommandTimeout)
+	defer cancel()
+	cmd, err := newSystemGitCommandContext(commandCtx, dir, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +246,7 @@ func runSystemGit(ctx context.Context, dir string, operation GitOperation, args 
 	if detail == "" {
 		detail = err.Error()
 	}
-	return output, mapSystemGitError(operation, detail, err)
+	return output, mapSystemGitCommandError(commandCtx, operation, detail, err)
 }
 
 // runSystemGitOutput keeps diagnostic output separate from stdout so callers
@@ -229,7 +266,9 @@ func runSystemGitOutputWithExitOne(
 	allowExitOne bool,
 	args ...string,
 ) ([]byte, error) {
-	cmd, err := newSystemGitCommandContext(ctx, dir, args...)
+	commandCtx, cancel := withSystemGitTimeout(ctx, systemGitCommandTimeout)
+	defer cancel()
+	cmd, err := newSystemGitCommandContext(commandCtx, dir, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +291,34 @@ func runSystemGitOutputWithExitOne(
 	if detail == "" {
 		detail = err.Error()
 	}
-	return stdout.Bytes(), mapSystemGitError(operation, detail, err)
+	return stdout.Bytes(), mapSystemGitCommandError(commandCtx, operation, detail, err)
+}
+
+func withSystemGitTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+func mapSystemGitCommandError(ctx context.Context, operation GitOperation, detail string, err error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return &OperationError{
+			Code:      ErrorCodeSystemGitFailed,
+			Operation: operation,
+			Detail:    "system Git command timed out",
+			Err:       context.DeadlineExceeded,
+		}
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return &OperationError{
+			Code:      ErrorCodeSystemGitFailed,
+			Operation: operation,
+			Detail:    "system Git command canceled",
+			Err:       context.Canceled,
+		}
+	}
+	return mapSystemGitError(operation, detail, err)
 }
 
 func mapSystemGitError(operation GitOperation, detail string, err error) error {
@@ -276,10 +342,12 @@ func mapSystemGitError(operation GitOperation, detail string, err error) error {
 }
 
 func systemGitRepositoryAvailable(ctx context.Context, path string) bool {
-	if strings.TrimSpace(path) == "" || !ProbeSystemGit(ctx, false).Available {
+	probeCtx, cancel := withSystemGitTimeout(ctx, systemGitRepositoryProbeTimeout)
+	defer cancel()
+	if strings.TrimSpace(path) == "" || !ProbeSystemGit(probeCtx, false).Available {
 		return false
 	}
-	cmd, err := newSystemGitCommandContext(ctx, "", "-C", path, "rev-parse", "--git-dir")
+	cmd, err := newSystemGitCommandContext(probeCtx, "", "-C", path, "rev-parse", "--git-dir")
 	if err != nil {
 		return false
 	}

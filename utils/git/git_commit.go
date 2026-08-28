@@ -41,6 +41,9 @@ func (r *GitRepo) addAllUnlocked(worktreePath string) error {
 		return err
 	}
 	defer repository.Close()
+	if err := r.ensureBuiltinWorktreeContentSafe(repository, worktreePath, OperationCommit); err != nil {
+		return err
+	}
 	worktree, err := repository.Worktree()
 	if err != nil {
 		return err
@@ -84,6 +87,9 @@ func (r *GitRepo) Commit(worktreePath, message string) error {
 		return err
 	}
 	defer repository.Close()
+	if err := r.ensureBuiltinIndexContentSafe(repository, OperationCommit); err != nil {
+		return err
+	}
 	worktree, err := repository.Worktree()
 	if err != nil {
 		return err
@@ -131,6 +137,9 @@ func (r *GitRepo) CommitAll(worktreePath, message string) error {
 		return err
 	}
 	defer repository.Close()
+	if err := r.ensureBuiltinWorktreeContentSafe(repository, target, OperationCommit); err != nil {
+		return err
+	}
 	worktree, err := repository.Worktree()
 	if err != nil {
 		return err

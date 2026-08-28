@@ -90,6 +90,9 @@ func (r *GitRepo) MergeBranch(worktreePath, sourceBranch string, strategy MergeS
 	if head.Hash() == sourceRef.Hash() {
 		return nil
 	}
+	if err := r.ensureBuiltinTreeContentSafe(repository, sourceRef.Hash(), operation); err != nil {
+		return err
+	}
 
 	worktree, err := repository.Worktree()
 	if err != nil {

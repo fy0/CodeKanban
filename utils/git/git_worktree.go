@@ -180,6 +180,12 @@ func (r *GitRepo) AddWorktree(path, branch string, createBranch bool) error {
 	} else if refErr != nil {
 		return &OperationError{Code: ErrorCodeInvalidReference, Operation: OperationWorktreesWrite, Detail: fmt.Sprintf("branch not found: %s", branch), Err: refErr}
 	}
+	if err := r.ensureBuiltinTreeContentSafe(r.repository, ref.Hash(), OperationWorktreesWrite); err != nil {
+		if createdBranch {
+			_ = r.repository.Storer.RemoveReference(branchRef)
+		}
+		return err
+	}
 
 	createdDirectory, err := ensureEmptyWorktreeDirectory(targetPath)
 	if err != nil {

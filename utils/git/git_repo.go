@@ -76,6 +76,13 @@ func HasRepositoryStructure(path string) bool {
 }
 
 func DetectRepository(path string) (*GitRepo, error) {
+	return DetectRepositoryContext(context.Background(), path)
+}
+
+func DetectRepositoryContext(ctx context.Context, path string) (*GitRepo, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	absPath, layout, err := discoverRepository(path)
 	if err != nil {
 		return nil, err
@@ -87,7 +94,7 @@ func DetectRepository(path string) (*GitRepo, error) {
 	}
 	repository, err := openFilesystemRepository(openPath, layout.bare)
 	if err != nil {
-		if !systemGitRepositoryAvailable(context.Background(), absPath) {
+		if !systemGitRepositoryAvailable(ctx, absPath) {
 			return nil, &OperationError{
 				Code:   ErrorCodeUnsupportedFormat,
 				Detail: fmt.Sprintf("repository cannot be opened by go-git: %v", err),
