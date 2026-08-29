@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment happy-dom
+
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { WebSessionBlock } from '@/stores/webSession';
 import {
@@ -6,6 +8,7 @@ import {
   matchesWebSessionConversationSearchTarget,
   mergeWebSessionConversationSearchMatches,
   resolveWebSessionConversationSearchMatchIndex,
+  shouldHandleWebSessionConversationSearchShortcut,
   type WebSessionConversationSearchFilters,
 } from '@/components/web-session/webSessionConversationSearch';
 
@@ -37,6 +40,68 @@ function makeBlock(
 }
 
 describe('webSessionConversationSearch', () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it('handles Ctrl+F and Cmd+F in the regular conversation interface', () => {
+    const input = document.createElement('input');
+    document.body.append(input);
+    input.focus();
+
+    expect(
+      shouldHandleWebSessionConversationSearchShortcut(
+        new KeyboardEvent('keydown', { key: 'f', ctrlKey: true })
+      )
+    ).toBe(true);
+    expect(
+      shouldHandleWebSessionConversationSearchShortcut(
+        new KeyboardEvent('keydown', { key: 'f', metaKey: true })
+      )
+    ).toBe(true);
+  });
+
+  it('leaves Ctrl+F to the browser while a dialog is open', () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    document.body.append(dialog);
+
+    expect(
+      shouldHandleWebSessionConversationSearchShortcut(
+        new KeyboardEvent('keydown', { key: 'f', ctrlKey: true })
+      )
+    ).toBe(false);
+  });
+
+  it('leaves Ctrl+F to the browser when focus is inside a non-modal overlay', () => {
+    const menu = document.createElement('div');
+    menu.setAttribute('role', 'menu');
+    const button = document.createElement('button');
+    menu.append(button);
+    document.body.append(menu);
+    button.focus();
+
+    expect(
+      shouldHandleWebSessionConversationSearchShortcut(
+        new KeyboardEvent('keydown', { key: 'f', ctrlKey: true })
+      )
+    ).toBe(false);
+  });
+
+  it('ignores events that are not the unmodified find shortcut', () => {
+    expect(
+      shouldHandleWebSessionConversationSearchShortcut(
+        new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, altKey: true })
+      )
+    ).toBe(false);
+    expect(
+      shouldHandleWebSessionConversationSearchShortcut(
+        new KeyboardEvent('keydown', { key: 'g', ctrlKey: true })
+      )
+    ).toBe(false);
+  });
+
   it('searches user and assistant text with the dialogue defaults', () => {
     const matches = findWebSessionConversationSearchMatches(
       [

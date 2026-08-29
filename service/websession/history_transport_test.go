@@ -185,6 +185,39 @@ func TestHistoryWindowForTransportBoundsSingletonToolPayloads(t *testing.T) {
 	}
 }
 
+func TestHistoryWindowForTransportPreservesLongPlanOutput(t *testing.T) {
+	planText := strings.Repeat("完整计划内容", 600)
+	window := HistoryWindow{
+		Items: []HistoryItem{{
+			ID:         "plan-item",
+			OrderIndex: 1,
+			Kind:       "tool",
+			ItemType:   "plan",
+			Tool: &HistoryTool{
+				ID:     "plan-tool",
+				Kind:   "plan",
+				Output: planText,
+				Status: "done",
+			},
+		}},
+		Events: []Event{{
+			Type: "tool_end",
+			Payload: map[string]any{
+				"kind": "plan",
+				"out":  planText,
+			},
+		}},
+	}
+
+	projected := HistoryWindowForTransport(window)
+	if got := projected.Items[0].Tool.Output; got != planText {
+		t.Fatalf("expected full plan item output, got %d runes want %d", len([]rune(got)), len([]rune(planText)))
+	}
+	if got := stringValue(projected.Events[0].Payload["out"]); got != planText {
+		t.Fatalf("expected full plan event output, got %d runes want %d", len([]rune(got)), len([]rune(planText)))
+	}
+}
+
 func TestBoundedHistoryTransportValueFallsBackForUnencodableValues(t *testing.T) {
 	projected := boundedHistoryTransportValue(
 		math.Inf(1),

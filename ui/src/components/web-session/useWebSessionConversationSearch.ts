@@ -17,6 +17,7 @@ import {
   matchesWebSessionConversationSearchTarget,
   mergeWebSessionConversationSearchMatches,
   resolveWebSessionConversationSearchMatchIndex,
+  shouldHandleWebSessionConversationSearchShortcut,
   type WebSessionConversationSearchFilters,
   type WebSessionConversationSearchMatch,
 } from '@/components/web-session/webSessionConversationSearch';
@@ -197,13 +198,9 @@ export function useWebSessionConversationSearch({
 
   function handleShortcut(event: KeyboardEvent) {
     if (
-      event.defaultPrevented ||
-      event.isComposing ||
       !toValue(isActive) ||
       !currentSession.value ||
-      event.altKey ||
-      !(event.ctrlKey || event.metaKey) ||
-      event.key.toLowerCase() !== 'f'
+      !shouldHandleWebSessionConversationSearchShortcut(event)
     ) {
       return;
     }

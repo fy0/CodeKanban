@@ -1355,6 +1355,35 @@ func TestScheduledPlanExecutionExpiresWhenPlanIsNoLongerCurrent(t *testing.T) {
 	}
 }
 
+func TestScheduledPlanHistoryUsesWaitingPlanApprovalAsAuthoritativeState(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Authoritative plan state", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	plan := insertScheduledPlanHistoryItem(t, manager, session.ID, "Implement this plan")
+	if _, err := manager.appendHistoryItem(context.Background(), session.ID, HistoryItem{
+		Kind:     "user",
+		ItemType: "message",
+		Text:     "redirected while planning",
+	}); err != nil {
+		t.Fatalf("append later user: %v", err)
+	}
+
+	session.AssistantState = string(AssistantStateWaitingPlanApproval)
+	if err := manager.validateScheduledPlanHistory(context.Background(), *session, plan.ID); err != nil {
+		t.Fatalf("expected authoritative waiting-plan state to keep plan valid: %v", err)
+	}
+	session.AssistantState = string(AssistantStateWorking)
+	if err := manager.validateScheduledPlanHistory(context.Background(), *session, plan.ID); !errors.Is(err, errScheduledPlanExpired) {
+		t.Fatalf("expected later user to expire plan outside waiting-plan state, got %v", err)
+	}
+}
+
 func insertScheduledPlanHistoryItem(
 	t *testing.T,
 	manager *Manager,

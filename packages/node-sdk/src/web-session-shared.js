@@ -729,7 +729,7 @@ function findPendingUserInput(items) {
   return pending;
 }
 
-function findLatestPlan(items) {
+function findLatestPlan(items, authoritativeWaitingPlanApproval = false) {
   const latestPlan = [...items]
     .reverse()
     .find((item) => item?.kind === "tool" && item?.tool?.kind === "plan");
@@ -749,7 +749,7 @@ function findLatestPlan(items) {
     timestamp: latestPlan.timestamp || latestPlan.observedAt || null,
     orderIndex: latestPlan.orderIndex,
     hasUserMessageAfter,
-    awaitingExecution: !hasUserMessageAfter,
+    awaitingExecution: authoritativeWaitingPlanApproval || !hasUserMessageAfter,
   };
 }
 
@@ -793,7 +793,10 @@ export function analyzeWebSession(snapshot) {
   const pendingUserInput =
     normalizePendingUserInputState(snapshot?.pendingUserInput) ||
     findPendingUserInput(items);
-  const latestPlan = findLatestPlan(items);
+  const latestPlan = findLatestPlan(
+    items,
+    session?.assistantState === "waiting_plan_approval",
+  );
   const lastAssistantMessage = findLastAssistantMessage(items);
 
   let phase = "idle";

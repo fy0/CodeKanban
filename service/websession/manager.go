@@ -1991,13 +1991,34 @@ func (m *Manager) SnapshotWithAutoSync(ctx context.Context, sessionID string, li
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
-	if !shouldAutoSyncSnapshot(record, snapshot.History.Total) {
+	if !shouldAutoSyncSnapshot(record, snapshot.History) {
 		return snapshot, nil
 	}
-	snapshot, err = m.syncSessionFromSource(ctx, sessionID, m.defaultCodexSyncMode(), true, false)
-	if err != nil {
-		return SessionSnapshot{}, err
+	hadHistory := snapshot.History.Total > 0
+	syncedSnapshot, syncErr := m.syncSessionFromSource(ctx, sessionID, m.defaultCodexSyncMode(), true, false)
+	if syncErr != nil && hadHistory {
+		if m.logger != nil {
+			m.logger.Warn(
+				"web session snapshot repair sync failed; preserving cached history",
+				zap.String("sessionId", sessionID),
+				zap.Error(syncErr),
+			)
+		}
+		return snapshot, nil
 	}
+	if syncErr != nil {
+		return SessionSnapshot{}, syncErr
+	}
+	if hadHistory && syncedSnapshot.History.Total == 0 {
+		if m.logger != nil {
+			m.logger.Warn(
+				"web session snapshot repair sync returned empty history; preserving cached history",
+				zap.String("sessionId", sessionID),
+			)
+		}
+		return snapshot, nil
+	}
+	snapshot = syncedSnapshot
 	if snapshot.History.Total == 0 {
 		return SessionSnapshot{}, ErrSessionHistoryUnavailable
 	}
@@ -2038,16 +2059,66 @@ func (m *Manager) SnapshotIfChanged(
 	return NewSessionSnapshotResponse(snapshot), nil
 }
 
-func shouldAutoSyncSnapshot(record tables.WebSessionTable, historyTotal int) bool {
-	if historyTotal > 0 {
+func shouldAutoSyncSnapshot(record tables.WebSessionTable, history HistoryWindow) bool {
+	if normalizeAgent(Agent(record.Agent)) != AgentCodex ||
+		record.NativeSessionID == nil ||
+		strings.TrimSpace(*record.NativeSessionID) == "" {
 		return false
 	}
-	switch normalizeAgent(Agent(record.Agent)) {
-	case AgentCodex:
-		return record.NativeSessionID != nil && strings.TrimSpace(*record.NativeSessionID) != ""
-	default:
+	if history.Total == 0 {
+		return true
+	}
+	return waitingPlanApprovalHistoryNeedsRepair(record, history.Items)
+}
+
+func waitingPlanApprovalHistoryNeedsRepair(record tables.WebSessionTable, items []HistoryItem) bool {
+	if effectiveAssistantState(record) != AssistantStateWaitingPlanApproval {
 		return false
 	}
+	rootThreadID := ""
+	if record.NativeSessionID != nil {
+		rootThreadID = strings.TrimSpace(*record.NativeSessionID)
+	}
+
+	var latestPlan *HistoryItem
+	for index := len(items) - 1; index >= 0; index-- {
+		item := &items[index]
+		if !isPlanHistoryItem(*item) || item.Tool == nil || strings.TrimSpace(item.Tool.Output) == "" {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(item.Tool.Status))
+		if status != "done" && status != "completed" && status != "success" && status != "succeeded" {
+			continue
+		}
+		if rootThreadID != "" && item.SourceThreadID != nil && strings.TrimSpace(*item.SourceThreadID) != rootThreadID {
+			continue
+		}
+		latestPlan = item
+		break
+	}
+	if latestPlan == nil {
+		return true
+	}
+	if latestPlan.SourceThreadID == nil || latestPlan.SourceTurnID == nil {
+		return false
+	}
+	planThreadID := strings.TrimSpace(*latestPlan.SourceThreadID)
+	planTurnID := strings.TrimSpace(*latestPlan.SourceTurnID)
+	if planThreadID == "" || planTurnID == "" {
+		return false
+	}
+	for index := range items {
+		item := items[index]
+		if item.Kind != "user" || item.OrderIndex <= latestPlan.OrderIndex ||
+			item.SourceThreadID == nil || item.SourceTurnID == nil {
+			continue
+		}
+		if strings.TrimSpace(*item.SourceThreadID) == planThreadID &&
+			strings.TrimSpace(*item.SourceTurnID) == planTurnID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) loadSnapshotLocal(

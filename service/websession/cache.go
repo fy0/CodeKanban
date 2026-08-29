@@ -477,6 +477,332 @@ func (m *Manager) replaceSessionHistoryCache(
 	)
 }
 
+func (m *Manager) reconcileSessionHistoryCache(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	turns []tables.WebSessionTurnTable,
+	items []tables.WebSessionItemTable,
+	updates map[string]any,
+	rootThreadID string,
+) error {
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	rootThreadID = strings.TrimSpace(rootThreadID)
+
+	return m.observedTransaction(ctx, db, "reconcile_history_cache", func(tx *gorm.DB) error {
+		var existingSession tables.WebSessionTable
+		if err := tx.Select("id").First(&existingSession, "id = ?", session.ID).Error; err != nil {
+			return err
+		}
+
+		var existingTurns []tables.WebSessionTurnTable
+		if err := tx.Where("web_session_id = ?", session.ID).
+			Order("order_index ASC").
+			Find(&existingTurns).Error; err != nil {
+			return err
+		}
+		turnBySource := make(map[string]*tables.WebSessionTurnTable, len(existingTurns))
+		maxTurnOrder := int64(0)
+		for index := range existingTurns {
+			row := &existingTurns[index]
+			if row.OrderIndex > maxTurnOrder {
+				maxTurnOrder = row.OrderIndex
+			}
+			if key, ok := historyTurnSourceIdentity(row.SourceThreadID, row.SourceTurnID); ok {
+				turnBySource[key] = row
+			}
+		}
+
+		historyChanged := false
+		turnIDBySource := make(map[string]string, len(turns))
+		for index := range turns {
+			incoming := turns[index]
+			key, hasIdentity := historyTurnSourceIdentity(incoming.SourceThreadID, incoming.SourceTurnID)
+			row := turnBySource[key]
+			if !hasIdentity || row == nil {
+				row = &incoming
+				row.WebSessionID = session.ID
+				maxTurnOrder++
+				row.OrderIndex = maxTurnOrder
+				if err := tx.Create(row).Error; err != nil {
+					return err
+				}
+				historyChanged = true
+				if hasIdentity {
+					turnBySource[key] = row
+				}
+			} else {
+				previous := *row
+				row.Status = firstNonEmpty(strings.TrimSpace(incoming.Status), row.Status)
+				if strings.TrimSpace(incoming.ErrorJSON) != "" || strings.TrimSpace(row.ErrorJSON) == "" {
+					row.ErrorJSON = incoming.ErrorJSON
+				}
+				row.SourceCreated = row.SourceCreated || incoming.SourceCreated
+				if !historyTurnRowsEqual(previous, *row) {
+					if err := tx.Save(row).Error; err != nil {
+						return err
+					}
+					historyChanged = true
+				}
+			}
+			if hasIdentity {
+				turnIDBySource[key] = row.ID
+			}
+		}
+
+		var existingItems []tables.WebSessionItemTable
+		if err := tx.Where("web_session_id = ?", session.ID).
+			Order("order_index ASC").
+			Find(&existingItems).Error; err != nil {
+			return err
+		}
+		itemBySource := make(map[string]*tables.WebSessionItemTable, len(existingItems))
+		maxItemOrder := int64(0)
+		for index := range existingItems {
+			row := &existingItems[index]
+			if row.OrderIndex > maxItemOrder {
+				maxItemOrder = row.OrderIndex
+			}
+			if key, ok := historyItemSourceIdentity(row.SourceThreadID, row.SourceItemID); ok {
+				itemBySource[key] = row
+			}
+		}
+
+		var latestRootPlan *tables.WebSessionItemTable
+		for index := range items {
+			incomingRow := items[index]
+			incomingItem := mapHistoryItemRowWithSession(incomingRow, session.ID)
+			key, hasIdentity := historyItemSourceIdentity(incomingRow.SourceThreadID, incomingRow.SourceItemID)
+			row := itemBySource[key]
+			isNew := !hasIdentity || row == nil
+			var previous tables.WebSessionItemTable
+			if isNew {
+				row = &incomingRow
+				row.WebSessionID = session.ID
+				maxItemOrder++
+				row.OrderIndex = maxItemOrder
+			} else {
+				previous = *row
+				merged := mergeReconciledHistoryItem(
+					mapHistoryItemRowWithSession(*row, session.ID),
+					incomingItem,
+				)
+				applyHistoryItemToRow(row, session.ID, merged)
+			}
+
+			if turnKey, ok := historyTurnSourceIdentity(row.SourceThreadID, row.SourceTurnID); ok {
+				row.WebTurnID = nilIfEmptyHistory(turnIDBySource[turnKey])
+			}
+			if strings.TrimSpace(row.Role) == "" {
+				row.Role = incomingRow.Role
+			}
+			if strings.TrimSpace(incomingRow.Status) != "" {
+				row.Status = incomingRow.Status
+			}
+
+			if isNew {
+				if err := tx.Create(row).Error; err != nil {
+					return err
+				}
+				historyChanged = true
+				if hasIdentity {
+					itemBySource[key] = row
+				}
+			} else {
+				if !historyItemRowsEqual(previous, *row) {
+					if err := tx.Save(row).Error; err != nil {
+						return err
+					}
+					historyChanged = true
+				}
+			}
+
+			if rootThreadID != "" && pointerString(row.SourceThreadID) == rootThreadID {
+				item := mapHistoryItemRowWithSession(*row, session.ID)
+				if isPlanHistoryItem(item) {
+					latestRootPlan = row
+				}
+			}
+		}
+
+		if latestRootPlan != nil && latestRootPlan.OrderIndex != maxItemOrder {
+			maxItemOrder++
+			latestRootPlan.OrderIndex = maxItemOrder
+			if err := tx.Save(latestRootPlan).Error; err != nil {
+				return err
+			}
+			historyChanged = true
+		}
+		if historyChanged {
+			if err := m.reapplyWorkTimingAnnotationsDB(ctx, tx, session.ID); err != nil {
+				return err
+			}
+		}
+
+		var itemCount int64
+		if err := tx.Model(&tables.WebSessionItemTable{}).
+			Where("web_session_id = ?", session.ID).
+			Count(&itemCount).Error; err != nil {
+			return err
+		}
+		var turnCount int64
+		if err := tx.Model(&tables.WebSessionTurnTable{}).
+			Where("web_session_id = ?", session.ID).
+			Count(&turnCount).Error; err != nil {
+			return err
+		}
+
+		nextUpdates := cloneMap(updates)
+		nextUpdates["turn_count"] = turnCount
+		nextUpdates["item_count"] = itemCount
+		if historyChanged {
+			nextUpdates = withHistoryEpochIncrement(nextUpdates)
+		}
+		return tx.Model(&tables.WebSessionTable{}).
+			Where("id = ?", session.ID).
+			Updates(withSnapshotRevisionIncrement(nextUpdates)).Error
+	},
+		zap.String("sessionId", session.ID),
+		zap.Int("turnCount", len(turns)),
+		zap.Int("itemCount", len(items)),
+		zap.Int("updateFieldCount", len(updates)),
+	)
+}
+
+func historyTurnSourceIdentity(threadID, turnID *string) (string, bool) {
+	thread := pointerString(threadID)
+	turn := pointerString(turnID)
+	if thread == "" || turn == "" {
+		return "", false
+	}
+	return scopedSourceTurnKey(thread, turn), true
+}
+
+func historyItemSourceIdentity(threadID, itemID *string) (string, bool) {
+	item := pointerString(itemID)
+	if item == "" {
+		return "", false
+	}
+	return strings.TrimSpace(pointerString(threadID)) + "\x00" + item, true
+}
+
+func mergeReconciledHistoryItem(existing, incoming HistoryItem) HistoryItem {
+	merged := incoming
+	merged.ID = existing.ID
+	merged.OrderIndex = existing.OrderIndex
+	if merged.SourceThreadID == nil {
+		merged.SourceThreadID = existing.SourceThreadID
+	}
+	if merged.SourceTurnID == nil {
+		merged.SourceTurnID = existing.SourceTurnID
+	}
+	if merged.SourceItemID == nil {
+		merged.SourceItemID = existing.SourceItemID
+	}
+	merged.RunID = existing.RunID
+	merged.RunDurationMs = existing.RunDurationMs
+	merged.RunOutcome = existing.RunOutcome
+	merged.LastEventSeq = existing.LastEventSeq
+	if incoming.LastEventSeq > merged.LastEventSeq {
+		merged.LastEventSeq = incoming.LastEventSeq
+	}
+	if merged.Timestamp == nil {
+		merged.Timestamp = existing.Timestamp
+	}
+	if merged.ObservedAt == nil {
+		merged.ObservedAt = existing.ObservedAt
+	}
+	if len(merged.Attachments) == 0 {
+		merged.Attachments = existing.Attachments
+	}
+	merged.Tool = mergeReconciledHistoryTool(existing.Tool, incoming.Tool)
+	if strings.TrimSpace(merged.Level) == "" {
+		merged.Level = existing.Level
+	}
+	merged.Done = merged.Done || existing.Done
+	if merged.Detail == nil {
+		merged.Detail = existing.Detail
+	}
+	merged.Payload = mergeReconciledHistoryMap(existing.Payload, incoming.Payload)
+	return merged
+}
+
+func mergeReconciledHistoryTool(existing, incoming *HistoryTool) *HistoryTool {
+	if incoming == nil {
+		return existing
+	}
+	if existing == nil {
+		return incoming
+	}
+	merged := *incoming
+	merged.ID = firstNonEmpty(strings.TrimSpace(incoming.ID), existing.ID)
+	merged.Name = firstNonEmpty(strings.TrimSpace(incoming.Name), existing.Name)
+	merged.Kind = firstNonEmpty(strings.TrimSpace(incoming.Kind), existing.Kind)
+	if merged.Input == nil {
+		merged.Input = existing.Input
+	}
+	if merged.Output == "" {
+		merged.Output = existing.Output
+	}
+	merged.Status = firstNonEmpty(strings.TrimSpace(incoming.Status), existing.Status)
+	merged.Meta = mergeReconciledHistoryMap(existing.Meta, incoming.Meta)
+	if merged.CommandGroup == nil {
+		merged.CommandGroup = existing.CommandGroup
+	}
+	return &merged
+}
+
+func mergeReconciledHistoryMap(existing, incoming map[string]any) map[string]any {
+	if len(existing) == 0 {
+		return cloneMap(incoming)
+	}
+	merged := cloneMap(existing)
+	if merged == nil {
+		merged = make(map[string]any)
+	}
+	for key, value := range incoming {
+		merged[key] = value
+	}
+	return merged
+}
+
+func historyTurnRowsEqual(left, right tables.WebSessionTurnTable) bool {
+	return pointerString(left.SourceThreadID) == pointerString(right.SourceThreadID) &&
+		pointerString(left.SourceTurnID) == pointerString(right.SourceTurnID) &&
+		left.OrderIndex == right.OrderIndex &&
+		left.Status == right.Status &&
+		left.ErrorJSON == right.ErrorJSON &&
+		left.SourceCreated == right.SourceCreated
+}
+
+func historyItemRowsEqual(left, right tables.WebSessionItemTable) bool {
+	return pointerString(left.WebTurnID) == pointerString(right.WebTurnID) &&
+		pointerString(left.SourceThreadID) == pointerString(right.SourceThreadID) &&
+		pointerString(left.SourceTurnID) == pointerString(right.SourceTurnID) &&
+		pointerString(left.SourceItemID) == pointerString(right.SourceItemID) &&
+		pointerString(left.CommandGroupID) == pointerString(right.CommandGroupID) &&
+		pointerString(left.RunID) == pointerString(right.RunID) &&
+		optionalInt64Equal(left.RunDurationMs, right.RunDurationMs) &&
+		left.RunOutcome == right.RunOutcome &&
+		left.OrderIndex == right.OrderIndex &&
+		left.LastEventSeq == right.LastEventSeq &&
+		left.ItemKind == right.ItemKind &&
+		left.ItemType == right.ItemType &&
+		left.Role == right.Role &&
+		left.Status == right.Status &&
+		left.Level == right.Level &&
+		left.Text == right.Text &&
+		left.Done == right.Done &&
+		optionalTimeEqual(left.Timestamp, right.Timestamp) &&
+		optionalTimeEqual(left.ObservedAt, right.ObservedAt) &&
+		left.AttachmentsJSON == right.AttachmentsJSON &&
+		left.ToolJSON == right.ToolJSON &&
+		left.DetailJSON == right.DetailJSON &&
+		left.PayloadJSON == right.PayloadJSON
+}
+
 func (m *Manager) loadHistoryWindow(
 	ctx context.Context,
 	sessionID string,

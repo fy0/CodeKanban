@@ -74,7 +74,7 @@ func historyItemForTransport(item HistoryItem) HistoryItem {
 			maxHistoryTransportToolInputBytes,
 			historyTransportInputFallback(item.Tool.Kind, item.Tool.Input, summary),
 		)
-		tool.Output = limitHistoryTransportText(item.Tool.Output, maxHistoryTransportToolOutputRunes)
+		tool.Output = historyTransportToolOutput(item.Tool.Kind, item.Tool.Output)
 	}
 	if len(tool.Meta) == 0 {
 		tool.Meta = nil
@@ -124,7 +124,7 @@ func historyEventForTransport(event Event) Event {
 		} else {
 			delete(projected.Payload, "in")
 		}
-		if output := limitHistoryTransportText(eventToolOutput(event), maxHistoryTransportToolOutputRunes); output != "" {
+		if output := historyTransportToolOutput(eventToolKind(event), eventToolOutput(event)); output != "" {
 			projected.Payload["out"] = output
 		} else {
 			delete(projected.Payload, "out")
@@ -143,10 +143,25 @@ func historyEventForTransport(event Event) Event {
 		maxHistoryTransportPayloadBytes+maxHistoryTransportToolInputBytes,
 		historyTransportMapFallback(projected.Payload, historyTransportEventKeys),
 	)
+	if strings.EqualFold(strings.TrimSpace(eventToolKind(event)), "plan") {
+		if projected.Payload == nil {
+			projected.Payload = make(map[string]any)
+		}
+		if output := eventToolOutput(event); output != "" {
+			projected.Payload["out"] = output
+		}
+	}
 	if len(projected.Payload) == 0 {
 		projected.Payload = nil
 	}
 	return projected
+}
+
+func historyTransportToolOutput(kind, output string) string {
+	if strings.EqualFold(strings.TrimSpace(kind), "plan") {
+		return output
+	}
+	return limitHistoryTransportText(output, maxHistoryTransportToolOutputRunes)
 }
 
 func projectHistoryTransportMeta(kind string, input any, meta map[string]any, output string) map[string]any {

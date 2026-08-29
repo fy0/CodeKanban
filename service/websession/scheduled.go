@@ -526,7 +526,11 @@ func normalizeScheduledPlanExecutionPayload(payload scheduledPlanExecutionPayloa
 	return payload, nil
 }
 
-func (m *Manager) validateScheduledPlanHistory(ctx context.Context, sessionID, targetID string) error {
+func (m *Manager) validateScheduledPlanHistory(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	targetID string,
+) error {
 	db := model.GetDB()
 	if db == nil {
 		return model.ErrDBNotInitialized
@@ -538,7 +542,7 @@ func (m *Manager) validateScheduledPlanHistory(ctx context.Context, sessionID, t
 
 	var latestPlan tables.WebSessionItemTable
 	if err := db.WithContext(ctx).
-		Where("web_session_id = ? AND item_type = ?", sessionID, "plan").
+		Where("web_session_id = ? AND item_type = ?", session.ID, "plan").
 		Order("order_index DESC").
 		First(&latestPlan).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -549,11 +553,14 @@ func (m *Manager) validateScheduledPlanHistory(ctx context.Context, sessionID, t
 	if strings.TrimSpace(latestPlan.ID) != targetID {
 		return errScheduledPlanExpired
 	}
+	if effectiveAssistantState(session) == AssistantStateWaitingPlanApproval {
+		return nil
+	}
 
 	var userMessageCount int64
 	if err := db.WithContext(ctx).
 		Model(&tables.WebSessionItemTable{}).
-		Where("web_session_id = ? AND order_index > ? AND item_kind = ?", sessionID, latestPlan.OrderIndex, "user").
+		Where("web_session_id = ? AND order_index > ? AND item_kind = ?", session.ID, latestPlan.OrderIndex, "user").
 		Count(&userMessageCount).Error; err != nil {
 		return err
 	}
@@ -663,7 +670,7 @@ func (m *Manager) validateScheduledPlanExecution(
 	if err := m.ensureSessionMessagingAvailable(session); err != nil {
 		return tables.WebSessionTable{}, err
 	}
-	if err := m.validateScheduledPlanHistory(ctx, session.ID, targetID); err != nil {
+	if err := m.validateScheduledPlanHistory(ctx, session, targetID); err != nil {
 		return tables.WebSessionTable{}, err
 	}
 	if err := m.validateScheduledPlanApproval(ctx, session, payload); err != nil {

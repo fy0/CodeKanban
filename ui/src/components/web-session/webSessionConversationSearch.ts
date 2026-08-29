@@ -20,6 +20,36 @@ export type WebSessionConversationSearchMatch = {
   commandGroupId?: string;
 };
 
+const OPEN_CONVERSATION_SEARCH_BLOCKING_LAYER_SELECTOR =
+  '[aria-modal="true"]:not([aria-hidden="true"]), [role="dialog"]:not([aria-hidden="true"])';
+const CONVERSATION_SEARCH_BLOCKING_FOCUS_SELECTOR =
+  '[aria-modal="true"], [role="dialog"], [role="menu"], [role="listbox"], [role="tooltip"]';
+
+export function shouldHandleWebSessionConversationSearchShortcut(
+  event: KeyboardEvent,
+  ownerDocument: Document | null = typeof document !== 'undefined' ? document : null
+) {
+  if (
+    event.defaultPrevented ||
+    event.isComposing ||
+    event.altKey ||
+    !(event.ctrlKey || event.metaKey) ||
+    event.key.toLowerCase() !== 'f'
+  ) {
+    return false;
+  }
+  if (ownerDocument?.querySelector(OPEN_CONVERSATION_SEARCH_BLOCKING_LAYER_SELECTOR)) {
+    return false;
+  }
+
+  const eventPath =
+    typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+  if (eventPath.some(isConversationSearchBlockingFocusTarget)) {
+    return false;
+  }
+  return !isConversationSearchBlockingFocusTarget(ownerDocument?.activeElement ?? null);
+}
+
 export function normalizeWebSessionConversationSearchQuery(value: unknown) {
   return String(value ?? '')
     .trim()
@@ -208,4 +238,11 @@ function stringifySearchValue(value: unknown) {
   } catch {
     return String(value);
   }
+}
+
+function isConversationSearchBlockingFocusTarget(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    Boolean(target.closest(CONVERSATION_SEARCH_BLOCKING_FOCUS_SELECTOR))
+  );
 }

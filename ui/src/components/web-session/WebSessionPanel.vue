@@ -3238,6 +3238,7 @@ import {
   shouldShowCyberPolicyWarning,
 } from '@/components/web-session/webSessionDevMode';
 import { resolveWebSessionAgentCapability } from '@/components/web-session/webSessionAgentCapabilities';
+import { isWebSessionLatestPlanActionable } from '@/components/web-session/webSessionPlanState';
 import {
   buildWebSessionComposerPastePlan,
   getImageFilesFromTransfer,
@@ -5418,12 +5419,18 @@ const inlinePlanChoice = computed<InlinePlanChoice | null>(() => {
     })),
   };
 });
+const isLatestPlanActionable = computed(() =>
+  isWebSessionLatestPlanActionable({
+    hasPlan: Boolean(latestPlanToolId.value),
+    hasUserMessageAfter: hasUserMessageAfterLatestPlan.value,
+    phase: liveState.value.phase,
+  })
+);
 const isPlanWaitingApprovalState = computed(
   () =>
     liveState.value.phase === 'waiting_plan_approval' &&
     !pendingApproval.value &&
-    Boolean(latestPlanToolId.value) &&
-    !hasUserMessageAfterLatestPlan.value
+    isLatestPlanActionable.value
 );
 const currentSubmitEntry = computed(() =>
   getWebSessionSubmitEntry(submitStateBySessionId.value, currentDraftSessionId.value)
@@ -10930,7 +10937,7 @@ function showPlanActions(toolId: string) {
       !activeScheduledPlanTargetIds.value.has(latestPlanItemId.value) &&
       (!liveState.value.running || inlinePlanChoice.value) &&
       !dismissedPlanActions.value[toolId] &&
-      !hasUserMessageAfterLatestPlan.value
+      isLatestPlanActionable.value
   );
 }
 

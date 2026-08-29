@@ -647,6 +647,16 @@ test('CodeKanbanClient analyzeWebSession derives actionable polling state from s
           },
           payload: {},
         },
+        {
+          id: 'redirect-1',
+          orderIndex: 3,
+          kind: 'user',
+          itemType: 'user_message',
+          text: 'redirected while planning',
+          timestamp: '2026-04-10T00:00:03Z',
+          observedAt: '2026-04-10T00:00:03Z',
+          payload: {},
+        },
       ],
     }),
   );
@@ -656,6 +666,8 @@ test('CodeKanbanClient analyzeWebSession derives actionable polling state from s
   assert.equal(state.needsAction, true);
   assert.equal(state.nextAction.type, 'execute_plan');
   assert.equal(state.latestPlan.toolId, 'plan-tool-1');
+  assert.equal(state.latestPlan.hasUserMessageAfter, true);
+  assert.equal(state.latestPlan.awaitingExecution, true);
 });
 
 test('CodeKanbanClient getWebSessionState identifies pending user input for polling clients', async () => {

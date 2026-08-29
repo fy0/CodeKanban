@@ -460,6 +460,55 @@ func compactSyncedHistoryItems(items []HistoryItem) []HistoryItem {
 	return result
 }
 
+func isPlanHistoryItem(item HistoryItem) bool {
+	return item.Kind == "tool" && item.Tool != nil && strings.EqualFold(strings.TrimSpace(item.Tool.Kind), "plan")
+}
+
+func moveScopedTurnPlansToEnd(items []HistoryItem) []HistoryItem {
+	if len(items) < 2 {
+		return items
+	}
+
+	indicesByTurn := make(map[string][]int)
+	for index, item := range items {
+		if item.SourceThreadID == nil || item.SourceTurnID == nil {
+			continue
+		}
+		threadID := strings.TrimSpace(*item.SourceThreadID)
+		turnID := strings.TrimSpace(*item.SourceTurnID)
+		if threadID == "" || turnID == "" {
+			continue
+		}
+		key := scopedSourceTurnKey(threadID, turnID)
+		indicesByTurn[key] = append(indicesByTurn[key], index)
+	}
+	for _, indices := range indicesByTurn {
+		if len(indices) < 2 {
+			continue
+		}
+		reordered := make([]HistoryItem, 0, len(indices))
+		plans := make([]HistoryItem, 0, 1)
+		for _, index := range indices {
+			if isPlanHistoryItem(items[index]) {
+				plans = append(plans, items[index])
+			} else {
+				reordered = append(reordered, items[index])
+			}
+		}
+		if len(plans) == 0 {
+			continue
+		}
+		reordered = append(reordered, plans...)
+		for offset, index := range indices {
+			items[index] = reordered[offset]
+		}
+	}
+	for index := range items {
+		items[index].OrderIndex = int64(index + 1)
+	}
+	return items
+}
+
 func sortSyncedHistoryItems(items []HistoryItem) {
 	sort.SliceStable(items, func(i, j int) bool {
 		left := historyItemObservedTimestamp(items[i])
@@ -665,22 +714,6 @@ func (m *Manager) syncSessionFromThreadSource(
 		metadataUpdates["activity_at"] = *remote.Summary.UpdatedAt
 	}
 
-	if !clearExisting && m.shouldPreserveExistingHistoryOnFastSync(session) {
-		if descendantsDiscovered {
-			if err := m.replaceSessionSubAgents(ctx, session.ID, subAgents, true); err != nil {
-				return SessionSnapshot{}, err
-			}
-		}
-		if err := m.updateRuntimeState(ctx, session.ID, metadataUpdates); err != nil {
-			return SessionSnapshot{}, err
-		}
-		refreshed, err := m.GetSession(ctx, session.ID)
-		if err != nil {
-			return SessionSnapshot{}, err
-		}
-		return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow)
-	}
-
 	allThreads := make([]codexThreadReadResult, 0, len(descendants)+1)
 	allThreads = append(allThreads, remote)
 	allThreads = append(allThreads, descendants...)
@@ -730,6 +763,7 @@ func (m *Manager) syncSessionFromThreadSource(
 	}
 
 	sortSyncedHistoryItems(historyItems)
+	historyItems = moveScopedTurnPlansToEnd(historyItems)
 	historyItems = compactSyncedHistoryItems(historyItems)
 	updateSubAgentsFromHistory(subAgents, historyItems)
 	itemRows := make([]tables.WebSessionItemTable, 0, len(historyItems))
@@ -762,8 +796,14 @@ func (m *Manager) syncSessionFromThreadSource(
 	if err := m.store.deleteSessionFiles(session.ID); err != nil {
 		return SessionSnapshot{}, err
 	}
-	if err := m.replaceSessionHistoryCache(ctx, session, turnRows, itemRows, updates); err != nil {
-		return SessionSnapshot{}, err
+	var cacheErr error
+	if !clearExisting && m.shouldPreserveExistingHistoryOnFastSync(session) {
+		cacheErr = m.reconcileSessionHistoryCache(ctx, session, turnRows, itemRows, updates, remote.Summary.ID)
+	} else {
+		cacheErr = m.replaceSessionHistoryCache(ctx, session, turnRows, itemRows, updates)
+	}
+	if cacheErr != nil {
+		return SessionSnapshot{}, cacheErr
 	}
 	if descendantsDiscovered {
 		if err := m.replaceSessionSubAgents(ctx, session.ID, subAgents, true); err != nil {
