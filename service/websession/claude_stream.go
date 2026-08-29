@@ -1,7 +1,6 @@
 package websession
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
@@ -544,9 +543,7 @@ func (m *Manager) parseClaudeStreamHistory(filePath string, workflowMode Workflo
 	pendingTools := make(map[string]int)
 	pendingAskQuestions := make(map[string][]toolRequestQuestion)
 	turnIDs := make(map[string]struct{})
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 2*1024*1024)
+	scanner := newNativeHistoryJSONLScanner(file)
 
 	appendItem := func(item HistoryItem) int {
 		item.OrderIndex = int64(len(result.Items) + 1)

@@ -1,7 +1,6 @@
 package websession
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -265,9 +264,7 @@ func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHist
 	var subagentHistoryStartOrdinal *uint64
 	metadataSeen := false
 
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 2*1024*1024)
+	scanner := newNativeHistoryJSONLScanner(file)
 
 	appendItem := func(item HistoryItem) int {
 		orderIndex++

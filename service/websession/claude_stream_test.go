@@ -453,6 +453,55 @@ func TestParseClaudeStreamHistoryPreservesTextBeforeToolUse(t *testing.T) {
 	}
 }
 
+func TestParseClaudeStreamHistoryAcceptsLargeToolResult(t *testing.T) {
+	store, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("newStore returned error: %v", err)
+	}
+	manager := &Manager{cfg: Config{DataDir: t.TempDir()}, store: store, logger: zap.NewNop()}
+	filePath := filepath.Join(t.TempDir(), "claude-large-tool-result.jsonl")
+	largeOutput := strings.Repeat("x", 2*1024*1024+1024)
+	resultEntry, err := json.Marshal(map[string]any{
+		"type":      "user",
+		"uuid":      "tool_result_large",
+		"timestamp": "2026-04-12T03:00:01.000Z",
+		"message": map[string]any{
+			"role": "user",
+			"content": []any{map[string]any{
+				"type":        "tool_result",
+				"tool_use_id": "tool_large",
+				"content":     largeOutput,
+				"is_error":    false,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal large Claude result: %v", err)
+	}
+	content := strings.Join([]string{
+		`{"type":"assistant","uuid":"assistant_large","timestamp":"2026-04-12T03:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool_large","name":"Bash","input":{"command":"large-output"}}],"stop_reason":"tool_use"}}`,
+		string(resultEntry),
+		`{"type":"assistant","uuid":"assistant_after","timestamp":"2026-04-12T03:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"history continued"}],"stop_reason":"end_turn"}}`,
+	}, "\n")
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write Claude fixture: %v", err)
+	}
+
+	parsed, err := manager.parseClaudeStreamHistory(filePath, WorkflowModeDefault)
+	if err != nil {
+		t.Fatalf("parseClaudeStreamHistory returned error: %v", err)
+	}
+	if len(parsed.Items) != 2 || parsed.Items[0].Tool == nil {
+		t.Fatalf("expected tool and trailing message, got %#v", parsed.Items)
+	}
+	if parsed.Items[0].Tool.Output != strings.Repeat("x", defaultToolOutputLimit)+"..." {
+		t.Fatalf("expected truncated large tool output, got %d bytes", len(parsed.Items[0].Tool.Output))
+	}
+	if parsed.Items[1].Kind != "assistant" || parsed.Items[1].Text != "history continued" {
+		t.Fatalf("expected trailing message after large record, got %#v", parsed.Items[1])
+	}
+}
+
 func TestSyncClaudeSessionFromSourceRebuildsAskUserQuestionHistory(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

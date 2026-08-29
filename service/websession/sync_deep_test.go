@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,6 +66,49 @@ func TestParseCodexDeepHistoryCapturesToolsAndTimestamps(t *testing.T) {
 	}
 	if items[3].Kind != "assistant" || items[3].Text != "I found the sync entrypoints." {
 		t.Fatalf("unexpected last item: %#v", items[3])
+	}
+}
+
+func TestParseCodexDeepHistoryAcceptsLargeToolOutput(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	largeOutput := strings.Repeat("x", 2*1024*1024+1024)
+	outputEntry, err := json.Marshal(map[string]any{
+		"timestamp": "2026-04-09T01:00:02Z",
+		"type":      "response_item",
+		"payload": map[string]any{
+			"type":    "function_call_output",
+			"call_id": "call_large",
+			"output":  largeOutput,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal large output entry: %v", err)
+	}
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-04-09T01:00:00Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"large-output\"}","call_id":"call_large"}}`,
+		string(outputEntry),
+		`{"timestamp":"2026-04-09T01:00:03Z","type":"event_msg","payload":{"type":"agent_message","message":"history continued"}}`,
+	})
+
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory returned error: %v", err)
+	}
+	if len(items) != 2 || items[0].Tool == nil {
+		t.Fatalf("expected tool and trailing message, got %#v", items)
+	}
+	if items[0].Tool.Output != strings.Repeat("x", defaultToolOutputLimit)+"..." {
+		t.Fatalf("expected truncated large tool output, got %d bytes", len(items[0].Tool.Output))
+	}
+	if items[1].Kind != "assistant" || items[1].Text != "history continued" {
+		t.Fatalf("expected trailing message after large record, got %#v", items[1])
 	}
 }
 
