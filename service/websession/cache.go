@@ -106,6 +106,7 @@ func mapHistoryItemRow(row tables.WebSessionItemTable) HistoryItem {
 		RunDurationMs:  row.RunDurationMs,
 		RunOutcome:     WorkTimingOutcome(row.RunOutcome),
 		OrderIndex:     row.OrderIndex,
+		LastEventSeq:   row.LastEventSeq,
 		Kind:           row.ItemKind,
 		ItemType:       row.ItemType,
 		Text:           row.Text,
@@ -145,6 +146,7 @@ func applyHistoryItemToRow(row *tables.WebSessionItemTable, sessionID string, it
 	row.RunDurationMs = item.RunDurationMs
 	row.RunOutcome = string(item.RunOutcome)
 	row.OrderIndex = item.OrderIndex
+	row.LastEventSeq = item.LastEventSeq
 	row.ItemKind = strings.TrimSpace(item.Kind)
 	row.ItemType = strings.TrimSpace(item.ItemType)
 	row.Text = item.Text
@@ -405,8 +407,16 @@ func (m *Manager) ensureCompactGroupHistorySourceKeyDB(
 			deleteIDs = append(deleteIDs, candidate.row.ID)
 		}
 		if len(deleteIDs) > 0 {
-			if err := tx.Unscoped().Where("id IN ?", deleteIDs).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
-				return err
+			result := tx.Unscoped().Where("id IN ?", deleteIDs).Delete(&tables.WebSessionItemTable{})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected > 0 {
+				if err := tx.Model(&tables.WebSessionTable{}).
+					Where("id = ?", sessionID).
+					UpdateColumn("history_epoch", gorm.Expr("history_epoch + 1")).Error; err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -452,12 +462,11 @@ func (m *Manager) replaceSessionHistoryCache(
 		if err := m.reapplyWorkTimingAnnotationsDB(ctx, tx, session.ID); err != nil {
 			return err
 		}
-		if len(updates) > 0 {
-			if err := tx.Model(&tables.WebSessionTable{}).
-				Where("id = ?", session.ID).
-				Updates(withSnapshotRevisionIncrement(updates)).Error; err != nil {
-				return err
-			}
+		updates = withHistoryEpochIncrement(updates)
+		if err := tx.Model(&tables.WebSessionTable{}).
+			Where("id = ?", session.ID).
+			Updates(withSnapshotRevisionIncrement(updates)).Error; err != nil {
+			return err
 		}
 		return nil
 	},

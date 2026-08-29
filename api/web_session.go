@@ -218,7 +218,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		if err != nil || record.ProjectID != input.ProjectID {
 			return nil, huma.Error404NotFound("session not found")
 		}
-		item, err := c.manager.SnapshotWithAutoSyncIfChanged(
+		item, err := c.manager.SnapshotIfChanged(
 			ctx,
 			input.SessionID,
 			input.Limit,
@@ -237,6 +237,42 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-snapshot"
 		op.Summary = "获取会话快照"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Get(group, "/projects/{projectId}/web-sessions/{sessionId}/catch-up", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID         string `path:"projectId"`
+			SessionID         string `path:"sessionId"`
+			AfterEventCursor  string `query:"afterEventCursor" required:"true"`
+			TargetEventCursor string `query:"targetEventCursor"`
+			HistoryEpoch      string `query:"historyEpoch" required:"true"`
+			Limit             int    `query:"limit" default:"80"`
+		},
+	) (*h.ItemResponse[websession.SessionCatchUpResponse], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		item, err := c.manager.CatchUpSession(
+			ctx,
+			input.SessionID,
+			input.AfterEventCursor,
+			input.TargetEventCursor,
+			input.HistoryEpoch,
+			input.Limit,
+		)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		item = websession.SessionCatchUpResponseForTransport(item)
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-catch-up"
+		op.Summary = "按事件游标补齐会话状态"
 		op.Tags = []string{webSessionTag}
 	})
 

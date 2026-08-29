@@ -106,6 +106,9 @@ type wireSess struct {
 	Status                            string         `json:"st"`
 	AssistantState                    string         `json:"ast,omitempty"`
 	Unread                            bool           `json:"unr"`
+	AttentionRevision                 string         `json:"ar,omitempty"`
+	HistoryEpoch                      string         `json:"he,omitempty"`
+	EventCursor                       string         `json:"ec,omitempty"`
 	ArchivedAt                        *int64         `json:"aa,omitempty"`
 	ActivityAt                        int64          `json:"act"`
 	StatusUpdatedAt                   *int64         `json:"sta,omitempty"`
@@ -190,6 +193,7 @@ type wireHistItem struct {
 	RunDurationMs  *int64              `json:"dur,omitempty"`
 	RunOutcome     string              `json:"out,omitempty"`
 	OrderIndex     int64               `json:"oi"`
+	LastEventSeq   int64               `json:"es,omitempty"`
 	Kind           string              `json:"kd"`
 	ItemType       string              `json:"tp"`
 	Text           string              `json:"txt,omitempty"`
@@ -529,6 +533,9 @@ func mapWireSession(session SessionSummary) *wireSess {
 		Status:                            string(session.Status),
 		AssistantState:                    string(session.AssistantState),
 		Unread:                            session.HasUnread,
+		AttentionRevision:                 session.AttentionRevision,
+		HistoryEpoch:                      session.HistoryEpoch,
+		EventCursor:                       session.EventCursor,
 		ArchivedAt:                        archivedAt,
 		ActivityAt:                        session.ActivityAt.UnixMilli(),
 		StatusUpdatedAt:                   statusUpdatedAt,
@@ -727,6 +734,7 @@ func mapWireHistoryItem(item HistoryItem) wireHistItem {
 		RunDurationMs:  item.RunDurationMs,
 		RunOutcome:     string(item.RunOutcome),
 		OrderIndex:     item.OrderIndex,
+		LastEventSeq:   item.LastEventSeq,
 		Kind:           item.Kind,
 		ItemType:       item.ItemType,
 		Text:           item.Text,

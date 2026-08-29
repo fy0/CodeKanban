@@ -626,7 +626,7 @@ func TestCodexCommandApprovalPersistsDetailsAndSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession after approval returned error: %v", err)
 	}
-	snapshot, err := manager.loadSnapshotLocal(context.Background(), refreshed, DefaultHistoryWindow, false)
+	snapshot, err := manager.loadSnapshotLocal(context.Background(), refreshed, DefaultHistoryWindow)
 	if err != nil {
 		t.Fatalf("loadSnapshotLocal returned error: %v", err)
 	}

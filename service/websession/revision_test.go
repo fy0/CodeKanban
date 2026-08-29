@@ -30,7 +30,7 @@ func TestSessionRevisionAdvancesAtomicallyAndControlsConditionalSnapshots(t *tes
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
-	initial, err := manager.SnapshotWithAutoSyncIfChanged(
+	initial, err := manager.SnapshotIfChanged(
 		context.Background(),
 		created.ID,
 		DefaultHistoryWindow,
@@ -44,7 +44,7 @@ func TestSessionRevisionAdvancesAtomicallyAndControlsConditionalSnapshots(t *tes
 		t.Fatalf("expected a full revisioned snapshot, got %#v", initial)
 	}
 
-	unchanged, err := manager.SnapshotWithAutoSyncIfChanged(
+	unchanged, err := manager.SnapshotIfChanged(
 		context.Background(),
 		created.ID,
 		DefaultHistoryWindow,
@@ -90,7 +90,7 @@ func TestSessionRevisionAdvancesAtomicallyAndControlsConditionalSnapshots(t *tes
 		t.Fatalf("expected %d unique revisions, got %#v", advances, seen)
 	}
 
-	changed, err := manager.SnapshotWithAutoSyncIfChanged(
+	changed, err := manager.SnapshotIfChanged(
 		context.Background(),
 		created.ID,
 		DefaultHistoryWindow,
@@ -109,7 +109,7 @@ func TestSessionRevisionAdvancesAtomicallyAndControlsConditionalSnapshots(t *tes
 	}
 }
 
-func TestConditionalSnapshotRepairsStaleHistoryCountsWithoutRehydrating(t *testing.T) {
+func TestConditionalSnapshotLeavesStaleHistoryCountsForMaintenance(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -156,7 +156,7 @@ func TestConditionalSnapshotRepairsStaleHistoryCountsWithoutRehydrating(t *testi
 		t.Fatalf("expected seeded stale item count, got %d", record.ItemCount)
 	}
 	revision := formatSnapshotRevision(record.SnapshotRevision)
-	response, err := manager.SnapshotWithAutoSyncIfChanged(
+	response, err := manager.SnapshotIfChanged(
 		context.Background(),
 		created.ID,
 		DefaultHistoryWindow,
@@ -173,11 +173,11 @@ func TestConditionalSnapshotRepairsStaleHistoryCountsWithoutRehydrating(t *testi
 	if err != nil {
 		t.Fatalf("GetSession after repair returned error: %v", err)
 	}
-	if repaired.ItemCount != 1 {
-		t.Fatalf("expected repaired item count 1, got %d", repaired.ItemCount)
+	if repaired.ItemCount != 7 {
+		t.Fatalf("snapshot changed stale item count, got %d", repaired.ItemCount)
 	}
-	if repaired.TurnCount != 0 {
-		t.Fatalf("expected repaired turn count 0, got %d", repaired.TurnCount)
+	if repaired.TurnCount != 9 {
+		t.Fatalf("snapshot changed stale turn count, got %d", repaired.TurnCount)
 	}
 	if repaired.SnapshotRevision != record.SnapshotRevision {
 		t.Fatalf("count repair advanced revision from %d to %d", record.SnapshotRevision, repaired.SnapshotRevision)

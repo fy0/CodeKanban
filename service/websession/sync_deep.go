@@ -200,7 +200,7 @@ func (m *Manager) syncSessionFromLogSource(
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
-	return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow, false)
+	return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow)
 }
 
 func (m *Manager) resolveCodexLogSource(

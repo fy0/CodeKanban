@@ -179,7 +179,7 @@ func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupPa
 		for _, ids := range chunkHistoryCleanupIDs(plan.resetSessionIDs) {
 			if err := tx.Model(&tables.WebSessionTable{}).
 				Where("id IN ?", ids).
-				Updates(withSnapshotRevisionIncrement(map[string]any{
+				Updates(withSnapshotRevisionIncrement(withHistoryEpochIncrement(map[string]any{
 					"turn_count":     0,
 					"item_count":     0,
 					"has_unread":     false,
@@ -187,7 +187,7 @@ func (m *Manager) RunHistoryCleanup(ctx context.Context, params HistoryCleanupPa
 					"sync_error":     nil,
 					"last_sync_mode": "",
 					"last_synced_at": nil,
-				})).Error; err != nil {
+				}))).Error; err != nil {
 				return err
 			}
 		}

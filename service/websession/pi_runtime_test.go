@@ -1205,7 +1205,7 @@ func TestManagerPiRPCProjectsPR5EventsAndNativePendingInputs(t *testing.T) {
 	if approval == nil || approval.PiRequestID != "confirm-1" {
 		t.Fatalf("unexpected Pi approval: %#v", approval)
 	}
-	snapshot, err := manager.loadSnapshotLocal(context.Background(), mustGetSession(t, manager, created.ID), DefaultHistoryWindow, false)
+	snapshot, err := manager.loadSnapshotLocal(context.Background(), mustGetSession(t, manager, created.ID), DefaultHistoryWindow)
 	if err != nil {
 		t.Fatal(err)
 	}

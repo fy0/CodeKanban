@@ -285,6 +285,9 @@ type SessionSummary struct {
 	Status                            Status                     `json:"status"`
 	AssistantState                    AssistantState             `json:"assistantState,omitempty"`
 	HasUnread                         bool                       `json:"hasUnread"`
+	AttentionRevision                 string                     `json:"attentionRevision"`
+	HistoryEpoch                      string                     `json:"historyEpoch"`
+	EventCursor                       string                     `json:"eventCursor"`
 	ArchivedAt                        *time.Time                 `json:"archivedAt,omitempty"`
 	ActivityAt                        time.Time                  `json:"activityAt"`
 	StatusUpdatedAt                   *time.Time                 `json:"statusUpdatedAt,omitempty"`
@@ -443,6 +446,7 @@ type HistoryItem struct {
 	Done           bool                `json:"done,omitempty"`
 	Detail         *HistoryDetail      `json:"detail,omitempty"`
 	Payload        map[string]any      `json:"payload,omitempty"`
+	LastEventSeq   int64               `json:"lastEventSeq,omitempty"`
 }
 
 type HistoryWindow struct {
@@ -512,6 +516,8 @@ type PendingApproval struct {
 
 type SessionSnapshot struct {
 	Revision         string               `json:"revision"`
+	HistoryEpoch     string               `json:"historyEpoch"`
+	EventCursor      string               `json:"eventCursor"`
 	PendingEpoch     string               `json:"pendingEpoch"`
 	PendingVersion   uint64               `json:"pendingVersion"`
 	Session          SessionSummary       `json:"session"`
@@ -525,6 +531,8 @@ type SessionSnapshot struct {
 
 type SessionSnapshotResponse struct {
 	Revision         string               `json:"revision"`
+	HistoryEpoch     string               `json:"historyEpoch"`
+	EventCursor      string               `json:"eventCursor"`
 	PendingEpoch     string               `json:"pendingEpoch"`
 	PendingVersion   uint64               `json:"pendingVersion"`
 	Unchanged        bool                 `json:"unchanged"`
@@ -554,6 +562,8 @@ func NewSessionHydrationTarget(session SessionSummary) SessionHydrationTarget {
 func NewSessionSnapshotResponse(snapshot SessionSnapshot) SessionSnapshotResponse {
 	return SessionSnapshotResponse{
 		Revision:         snapshot.Revision,
+		HistoryEpoch:     snapshot.HistoryEpoch,
+		EventCursor:      snapshot.EventCursor,
 		PendingEpoch:     snapshot.PendingEpoch,
 		PendingVersion:   snapshot.PendingVersion,
 		Session:          &snapshot.Session,

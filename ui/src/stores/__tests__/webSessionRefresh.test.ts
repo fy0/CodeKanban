@@ -13,6 +13,7 @@ const {
   reconcileMock,
   queryArchivedMock,
   snapshotMock,
+  catchUpMock,
   historyMock,
   syncMock,
   deleteMock,
@@ -22,6 +23,7 @@ const {
   reconcileMock: vi.fn(),
   queryArchivedMock: vi.fn(),
   snapshotMock: vi.fn(),
+  catchUpMock: vi.fn(),
   historyMock: vi.fn(),
   syncMock: vi.fn(),
   deleteMock: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock('@/api/webSession', () => ({
     reconcile: reconcileMock,
     queryArchived: queryArchivedMock,
     snapshot: snapshotMock,
+    catchUp: catchUpMock,
     history: historyMock,
     sync: syncMock,
     delete: deleteMock,
@@ -67,6 +70,9 @@ function makeSession(overrides: Partial<WebSessionSummary> = {}): WebSessionSumm
   return {
     id: 'session-1',
     revision: '1',
+    attentionRevision: '0',
+    historyEpoch: '1',
+    eventCursor: '0:9223372036854775807',
     projectId: 'project-1',
     worktreeId: null,
     orderIndex: 1000,
@@ -128,6 +134,9 @@ function toWireSession(session: WebSessionSummary) {
   return {
     id: session.id,
     rev: session.revision,
+    ar: session.attentionRevision,
+    he: session.historyEpoch,
+    ec: session.eventCursor,
     pid: session.projectId,
     wid: session.worktreeId,
     oi: session.orderIndex,
@@ -284,6 +293,7 @@ describe('webSession loading behavior', () => {
     reconcileMock.mockResolvedValue({ items: [], missingIds: [] });
     queryArchivedMock.mockReset();
     snapshotMock.mockReset();
+    catchUpMock.mockReset();
     historyMock.mockReset();
     syncMock.mockReset();
     deleteMock.mockReset();
@@ -378,6 +388,279 @@ describe('webSession loading behavior', () => {
       expect.objectContaining({ knownRevision: '5' })
     );
     expect(store.isSessionSnapshotCurrent(newest.id, '5')).toBe(true);
+  });
+
+  it('merges incremental catch-up items from the hydrated event cursor', async () => {
+    const store = useWebSessionStore();
+    const baseline = makeSession({
+      id: 'session-catch-up',
+      revision: '5',
+      eventCursor: '5:9223372036854775807',
+      itemCount: 1,
+    });
+    const caughtUp = makeSession({
+      ...baseline,
+      revision: '7',
+      eventCursor: '7:9223372036854775807',
+      itemCount: 2,
+    });
+    listMock.mockResolvedValue([baseline]);
+    snapshotMock.mockResolvedValue({
+      revision: '5',
+      historyEpoch: '1',
+      eventCursor: '5:9223372036854775807',
+      session: baseline,
+      history: {
+        items: [makeWireHistoryItem(1, { id: 'assistant-1', txt: 'draft', es: 5 })],
+        hasMore: false,
+        total: 1,
+      },
+    });
+    catchUpMock.mockResolvedValue({
+      revision: '7',
+      historyEpoch: '1',
+      nextEventCursor: '7:9223372036854775807',
+      targetEventCursor: '7:9223372036854775807',
+      hasMore: false,
+      resetRequired: false,
+      session: caughtUp,
+      items: [
+        makeWireHistoryItem(1, { id: 'assistant-1', txt: 'complete', es: 6 }),
+        makeWireHistoryItem(2, { id: 'assistant-2', txt: 'next', es: 7 }),
+      ],
+      total: 2,
+      pendingEpoch: 'process-1',
+      pendingVersion: 0,
+      pendingInputs: [],
+      scheduledInputs: [],
+      subAgents: [],
+    });
+
+    await store.loadSessions(baseline.projectId);
+    await store.loadSessionSnapshot(baseline.projectId, baseline.id);
+    await store.catchUpSession(baseline.projectId, baseline.id);
+
+    expect(catchUpMock).toHaveBeenCalledWith(
+      baseline.projectId,
+      baseline.id,
+      expect.objectContaining({
+        afterEventCursor: '5:9223372036854775807',
+        historyEpoch: '1',
+        limit: 80,
+      })
+    );
+    expect(store.getBlocks(baseline.id).map(item => item.text)).toEqual(['complete', 'next']);
+    expect(snapshotMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a stale catch-up response overwrite a newer realtime item', async () => {
+    const store = useWebSessionStore();
+    const baseline = makeSession({
+      id: 'session-catch-up-race',
+      revision: '5',
+      eventCursor: '5:9223372036854775807',
+      itemCount: 1,
+    });
+    const realtime = makeSession({
+      ...baseline,
+      revision: '7',
+      eventCursor: '7:9223372036854775807',
+    });
+    let resolveCatchUp!: (value: unknown) => void;
+    const catchUpPromise = new Promise(resolve => {
+      resolveCatchUp = resolve;
+    });
+    listMock.mockResolvedValue([baseline]);
+    snapshotMock.mockResolvedValue({
+      revision: '5',
+      historyEpoch: '1',
+      eventCursor: '5:9223372036854775807',
+      session: baseline,
+      history: {
+        items: [makeWireHistoryItem(1, { id: 'assistant-1', txt: 'draft', es: 5 })],
+        hasMore: false,
+        total: 1,
+      },
+    });
+    catchUpMock.mockReturnValueOnce(catchUpPromise).mockResolvedValueOnce({
+      revision: '7',
+      historyEpoch: '1',
+      nextEventCursor: '7:9223372036854775807',
+      targetEventCursor: '7:9223372036854775807',
+      hasMore: false,
+      resetRequired: false,
+      session: realtime,
+      items: [],
+      total: 1,
+      pendingEpoch: 'process-1',
+      pendingVersion: 0,
+      pendingInputs: [],
+      scheduledInputs: [],
+      subAgents: [],
+    });
+
+    await store.loadSessions(baseline.projectId);
+    await store.loadSessionSnapshot(baseline.projectId, baseline.id);
+    store.setActiveSession(baseline.projectId, baseline.id);
+    await store.openEventStream();
+
+    const catchUp = store.catchUpSession(baseline.projectId, baseline.id);
+    await vi.waitFor(() => expect(catchUpMock).toHaveBeenCalledTimes(1));
+    findSocket('/api/v1/web-sessions/events')?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: baseline.id,
+      rev: '7',
+      ts: Date.now(),
+      op: 'hist_item',
+      s: toWireSession(realtime),
+      i: makeWireHistoryItem(1, {
+        id: 'assistant-1',
+        kd: 'assistant',
+        tp: 'agent_message',
+        txt: 'realtime',
+        es: 7,
+      }),
+    });
+    resolveCatchUp({
+      revision: '6',
+      historyEpoch: '1',
+      nextEventCursor: '6:9223372036854775807',
+      targetEventCursor: '6:9223372036854775807',
+      hasMore: false,
+      resetRequired: false,
+      session: { ...baseline, revision: '6', eventCursor: '6:9223372036854775807' },
+      items: [
+        makeWireHistoryItem(1, {
+          id: 'assistant-1',
+          kd: 'assistant',
+          tp: 'agent_message',
+          txt: 'stale catch-up',
+          es: 6,
+        }),
+      ],
+      total: 1,
+      pendingEpoch: 'process-1',
+      pendingVersion: 0,
+      pendingInputs: [],
+      scheduledInputs: [],
+      subAgents: [],
+    });
+    await catchUp;
+
+    expect(store.getBlocks(baseline.id)[0]?.text).toBe('realtime');
+    expect(catchUpMock).toHaveBeenCalledTimes(2);
+    expect(catchUpMock).toHaveBeenLastCalledWith(
+      baseline.projectId,
+      baseline.id,
+      expect.objectContaining({ afterEventCursor: '7:1', historyEpoch: '1' })
+    );
+  });
+
+  it('falls back to a snapshot when catch-up reports a new history epoch', async () => {
+    const store = useWebSessionStore();
+    const baseline = makeSession({
+      id: 'session-catch-up-reset',
+      revision: '5',
+      historyEpoch: '1',
+      eventCursor: '5:9223372036854775807',
+    });
+    const replaced = makeSession({
+      ...baseline,
+      revision: '8',
+      historyEpoch: '2',
+      eventCursor: '8:9223372036854775807',
+    });
+    listMock.mockResolvedValue([baseline]);
+    snapshotMock
+      .mockResolvedValueOnce({
+        revision: '5',
+        historyEpoch: '1',
+        eventCursor: '5:9223372036854775807',
+        session: baseline,
+        history: {
+          items: [makeWireHistoryItem(1, { id: 'old-item', txt: 'old' })],
+          hasMore: false,
+          total: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        revision: '8',
+        historyEpoch: '2',
+        eventCursor: '8:9223372036854775807',
+        session: replaced,
+        history: {
+          items: [makeWireHistoryItem(1, { id: 'new-item', txt: 'rebuilt' })],
+          hasMore: false,
+          total: 1,
+        },
+      });
+    catchUpMock.mockResolvedValue({
+      revision: '8',
+      historyEpoch: '2',
+      nextEventCursor: '8:9223372036854775807',
+      targetEventCursor: '8:9223372036854775807',
+      hasMore: false,
+      resetRequired: true,
+      session: replaced,
+      items: [],
+      total: 1,
+      pendingEpoch: 'process-1',
+      pendingVersion: 0,
+      pendingInputs: [],
+      scheduledInputs: [],
+      subAgents: [],
+    });
+
+    await store.loadSessions(baseline.projectId);
+    await store.loadSessionSnapshot(baseline.projectId, baseline.id);
+    await store.catchUpSession(baseline.projectId, baseline.id);
+
+    expect(snapshotMock).toHaveBeenCalledTimes(2);
+    expect(store.getBlocks(baseline.id).map(item => item.text)).toEqual(['rebuilt']);
+  });
+
+  it('marks unread state with the attention revision instead of content revision', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-mark-read',
+      revision: '5',
+      attentionRevision: '3',
+      hasUnread: true,
+    });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const request = store.markSessionRead(session.id);
+    const commandSocket = await waitForCommandCount(1);
+    const sent = commandSocket?.sent[0] as
+      | { rid: string; sid: string; op: string; p: Record<string, unknown> }
+      | undefined;
+    expect(sent).toMatchObject({
+      sid: session.id,
+      op: 'mark_read',
+      p: { ar: '3' },
+    });
+    if (!sent) {
+      throw new Error('mark_read command was not sent');
+    }
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: sent.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'mark_read',
+      ok: 1,
+      p: { hasUnread: false, attentionRevision: '4' },
+    });
+    await request;
+
+    expect(store.getSessions(session.projectId)[0]).toMatchObject({
+      revision: '5',
+      attentionRevision: '4',
+      hasUnread: false,
+    });
   });
 
   it('invalidates cleaned histories without removing session summaries', async () => {
@@ -526,7 +809,10 @@ describe('webSession loading behavior', () => {
     expect(snapshotMock).toHaveBeenLastCalledWith(
       baseline.projectId,
       baseline.id,
-      expect.objectContaining({ knownRevision: '5' })
+      expect.objectContaining({
+        limit: 80,
+        signal: expect.any(AbortSignal),
+      })
     );
     eventSocket?.dispatch(resyncFrame);
     await flushMicrotasks();

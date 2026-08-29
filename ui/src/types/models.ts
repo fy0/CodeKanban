@@ -467,6 +467,9 @@ export interface CodexSkillSummary {
 export interface WebSessionSummary {
   id: string;
   revision?: string;
+  attentionRevision?: string;
+  historyEpoch?: string;
+  eventCursor?: string;
   projectId: string;
   worktreeId?: string | null;
   orderIndex: number;

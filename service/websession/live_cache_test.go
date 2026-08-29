@@ -271,6 +271,9 @@ func TestApplyEventToHistoryCacheCanonicalizesCommandExecutionGroupRows(t *testi
 	if got := len(decodeHistoryGroupItems(grouped.Payload)); got != 3 {
 		t.Fatalf("expected 3 command group detail items, got %d", got)
 	}
+	if snapshot.HistoryEpoch != "2" {
+		t.Fatalf("expected history epoch to advance after row compaction, got %q", snapshot.HistoryEpoch)
+	}
 }
 
 func TestCompactGroupHistoryLookupUsesGroupIndex(t *testing.T) {

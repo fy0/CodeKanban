@@ -3884,6 +3884,7 @@ let timelinePositionRestoreRunningGeneration = 0;
 let composerDragDepth = 0;
 let webSessionCatchUpTimer: number | null = null;
 let webSessionCatchUpToken = 0;
+let webSessionCatchUpAbortController: AbortController | null = null;
 const webSessionCatchUpScheduler = createWebSessionCatchUpScheduler(reason => {
   void refreshWebSessionCatchUp(reason);
 }, WEB_SESSION_CATCH_UP_DEBOUNCE_MS);
@@ -4657,6 +4658,8 @@ function clearWebSessionCatchUpTimer() {
 function stopWebSessionCatchUp(reason: string) {
   clearWebSessionCatchUpTimer();
   webSessionCatchUpScheduler.cancel();
+  webSessionCatchUpAbortController?.abort();
+  webSessionCatchUpAbortController = null;
   if (!webSessionCatchUpActive.value && !frozenBlocks.value) {
     return;
   }
@@ -4698,7 +4701,11 @@ async function refreshWebSessionCatchUp(reason: string) {
 
   beginWebSessionCatchUp(reason);
   const token = ++webSessionCatchUpToken;
+  webSessionCatchUpAbortController?.abort();
+  const abortController = new AbortController();
+  webSessionCatchUpAbortController = abortController;
   const sessionIsArchivedPreview = isArchivedPreviewSession(currentSession.value);
+  let hydrationSucceeded = true;
   const isCurrentCatchUp = () =>
     token === webSessionCatchUpToken && isCurrentVisibleSession(sessionId);
 
@@ -4713,33 +4720,40 @@ async function refreshWebSessionCatchUp(reason: string) {
         webSessionStore.getSessions(session.projectId).find(item => item.id === sessionId)
           ?.revision ?? serverRevision;
     }
-    let snapshot = null;
+    let hydration = null;
     if (!webSessionStore.isSessionSnapshotCurrent(sessionId, serverRevision)) {
       if (!isCurrentCatchUp()) {
         return;
       }
-      snapshot = await webSessionStore.loadSessionSnapshot(session.projectId, sessionId, {
-        rememberActive: false,
+      hydration = await webSessionStore.catchUpSession(session.projectId, sessionId, {
         preserveArchivedPosition: sessionIsArchivedPreview,
-        conditional: true,
+        signal: abortController.signal,
       });
     }
     if (!isCurrentCatchUp()) {
       return;
     }
-    if (sessionIsArchivedPreview && snapshot?.session) {
+    if (sessionIsArchivedPreview && hydration?.session) {
       archivedPreviewSession.value = {
-        ...snapshot.session,
+        ...hydration.session,
         isArchivedPreview: true,
       };
     }
     syncArchivedPreviewSessionSummary(sessionId);
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return;
+    }
+    hydrationSucceeded = false;
     console.warn('[Web Session Catch-Up] Failed to refresh session snapshot', {
       sessionId,
       reason,
       error,
     });
+  } finally {
+    if (webSessionCatchUpAbortController === abortController) {
+      webSessionCatchUpAbortController = null;
+    }
   }
 
   if (token !== webSessionCatchUpToken) {
@@ -4753,6 +4767,9 @@ async function refreshWebSessionCatchUp(reason: string) {
     }
     stopWebSessionCatchUp(reason);
     nextTick(() => {
+      if (!hydrationSucceeded || !isCurrentVisibleSession(sessionId)) {
+        return;
+      }
       const container = timelineScrollRef.value;
       if (!container) {
         return;
@@ -4763,6 +4780,7 @@ async function refreshWebSessionCatchUp(reason: string) {
         updateBottomState(container);
       }
       markSessionViewed(sessionId);
+      void webSessionStore.markSessionRead(sessionId);
     });
   }, WEB_SESSION_CATCH_UP_SETTLE_MS);
 }
@@ -9114,9 +9132,7 @@ async function connectVisibleRealSession(projectId: string, sessionId: string) {
     ) {
       return realSessionSnapshotLoadController.isCurrent(snapshotLoad);
     }
-    await webSessionStore.loadSessionSnapshot(projectId, sessionId, {
-      rememberActive: false,
-      conditional: true,
+    await webSessionStore.catchUpSession(projectId, sessionId, {
       signal: snapshotLoad.signal,
     });
     return realSessionSnapshotLoadController.isCurrent(snapshotLoad);

@@ -136,7 +136,8 @@ describe('web session composer submission', () => {
     expect(catchUpSource).toContain('const isCurrentCatchUp');
     expect(catchUpSource).toContain('await webSessionStore.reconcileRecentSessions()');
     expect(catchUpSource).not.toContain('loadSessions(session.projectId, true)');
-    expect(catchUpSource).toContain('rememberActive: false');
+    expect(catchUpSource).toContain('webSessionStore.catchUpSession');
+    expect(catchUpSource).toContain('signal: abortController.signal');
   });
 
   it('guards delayed send completion side effects by the target session', () => {

@@ -25,6 +25,7 @@ func TestHistoryWindowForTransportOmitsExpandableCommandDetails(t *testing.T) {
 		"pwd",
 		groupItems,
 	)
+	original.LastEventSeq = 7
 
 	originalEvent := Event{
 		Type: "tool_end",
@@ -83,6 +84,9 @@ func TestHistoryWindowForTransportOmitsExpandableCommandDetails(t *testing.T) {
 	}
 
 	wireItem := mapWireHistoryItem(original)
+	if item.LastEventSeq != 7 || wireItem.LastEventSeq != 7 {
+		t.Fatalf("expected event sequence to survive transport projection, got item=%d wire=%d", item.LastEventSeq, wireItem.LastEventSeq)
+	}
 	if wireItem.Tool == nil || wireItem.Tool.Input != nil || wireItem.Tool.Output != "" {
 		t.Fatalf("expected websocket tool input/output to be removed, got %#v", wireItem.Tool)
 	}

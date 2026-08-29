@@ -87,4 +87,20 @@ func TestWebSessionItemCommandGroupIndexColumns(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("command group index columns = %#v, want %#v", got, want)
 	}
+
+	if !db.Migrator().HasIndex(&tables.WebSessionItemTable{}, "idx_web_session_item_event") {
+		t.Fatal("missing idx_web_session_item_event")
+	}
+	columns = nil
+	if err := db.Raw("PRAGMA index_info('idx_web_session_item_event')").Scan(&columns).Error; err != nil {
+		t.Fatalf("load event cursor index columns: %v", err)
+	}
+	got = got[:0]
+	for _, column := range columns {
+		got = append(got, column.Name)
+	}
+	want = []string{"web_session_id", "last_event_seq", "order_index"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("event cursor index columns = %#v, want %#v", got, want)
+	}
 }

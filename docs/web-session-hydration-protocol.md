@@ -1,30 +1,55 @@
 # WebSession Hydration Protocol
 
-WebSession uses one authoritative full-state transport and two incremental
-WebSocket channels. A logical mutation must never return the same full history
-through more than one channel.
+WebSession uses one authoritative full-state transport, one cursor-based
+catch-up transport, and two WebSocket channels. A logical mutation must never
+return the same full history through more than one channel.
 
 ## Transport ownership
 
-| Transport                     | Responsibility                                 | Full history allowed |
-| ----------------------------- | ---------------------------------------------- | -------------------- |
-| `GET .../snapshot`            | Conditional full hydration                     | Yes                  |
+| Transport                      | Responsibility                                 | Full history allowed |
+| ------------------------------ | ---------------------------------------------- | -------------------- |
+| `GET .../snapshot`             | Conditional full hydration                     | Yes                  |
+| `GET .../catch-up`             | Event-cursor delta for one focused session     | No                   |
 | `POST /web-sessions/reconcile` | Conditional summary recovery                   | No                   |
-| Other HTTP endpoints          | Mutation result and hydration target           | No                   |
-| Command WebSocket             | Command ack or command-specific compact result | No                   |
-| Event WebSocket               | Session summary and incremental state          | No                   |
+| Other HTTP endpoints           | Mutation result and hydration target           | No                   |
+| Command WebSocket              | Command ack or command-specific compact result | No                   |
+| Event WebSocket                | Session summary and focused incremental state  | No                   |
 
 The conditional snapshot response is either:
 
 - a complete snapshot at `revision`; or
-- `{ revision, pendingEpoch, pendingVersion, pendingInputs, unchanged: true }`
-  when `knownRevision` is current.
+- `{ revision, historyEpoch, eventCursor, pendingEpoch, pendingVersion,
+pendingInputs, unchanged: true }` when `knownRevision` is current.
+
+Snapshot is a pure database read. It does not clear unread state, repair
+counters, or contact the App Server. Source reconciliation remains an explicit
+`sync` operation. This ensures that switching to a cached session cannot turn a
+read into an expensive source reload.
 
 Pending state is always included because it has an independent in-memory clock
 and can change without advancing `revision`.
 
 Mutation HTTP responses that require hydration return a target containing
-`session` and `revision`. The client then uses the conditional snapshot endpoint.
+`session` and `revision`. The client normally catches up from its hydrated event
+cursor. An explicit `resync_required` notice always forces a full snapshot.
+
+## Event cursor and history epoch
+
+A full snapshot establishes `(historyEpoch, eventCursor)`. The cursor has the
+form `eventSequence:orderIndex`; a snapshot baseline ends at
+`eventSequence:9223372036854775807`.
+
+`GET .../catch-up` receives the last hydrated cursor and epoch. Its first page
+also fixes a target cursor, which subsequent pages reuse. This gives one stable
+catch-up window while new events continue to arrive. History items carry their
+last event sequence so an older HTTP response cannot overwrite a newer
+WebSocket update for the same item.
+
+Operations that replace, delete, compact, or reorder cached history increment
+`historyEpoch`. A mismatched epoch returns `resetRequired: true`; the browser
+keeps the cached timeline visible while replacing it from snapshot. Ordinary
+append and in-place event projections retain the epoch and are recoverable by
+cursor.
 
 ## Resume reconciliation
 
@@ -41,7 +66,9 @@ The server reads only those IDs and returns:
 
 Unchanged targets produce no response item. This keeps resume traffic bounded
 when a user has hundreds of sessions and avoids loading any conversation history
-until the focused session actually requires hydration.
+until the focused session actually requires hydration. Background sessions
+receive summaries only. Detailed history, scheduled-input, and sub-agent frames
+are sent only for the session named by the connection's focus heartbeat.
 
 ## WebSocket envelope
 
@@ -74,6 +101,9 @@ Acknowledgement fields depend on the operation:
   durable `rev` read or write;
 - read commands return their compact result in `p`. For example, `goal_get`
   returns `p.goal`, including `null` when no goal exists.
+- `mark_read` carries the last observed attention revision in `p.ar`. Its ack
+  returns the authoritative unread state and attention revision without changing
+  the content revision.
 
 An empty pending queue is encoded as `"pi": []`, not by omitting `pi`.
 
@@ -115,8 +145,8 @@ A resync notice contains only the envelope and an optional reason:
 3. Scheduled state remains recoverable through the durable revision. Pending
    state does not update or read `snapshot_revision`; it uses the independent
    pending clock described below.
-4. Repairing stale history counters does not advance the revision because it
-   fixes metadata for already committed history.
+4. Snapshot never repairs stale history counters. Repair belongs to an explicit
+   maintenance or synchronization path.
 5. Read-only refreshes, including `goal_get`, do not write or advance the
    revision when the fetched state is unchanged.
 
@@ -130,7 +160,22 @@ The browser tracks three revisions per session:
 
 Only `hydrated` may be sent as `knownRevision`. Incremental events can advance
 `observed` and `applied`, but they do not prove that the complete baseline is
-current.
+current. Separately, the client stores the hydrated history epoch and event
+cursor. Focused history frames advance that cursor only to the individual item
+that was applied; a catch-up response advances it to the response page boundary.
+
+## Attention clock
+
+Unread state is independent from content hydration. Each background attention
+event sets `hasUnread` and increments `attentionRevision`. After catch-up has
+settled and the updated timeline has rendered, the browser sends `mark_read`
+asynchronously with the revision it actually observed.
+
+The database clears unread state only when both `hasUnread` and
+`attentionRevision` still match. A newer background event therefore wins over a
+stale mark-read request. Clearing unread advances the attention revision but not
+`snapshot_revision`, so viewing a session never creates another content
+hydration cycle.
 
 ## Pending clock
 
@@ -168,11 +213,13 @@ idempotent within the server process.
 For each session, the client hydration queue:
 
 1. skips a notice already covered by `hydrated`;
-2. coalesces duplicate notices into one in-flight conditional request;
+2. coalesces duplicate notices into one in-flight hydration request;
 3. retains only the highest requested revision;
 4. runs one trailing request when a higher revision arrives during hydration;
 5. does not automatically loop on a failed request, but allows a later notice
    for the same revision to retry.
 
-This keeps recovery idempotent while preventing command ack, HTTP fallback, and
-event reconciliation from starting parallel full hydrations.
+Ordinary revision recovery uses event-cursor catch-up. A changed history epoch
+or explicit resync reason uses snapshot. This keeps recovery idempotent while
+preventing command ack, HTTP fallback, and event reconciliation from starting
+parallel full hydrations.

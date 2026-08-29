@@ -341,6 +341,8 @@ export type WebSessionSubAgentRecord = {
 
 export type WebSessionSnapshot = {
   revision?: string;
+  historyEpoch?: string;
+  eventCursor?: string;
   pendingEpoch?: string;
   pendingVersion?: number;
   unchanged?: boolean;
@@ -350,6 +352,24 @@ export type WebSessionSnapshot = {
   scheduledInputs?: WebSessionScheduledInputRecord[];
   pendingApproval?: WebSessionPendingApprovalRecord | null;
   subAgents?: WebSessionSubAgentRecord[];
+};
+
+export type WebSessionCatchUp = {
+  revision: string;
+  historyEpoch: string;
+  nextEventCursor: string;
+  targetEventCursor: string;
+  hasMore: boolean;
+  resetRequired: boolean;
+  session: WebSessionSummary;
+  items: unknown[];
+  total: number;
+  pendingEpoch: string;
+  pendingVersion: number;
+  pendingInputs: WebSessionPendingInputRecord[];
+  scheduledInputs: WebSessionScheduledInputRecord[];
+  pendingApproval?: WebSessionPendingApprovalRecord | null;
+  subAgents: WebSessionSubAgentRecord[];
 };
 
 export type WebSessionHydrationTarget = {
@@ -579,6 +599,45 @@ export const webSessionApi = {
     }
     if (!body.item) {
       throw new Error('failed to load AI session snapshot');
+    }
+    return body.item;
+  },
+
+  async catchUp(
+    projectId: string,
+    sessionId: string,
+    options: {
+      afterEventCursor: string;
+      targetEventCursor?: string;
+      historyEpoch: string;
+      limit?: number;
+      signal?: AbortSignal;
+    }
+  ): Promise<WebSessionCatchUp> {
+    const query = new URLSearchParams({
+      afterEventCursor: options.afterEventCursor,
+      historyEpoch: options.historyEpoch,
+      limit: String(Math.max(1, Math.trunc(options.limit ?? 80))),
+    });
+    if (options.targetEventCursor) {
+      query.set('targetEventCursor', options.targetEventCursor);
+    }
+    const method = http.Get<ItemResponse<WebSessionCatchUp>>(
+      `/projects/${projectId}/web-sessions/${sessionId}/catch-up?${query.toString()}`
+    );
+    const abortHandler = () => method.abort();
+    if (options.signal?.aborted) {
+      throw createAbortError();
+    }
+    options.signal?.addEventListener('abort', abortHandler, { once: true });
+    let body: ItemResponse<WebSessionCatchUp> = {};
+    try {
+      body = (await method.send(true)) ?? {};
+    } finally {
+      options.signal?.removeEventListener('abort', abortHandler);
+    }
+    if (!body.item) {
+      throw new Error('failed to catch up AI session');
     }
     return body.item;
   },

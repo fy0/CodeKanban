@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1978,7 +1979,7 @@ func (m *Manager) Snapshot(ctx context.Context, sessionID string, limit int) (Se
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
-	return m.loadSnapshotLocal(ctx, record, limit, true)
+	return m.loadSnapshotLocal(ctx, record, limit)
 }
 
 func (m *Manager) SnapshotWithAutoSync(ctx context.Context, sessionID string, limit int) (SessionSnapshot, error) {
@@ -1986,7 +1987,7 @@ func (m *Manager) SnapshotWithAutoSync(ctx context.Context, sessionID string, li
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
-	snapshot, err := m.loadSnapshotLocal(ctx, record, limit, true)
+	snapshot, err := m.loadSnapshotLocal(ctx, record, limit)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
@@ -2003,7 +2004,7 @@ func (m *Manager) SnapshotWithAutoSync(ctx context.Context, sessionID string, li
 	return snapshot, nil
 }
 
-func (m *Manager) SnapshotWithAutoSyncIfChanged(
+func (m *Manager) SnapshotIfChanged(
 	ctx context.Context,
 	sessionID string,
 	limit int,
@@ -2018,29 +2019,19 @@ func (m *Manager) SnapshotWithAutoSyncIfChanged(
 		return SessionSnapshotResponse{}, err
 	}
 	current := normalizeSnapshotRevision(record.SnapshotRevision)
-	historyTotal := record.ItemCount
 	if known > 0 && known == current {
-		itemCount, turnCount, countErr := m.sessionHistoryCounts(ctx, record.ID)
-		if countErr == nil {
-			historyTotal = itemCount
-			if itemCount != record.ItemCount || turnCount != record.TurnCount {
-				m.repairSessionHistoryCounts(ctx, record, itemCount, turnCount)
-				record.ItemCount = itemCount
-				record.TurnCount = turnCount
-			}
-		}
-	}
-	if known > 0 && known == current && !record.HasUnread && !shouldAutoSyncSnapshot(record, historyTotal) {
 		pendingEpoch, pendingVersion, pendingInputs := m.pendingStateSnapshot(record.ID)
 		return SessionSnapshotResponse{
 			Revision:       formatSnapshotRevision(current),
+			HistoryEpoch:   strconv.FormatInt(normalizeHistoryEpoch(record.HistoryEpoch), 10),
+			EventCursor:    formatEventCursor(record.LastEventSeq, maxEventCursorOrder),
 			PendingEpoch:   pendingEpoch,
 			PendingVersion: pendingVersion,
 			PendingInputs:  pendingInputs,
 			Unchanged:      true,
 		}, nil
 	}
-	snapshot, err := m.SnapshotWithAutoSync(ctx, sessionID, limit)
+	snapshot, err := m.Snapshot(ctx, sessionID, limit)
 	if err != nil {
 		return SessionSnapshotResponse{}, err
 	}
@@ -2063,7 +2054,6 @@ func (m *Manager) loadSnapshotLocal(
 	ctx context.Context,
 	record tables.WebSessionTable,
 	limit int,
-	clearUnread bool,
 ) (SessionSnapshot, error) {
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
@@ -2072,38 +2062,12 @@ func (m *Manager) loadSnapshotLocal(
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
-	if history.Total != record.ItemCount {
-		itemCount, turnCount, countErr := m.sessionHistoryCounts(ctx, record.ID)
-		if countErr == nil {
-			m.repairSessionHistoryCounts(ctx, record, itemCount, turnCount)
-			record.ItemCount = itemCount
-			record.TurnCount = turnCount
-		}
-	}
-
-	// Entering a session clears the unread state.
-	if clearUnread && record.HasUnread {
-		record.HasUnread = false
-		if err := model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
-			Where("id = ?", record.ID).
-			Updates(withSnapshotRevisionIncrement(map[string]any{
-				"has_unread": false,
-			})).Error; err != nil {
-			m.logger.Warn("failed to clear unread flag", zap.String("sessionId", record.ID), zap.Error(err))
-		} else if refreshed, refreshErr := m.GetSession(ctx, record.ID); refreshErr == nil {
-			record = refreshed
-		}
-	}
-
 	scheduledInputs, err := m.scheduledInputsSnapshot(ctx, record.ID)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
 	summary := m.mapSessionSummary(record)
 	summary.HasScheduledPlanExecution = scheduledInputsHavePendingPlanExecution(scheduledInputs)
-	if clearUnread {
-		summary.HasUnread = false
-	}
 	subAgents, err := m.sessionSubAgents(ctx, record.ID)
 	if err != nil {
 		return SessionSnapshot{}, err
@@ -2111,6 +2075,8 @@ func (m *Manager) loadSnapshotLocal(
 	pendingEpoch, pendingVersion, pendingInputs := m.pendingStateSnapshot(record.ID)
 	return SessionSnapshot{
 		Revision:         summary.Revision,
+		HistoryEpoch:     summary.HistoryEpoch,
+		EventCursor:      summary.EventCursor,
 		PendingEpoch:     pendingEpoch,
 		PendingVersion:   pendingVersion,
 		Session:          summary,
@@ -3110,6 +3076,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleSetWorkflowModeCommand(ctx, client, frame)
 	case "goal_get":
 		return m.handleGoalGetCommand(ctx, client, frame)
+	case "mark_read":
+		return m.handleMarkReadCommand(ctx, client, frame)
 	case "goal_set":
 		return m.handleGoalSetCommand(ctx, client, frame)
 	case "goal_bootstrap":
@@ -3614,6 +3582,23 @@ func (m *Manager) handleGoalGetCommand(ctx context.Context, client *client, fram
 		m.currentSessionRevision(ctx, frame.SessionID),
 		wireGoalPayload{Goal: mapWireGoal(goal)},
 	))
+}
+
+func (m *Manager) handleMarkReadCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	var payload struct {
+		AttentionRevision string `json:"ar"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid mark read payload", false))
+	}
+	state, err := m.MarkSessionRead(ctx, frame.SessionID, payload.AttentionRevision)
+	if err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, map[string]any{
+		"hasUnread":         state.HasUnread,
+		"attentionRevision": state.AttentionRevision,
+	}))
 }
 
 func (m *Manager) handleGoalSetCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -5524,11 +5509,21 @@ func (m *Manager) projectPersistedEvent(
 		if retry.subAgent != nil {
 			m.broadcast(newSubAgentFrame(sessionID, *retry.subAgent, m.summaryForBroadcast(ctx, sessionID)))
 		}
+		items := make([]HistoryItem, 0, 2)
 		if retry.cachedItem != nil {
-			m.broadcast(newHistoryItemFrame(sessionID, *retry.cachedItem, m.summaryForBroadcast(ctx, sessionID)))
+			items = append(items, *retry.cachedItem)
 		}
 		if retry.timingItem != nil && (retry.cachedItem == nil || retry.cachedItem.ID != retry.timingItem.ID) {
-			m.broadcast(newHistoryItemFrame(sessionID, *retry.timingItem, m.summaryForBroadcast(ctx, sessionID)))
+			items = append(items, *retry.timingItem)
+		}
+		sort.SliceStable(items, func(left, right int) bool {
+			if items[left].LastEventSeq == items[right].LastEventSeq {
+				return items[left].OrderIndex < items[right].OrderIndex
+			}
+			return items[left].LastEventSeq < items[right].LastEventSeq
+		})
+		for _, item := range items {
+			m.broadcast(newHistoryItemFrame(sessionID, item, m.summaryForBroadcast(ctx, sessionID)))
 		}
 		if retry.event.Type == "tool_end" {
 			m.maybeInterruptForRedirect(sessionID)
@@ -5585,6 +5580,14 @@ func (m *Manager) projectPersistedEventDatabase(
 			return err
 		}
 		working.timingItem = timingItem
+		if working.timingItem != nil {
+			working.timingItem.LastEventSeq = event.Seq
+			if err := tx.Model(&tables.WebSessionItemTable{}).
+				Where("id = ?", working.timingItem.ID).
+				UpdateColumn("last_event_seq", event.Seq).Error; err != nil {
+				return err
+			}
+		}
 		if timingItem != nil && working.cachedItem != nil && timingItem.ID == working.cachedItem.ID {
 			working.cachedItem = timingItem
 			working.timingItem = nil
@@ -5614,6 +5617,7 @@ func (m *Manager) runtimeUpdatesForEvent(sessionID string, event Event) map[stri
 	}
 	if shouldMarkSessionUnreadForEvent(event) && !m.hasFocusedEventClient(sessionID) {
 		update["has_unread"] = true
+		update["attention_revision"] = gorm.Expr("attention_revision + 1")
 	}
 	if event.Type == "msg_u" {
 		update["last_message_at"] = event.Timestamp
@@ -6857,6 +6861,9 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		Status:                            effectiveStatus(record, assistantState),
 		AssistantState:                    assistantState,
 		HasUnread:                         record.HasUnread,
+		AttentionRevision:                 strconv.FormatInt(normalizeAttentionRevision(record.AttentionRevision), 10),
+		HistoryEpoch:                      strconv.FormatInt(normalizeHistoryEpoch(record.HistoryEpoch), 10),
+		EventCursor:                       formatEventCursor(record.LastEventSeq, maxEventCursorOrder),
 		ArchivedAt:                        record.ArchivedAt,
 		ActivityAt:                        activityAt,
 		StatusUpdatedAt:                   statusUpdatedAt,

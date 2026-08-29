@@ -41,6 +41,8 @@ type WebSessionTable struct {
 	Status                  string     `gorm:"type:text;not null;index" json:"status"`
 	AssistantState          string     `gorm:"type:text;index" json:"assistantState"`
 	HasUnread               bool       `gorm:"type:boolean;not null;default:false" json:"hasUnread"`
+	AttentionRevision       int64      `gorm:"type:integer;not null;default:0" json:"attentionRevision"`
+	HistoryEpoch            int64      `gorm:"type:integer;not null;default:1" json:"historyEpoch"`
 	ArchivedAt              *time.Time `gorm:"type:datetime;index" json:"archivedAt"`
 	ActivityAt              time.Time  `gorm:"type:datetime;index" json:"activityAt"`
 	StatusUpdatedAt         *time.Time `gorm:"type:datetime;index" json:"statusUpdatedAt"`

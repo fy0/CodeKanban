@@ -678,7 +678,7 @@ func (m *Manager) syncSessionFromThreadSource(
 		if err != nil {
 			return SessionSnapshot{}, err
 		}
-		return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow, false)
+		return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow)
 	}
 
 	allThreads := make([]codexThreadReadResult, 0, len(descendants)+1)
@@ -774,7 +774,7 @@ func (m *Manager) syncSessionFromThreadSource(
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
-	return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow, false)
+	return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow)
 }
 
 func (m *Manager) SyncSession(ctx context.Context, sessionID string) (SessionSnapshot, error) {

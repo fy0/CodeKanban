@@ -91,7 +91,7 @@ func (m *Manager) syncImportedPiSession(
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
-	return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow, false)
+	return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow)
 }
 
 type piHistoryProjection struct {
@@ -331,6 +331,7 @@ func (m *Manager) reconcileLivePiHistory(
 		activeItemIDs := make([]string, 0, len(messages))
 		turnStartOrders := make(map[string]int64, len(activeTurnSources))
 		var lastMessageAt *time.Time
+		historyChanged := false
 		for _, message := range messages {
 			entryID := strings.TrimSpace(message.entry.ID)
 			activeItemIDs = append(activeItemIDs, entryID)
@@ -339,11 +340,14 @@ func (m *Manager) reconcileLivePiHistory(
 				row = findPiLiveMessageCandidate(itemRows, usedRows, message.role, message.text)
 			}
 			isNew := row == nil
+			var previousRow tables.WebSessionItemTable
 			if isNew {
 				row = &tables.WebSessionItemTable{}
 				row.Init()
 				maxOrder++
 				row.OrderIndex = maxOrder
+			} else {
+				previousRow = *row
 			}
 			usedRows[row.ID] = struct{}{}
 			item := mapHistoryItemRowWithSession(*row, session.ID)
@@ -367,6 +371,9 @@ func (m *Manager) reconcileLivePiHistory(
 			row.WebTurnID = nilIfEmptyHistory(turnIDs[message.turnSourceID])
 			row.Role = message.role
 			row.Status = "completed"
+			if isNew || !piHistoryRowsEqual(previousRow, *row) {
+				historyChanged = true
+			}
 			if current, exists := turnStartOrders[message.turnSourceID]; !exists || row.OrderIndex < current {
 				turnStartOrders[message.turnSourceID] = row.OrderIndex
 			}
@@ -393,12 +400,13 @@ func (m *Manager) reconcileLivePiHistory(
 					liveItems = liveItems.Where("order_index < ?", nextOrder)
 				}
 			}
-			if err := liveItems.Updates(map[string]any{
+			result := liveItems.Updates(map[string]any{
 				"web_turn_id":      turnIDs[turnSourceID],
 				"source_thread_id": nativeSessionID,
 				"source_turn_id":   turnSourceID,
-			}).Error; err != nil {
-				return err
+			})
+			if result.Error != nil {
+				return result.Error
 			}
 		}
 
@@ -409,8 +417,12 @@ func (m *Manager) reconcileLivePiHistory(
 		if len(activeItemIDs) > 0 {
 			staleItems = staleItems.Where("source_item_id NOT IN ?", activeItemIDs)
 		}
-		if err := staleItems.Delete(&tables.WebSessionItemTable{}).Error; err != nil {
-			return err
+		staleItemResult := staleItems.Delete(&tables.WebSessionItemTable{})
+		if staleItemResult.Error != nil {
+			return staleItemResult.Error
+		}
+		if staleItemResult.RowsAffected > 0 {
+			historyChanged = true
 		}
 		staleTurns := tx.Unscoped().Where("web_session_id = ? AND source_thread_id = ?", session.ID, nativeSessionID)
 		if len(activeTurnSources) > 0 {
@@ -433,10 +445,46 @@ func (m *Manager) reconcileLivePiHistory(
 		nextUpdates["item_count"] = itemCount
 		nextUpdates["last_message_at"] = lastMessageAt
 		nextUpdates["source_updated_at"] = lastMessageAt
+		if historyChanged {
+			nextUpdates = withHistoryEpochIncrement(nextUpdates)
+		}
 		return tx.Model(&tables.WebSessionTable{}).
 			Where("id = ?", session.ID).
 			Updates(withSnapshotRevisionIncrement(nextUpdates)).Error
 	})
+}
+
+func piHistoryRowsEqual(left, right tables.WebSessionItemTable) bool {
+	return pointerString(left.RunID) == pointerString(right.RunID) &&
+		optionalInt64Equal(left.RunDurationMs, right.RunDurationMs) &&
+		left.RunOutcome == right.RunOutcome &&
+		left.OrderIndex == right.OrderIndex &&
+		left.LastEventSeq == right.LastEventSeq &&
+		left.ItemKind == right.ItemKind &&
+		left.ItemType == right.ItemType &&
+		left.Level == right.Level &&
+		left.Text == right.Text &&
+		left.Done == right.Done &&
+		optionalTimeEqual(left.Timestamp, right.Timestamp) &&
+		optionalTimeEqual(left.ObservedAt, right.ObservedAt) &&
+		left.AttachmentsJSON == right.AttachmentsJSON &&
+		left.ToolJSON == right.ToolJSON &&
+		left.DetailJSON == right.DetailJSON &&
+		left.PayloadJSON == right.PayloadJSON
+}
+
+func optionalInt64Equal(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func optionalTimeEqual(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
 }
 
 func findPiLiveMessageCandidate(

@@ -373,6 +373,47 @@ describe('webSessionApi.history', () => {
   });
 });
 
+describe('webSessionApi.catchUp', () => {
+  beforeEach(() => {
+    getMethodMock.mockReset();
+  });
+
+  it('requests a stable event-cursor window', async () => {
+    const sendMock = vi.fn().mockResolvedValue({
+      item: {
+        revision: '9',
+        historyEpoch: '2',
+        nextEventCursor: '8:12',
+        targetEventCursor: '9:9223372036854775807',
+        hasMore: true,
+        resetRequired: false,
+        session: { id: 'session-1' },
+        items: [],
+        total: 4,
+        pendingEpoch: 'process-1',
+        pendingVersion: 1,
+        pendingInputs: [],
+        scheduledInputs: [],
+        subAgents: [],
+      },
+    });
+    getMethodMock.mockReturnValue({ send: sendMock, abort: vi.fn() });
+
+    const result = await webSessionApi.catchUp('project-1', 'session-1', {
+      afterEventCursor: '7:9223372036854775807',
+      targetEventCursor: '9:9223372036854775807',
+      historyEpoch: '2',
+      limit: 80,
+    });
+
+    expect(getMethodMock).toHaveBeenCalledWith(
+      '/projects/project-1/web-sessions/session-1/catch-up?afterEventCursor=7%3A9223372036854775807&historyEpoch=2&limit=80&targetEventCursor=9%3A9223372036854775807'
+    );
+    expect(sendMock).toHaveBeenCalledWith(true);
+    expect(result).toMatchObject({ hasMore: true, nextEventCursor: '8:12' });
+  });
+});
+
 describe('webSessionApi.commandGroupDetail', () => {
   beforeEach(() => {
     getMethodMock.mockReset();

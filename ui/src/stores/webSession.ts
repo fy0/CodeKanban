@@ -51,6 +51,9 @@ type SessionAssistantState =
 type WireSession = {
   id: string;
   rev?: string;
+  ar?: string;
+  he?: string;
+  ec?: string;
   pid: string;
   wid?: string | null;
   oi?: number;
@@ -183,6 +186,7 @@ type WireHistoryItem = {
   dur?: number | null;
   out?: WebSessionWorkTimingOutcome | string;
   oi: number;
+  es?: number;
   kd: 'user' | 'assistant' | 'system' | 'tool';
   tp: string;
   txt?: string;
@@ -338,6 +342,7 @@ export interface WebSessionBlock {
   runDurationMs?: number | null;
   runOutcome?: WebSessionWorkTimingOutcome | null;
   orderIndex: number;
+  eventSequence?: number;
   kind: 'user' | 'assistant' | 'system' | 'tool';
   itemType: string;
   text: string;
@@ -761,6 +766,7 @@ type LoadSessionSnapshotOptions = {
   signal?: AbortSignal;
   preserveArchivedPosition?: boolean;
   conditional?: boolean;
+  ensureLatest?: boolean;
   limit?: number;
   skipTrailing?: boolean;
 };
@@ -2024,10 +2030,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (!session?.projectId || session.archivedAt) {
         return;
       }
-      await loadSessionSnapshot(session.projectId, request.sessionId, {
-        rememberActive: false,
-        conditional: true,
-      });
+      if (request.reason) {
+        await loadSessionSnapshot(session.projectId, request.sessionId, {
+          rememberActive: false,
+          ensureLatest: true,
+        });
+        return;
+      }
+      await catchUpSession(session.projectId, request.sessionId);
     },
     onError: (request, error) => {
       console.warn('[Web Session] Failed to hydrate requested session revision', {
@@ -2053,6 +2063,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
       consumers: Set<symbol>;
     }
   >();
+  const hydratedEventCursorBySession = new Map<string, string>();
+  const hydratedHistoryEpochBySession = new Map<string, string>();
+  const inFlightMarkReadBySession = new Map<string, Promise<void>>();
   const commandGroupDetailsByKey = new Map<string, WebSessionCommandExecutionGroupDetail>();
   const inFlightCommandGroupDetailsByKey = new Map<
     string,
@@ -2064,6 +2077,34 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const eventIndexBySession = new Map<string, Map<string, number>>();
   const emptySessionBlocks: WebSessionBlock[] = [];
   let draftAttachmentUploadSeed = 0;
+
+  function compareEventCursors(left: string, right: string) {
+    const leftParts = /^(\d+):(\d+)$/.exec(left.trim());
+    const rightParts = /^(\d+):(\d+)$/.exec(right.trim());
+    if (!leftParts || !rightParts) {
+      return null;
+    }
+    const leftSequence = BigInt(leftParts[1]);
+    const rightSequence = BigInt(rightParts[1]);
+    if (leftSequence !== rightSequence) {
+      return leftSequence > rightSequence ? 1 : -1;
+    }
+    const leftOrder = BigInt(leftParts[2]);
+    const rightOrder = BigInt(rightParts[2]);
+    return leftOrder === rightOrder ? 0 : leftOrder > rightOrder ? 1 : -1;
+  }
+
+  function advanceHydratedEventCursor(sessionId: string, cursor: string) {
+    const normalized = cursor.trim();
+    if (!normalized) {
+      return;
+    }
+    const current = hydratedEventCursorBySession.get(sessionId);
+    if (current && compareEventCursors(normalized, current) !== 1) {
+      return;
+    }
+    hydratedEventCursorBySession.set(sessionId, normalized);
+  }
   let outgoingMessageSeed = 0;
 
   const allSessionIds = computed(() => {
@@ -2986,6 +3027,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return {
       id: session.id,
       revision: normalizeWebSessionRevision(session.rev),
+      attentionRevision: String(session.ar ?? '0'),
+      historyEpoch: String(session.he ?? '1'),
+      eventCursor: String(session.ec ?? '0:0'),
       projectId: session.pid,
       worktreeId: session.wid ?? null,
       orderIndex: Number(session.oi ?? 0),
@@ -3387,6 +3431,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
             ? record.runOutcome
             : null,
       orderIndex: Number(record.oi ?? record.orderIndex ?? 0),
+      eventSequence:
+        typeof (record.es ?? record.lastEventSeq) === 'number' &&
+        Number.isFinite(record.es ?? record.lastEventSeq)
+          ? Math.max(0, Math.trunc(Number(record.es ?? record.lastEventSeq)))
+          : undefined,
       kind:
         kind === 'user' || kind === 'assistant' || kind === 'system' || kind === 'tool'
           ? kind
@@ -3727,6 +3776,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     delete nextHistory[sessionId];
     historyBySession.value = nextHistory;
     sessionSync.clear(sessionId);
+    hydratedEventCursorBySession.delete(sessionId);
+    hydratedHistoryEpochBySession.delete(sessionId);
+    inFlightMarkReadBySession.delete(sessionId);
     pendingClockBySession.delete(sessionId);
     pendingInputVersionBySession.delete(sessionId);
     pendingAutoRetryOverrides.delete(sessionId);
@@ -4303,8 +4355,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
         merged.push(item);
         return;
       }
+      const existing = merged[existingIndex];
+      if ((existing?.eventSequence ?? 0) > (item.eventSequence ?? 0)) {
+        return;
+      }
       merged[existingIndex] = {
-        ...merged[existingIndex],
+        ...existing,
         ...item,
       };
     });
@@ -4315,16 +4371,23 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function mergeRealtimeEvent(sessionId: string, item: WebSessionBlock) {
     if (!item?.id) {
-      return;
+      return false;
     }
     const current = eventsBySession.value[sessionId] ?? emptySessionBlocks;
     const indexById = getEventIndex(sessionId, current);
     const existingIndex = indexById.get(item.id);
     const previousCache = runtimeProjectionCacheBySession.get(sessionId);
-    syncSnapshotApprovalFromRealtimeBlock(sessionId, item);
     let nextEvents: WebSessionBlock[];
     let incrementalSeed: RuntimeAccumulator | null = null;
     let incrementalStartIndex = -1;
+
+    if (
+      existingIndex != null &&
+      (current[existingIndex]?.eventSequence ?? 0) > (item.eventSequence ?? 0)
+    ) {
+      return false;
+    }
+    syncSnapshotApprovalFromRealtimeBlock(sessionId, item);
 
     if (existingIndex != null) {
       nextEvents = [...current];
@@ -4367,9 +4430,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
         incrementalSeed,
         incrementalStartIndex
       );
-      return;
+      return true;
     }
     invalidateRuntimeProjection(sessionId);
+    return true;
   }
 
   function trimInactiveSessionEvents(activeSessionId = '') {
@@ -5212,11 +5276,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
       const shouldEmitTransition = frame.op !== 'hist_page';
       const previousProjection = shouldEmitTransition ? getRuntimeProjection(frame.sid) : null;
+      let frameSummary: WebSessionSummary | null = null;
       if (frame.s) {
-        upsertSession({
+        frameSummary = {
           ...normalizeSession(frame.s),
           revision: normalizeWebSessionRevision(frame.rev ?? frame.s.rev),
-        });
+        };
+        upsertSession(frameSummary);
+        const hydratedHistoryEpoch = hydratedHistoryEpochBySession.get(frame.sid);
+        if (
+          hydratedHistoryEpoch &&
+          frameSummary.historyEpoch &&
+          frameSummary.historyEpoch !== hydratedHistoryEpoch
+        ) {
+          if (eventFocusedSessionId === frame.sid) {
+            sessionSync.requestHydration(frame.sid, frame.rev, 'history_epoch_changed');
+          }
+          return;
+        }
       }
       if (frame.op === 'scheduled') {
         setScheduledInputs(
@@ -5280,12 +5357,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
         return;
       }
 
+      let appliedHistoryItem: WebSessionBlock | null = null;
       if (frame.op === 'hist_item' && frame.i) {
         const item = normalizeHistoryItem(frame.i);
-        mergeRealtimeEvent(frame.sid, item);
+        if (mergeRealtimeEvent(frame.sid, item)) {
+          appliedHistoryItem = item;
+        }
       }
 
       emitStateTransition(frame.sid, previousProjection!, getRuntimeProjection(frame.sid));
+      if (
+        hydratedHistoryEpochBySession.has(frame.sid) &&
+        (appliedHistoryItem?.eventSequence ?? 0) > 0
+      ) {
+        advanceHydratedEventCursor(
+          frame.sid,
+          `${appliedHistoryItem!.eventSequence}:${Math.max(0, appliedHistoryItem!.orderIndex)}`
+        );
+      }
       sessionSync.markApplied(frame.sid, frame.rev);
     }
   }
@@ -6040,7 +6129,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!projectId || !sessionId) {
       return null;
     }
-    setHistoryLoading(sessionId, true);
+    if (getBlocks(sessionId).length === 0) {
+      setHistoryLoading(sessionId, true);
+    }
     try {
       const limit = Math.max(1, Math.trunc(options?.limit ?? 80));
       const key = `${projectId}:${sessionId}:${limit}`;
@@ -6125,6 +6216,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
       sessionSync.observe(sessionId, responseRevision);
       if (snapshot.unchanged) {
         sessionSync.markHydrated(sessionId, responseRevision);
+        hydratedHistoryEpochBySession.set(
+          sessionId,
+          String(snapshot.historyEpoch ?? findSessionById(sessionId)?.historyEpoch ?? '1')
+        );
+        advanceHydratedEventCursor(
+          sessionId,
+          String(snapshot.eventCursor ?? findSessionById(sessionId)?.eventCursor ?? '0:0')
+        );
         setHistoryLoading(sessionId, false);
       } else if (snapshot.session && snapshot.history) {
         const summary = {
@@ -6167,6 +6266,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 : {}),
             }
           );
+          hydratedHistoryEpochBySession.set(
+            sessionId,
+            String(snapshot.historyEpoch ?? summary.historyEpoch ?? '1')
+          );
+          advanceHydratedEventCursor(
+            sessionId,
+            String(snapshot.eventCursor ?? summary.eventCursor ?? '0:0')
+          );
         }
       } else {
         setHistoryLoading(sessionId, false);
@@ -6176,7 +6283,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
       const observedRevision = sessionSync.getObserved(sessionId);
       if (
-        options?.conditional &&
+        (options?.conditional || options?.ensureLatest) &&
         !options.skipTrailing &&
         compareWebSessionRevisions(responseRevision, observedRevision) === -1
       ) {
@@ -6190,6 +6297,166 @@ export const useWebSessionStore = defineStore('web-session', () => {
       setHistoryLoading(sessionId, false);
       throw error;
     }
+  }
+
+  async function catchUpSession(
+    projectId: string,
+    sessionId: string,
+    options?: {
+      signal?: AbortSignal;
+      preserveArchivedPosition?: boolean;
+      skipTrailing?: boolean;
+    }
+  ) {
+    let cursor = hydratedEventCursorBySession.get(sessionId);
+    let historyEpoch = hydratedHistoryEpochBySession.get(sessionId);
+    if (!cursor || !historyEpoch) {
+      return loadSessionSnapshot(projectId, sessionId, {
+        rememberActive: false,
+        preserveArchivedPosition: options?.preserveArchivedPosition === true,
+        signal: options?.signal,
+        ensureLatest: true,
+      });
+    }
+
+    let targetCursor = '';
+    let latestRevision = '';
+    while (true) {
+      const response = await webSessionApi.catchUp(projectId, sessionId, {
+        afterEventCursor: cursor,
+        ...(targetCursor ? { targetEventCursor: targetCursor } : {}),
+        historyEpoch,
+        limit: 80,
+        signal: options?.signal,
+      });
+      if (hydratedHistoryEpochBySession.get(sessionId) !== historyEpoch) {
+        return response;
+      }
+      if (response.resetRequired) {
+        return loadSessionSnapshot(projectId, sessionId, {
+          rememberActive: false,
+          preserveArchivedPosition: options?.preserveArchivedPosition === true,
+          signal: options?.signal,
+          ensureLatest: true,
+        });
+      }
+
+      targetCursor = response.targetEventCursor;
+      latestRevision = normalizeWebSessionRevision(response.revision ?? response.session.revision);
+      const previousProjection = getRuntimeProjection(sessionId);
+      const catchUpItems = Array.isArray(response.items)
+        ? response.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+        : [];
+      mergeHistoricalEvents(sessionId, catchUpItems);
+      if (Array.isArray(response.pendingInputs)) {
+        applyAuthoritativePendingState(
+          sessionId,
+          response.pendingEpoch,
+          response.pendingVersion,
+          response.pendingInputs
+            .map(item => normalizePendingInput(item))
+            .filter((item): item is WebSessionPendingInput => item != null)
+        );
+      }
+      let responseApplied = false;
+      if (sessionSync.shouldApply(sessionId, latestRevision)) {
+        const summary = {
+          ...response.session,
+          revision: latestRevision || response.session.revision,
+        };
+        upsertSession(summary, {
+          preserveArchivedPosition: options?.preserveArchivedPosition === true,
+        });
+        setSnapshotApproval(sessionId, normalizePendingApproval(response.pendingApproval));
+        setScheduledInputs(
+          sessionId,
+          Array.isArray(response.scheduledInputs)
+            ? response.scheduledInputs
+                .map(item => normalizeScheduledInput(item))
+                .filter((item): item is WebSessionScheduledInput => item != null)
+            : []
+        );
+        setSubAgents(
+          sessionId,
+          Array.isArray(response.subAgents)
+            ? response.subAgents
+                .map(item => normalizeSubAgent(item))
+                .filter((item): item is WebSessionSubAgent => item != null)
+            : []
+        );
+        const currentMeta = getHistoryMeta(sessionId);
+        historyBySession.value = {
+          ...historyBySession.value,
+          [sessionId]: {
+            ...currentMeta,
+            total: Number(response.total ?? currentMeta.total),
+            loading: false,
+          },
+        };
+        sessionSync.markApplied(sessionId, latestRevision);
+        responseApplied = true;
+      }
+
+      if (catchUpItems.length > 0 || responseApplied) {
+        emitStateTransition(sessionId, previousProjection, getRuntimeProjection(sessionId));
+      }
+
+      cursor = response.nextEventCursor;
+      advanceHydratedEventCursor(sessionId, cursor);
+      hydratedHistoryEpochBySession.set(sessionId, response.historyEpoch);
+      historyEpoch = response.historyEpoch;
+      if (!response.hasMore) {
+        sessionSync.markHydrated(sessionId, latestRevision);
+        const observedRevision = sessionSync.getObserved(sessionId);
+        if (
+          !options?.skipTrailing &&
+          compareWebSessionRevisions(latestRevision, observedRevision) === -1
+        ) {
+          return catchUpSession(projectId, sessionId, {
+            ...options,
+            skipTrailing: true,
+          });
+        }
+        return response;
+      }
+    }
+  }
+
+  function markSessionRead(sessionId: string) {
+    const existing = inFlightMarkReadBySession.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+    const session = findSessionById(sessionId);
+    const attentionRevision = String(session?.attentionRevision ?? '').trim();
+    if (!session?.hasUnread || !attentionRevision) {
+      return Promise.resolve();
+    }
+    const request = sendCommand('mark_read', sessionId, { ar: attentionRevision })
+      .then(frame => {
+        const payload = asRecord(frame.p);
+        updateSessionStatus(
+          sessionId,
+          current => ({
+            ...current,
+            hasUnread: payload?.hasUnread === true,
+            attentionRevision: String(
+              payload?.attentionRevision ?? current.attentionRevision ?? attentionRevision
+            ),
+          }),
+          { preserveOrder: true }
+        );
+      })
+      .catch(error => {
+        console.warn('[Web Session] Failed to mark session as read', { sessionId, error });
+      })
+      .finally(() => {
+        if (inFlightMarkReadBySession.get(sessionId) === request) {
+          inFlightMarkReadBySession.delete(sessionId);
+        }
+      });
+    inFlightMarkReadBySession.set(sessionId, request);
+    return request;
   }
 
   async function hydrateSessionTarget(
@@ -7530,6 +7797,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     invalidateArchivedSessions,
     setActiveSession,
     loadSessionSnapshot,
+    catchUpSession,
+    markSessionRead,
     createSession: createSessionViaHttp,
     editUserMessage,
     importSession,
