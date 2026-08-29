@@ -80,7 +80,9 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		AllowCredentials: cfg.CorsAllowOrigins != "*",
 	}))
 	app.Use(recover.New(recover.Config{EnableStackTrace: true}))
-	app.Use(logger.New())
+	requestLoggerConfig := logger.ConfigDefault
+	requestLoggerConfig.Format = strings.TrimRight(requestLoggerConfig.Format, "\r\n") + utils.ConsoleLineEnding()
+	app.Use(logger.New(requestLoggerConfig))
 	app.Use(compress.New())
 	registerAuthMiddleware(app, cfg)
 

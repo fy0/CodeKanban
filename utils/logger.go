@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"go.uber.org/zap"
@@ -26,9 +27,11 @@ func InitLogger(cfg *AppConfig) (*zap.Logger, func(), error) {
 		enc.AppendString(t.Local().Format("2006-01-02 15:04:05.000"))
 	}
 	encoderCfg.TimeKey = "timestamp"
+	consoleEncoderCfg := encoderCfg
+	consoleEncoderCfg.LineEnding = ConsoleLineEnding()
 
 	consoleCore := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderCfg),
+		zapcore.NewConsoleEncoder(consoleEncoderCfg),
 		zapcore.AddSync(os.Stdout),
 		zapcore.Level(level),
 	)
@@ -66,6 +69,18 @@ func InitLogger(cfg *AppConfig) (*zap.Logger, func(), error) {
 	}
 
 	return logger, cleanup, nil
+}
+
+// ConsoleLineEnding keeps console output independent from mutable terminal newline modes.
+func ConsoleLineEnding() string {
+	return consoleLineEndingForOS(runtime.GOOS)
+}
+
+func consoleLineEndingForOS(goos string) string {
+	if goos == "windows" {
+		return "\r\n"
+	}
+	return "\n"
 }
 
 // Logger 返回当前全局日志器，若未初始化则构造一个开发模式日志器。
