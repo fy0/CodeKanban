@@ -1518,83 +1518,18 @@
                     <div v-if="pendingUserInput.stale" class="approval-note">
                       {{ pendingUserInput.recoveryMessage || t('webSession.recoveredRuntimeHint') }}
                     </div>
-                    <div
+                    <WebSessionUserInputQuestionField
                       v-for="question in pendingUserInput.questions"
-                      :key="question.id"
-                      v-memo="userInputQuestionMemoDeps(question)"
-                      class="user-input-question"
-                    >
-                      <div class="user-input-question-header">
-                        {{ question.header || question.question }}
-                      </div>
-                      <div
-                        v-if="
-                          question.header &&
-                          question.question &&
-                          question.header !== question.question
-                        "
-                        class="user-input-question-copy"
-                      >
-                        {{ question.question }}
-                      </div>
-                      <n-checkbox-group
-                        v-if="question.options.length > 0 && question.multiSelect"
-                        v-model:value="userInputSelections[question.id]"
-                        :disabled="isUserInputInteractionDisabled"
-                        class="user-input-options"
-                      >
-                        <div
-                          v-for="option in question.options"
-                          :key="`${question.id}:${option.label}`"
-                          :class="{
-                            'is-selected': userInputSelections[question.id]?.includes(option.label),
-                            'is-disabled': isUserInputInteractionDisabled,
-                          }"
-                          class="user-input-option"
-                        >
-                          <n-checkbox :value="option.label">
-                            <span class="user-input-option-label">{{ option.label }}</span>
-                          </n-checkbox>
-                          <div v-if="option.description" class="user-input-option-description">
-                            {{ option.description }}
-                          </div>
-                        </div>
-                      </n-checkbox-group>
-                      <n-radio-group
-                        v-else-if="question.options.length > 0"
-                        :value="userInputSelections[question.id]?.[0] || null"
-                        :disabled="isUserInputInteractionDisabled"
-                        class="user-input-options"
-                        @update:value="handleUserInputSingleSelect(question.id, $event)"
-                      >
-                        <div
-                          v-for="option in question.options"
-                          :key="`${question.id}:${option.label}`"
-                          :class="{
-                            'is-selected': userInputSelections[question.id]?.includes(option.label),
-                            'is-disabled': isUserInputInteractionDisabled,
-                          }"
-                          class="user-input-option"
-                        >
-                          <n-radio :value="option.label">
-                            <span class="user-input-option-label">{{ option.label }}</span>
-                          </n-radio>
-                          <div v-if="option.description" class="user-input-option-description">
-                            {{ option.description }}
-                          </div>
-                        </div>
-                      </n-radio-group>
-                      <n-input
-                        v-if="question.isOther || question.options.length === 0"
-                        v-model:value="userInputDrafts[question.id]"
-                        :type="question.isSecret ? 'password' : 'text'"
-                        size="small"
-                        :disabled="isUserInputInteractionDisabled"
-                        :show-password-on="question.isSecret ? 'mousedown' : undefined"
-                        :placeholder="userInputPlaceholder(question)"
-                        @keydown="handleUserInputEnter"
-                      />
-                    </div>
+                      :key="`${pendingUserInputSyncKey}:${question.id}`"
+                      :question="question"
+                      :selection="userInputSelections[question.id] ?? []"
+                      :draft="userInputDrafts[question.id] ?? ''"
+                      :disabled="isUserInputInteractionDisabled"
+                      :placeholder="userInputPlaceholder(question)"
+                      @update:selection="handleUserInputSelectionUpdate(question.id, $event)"
+                      @update:draft="handleUserInputDraftUpdate(question.id, $event)"
+                      @keydown="handleUserInputEnter"
+                    />
                     <div class="approval-actions">
                       <n-button
                         size="small"
@@ -3296,6 +3231,7 @@ import WebSessionSidebar from '@/components/web-session/WebSessionSidebar.vue';
 import { useWebSessionSidebarResize } from '@/components/web-session/useWebSessionSidebarResize';
 import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkillCatalogPanel.vue';
 import WebSessionTreeDrawer from '@/components/web-session/WebSessionTreeDrawer.vue';
+import WebSessionUserInputQuestionField from '@/components/web-session/WebSessionUserInputQuestion.vue';
 import type { WebSessionComposerEditorExposed } from '@/components/web-session/webSessionComposerEditor';
 import {
   isWebSessionDevMode,
@@ -3415,7 +3351,6 @@ import {
   scheduleWebSessionUserInputSlowHint,
 } from '@/components/web-session/webSessionUserInputSubmit';
 import {
-  buildWebSessionUserInputQuestionMemoDeps,
   buildWebSessionUserInputDraftSyncKey,
   buildWebSessionUserInputDraftStorageKey,
   reconcileWebSessionUserInputLocalState,
@@ -3503,6 +3438,7 @@ import type { CrossProjectSessionItem } from '@/components/web-session/webSessio
 import {
   isArchivedPreviewSession,
   isDraftSession,
+  shouldLoadWebSessionSnapshotOnActivation,
   type ArchivedPreviewSessionTab,
   type DraftSessionTab,
   type MobileSessionDrawerView,
@@ -9172,8 +9108,15 @@ async function connectVisibleRealSession(projectId: string, sessionId: string) {
   activeArchivedPreviewId.value = '';
   webSessionStore.setActiveSession(projectId, sessionId);
   try {
+    const session = webSessionStore.getSessions(projectId).find(item => item.id === sessionId);
+    if (
+      !shouldLoadWebSessionSnapshotOnActivation(session, webSessionStore.isSessionSnapshotCurrent)
+    ) {
+      return realSessionSnapshotLoadController.isCurrent(snapshotLoad);
+    }
     await webSessionStore.loadSessionSnapshot(projectId, sessionId, {
       rememberActive: false,
+      conditional: true,
       signal: snapshotLoad.signal,
     });
     return realSessionSnapshotLoadController.isCurrent(snapshotLoad);
@@ -12969,15 +12912,25 @@ function handleUserInputEnter(event: KeyboardEvent) {
   void handleUserInputSubmit();
 }
 
-function handleUserInputSingleSelect(questionId: string, value: string | null) {
+function handleUserInputSelectionUpdate(questionId: string, value: string[]) {
   const normalizedQuestionId = String(questionId || '').trim();
   if (!normalizedQuestionId) {
     return;
   }
-  const normalizedValue = String(value || '').trim();
   userInputSelections.value = {
     ...userInputSelections.value,
-    [normalizedQuestionId]: normalizedValue ? [normalizedValue] : [],
+    [normalizedQuestionId]: [...value],
+  };
+}
+
+function handleUserInputDraftUpdate(questionId: string, value: string) {
+  const normalizedQuestionId = String(questionId || '').trim();
+  if (!normalizedQuestionId) {
+    return;
+  }
+  userInputDrafts.value = {
+    ...userInputDrafts.value,
+    [normalizedQuestionId]: value,
   };
 }
 
@@ -13439,17 +13392,6 @@ function userInputPlaceholder(question: WebSessionUserInputQuestion) {
   return t('webSession.userInputAnswerPlaceholder');
 }
 
-function userInputQuestionMemoDeps(question: WebSessionUserInputQuestion) {
-  return buildWebSessionUserInputQuestionMemoDeps({
-    requestKey: pendingUserInputSyncKey.value,
-    question,
-    selections: userInputSelections.value[question.id],
-    draft: userInputDrafts.value[question.id],
-    disabled: isUserInputInteractionDisabled.value,
-    placeholder: userInputPlaceholder(question),
-  });
-}
-
 function buildUserInputAnswers() {
   const request = pendingUserInput.value;
   if (!request) {
@@ -13523,7 +13465,8 @@ async function ensureMessageCapabilityAvailable(
   agent: WebSessionAgent,
   options: { refresh?: boolean } = {}
 ) {
-  const config = options.refresh === false ? codexRuntimeConfig.value : await refreshRuntimeCapabilities();
+  const config =
+    options.refresh === false ? codexRuntimeConfig.value : await refreshRuntimeCapabilities();
   if (!config) {
     if (agent === 'pi') {
       message.warning(piUnavailableReason.value);

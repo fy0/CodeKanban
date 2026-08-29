@@ -5,47 +5,46 @@ import { describe, expect, it } from 'vitest';
 
 const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
 const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
-const webSessionTimelineStylePath = fileURLToPath(
-  new URL('../styles/webSessionPanelTimeline.css', import.meta.url)
+const webSessionUserInputQuestionPath = fileURLToPath(
+  new URL('../WebSessionUserInputQuestion.vue', import.meta.url)
 );
-const webSessionTimelineStyleSource = readFileSync(webSessionTimelineStylePath, 'utf8');
+const webSessionUserInputQuestionSource = readFileSync(webSessionUserInputQuestionPath, 'utf8');
+const webSessionUserInputQuestionStylePath = fileURLToPath(
+  new URL('../styles/webSessionUserInputQuestion.css', import.meta.url)
+);
+const webSessionUserInputQuestionStyleSource = readFileSync(
+  webSessionUserInputQuestionStylePath,
+  'utf8'
+);
 
 describe('web session user input option styles', () => {
   it('exposes selected and disabled state classes for single and multi-select options', () => {
-    const optionBlocks = webSessionPanelSource.match(
+    const optionBlocks = webSessionUserInputQuestionSource.match(
       /<div\s+v-for="option in question\.options"[\s\S]*?class="user-input-option"[\s\S]*?<\/div>/g
     );
 
     expect(optionBlocks).toHaveLength(2);
     for (const optionBlock of optionBlocks ?? []) {
-      expect(optionBlock).toContain(
-        "'is-selected': userInputSelections[question.id]?.includes(option.label)"
-      );
-      expect(optionBlock).toContain("'is-disabled': isUserInputInteractionDisabled");
+      expect(optionBlock).toContain("'is-selected': selection.includes(option.label)");
+      expect(optionBlock).toContain("'is-disabled': disabled");
     }
   });
 
   it('keeps the option card states scoped to the pending user input surface', () => {
-    expect(webSessionTimelineStyleSource).toContain('.user-input-option.is-selected');
-    expect(webSessionTimelineStyleSource).toContain('.user-input-option:focus-within');
-    expect(webSessionTimelineStyleSource).toContain('.user-input-option.is-disabled');
-    expect(webSessionTimelineStyleSource).toContain('.history-option-row');
+    expect(webSessionUserInputQuestionStyleSource).toContain('.user-input-option.is-selected');
+    expect(webSessionUserInputQuestionStyleSource).toContain('.user-input-option:focus-within');
+    expect(webSessionUserInputQuestionStyleSource).toContain('.user-input-option.is-disabled');
+    expect(webSessionPanelSource).toContain('<WebSessionUserInputQuestionField');
   });
 
-  it('renders the selected radio marker without suspended transitions', () => {
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.user-input-option :deep\(\.n-radio__dot\),\s*\.user-input-option :deep\(\.n-radio__dot::before\)\s*{\s*transition: none;\s*}/
-    );
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.user-input-option\.is-selected :deep\(\.n-radio__dot\)\s*{\s*background-color: var\(--n-color-active\);\s*}/
-    );
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.user-input-option\.is-selected :deep\(\.n-radio__dot::before\)\s*{\s*opacity: 1;\s*background-color: var\(--n-dot-color-active\);\s*transform: scale\(1\);\s*}/
-    );
+  it('leaves radio marker rendering to the controlled Naive UI state', () => {
+    expect(webSessionUserInputQuestionStyleSource).not.toContain('.n-radio__dot');
+    expect(webSessionUserInputQuestionSource).toContain(':value="selection[0] || null"');
+    expect(webSessionUserInputQuestionSource).toContain('@update:value="handleSingleSelect"');
   });
 
   it('does not add an inset accent line to the selected option card', () => {
-    expect(webSessionTimelineStyleSource).not.toContain('box-shadow: inset 3px 0 0');
-    expect(webSessionTimelineStyleSource).not.toContain('box-shadow 0.16s ease');
+    expect(webSessionUserInputQuestionStyleSource).not.toContain('box-shadow: inset 3px 0 0');
+    expect(webSessionUserInputQuestionStyleSource).not.toContain('box-shadow 0.16s ease');
   });
 });

@@ -45,3 +45,10 @@ export function isArchivedPreviewSession(
 ): session is ArchivedPreviewSessionTab {
   return Boolean(session && 'isArchivedPreview' in session && session.isArchivedPreview);
 }
+
+export function shouldLoadWebSessionSnapshotOnActivation(
+  session: Pick<WebSessionSummary, 'id' | 'revision'> | null | undefined,
+  isSnapshotCurrent: (sessionId: string, revision?: string | null) => boolean
+) {
+  return !session || !isSnapshotCurrent(session.id, session.revision);
+}

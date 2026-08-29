@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   buildWebSessionUserInputDraftStorageKey,
   buildWebSessionUserInputDraftSyncKey,
-  buildWebSessionUserInputQuestionMemoDeps,
   reconcileWebSessionUserInputLocalState,
 } from '@/components/web-session/webSessionUserInputDraftSync';
 
@@ -79,72 +78,6 @@ describe('webSessionUserInputDraftSync', () => {
     );
 
     expect(changedQuestions).toBe(base);
-  });
-
-  it('keeps question memo dependencies stable across equivalent live refresh objects', () => {
-    const question = {
-      id: 'scope',
-      header: 'Scope',
-      question: 'Which scope should I use?',
-      multiSelect: false,
-      isOther: true,
-      isSecret: false,
-      options: [{ label: 'Frontend', description: 'Update the UI only.' }],
-    };
-    const first = buildWebSessionUserInputQuestionMemoDeps({
-      requestKey: 'session-1:request-1',
-      question,
-      selections: ['Frontend'],
-      draft: 'Keep the current behavior',
-      disabled: false,
-      placeholder: 'Add extra detail',
-    });
-    const second = buildWebSessionUserInputQuestionMemoDeps({
-      requestKey: 'session-1:request-1',
-      question: {
-        ...question,
-        options: question.options.map(option => ({ ...option })),
-      },
-      selections: ['Frontend'],
-      draft: 'Keep the current behavior',
-      disabled: false,
-      placeholder: 'Add extra detail',
-    });
-
-    expect(second).toEqual(first);
-  });
-
-  it('invalidates question memo dependencies when visible or editable state changes', () => {
-    const input = {
-      requestKey: 'session-1:request-1',
-      question: {
-        id: 'scope',
-        header: 'Scope',
-        question: 'Which scope should I use?',
-        multiSelect: false,
-        isOther: true,
-        isSecret: false,
-        options: [{ label: 'Frontend', description: 'Update the UI only.' }],
-      },
-      selections: ['Frontend'],
-      draft: 'Keep the current behavior',
-      disabled: false,
-      placeholder: 'Add extra detail',
-    };
-    const base = buildWebSessionUserInputQuestionMemoDeps(input);
-
-    expect(buildWebSessionUserInputQuestionMemoDeps({ ...input, draft: 'Changed' })).not.toEqual(
-      base
-    );
-    expect(buildWebSessionUserInputQuestionMemoDeps({ ...input, disabled: true })).not.toEqual(
-      base
-    );
-    expect(
-      buildWebSessionUserInputQuestionMemoDeps({
-        ...input,
-        question: { ...input.question, question: 'Updated question?' },
-      })
-    ).not.toEqual(base);
   });
 
   it('reconciles local state by preserving current question drafts and dropping removed ones', () => {

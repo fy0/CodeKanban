@@ -10,15 +10,6 @@ export interface WebSessionUserInputLocalState {
   drafts: Record<string, string>;
 }
 
-export interface WebSessionUserInputQuestionMemoState {
-  requestKey: string;
-  question: WebSessionUserInputQuestion;
-  selections?: string[];
-  draft?: string;
-  disabled: boolean;
-  placeholder: string;
-}
-
 function normalizeQuestionId(questionId: string) {
   return String(questionId ?? '');
 }
@@ -54,32 +45,6 @@ export function buildWebSessionUserInputDraftStorageKey(
     return '';
   }
   return JSON.stringify([normalizedSessionId, normalizedItemId]);
-}
-
-export function buildWebSessionUserInputQuestionMemoDeps({
-  requestKey,
-  question,
-  selections,
-  draft,
-  disabled,
-  placeholder,
-}: WebSessionUserInputQuestionMemoState): Array<string | boolean> {
-  return [
-    String(requestKey ?? ''),
-    normalizeQuestionId(question.id),
-    String(question.header ?? ''),
-    String(question.question ?? ''),
-    Boolean(question.multiSelect),
-    Boolean(question.isOther),
-    Boolean(question.isSecret),
-    JSON.stringify(
-      question.options.map(option => [String(option.label ?? ''), String(option.description ?? '')])
-    ),
-    JSON.stringify((selections ?? []).map(value => String(value ?? ''))),
-    String(draft ?? ''),
-    Boolean(disabled),
-    String(placeholder ?? ''),
-  ];
 }
 
 export function reconcileWebSessionUserInputLocalState(

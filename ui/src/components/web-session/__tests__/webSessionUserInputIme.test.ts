@@ -5,17 +5,21 @@ import { describe, expect, it } from 'vitest';
 
 const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
 const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
+const webSessionUserInputQuestionPath = fileURLToPath(
+  new URL('../WebSessionUserInputQuestion.vue', import.meta.url)
+);
+const webSessionUserInputQuestionSource = readFileSync(webSessionUserInputQuestionPath, 'utf8');
 
 function extractUserInputFieldSource() {
-  const matched = webSessionPanelSource.match(
+  const matched = webSessionUserInputQuestionSource.match(
     /<n-input\s+v-if="question\.isOther \|\| question\.options\.length === 0"[\s\S]*?\/>/
   );
   return matched?.[0] ?? '';
 }
 
-function extractUserInputQuestionOpeningTag() {
+function extractUserInputQuestionComponent() {
   const matched = webSessionPanelSource.match(
-    /<div\s+v-for="question in pendingUserInput\.questions"[\s\S]*?class="user-input-question"\s*>/
+    /<WebSessionUserInputQuestionField\s+v-for="question in pendingUserInput\.questions"[\s\S]*?\/>/
   );
   return matched?.[0] ?? '';
 }
@@ -27,11 +31,14 @@ describe('web session user input IME protection', () => {
     );
   });
 
-  it('memoizes each question at the v-for boundary', () => {
-    const questionOpeningTag = extractUserInputQuestionOpeningTag();
+  it('keeps interactive controls out of memoized subtrees', () => {
+    const questionComponent = extractUserInputQuestionComponent();
     const fieldSource = extractUserInputFieldSource();
 
-    expect(questionOpeningTag).toContain('v-memo="userInputQuestionMemoDeps(question)"');
+    expect(questionComponent).toContain(':key="`${pendingUserInputSyncKey}:${question.id}`"');
+    expect(questionComponent).not.toContain('v-memo');
     expect(fieldSource).not.toContain('v-memo');
+    expect(fieldSource).toContain(':value="draft"');
+    expect(fieldSource).toContain('@update:value="emit(\'update:draft\', $event)"');
   });
 });
