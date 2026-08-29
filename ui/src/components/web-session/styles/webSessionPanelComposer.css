@@ -535,6 +535,26 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
+  max-height: min(360px, calc(100dvh - 160px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  padding-right: 4px;
+}
+
+.live-sub-agent-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.live-sub-agent-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.live-sub-agent-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--n-text-color-3) 58%, transparent);
 }
 
 .live-sub-agent-item {

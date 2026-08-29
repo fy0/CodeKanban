@@ -1949,7 +1949,7 @@
                             class="composer-sub-agent-trigger-pulse"
                           ></span>
                           <span class="composer-sub-agent-trigger-count">{{
-                            hasActiveSubAgents ? activeSubAgentCount : knownSubAgents.length
+                            activeSubAgentCount
                           }}</span>
                         </button>
                       </template>
@@ -1957,20 +1957,19 @@
                         <div class="live-sub-agent-popover-title">
                           {{
                             t('webSession.subAgentPopoverTitle', {
-                              count: knownSubAgents.length,
                               active: activeSubAgentCount,
+                              recent: subAgentPopover.recentCount,
                             })
                           }}
                         </div>
                         <div class="live-sub-agent-list">
                           <button
-                            v-for="agent in knownSubAgents"
+                            v-for="agent in subAgentPopover.items"
                             :key="agent.id"
                             type="button"
                             class="live-sub-agent-item"
                             :class="{
-                              'is-active':
-                                agent.status === 'pending_init' || agent.status === 'running',
+                              'is-active': subAgentPopover.activeIds.has(agent.id),
                             }"
                             :aria-label="`${t('webSession.subAgentLocate')}: ${agent.title}`"
                             @click="locateSubAgent(agent)"
@@ -3353,6 +3352,7 @@ import {
   isTransportRetryActivityText,
   subAgentActivitySummary,
 } from '@/components/web-session/webSessionSubAgentActivity';
+import { resolveWebSessionSubAgentPopover } from '@/components/web-session/webSessionSubAgentPopover';
 import { resolveWebSessionTimelineSubAgent } from '@/components/web-session/webSessionTimelineRole';
 import { useWebSessionConversationSearch } from '@/components/web-session/useWebSessionConversationSearch';
 import { useWebSessionLocalFileNavigation } from '@/components/web-session/useWebSessionLocalFileNavigation';
@@ -5488,10 +5488,11 @@ const activeSubAgentCount = computed(
   () => displayLiveState.value.activeSubAgentCount ?? activeSubAgents.value.length
 );
 const hasActiveSubAgents = computed(() => activeSubAgentCount.value > 0);
+const subAgentPopover = computed(() =>
+  resolveWebSessionSubAgentPopover(knownSubAgents.value, activeSubAgents.value)
+);
 const subAgentTriggerTitle = computed(() =>
-  hasActiveSubAgents.value
-    ? t('webSession.liveSubAgentCount', { count: activeSubAgentCount.value })
-    : t('webSession.subAgentKnownCount', { count: knownSubAgents.value.length })
+  t('webSession.liveSubAgentCount', { count: activeSubAgentCount.value })
 );
 const isSubmittingPlanExecution = computed(() => currentSubmitEntry.value?.kind === 'execute_plan');
 const showRuntimeStrip = computed(() => {
