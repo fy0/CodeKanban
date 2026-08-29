@@ -491,7 +491,24 @@
   border-radius: 999px;
   background: currentColor;
   box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 34%, transparent);
-  animation: livePulse 1.6s ease-in-out infinite;
+  animation: composerSubAgentPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes composerSubAgentPulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.18);
+    opacity: 0.72;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .composer-sub-agent-trigger-count {

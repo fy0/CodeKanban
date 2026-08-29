@@ -2147,3 +2147,73 @@
   align-items: center;
   justify-content: center;
 }
+
+@keyframes livePulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.18);
+    opacity: 0.72;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes liveRipple {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.56;
+  }
+
+  70% {
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@keyframes liveBars {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+    opacity: 0.45;
+  }
+
+  50% {
+    transform: scaleY(1.85);
+    opacity: 1;
+  }
+}
+
+@keyframes liveSweep {
+  0% {
+    transform: translateX(-130%);
+  }
+
+  55% {
+    transform: translateX(130%);
+  }
+
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+@keyframes liveTrack {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(380%);
+  }
+}
