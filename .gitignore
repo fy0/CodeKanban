@@ -28,6 +28,7 @@ dist/
 config.yaml
 version.yaml
 assets/
+/static/index.html
 data.db
 .vscode/launch.json
 .claude
