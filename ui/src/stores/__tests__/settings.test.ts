@@ -113,7 +113,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(8);
+    expect(persisted.version).toBe(9);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -139,7 +139,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(8);
+    expect(persisted.version).toBe(9);
     expect(persisted.followSystemTheme).toBe(1);
 
     setActivePinia(createPinia());
@@ -169,7 +169,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(8);
+    expect(persisted.version).toBe(9);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -193,7 +193,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(8);
+    expect(persisted.version).toBe(9);
     expect(persisted.followSystemTheme).toBe(1);
   });
 
@@ -233,7 +233,7 @@ describe('settings theme storage', () => {
       customTheme?: Record<string, unknown>;
     };
 
-    expect(persisted.version).toBe(8);
+    expect(persisted.version).toBe(9);
     expect(persisted.terminalDisplayMode).toBeUndefined();
     expect(persisted.theme?.terminalFloatingButtonBg).toBeUndefined();
     expect(persisted.customTheme?.terminalFloatingButtonFg).toBeUndefined();
@@ -314,7 +314,7 @@ describe('settings theme storage', () => {
       webSessionAutoRetryDispatchPendingOnFailure?: boolean;
     };
 
-    expect(persisted.version).toBe(8);
+    expect(persisted.version).toBe(9);
     expect(persisted.webSessionAutoContinueScope).toBeUndefined();
     expect(persisted.webSessionAutoContinuePreset).toBeUndefined();
     expect(persisted.webSessionAutoContinueMaxAttempts).toBeUndefined();
@@ -354,7 +354,7 @@ describe('settings theme storage', () => {
       dailyTipEnabled?: boolean;
     };
 
-    expect(persisted.version).toBe(8);
+    expect(persisted.version).toBe(9);
     expect(persisted.dailyTipEnabled).toBeUndefined();
   });
 

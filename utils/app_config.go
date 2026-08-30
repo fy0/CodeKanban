@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -245,6 +247,7 @@ func (c *TerminalConfig) IdleDuration() time.Duration {
 }
 
 type AppConfig struct {
+	ConfigStoreVersion     int              `json:"configStoreVersion,omitempty" yaml:"configStoreVersion,omitempty"`
 	ServeAt                string           `json:"serveAt" yaml:"serveAt"`
 	Domain                 string           `json:"domain" yaml:"domain"`
 	RegisterOpen           bool             `json:"registerOpen" yaml:"registerOpen"`
@@ -273,6 +276,82 @@ type AppConfig struct {
 	Git                    GitConfig        `json:"git" yaml:"git"`
 }
 
+type bootstrapAuthConfig struct {
+	SessionTTL string `json:"sessionTTL" yaml:"sessionTTL"`
+}
+
+type bootstrapTerminalConfig struct {
+	IdleTimeout           string   `json:"idleTimeout" yaml:"idleTimeout"`
+	MaxSessionsPerProject int      `json:"maxSessionsPerProject" yaml:"maxSessionsPerProject"`
+	AllowedRoots          []string `json:"allowedRoots" yaml:"allowedRoots"`
+	Encoding              string   `json:"encoding" yaml:"encoding"`
+	ScrollbackBytes       int      `json:"scrollbackBytes" yaml:"scrollbackBytes"`
+}
+
+// bootstrapAppConfig contains only values required before config.db can be
+// opened. Settings changed through the application are intentionally absent.
+type bootstrapAppConfig struct {
+	ConfigStoreVersion     int                     `json:"configStoreVersion,omitempty" yaml:"configStoreVersion,omitempty"`
+	ServeAt                string                  `json:"serveAt" yaml:"serveAt"`
+	Domain                 string                  `json:"domain" yaml:"domain"`
+	RegisterOpen           bool                    `json:"registerOpen" yaml:"registerOpen"`
+	WebURL                 string                  `json:"webUrl" yaml:"webUrl"`
+	AttachmentSizeLimit    int64                   `json:"attachmentSizeLimit" yaml:"attachmentSizeLimit"`
+	ImageCompress          bool                    `json:"imageCompress" yaml:"imageCompress"`
+	LogFile                string                  `json:"logFile" yaml:"logFile"`
+	LogLevel               string                  `json:"logLevel" yaml:"logLevel"`
+	DBLogLevel             int                     `json:"dbLogLevel" yaml:"dbLogLevel"`
+	CorsAllowOrigins       string                  `json:"corsAllowOrigins" yaml:"corsAllowOrigins"`
+	UIOverwrite            string                  `json:"uiOverwrite" yaml:"uiOverwrite"`
+	AutoMigrate            bool                    `json:"autoMigrate" yaml:"autoMigrate"`
+	OpenAPIEnabled         bool                    `json:"openapiEnabled" yaml:"openapiEnabled"`
+	DocsPath               string                  `json:"docsPath" yaml:"docsPath"`
+	APITitle               string                  `json:"apiTitle" yaml:"apiTitle"`
+	APIVersion             string                  `json:"apiVersion" yaml:"apiVersion"`
+	AttachmentConfig       AttachmentConfig        `json:"attachmentConfig" yaml:"attachmentConfig"`
+	DSN                    string                  `json:"dbUrl" yaml:"dbUrl"`
+	PrintConfig            bool                    `json:"printConfig" yaml:"printConfig"`
+	DisableAutoOpenBrowser bool                    `json:"disableAutoOpenBrowser" yaml:"disableAutoOpenBrowser"`
+	Auth                   bootstrapAuthConfig     `json:"auth" yaml:"auth"`
+	Terminal               bootstrapTerminalConfig `json:"terminal" yaml:"terminal"`
+}
+
+func newBootstrapAppConfig(config *AppConfig) bootstrapAppConfig {
+	return bootstrapAppConfig{
+		ConfigStoreVersion:     config.ConfigStoreVersion,
+		ServeAt:                config.ServeAt,
+		Domain:                 config.Domain,
+		RegisterOpen:           config.RegisterOpen,
+		WebURL:                 config.WebUrl,
+		AttachmentSizeLimit:    config.AttachmentSizeLimit,
+		ImageCompress:          config.ImageCompress,
+		LogFile:                config.LogFile,
+		LogLevel:               config.LogLevel,
+		DBLogLevel:             config.DBLogLevel,
+		CorsAllowOrigins:       config.CorsAllowOrigins,
+		UIOverwrite:            config.UIOverwrite,
+		AutoMigrate:            config.AutoMigrate,
+		OpenAPIEnabled:         config.OpenAPIEnabled,
+		DocsPath:               config.DocsPath,
+		APITitle:               config.APITitle,
+		APIVersion:             config.APIVersion,
+		AttachmentConfig:       config.AttachmentConfig,
+		DSN:                    config.DSN,
+		PrintConfig:            config.PrintConfig,
+		DisableAutoOpenBrowser: config.DisableAutoOpenBrowser,
+		Auth: bootstrapAuthConfig{
+			SessionTTL: config.Auth.SessionTTL,
+		},
+		Terminal: bootstrapTerminalConfig{
+			IdleTimeout:           config.Terminal.IdleTimeout,
+			MaxSessionsPerProject: config.Terminal.MaxSessionsPerProject,
+			AllowedRoots:          append([]string(nil), config.Terminal.AllowedRoots...),
+			Encoding:              config.Terminal.Encoding,
+			ScrollbackBytes:       config.Terminal.ScrollbackBytes,
+		},
+	}
+}
+
 var configStore = koanf.New(".")
 
 // configMu 保护对 configStore 和 activeConfigPath 的并发访问
@@ -281,8 +360,18 @@ var configMu sync.RWMutex
 // activeConfigPath 存储实际加载的配置文件路径
 var activeConfigPath string
 
+// activeConfigExisted records whether the selected config file existed before
+// ReadConfig loaded it. It is used to avoid creating a rollback copy for a
+// brand-new installation.
+var activeConfigExisted bool
+
 // ReadConfig 会加载 config.yaml，若不存在则写入默认配置。
 func ReadConfig() *AppConfig {
+	// ReadConfig is normally called once at startup. Recreate the store so
+	// repeated loads (tests and embedding) cannot retain keys omitted by a
+	// later bootstrap-only config file.
+	configStore = koanf.New(".")
+
 	// 获取数据目录（npm 全局安装时使用 ~/.codekanban，否则使用 ./data）
 	dataDir := GetDataDir()
 
@@ -293,6 +382,8 @@ func ReadConfig() *AppConfig {
 	if _, err := os.Stat(workDirConfig); err == nil {
 		configPath = workDirConfig
 	}
+	_, activeConfigStatErr := os.Stat(configPath)
+	activeConfigExisted = activeConfigStatErr == nil
 
 	// 打印工作目录信息
 	if cwd, err := os.Getwd(); err == nil {
@@ -378,7 +469,7 @@ func ReadConfig() *AppConfig {
 	if err := configStore.Load(provider, yaml.Parser()); err != nil {
 		fmt.Printf("Failed to read config: %v\n", err)
 		if os.IsNotExist(err) {
-			if writeErr := WriteConfigToPath(&defaults, configPath); writeErr != nil {
+			if writeErr := WriteBootstrapConfigToPath(&defaults, configPath); writeErr != nil {
 				fmt.Printf("Failed to write default config: %v\n", writeErr)
 			}
 		} else {
@@ -408,13 +499,19 @@ func ReadConfig() *AppConfig {
 	config.Developer = NormalizeDeveloperConfig(config.Developer)
 	config.Git = NormalizeGitConfig(config.Git)
 	if webSessionActiveCallTimeoutConfigNeedsRewrite(fileConfigStore) {
-		if writeErr := WriteConfigToPath(&config, configPath); writeErr != nil {
+		writeConfig := WriteConfigToPath
+		if config.ConfigStoreVersion >= CurrentConfigStoreVersion {
+			writeConfig = WriteBootstrapConfigToPath
+		}
+		if writeErr := writeConfig(&config, configPath); writeErr != nil {
 			fmt.Printf("Failed to rewrite migrated config: %v\n", writeErr)
 		}
 	}
 
 	if config.PrintConfig {
-		configStore.Print()
+		bootstrapStore := koanf.New(".")
+		lo.Must0(bootstrapStore.Load(structs.Provider(newBootstrapAppConfig(&config), "yaml"), nil))
+		bootstrapStore.Print()
 	}
 
 	return &config
@@ -701,22 +798,67 @@ func normalizeWebSessionQuickInputItems(items []string, limit int) []string {
 	return normalized
 }
 
-// UpdateConfig 提供原子更新配置的能力，在锁内完成"修改+写盘"操作。
+// UpdateConfig 提供原子更新运行时配置的能力，在锁内完成"修改+写库"操作。
 // modifier 函数接收当前配置指针，可直接修改其字段。
-// 修改完成后自动持久化到磁盘。
+// 修改完成后自动持久化到配置数据库。
 func UpdateConfig(config *AppConfig, modifier func(*AppConfig)) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 
-	// 在锁内应用修改
-	modifier(config)
-
-	// 持久化到磁盘
-	if activeConfigPath == "" {
-		dataDir := GetDataDir()
-		activeConfigPath = fmt.Sprintf("%s/config.yaml", dataDir)
+	if config == nil || modifier == nil {
+		return nil
 	}
-	return writeConfigToPathLocked(config, activeConfigPath)
+	if runtimeConfigDB == nil {
+		return ErrConfigStoreNotInitialized
+	}
+
+	next, err := cloneAppConfig(config)
+	if err != nil {
+		return err
+	}
+	modifier(next)
+
+	if err := runtimeConfigDB.persistRuntimeSettings(next); err != nil {
+		return err
+	}
+	*config = *next
+	return nil
+}
+
+// UpdateConfigAndQuickInput atomically persists runtime settings together with
+// the complete quick-input history. It is reserved for backup restore; normal
+// prompt recording uses the incremental config database API.
+func UpdateConfigAndQuickInput(config *AppConfig, modifier func(*AppConfig)) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+	if config == nil || modifier == nil {
+		return nil
+	}
+	if runtimeConfigDB == nil {
+		return ErrConfigStoreNotInitialized
+	}
+	next, err := cloneAppConfig(config)
+	if err != nil {
+		return err
+	}
+	modifier(next)
+	if err := runtimeConfigDB.persistRuntimeSettingsAndQuickInput(next); err != nil {
+		return err
+	}
+	*config = *next
+	return nil
+}
+
+func cloneAppConfig(config *AppConfig) (*AppConfig, error) {
+	content, err := json.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to clone config: %w", err)
+	}
+	var cloned AppConfig
+	if err := json.Unmarshal(content, &cloned); err != nil {
+		return nil, fmt.Errorf("failed to clone config: %w", err)
+	}
+	return &cloned, nil
 }
 
 // WriteConfigToPath 将配置写入指定路径
@@ -724,6 +866,59 @@ func WriteConfigToPath(config *AppConfig, path string) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 	return writeConfigToPathLocked(config, path)
+}
+
+// WriteBootstrapConfigToPath persists only values required to open the
+// application and config.db. Runtime settings must never be written here.
+func WriteBootstrapConfigToPath(config *AppConfig, path string) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+	return writeBootstrapConfigToPathLocked(config, path)
+}
+
+func writeBootstrapConfigToPathLocked(config *AppConfig, path string) error {
+	if config == nil {
+		return fmt.Errorf("config is required")
+	}
+	store := koanf.New(".")
+	lo.Must0(store.Load(structs.Provider(newBootstrapAppConfig(config), "yaml"), nil))
+	content, err := yaml.Parser().Marshal(store.Raw())
+	if err != nil {
+		return fmt.Errorf("failed to serialize bootstrap config: %w", err)
+	}
+	if err := writeFileAtomically(path, content, 0o644); err != nil {
+		return fmt.Errorf("failed to write config file %s: %w", path, err)
+	}
+	return nil
+}
+
+func writeFileAtomically(path string, content []byte, mode os.FileMode) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(directory, ".codekanban-config-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(mode); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.Write(content); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return replaceFile(tempPath, path)
 }
 
 // writeConfigToPathLocked 不获取锁直接写入配置（调用者必须持有锁）
@@ -740,7 +935,7 @@ func writeConfigToPathLocked(config *AppConfig, path string) error {
 		return fmt.Errorf("failed to serialize config: %w", err)
 	}
 
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	if err := writeFileAtomically(path, content, 0o644); err != nil {
 		return fmt.Errorf("failed to write config file %s: %w", path, err)
 	}
 	return nil

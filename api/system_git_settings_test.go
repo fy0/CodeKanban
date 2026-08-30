@@ -51,8 +51,8 @@ git:
 		t.Fatal(err)
 	}
 	text := string(written)
-	if !strings.Contains(text, "readEngine: builtin") || !strings.Contains(text, "writeEngine: system") {
-		t.Fatalf("Git settings were not persisted:\n%s", text)
+	if strings.Contains(text, "readEngine:") || strings.Contains(text, "writeEngine:") || strings.Contains(text, "\ngit:") {
+		t.Fatalf("bootstrap config retained runtime Git settings:\n%s", text)
 	}
 }
 

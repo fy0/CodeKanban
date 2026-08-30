@@ -14,8 +14,9 @@ import (
 )
 
 type databaseHealthResult struct {
-	Database model.DatabaseHealth                   `json:"database"`
-	Sessions []websession.DatabaseSessionDiagnostic `json:"sessions,omitempty"`
+	Database              model.DatabaseHealth                   `json:"database"`
+	ConfigurationDatabase *utils.ConfigDatabaseHealth            `json:"configurationDatabase,omitempty"`
+	Sessions              []websession.DatabaseSessionDiagnostic `json:"sessions,omitempty"`
 }
 
 func registerSystemDatabaseRoutes(group *huma.Group, cfg *utils.AppConfig, manager *websession.Manager) {
@@ -34,6 +35,10 @@ func registerSystemDatabaseRoutes(group *huma.Group, cfg *utils.AppConfig, manag
 			return nil, huma.Error500InternalServerError("failed to inspect database", err)
 		}
 		result := databaseHealthResult{Database: health}
+		if store := utils.CurrentConfigDatabase(); store != nil {
+			configHealth := store.Health(ctx)
+			result.ConfigurationDatabase = &configHealth
+		}
 		if manager != nil {
 			result.Sessions = manager.DatabaseSessionDiagnostics()
 		}

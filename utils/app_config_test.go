@@ -336,13 +336,16 @@ developer:
 
 	oldStore := configStore
 	oldActivePath := activeConfigPath
+	oldActiveConfigExisted := activeConfigExisted
 	oldUseHomeData := useHomeData
 	configStore = koanf.New(".")
 	activeConfigPath = ""
+	activeConfigExisted = false
 	useHomeData = false
 	t.Cleanup(func() {
 		configStore = oldStore
 		activeConfigPath = oldActivePath
+		activeConfigExisted = oldActiveConfigExisted
 		useHomeData = oldUseHomeData
 	})
 
@@ -381,7 +384,7 @@ developer:
 	}
 }
 
-func TestReadConfigDefaultsDailyTipDisabledOnFirstStart(t *testing.T) {
+func TestReadConfigWritesBootstrapOnlyConfigOnFirstStart(t *testing.T) {
 	config, configPath := readDailyTipTestConfig(t, nil)
 	if config.UI.DailyTipEnabled {
 		t.Fatal("expected ui.dailyTipEnabled to default to false on first start")
@@ -391,8 +394,8 @@ func TestReadConfigDefaultsDailyTipDisabledOnFirstStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read generated config failed: %v", err)
 	}
-	if !strings.Contains(string(rewritten), "dailyTipEnabled: false") {
-		t.Fatalf("expected generated config to persist dailyTipEnabled=false, got:\n%s", rewritten)
+	if strings.Contains(string(rewritten), "dailyTipEnabled") || strings.Contains(string(rewritten), "\nui:") {
+		t.Fatalf("expected generated config to exclude runtime UI settings, got:\n%s", rewritten)
 	}
 }
 
@@ -438,13 +441,16 @@ func readDailyTipTestConfig(t *testing.T, content *string) (*AppConfig, string) 
 
 	oldStore := configStore
 	oldActivePath := activeConfigPath
+	oldActiveConfigExisted := activeConfigExisted
 	oldUseHomeData := useHomeData
 	configStore = koanf.New(".")
 	activeConfigPath = ""
+	activeConfigExisted = false
 	useHomeData = false
 	t.Cleanup(func() {
 		configStore = oldStore
 		activeConfigPath = oldActivePath
+		activeConfigExisted = oldActiveConfigExisted
 		useHomeData = oldUseHomeData
 	})
 

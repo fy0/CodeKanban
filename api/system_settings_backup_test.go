@@ -401,18 +401,10 @@ terminal:
 		t.Fatalf("read config failed: %v", err)
 	}
 	content := string(rewritten)
-	if !strings.Contains(content, "dailyTipEnabled: false") {
-		t.Fatalf("expected config file rewrite, got:\n%s", content)
-	}
-	if !strings.Contains(content, "pageTitle: Imported Board") &&
-		!strings.Contains(content, "pageTitle: 'Imported Board'") &&
-		!strings.Contains(content, `pageTitle: "Imported Board"`) {
-		t.Fatalf("expected imported page title in config, got:\n%s", content)
-	}
-	if !strings.Contains(content, "globalDirNamePattern: '{projectName}-custom'") &&
-		!strings.Contains(content, "globalDirNamePattern: \"{projectName}-custom\"") &&
-		!strings.Contains(content, "globalDirNamePattern: {projectName}-custom") {
-		t.Fatalf("expected worktree pattern rewrite, got:\n%s", content)
+	for _, dynamicKey := range []string{"dailyTipEnabled:", "pageTitle:", "globalDirNamePattern:", "\nui:", "\nworktree:"} {
+		if strings.Contains(content, dynamicKey) {
+			t.Fatalf("bootstrap config retained runtime key %q:\n%s", dynamicKey, content)
+		}
 	}
 }
 
@@ -545,7 +537,15 @@ ui:
 		_ = os.Chdir(oldWD)
 	})
 
-	return utils.ReadConfig(), configPath
+	cfg := utils.ReadConfig()
+	store, err := utils.InitConfigDatabase(cfg)
+	if err != nil {
+		t.Fatalf("initialize config database: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+	return cfg, configPath
 }
 
 func newSystemSettingsBackupTestApp(

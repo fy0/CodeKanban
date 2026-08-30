@@ -237,7 +237,31 @@ export function parseSettingsBackupJSON(text: string): SettingsBackupFile {
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('invalid backup JSON');
   }
-  return parsed;
+  return promoteLegacyClientQuickInput(parsed);
+}
+
+function promoteLegacyClientQuickInput(backup: SettingsBackupFile): SettingsBackupFile {
+  const cloned = cloneBackup(backup);
+  if (!cloned.payload || typeof cloned.payload !== 'object') {
+    return cloned;
+  }
+  const clientQuickInput = cloned.payload.client?.settings?.webSessionQuickInput;
+  if (!hasQuickInputSectionContent(clientQuickInput)) {
+    return cloned;
+  }
+  const server = (cloned.payload.server ??= {});
+  const serverQuickInput = (server.webSessionQuickInput ??= {});
+  if (serverQuickInput.pinned == null && clientQuickInput?.pinned != null) {
+    serverQuickInput.pinned = clientQuickInput.pinned;
+  }
+  if (serverQuickInput.recent == null && clientQuickInput?.recent != null) {
+    serverQuickInput.recent = clientQuickInput.recent;
+  }
+  if (serverQuickInput.recentByProject == null && clientQuickInput?.recentByProject != null) {
+    serverQuickInput.recentByProject = clientQuickInput.recentByProject;
+  }
+  delete cloned.payload.client?.settings?.webSessionQuickInput;
+  return cloned;
 }
 
 export function downloadSettingsBackupFile(backup: SettingsBackupFile, fileName: string) {

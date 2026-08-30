@@ -26,6 +26,7 @@ tmp/
 
 dist/
 config.yaml
+config.yaml.pre-config-db-*.bak
 version.yaml
 assets/
 /static/index.html

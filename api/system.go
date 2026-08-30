@@ -133,7 +133,7 @@ func registerSystemRoutes(
 		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
 			c.Git = normalized
 		}); err != nil {
-			return nil, huma.Error500InternalServerError("failed to save Git settings")
+			return nil, configStoreAPIError(err, "failed to save Git settings")
 		}
 		applyGitRuntimeConfig(normalized)
 		resp := h.NewItemResponse(gitSettingsResult{
@@ -247,7 +247,7 @@ func registerSystemRoutes(
 		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
 			c.Developer = normalized
 		}); err != nil {
-			return nil, huma.Error500InternalServerError("failed to save configuration")
+			return nil, configStoreAPIError(err, "failed to save configuration")
 		}
 
 		if terminalManager != nil {
@@ -326,7 +326,7 @@ func registerSystemRoutes(
 		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
 			c.UI.PageTitle = title
 		}); err != nil {
-			return nil, huma.Error500InternalServerError("failed to save configuration")
+			return nil, configStoreAPIError(err, "failed to save configuration")
 		}
 
 		resp := h.NewItemResponse(pageTitleSettings{Title: title})
@@ -335,7 +335,7 @@ func registerSystemRoutes(
 	}, func(op *huma.Operation) {
 		op.OperationID = "system-page-title-settings-update"
 		op.Summary = "更新网页标题设置"
-		op.Description = "更新实例级浏览器标签页标题，并持久化到配置文件"
+		op.Description = "更新实例级浏览器标签页标题，并持久化到配置数据库"
 		op.Tags = []string{systemTag}
 	})
 
@@ -348,7 +348,7 @@ func registerSystemRoutes(
 		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
 			c.UI.DailyTipEnabled = next.Enabled
 		}); err != nil {
-			return nil, huma.Error500InternalServerError("failed to save configuration")
+			return nil, configStoreAPIError(err, "failed to save configuration")
 		}
 
 		resp := h.NewItemResponse(next)
@@ -357,44 +357,74 @@ func registerSystemRoutes(
 	}, func(op *huma.Operation) {
 		op.OperationID = "system-daily-tip-settings-update"
 		op.Summary = "更新每日小技巧设置"
-		op.Description = "更新每日小技巧的服务端全局启用状态，并持久化到配置文件"
+		op.Description = "更新每日小技巧的服务端全局启用状态，并持久化到配置数据库"
 		op.Tags = []string{systemTag}
 	})
 
-	huma.Get(group, "/system/web-session-quick-input", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.WebSessionQuickInputConfig], error) {
-		resp := h.NewItemResponse(cfg.UI.WebSessionQuickInput)
+	huma.Get(group, "/system/web-session-quick-input", func(ctx context.Context, input *struct {
+		ProjectID string `query:"projectId"`
+	}) (*h.ItemResponse[utils.WebSessionQuickInputView], error) {
+		store := utils.CurrentConfigDatabase()
+		if store == nil {
+			return nil, configStoreAPIError(utils.ErrConfigStoreNotInitialized, "failed to load quick input")
+		}
+		view, err := store.QuickInputView(input.ProjectID)
+		if err != nil {
+			return nil, configStoreAPIError(err, "failed to load quick input")
+		}
+		resp := h.NewItemResponse(view)
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {
 		op.OperationID = "system-web-session-quick-input-get"
 		op.Summary = "获取会话快捷输入配置"
-		op.Description = "返回 Web 会话输入框的全局常驻项、全局最近输入记录和按项目保存的最近输入记录"
+		op.Description = "返回常驻项、全局最近输入以及指定项目的最近输入"
 		op.Tags = []string{systemTag}
 	})
 
-	huma.Post(group, "/system/web-session-quick-input/update", func(ctx context.Context, input *struct {
-		Body utils.WebSessionQuickInputConfig `json:"body"`
-	}) (*h.ItemResponse[utils.WebSessionQuickInputConfig], error) {
-		next := input.Body
-		// Preserve project history for older clients that still submit only
-		// the original pinned/recent fields.
-		if next.RecentByProject == nil {
-			next.RecentByProject = cfg.UI.WebSessionQuickInput.RecentByProject
+	huma.Post(group, "/system/web-session-quick-input/recent", func(ctx context.Context, input *struct {
+		Body struct {
+			Text      string `json:"text" required:"true"`
+			ProjectID string `json:"projectId,omitempty"`
+		} `json:"body"`
+	}) (*h.ItemResponse[utils.WebSessionQuickInputView], error) {
+		store := utils.CurrentConfigDatabase()
+		if store == nil {
+			return nil, configStoreAPIError(utils.ErrConfigStoreNotInitialized, "failed to record quick input")
 		}
-		normalized := utils.NormalizeWebSessionQuickInputConfig(next)
-		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
-			c.UI.WebSessionQuickInput = normalized
-		}); err != nil {
-			return nil, huma.Error500InternalServerError("failed to save configuration")
+		view, err := store.RecordQuickInput(input.Body.Text, input.Body.ProjectID)
+		if err != nil {
+			return nil, configStoreAPIError(err, "failed to record quick input")
 		}
-
-		resp := h.NewItemResponse(normalized)
+		resp := h.NewItemResponse(view)
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {
-		op.OperationID = "system-web-session-quick-input-update"
-		op.Summary = "更新会话快捷输入配置"
-		op.Description = "更新 Web 会话输入框的全局常驻项、全局最近输入记录和按项目保存的最近输入记录，并持久化到配置文件"
+		op.OperationID = "system-web-session-quick-input-recent-create"
+		op.Summary = "记录会话最近输入"
+		op.Description = "将一条成功提交的 Prompt 同时写入全局历史和可选的项目历史"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/web-session-quick-input/pinned/update", func(ctx context.Context, input *struct {
+		Body struct {
+			Items []string `json:"items"`
+		} `json:"body"`
+	}) (*h.ItemResponse[utils.WebSessionQuickInputView], error) {
+		store := utils.CurrentConfigDatabase()
+		if store == nil {
+			return nil, configStoreAPIError(utils.ErrConfigStoreNotInitialized, "failed to update pinned quick input")
+		}
+		view, err := store.UpdateQuickInputPinned(input.Body.Items)
+		if err != nil {
+			return nil, configStoreAPIError(err, "failed to update pinned quick input")
+		}
+		resp := h.NewItemResponse(view)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-web-session-quick-input-pinned-update"
+		op.Summary = "更新会话快捷输入常驻项"
 		op.Tags = []string{systemTag}
 	})
 
@@ -435,7 +465,7 @@ func registerSystemRoutes(
 				c.Terminal.Shell.Linux = input.Body.Shell
 			}
 		}); err != nil {
-			return nil, huma.Error500InternalServerError("failed to save configuration")
+			return nil, configStoreAPIError(err, "failed to save configuration")
 		}
 
 		// 热重载：更新终端管理器的 Shell 配置，新会话生效
@@ -517,7 +547,7 @@ func registerSystemRoutes(
 			c.Worktree.GlobalBaseDir = globalBaseDir
 			c.Worktree.GlobalDirNamePattern = pattern
 		}); err != nil {
-			return nil, huma.Error500InternalServerError("failed to save configuration")
+			return nil, configStoreAPIError(err, "failed to save configuration")
 		}
 
 		resp := h.NewItemResponse(cfg.Worktree)

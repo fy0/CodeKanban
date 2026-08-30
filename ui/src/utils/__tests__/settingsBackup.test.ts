@@ -84,7 +84,7 @@ describe('settingsBackup helpers', () => {
       clientPayload: {
         locale: 'zh-CN',
         settings: {
-          version: 8,
+          version: 9,
           currentPresetId: 'light',
           followSystemTheme: 0,
           customTheme: null,
@@ -161,6 +161,39 @@ describe('settingsBackup helpers', () => {
 
     expect(parsed.backupSchemaVersion).toBe(SETTINGS_BACKUP_SCHEMA_VERSION);
     expect(parsed.backupKind).toBe('settings');
+  });
+
+  it('promotes legacy client quick input into the server backup section', () => {
+    const parsed = parseSettingsBackupJSON(
+      JSON.stringify({
+        backupSchemaVersion: SETTINGS_BACKUP_SCHEMA_VERSION,
+        backupKind: SETTINGS_BACKUP_KIND,
+        sourceApp: { name: 'Code Kanban', version: '1.0.0', channel: 'stable' },
+        payload: {
+          server: {
+            webSessionQuickInput: {
+              pinned: ['Server pinned'],
+            },
+          },
+          client: {
+            settings: {
+              webSessionQuickInput: {
+                pinned: ['Legacy pinned'],
+                recent: ['Legacy global'],
+                recentByProject: { 'project-1': ['Legacy project'] },
+              },
+            },
+          },
+        },
+      })
+    );
+
+    expect(parsed.payload.server?.webSessionQuickInput).toEqual({
+      pinned: ['Server pinned'],
+      recent: ['Legacy global'],
+      recentByProject: { 'project-1': ['Legacy project'] },
+    });
+    expect(parsed.payload.client?.settings?.webSessionQuickInput).toBeUndefined();
   });
 
   it('builds importable backup filtered by selected sections', () => {

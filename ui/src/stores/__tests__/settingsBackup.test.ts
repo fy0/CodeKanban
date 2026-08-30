@@ -1,6 +1,6 @@
 import { storeToRefs } from 'pinia';
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import i18n from '@/i18n';
 import { useSettingsStore } from '@/stores/settings';
@@ -38,30 +38,33 @@ describe('settings backup helpers in store', () => {
     });
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('exports client backup with persisted settings shape', () => {
     const store = useSettingsStore();
     store.updateRecentProjectsLimit(7);
     store.updateShowWebSessionReasoning(true);
-    store.recordWebSessionRecentInput('Ship it');
 
     const payload = store.exportClientBackup('en-US', {
       includeQuickInputRecent: false,
     });
 
     expect(payload.locale).toBe('en-US');
-    expect(payload.settings.version).toBe(8);
+    expect(payload.settings.version).toBe(9);
     expect(payload.settings.recentProjectsLimit).toBe(7);
     expect(payload.settings.showWebSessionReasoning).toBe(true);
     expect('webSessionAutoRetryDispatchPendingOnFailure' in payload.settings).toBe(false);
-    expect(payload.settings.webSessionQuickInput?.recent).toBeUndefined();
-    expect(payload.settings.webSessionQuickInput?.recentByProject).toBeUndefined();
+    expect(payload.settings.webSessionQuickInput).toBeUndefined();
+    const persisted = JSON.parse(localStorage.getItem('general_settings') || '{}');
+    expect(persisted.webSessionQuickInput).toBeUndefined();
   });
 
   it('imports client backup and updates locale plus persisted storage', () => {
     const store = useSettingsStore();
     const { recentProjectsLimit, showWebSessionReasoning } = storeToRefs(store);
-    store.recordWebSessionRecentInput('Keep this');
-    store.recordWebSessionRecentInput('Keep project this', 'project-1');
+    store.updateWebSessionQuickInputPinned(['Server pinned']);
 
     store.importClientBackup({
       locale: 'en-US',
@@ -111,11 +114,13 @@ describe('settings backup helpers in store', () => {
 
     expect(recentProjectsLimit.value).toBe(6);
     expect(showWebSessionReasoning.value).toBe(true);
-    expect(store.webSessionQuickInput.recent).toEqual(['Keep this']);
-    expect(store.webSessionQuickInput.pinned).toEqual(['Plan']);
-    expect(store.webSessionQuickInput.recentByProject).toEqual({
-      'project-1': ['Keep project this'],
+    expect(store.webSessionQuickInput).toEqual({
+      pinned: ['Server pinned'],
+      recent: [],
+      recentByProject: {},
     });
+    const persisted = JSON.parse(localStorage.getItem('general_settings') || '{}');
+    expect(persisted.webSessionQuickInput).toBeUndefined();
     expect(localStorage.getItem('app-locale')).toBe('en-US');
     expect(i18n.global.locale).toBe('en-US');
   });

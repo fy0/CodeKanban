@@ -3434,7 +3434,7 @@ async function refreshSettingsAfterBackupImport(importedBackup: SettingsBackupFi
     server?.webSessionQuickInput?.recent ||
     server?.webSessionQuickInput?.recentByProject
   ) {
-    tasks.push(settingsStore.loadWebSessionQuickInput(true));
+    tasks.push(settingsStore.loadWebSessionQuickInput('', true));
   }
 
   if (tasks.length > 0) {

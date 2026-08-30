@@ -211,6 +211,13 @@ export interface WebSessionQuickInputSettings {
   recentByProject: Record<string, string[]>;
 }
 
+interface WebSessionQuickInputView {
+  pinned: string[];
+  globalRecent: string[];
+  projectId?: string;
+  projectRecent: string[];
+}
+
 export interface DailyTipSettings {
   enabled: boolean;
 }
@@ -281,7 +288,10 @@ interface GeneralSettings {
   inactiveTerminalSnapshotIntervalMs: number;
 }
 
-type PersistedGeneralSettings = Omit<GeneralSettings, 'followSystemThemeSetting'> & {
+type PersistedGeneralSettings = Omit<
+  GeneralSettings,
+  'followSystemThemeSetting' | 'webSessionQuickInput'
+> & {
   version: number;
   followSystemTheme: FollowSystemThemeSetting;
 };
@@ -299,7 +309,7 @@ type LoadSettingsResult = {
   shouldPersist: boolean;
 };
 
-const STORAGE_VERSION = 8;
+const STORAGE_VERSION = 9;
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
@@ -416,8 +426,9 @@ export const useSettingsStore = defineStore('settings', () => {
     ...DEFAULT_DAILY_TIP_SETTINGS,
   });
   const webSessionQuickInputLoaded = ref(false);
-  let webSessionQuickInputLoadTask: Promise<void> | null = null;
-  let webSessionQuickInputSyncTask: Promise<void> = Promise.resolve();
+  const webSessionQuickInputLoadedProjects = new Set<string>();
+  const webSessionQuickInputLoadTasks = new Map<string, Promise<void>>();
+  let webSessionQuickInputMutationTask: Promise<void> = Promise.resolve();
 
   if (loadedSettings.shouldPersist) {
     saveSettings(loadedSettings.settings);
@@ -719,26 +730,46 @@ export const useSettingsStore = defineStore('settings', () => {
     webSessionQuickInputLoaded.value = true;
   }
 
-  function recordWebSessionRecentInput(text: string, projectId?: string) {
+  function applyWebSessionQuickInputView(view: WebSessionQuickInputView) {
+    const projectId = String(view.projectId || '').trim();
+    const recentByProject = { ...settings.value.webSessionQuickInput.recentByProject };
+    if (projectId) {
+      const projectRecent = sanitizeWebSessionQuickInputItems(
+        view.projectRecent,
+        WEB_SESSION_QUICK_INPUT_RECENT_LIMIT
+      );
+      if (projectRecent.length > 0) {
+        recentByProject[projectId] = projectRecent;
+      } else {
+        delete recentByProject[projectId];
+      }
+      webSessionQuickInputLoadedProjects.add(projectId);
+    }
+    settings.value.webSessionQuickInput = {
+      pinned: sanitizeWebSessionQuickInputItems(view.pinned),
+      recent: sanitizeWebSessionQuickInputItems(
+        view.globalRecent,
+        WEB_SESSION_QUICK_INPUT_RECENT_LIMIT
+      ),
+      recentByProject,
+    };
+    webSessionQuickInputLoaded.value = true;
+  }
+
+  function applyOptimisticWebSessionRecentInput(text: string, projectId?: string) {
     const [normalized] = sanitizeWebSessionQuickInputItems([text], 1);
     if (!normalized) {
-      return;
+      return false;
     }
 
     const normalizedProjectId = String(projectId || '').trim();
     const current = settings.value.webSessionQuickInput;
+    const recentByProject = { ...current.recentByProject };
     if (normalizedProjectId) {
-      const recentByProject = { ...current.recentByProject };
       recentByProject[normalizedProjectId] = sanitizeWebSessionQuickInputItems(
         [normalized, ...(current.recentByProject[normalizedProjectId] ?? [])],
         WEB_SESSION_QUICK_INPUT_RECENT_LIMIT
       );
-      settings.value.webSessionQuickInput = {
-        ...current,
-        recentByProject,
-      };
-      webSessionQuickInputLoaded.value = true;
-      return;
     }
 
     settings.value.webSessionQuickInput = {
@@ -747,86 +778,93 @@ export const useSettingsStore = defineStore('settings', () => {
         [normalized, ...current.recent],
         WEB_SESSION_QUICK_INPUT_RECENT_LIMIT
       ),
+      recentByProject,
     };
     webSessionQuickInputLoaded.value = true;
+    return true;
+  }
+
+  function recordWebSessionRecentInput(text: string, projectId?: string) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const task = webSessionQuickInputMutationTask.then(async () => {
+      const previous = cloneWebSessionQuickInput(settings.value.webSessionQuickInput);
+      if (!applyOptimisticWebSessionRecentInput(text, normalizedProjectId)) {
+        return;
+      }
+      try {
+        const response = await http
+          .Post<ItemResponse<WebSessionQuickInputView>>('/system/web-session-quick-input/recent', {
+            text,
+            ...(normalizedProjectId ? { projectId: normalizedProjectId } : {}),
+          })
+          .send();
+        if (response?.item) {
+          applyWebSessionQuickInputView(response.item);
+        }
+      } catch (error) {
+        settings.value.webSessionQuickInput = previous;
+        throw error;
+      }
+    });
+    webSessionQuickInputMutationTask = task.catch(() => undefined);
+    return task;
   }
 
   function updateWebSessionQuickInputDirectSend(value: boolean) {
     settings.value.webSessionQuickInputDirectSend = value === true;
   }
 
-  function queueWebSessionQuickInputSync(payload: WebSessionQuickInputSettings) {
-    const pendingLoadTask = webSessionQuickInputLoadTask;
-
-    const task = webSessionQuickInputSyncTask.then(async () => {
-      if (pendingLoadTask) {
-        await pendingLoadTask;
-      }
-      const response = await http
-        .Post<
-          ItemResponse<WebSessionQuickInputSettings>
-        >('/system/web-session-quick-input/update', payload)
-        .send();
-      const next = sanitizeWebSessionQuickInput(response?.item ?? payload);
-      settings.value.webSessionQuickInput = next;
-      webSessionQuickInputLoaded.value = true;
-      return next;
-    });
-
-    webSessionQuickInputSyncTask = task
-      .then(() => undefined)
-      .catch(error => {
-        console.warn('Failed to sync web session quick input settings.', error);
-      });
-
-    return task;
-  }
-
-  async function loadWebSessionQuickInput(force = false) {
-    if (!force && webSessionQuickInputLoaded.value) {
+  async function loadWebSessionQuickInput(projectId = '', force = false) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const loadKey = normalizedProjectId || '__global__';
+    const loaded = normalizedProjectId
+      ? webSessionQuickInputLoadedProjects.has(normalizedProjectId)
+      : webSessionQuickInputLoaded.value;
+    if (!force && loaded) {
       return;
     }
-    if (!force && webSessionQuickInputLoadTask) {
-      return webSessionQuickInputLoadTask;
+    const existingTask = webSessionQuickInputLoadTasks.get(loadKey);
+    if (!force && existingTask) {
+      return existingTask;
     }
 
     const task = http
-      .Get<ItemResponse<WebSessionQuickInputSettings>>('/system/web-session-quick-input')
+      .Get<ItemResponse<WebSessionQuickInputView>>('/system/web-session-quick-input', {
+        params: normalizedProjectId ? { projectId: normalizedProjectId } : undefined,
+      })
       .send()
       .then(response => {
-        const next = sanitizeWebSessionQuickInput(response?.item);
-        settings.value.webSessionQuickInput = next;
-        webSessionQuickInputLoaded.value = true;
+        if (response?.item) {
+          applyWebSessionQuickInputView(response.item);
+        }
       })
       .catch(error => {
         console.warn('Failed to load web session quick input settings.', error);
       })
       .finally(() => {
-        webSessionQuickInputLoadTask = null;
+        webSessionQuickInputLoadTasks.delete(loadKey);
       });
 
-    webSessionQuickInputLoadTask = task;
+    webSessionQuickInputLoadTasks.set(loadKey, task);
     return task;
   }
 
-  async function syncWebSessionQuickInputToServer() {
-    const payload = sanitizeWebSessionQuickInput(settings.value.webSessionQuickInput);
-    settings.value.webSessionQuickInput = payload;
-    webSessionQuickInputLoaded.value = true;
-    return queueWebSessionQuickInputSync(payload);
-  }
-
   async function saveWebSessionQuickInputPinned(items: string[]) {
-    if (webSessionQuickInputLoadTask) {
-      await webSessionQuickInputLoadTask;
+    const globalLoadTask = webSessionQuickInputLoadTasks.get('__global__');
+    if (globalLoadTask) {
+      await globalLoadTask;
     } else if (!webSessionQuickInputLoaded.value) {
       await loadWebSessionQuickInput();
     }
-    const payload = sanitizeWebSessionQuickInput({
-      ...settings.value.webSessionQuickInput,
-      pinned: items,
-    });
-    return queueWebSessionQuickInputSync(payload);
+    const response = await http
+      .Post<
+        ItemResponse<WebSessionQuickInputView>
+      >('/system/web-session-quick-input/pinned/update', { items: sanitizeWebSessionQuickInputItems(items) })
+      .send();
+    if (response?.item) {
+      applyWebSessionQuickInputView(response.item);
+    }
+    return cloneWebSessionQuickInput(settings.value.webSessionQuickInput);
   }
 
   function updateConfirmBeforeTerminalClose(value: boolean) {
@@ -993,11 +1031,10 @@ export const useSettingsStore = defineStore('settings', () => {
     if (payload?.settings) {
       const importedSettings = cloneSettingsBackupClientSettings(payload.settings);
       if (importedSettings) {
-        importedSettings.webSessionQuickInput = preserveImportedQuickInputFields(
-          importedSettings.webSessionQuickInput,
-          settings.value.webSessionQuickInput
-        );
-        settings.value = deserializeSettingsFromBackup(importedSettings);
+        const serverQuickInput = cloneWebSessionQuickInput(settings.value.webSessionQuickInput);
+        const next = deserializeSettingsFromBackup(importedSettings);
+        next.webSessionQuickInput = serverQuickInput;
+        settings.value = next;
       }
     }
     saveSettings(settings.value);
@@ -1062,7 +1099,6 @@ export const useSettingsStore = defineStore('settings', () => {
     resetTerminalShortcut,
     resetNotepadShortcut,
     loadWebSessionQuickInput,
-    syncWebSessionQuickInputToServer,
     saveWebSessionQuickInputPinned,
     updateWebSessionQuickInputPinned,
     updateWebSessionQuickInputDirectSend,
@@ -1119,7 +1155,11 @@ function loadSettings(): LoadSettingsResult {
 
 function saveSettings(settings: GeneralSettings) {
   try {
-    const { followSystemThemeSetting, ...restSettings } = settings;
+    const {
+      followSystemThemeSetting,
+      webSessionQuickInput: _serverQuickInput,
+      ...restSettings
+    } = settings;
     const persisted: PersistedGeneralSettings = {
       version: STORAGE_VERSION,
       ...restSettings,
@@ -1132,7 +1172,11 @@ function saveSettings(settings: GeneralSettings) {
 }
 
 function serializeSettingsForBackup(settings: GeneralSettings): SettingsBackupClientSettings {
-  const { followSystemThemeSetting, ...restSettings } = settings;
+  const {
+    followSystemThemeSetting,
+    webSessionQuickInput: _serverQuickInput,
+    ...restSettings
+  } = settings;
   return {
     version: STORAGE_VERSION,
     ...restSettings,
@@ -1153,25 +1197,6 @@ function cloneSettingsBackupClientSettings(
     return value;
   }
   return JSON.parse(JSON.stringify(value)) as SettingsBackupClientPayload['settings'];
-}
-
-function preserveImportedQuickInputFields(
-  imported: Partial<WebSessionQuickInputSettings> | undefined,
-  current: WebSessionQuickInputSettings
-) {
-  const next = imported ? { ...imported } : {};
-  if (!('pinned' in next)) {
-    next.pinned = [...current.pinned];
-  }
-  if (!('recent' in next)) {
-    next.recent = [...current.recent];
-  }
-  if (!('recentByProject' in next)) {
-    next.recentByProject = Object.fromEntries(
-      Object.entries(current.recentByProject).map(([projectId, recent]) => [projectId, [...recent]])
-    );
-  }
-  return next;
 }
 
 function cloneDefaultSettings(): GeneralSettings {
@@ -1231,6 +1256,7 @@ function loadSettingsFromParsed(
   }
 
   const parsedVersion = typeof parsed.version === 'number' ? parsed.version : undefined;
+  const hasLegacyQuickInput = Object.prototype.hasOwnProperty.call(parsed, 'webSessionQuickInput');
 
   if (parsedVersion != null && parsedVersion > STORAGE_VERSION) {
     console.warn(`Unsupported settings version "${parsedVersion}", falling back to defaults.`);
@@ -1272,7 +1298,7 @@ function loadSettingsFromParsed(
       recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
       maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
       panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
-      webSessionQuickInput: sanitizeWebSessionQuickInput(parsed.webSessionQuickInput),
+      webSessionQuickInput: sanitizeWebSessionQuickInput(),
       webSessionQuickInputDirectSend: sanitizeWebSessionQuickInputDirectSend(
         parsed.webSessionQuickInputDirectSend
       ),
@@ -1314,7 +1340,7 @@ function loadSettingsFromParsed(
         parsed.inactiveTerminalSnapshotIntervalMs
       ),
     },
-    shouldPersist: parsedVersion !== STORAGE_VERSION,
+    shouldPersist: parsedVersion !== STORAGE_VERSION || hasLegacyQuickInput,
   };
 }
 
@@ -1543,6 +1569,18 @@ function sanitizeWebSessionQuickInput(
     pinned: sanitizeWebSessionQuickInputItems(value?.pinned),
     recent: sanitizeWebSessionQuickInputItems(value?.recent, WEB_SESSION_QUICK_INPUT_RECENT_LIMIT),
     recentByProject: sanitizeWebSessionQuickInputRecentByProject(value?.recentByProject),
+  };
+}
+
+function cloneWebSessionQuickInput(
+  value: WebSessionQuickInputSettings
+): WebSessionQuickInputSettings {
+  return {
+    pinned: [...value.pinned],
+    recent: [...value.recent],
+    recentByProject: Object.fromEntries(
+      Object.entries(value.recentByProject).map(([projectId, recent]) => [projectId, [...recent]])
+    ),
   };
 }
 

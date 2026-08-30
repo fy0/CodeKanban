@@ -7426,8 +7426,10 @@ async function handleQuickInputApply(text: string) {
 }
 
 function recordSubmittedPrompt(text: string, projectId?: string) {
-  settingsStore.recordWebSessionRecentInput(text, projectId);
-  void settingsStore.syncWebSessionQuickInputToServer();
+  void settingsStore.recordWebSessionRecentInput(text, projectId).catch(error => {
+    console.error('Failed to record quick input history:', error);
+    message.error(t('webSession.quickInputRecordFailed'));
+  });
 }
 
 function isQuickInputSelected(text: string) {
@@ -12536,8 +12538,7 @@ async function handleSubmit() {
       }
       await webSessionStore.compactSession(initialRealSession.id);
       submissionSucceeded = true;
-      settingsStore.recordWebSessionRecentInput(draftText);
-      void settingsStore.syncWebSessionQuickInputToServer();
+      recordSubmittedPrompt(draftText, initialRealSession.projectId || submitProjectId);
       return;
     }
     let session = initialRealSession;
@@ -15073,6 +15074,7 @@ watch(
     piTrustServerProjectPath.value = '';
     pendingPiAgentSelection.value = false;
     showPiTrustDialog.value = false;
+    void settingsStore.loadWebSessionQuickInput(projectId || '');
     if (projectId) {
       void initializeProjectSessions(projectId);
     } else {
@@ -15686,7 +15688,7 @@ onMounted(() => {
   liveStateClockTimer = window.setInterval(() => {
     liveStateClockMs.value = Date.now();
   }, LIVE_TIME_TICK_MS);
-  void settingsStore.loadWebSessionQuickInput();
+  void settingsStore.loadWebSessionQuickInput(props.projectId || '');
   void loadComposerDeveloperConfig();
   void loadCodexRuntimeConfig();
   void ensureCodexSkillsLoaded();

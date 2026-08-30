@@ -776,6 +776,7 @@ export default {
     quickInputScopeProject: '本项目',
     quickInputSearchPlaceholder: '搜索最近输入的 Prompt',
     quickInputSearchEmpty: '没有匹配的 Prompt',
+    quickInputRecordFailed: 'Prompt 已发送，但最近输入保存失败',
     skills: 'Skills',
     skillSearchPlaceholder: '搜索 skill 名称、说明或来源',
     skillEmpty: '当前没有可用的 skill',

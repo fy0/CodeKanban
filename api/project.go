@@ -10,6 +10,9 @@ import (
 	"code-kanban/api/h"
 	"code-kanban/model"
 	"code-kanban/service/websession"
+	"code-kanban/utils"
+
+	"go.uber.org/zap"
 )
 
 const projectTag = "project-项目管理"
@@ -239,6 +242,15 @@ func registerProjectRoutes(group *huma.Group, webSessionManager *websession.Mana
 				return nil, huma.Error404NotFound("project not found")
 			}
 			return nil, huma.Error500InternalServerError("failed to delete project", err)
+		}
+		if store := utils.CurrentConfigDatabase(); store != nil {
+			if err := store.DeleteProjectQuickInput(input.ID); err != nil &&
+				!errors.Is(err, utils.ErrConfigStoreReadOnly) {
+				utils.Logger().Warn("failed to delete project quick input history",
+					zap.String("projectId", input.ID),
+					zap.Error(err),
+				)
+			}
 		}
 
 		resp := h.NewMessageResponse("Project deleted successfully")

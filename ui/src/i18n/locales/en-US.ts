@@ -803,6 +803,7 @@ export default {
     quickInputScopeProject: 'This project',
     quickInputSearchPlaceholder: 'Search recent prompts',
     quickInputSearchEmpty: 'No matching prompts',
+    quickInputRecordFailed: 'Prompt sent, but recent input could not be saved',
     skills: 'Skills',
     skillSearchPlaceholder: 'Search skills by name, description, or source',
     skillEmpty: 'No Codex skills are available',

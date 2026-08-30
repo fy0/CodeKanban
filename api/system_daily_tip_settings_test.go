@@ -44,7 +44,7 @@ ui:
 	}
 }
 
-func TestSystemDailyTipSettingsUpdatePersistsConfig(t *testing.T) {
+func TestSystemDailyTipSettingsUpdatePersistsConfigDatabase(t *testing.T) {
 	cfg, configPath := loadSystemDailyTipTestConfig(t, `
 ui:
   dailyTipEnabled: true
@@ -77,8 +77,8 @@ ui:
 	if err != nil {
 		t.Fatalf("read config failed: %v", err)
 	}
-	if !strings.Contains(string(rewritten), "dailyTipEnabled: false") {
-		t.Fatalf("expected config file to persist dailyTipEnabled=false, got:\n%s", string(rewritten))
+	if strings.Contains(string(rewritten), "dailyTipEnabled") || strings.Contains(string(rewritten), "\nui:") {
+		t.Fatalf("expected bootstrap config to exclude daily tip settings, got:\n%s", string(rewritten))
 	}
 }
 
@@ -106,7 +106,15 @@ func loadSystemDailyTipTestConfig(t *testing.T, configYAML string) (*utils.AppCo
 		_ = os.Chdir(oldWD)
 	})
 
-	return utils.ReadConfig(), configPath
+	cfg := utils.ReadConfig()
+	store, err := utils.InitConfigDatabase(cfg)
+	if err != nil {
+		t.Fatalf("initialize config database: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+	return cfg, configPath
 }
 
 func newSystemDailyTipTestApp(t *testing.T, cfg *utils.AppConfig) *fiber.App {

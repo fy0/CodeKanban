@@ -121,7 +121,7 @@ func registerAuthRoutes(app *fiber.App, cfg *utils.AppConfig) {
 		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
 			utils.ApplyAuthAccessConfigToAuthConfig(&c.Auth, normalized)
 		}); err != nil {
-			return sendAPIError(ctx, http.StatusInternalServerError, "failed to save access configuration")
+			return sendConfigStoreFiberError(ctx, err, "failed to save access configuration")
 		}
 
 		resp := h.NewItemResponse(normalized)
@@ -183,7 +183,7 @@ func registerAuthRoutes(app *fiber.App, cfg *utils.AppConfig) {
 			c.Auth.PasswordHash = passwordHash
 			c.Auth.TokenSecret = tokenSecret
 		}); err != nil {
-			return sendAPIError(ctx, http.StatusInternalServerError, "failed to save password configuration")
+			return sendConfigStoreFiberError(ctx, err, "failed to save password configuration")
 		}
 
 		if err := issueAuthCookie(ctx, cfg); err != nil {
@@ -226,7 +226,7 @@ func registerAuthRoutes(app *fiber.App, cfg *utils.AppConfig) {
 			c.Auth.PasswordHash = passwordHash
 			c.Auth.TokenSecret = tokenSecret
 		}); err != nil {
-			return sendAPIError(ctx, http.StatusInternalServerError, "failed to save password configuration")
+			return sendConfigStoreFiberError(ctx, err, "failed to save password configuration")
 		}
 
 		if err := issueAuthCookie(ctx, cfg); err != nil {
@@ -265,7 +265,7 @@ func registerAuthRoutes(app *fiber.App, cfg *utils.AppConfig) {
 			c.Auth.PasswordHash = ""
 			c.Auth.TokenSecret = tokenSecret
 		}); err != nil {
-			return sendAPIError(ctx, http.StatusInternalServerError, "failed to save password configuration")
+			return sendConfigStoreFiberError(ctx, err, "failed to save password configuration")
 		}
 
 		clearAuthCookie(ctx)

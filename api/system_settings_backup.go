@@ -91,7 +91,7 @@ func registerSystemSettingsBackupRoutes(
 			return nil, huma.Error400BadRequest("backup import is blocked by validation errors")
 		}
 		if err := applySettingsBackup(cfg, input.Body, terminalManager, webSessionManager); err != nil {
-			return nil, huma.Error500InternalServerError("failed to import settings backup", err)
+			return nil, configStoreAPIError(err, "failed to import settings backup")
 		}
 		result.Migrated = migrated
 		resp := h.NewItemResponse(result)
@@ -360,7 +360,11 @@ func applySettingsBackup(
 		server.AuthAccess = &authAccess
 	}
 
-	if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+	updateConfig := utils.UpdateConfig
+	if server.WebSessionQuickInput != nil {
+		updateConfig = utils.UpdateConfigAndQuickInput
+	}
+	if err := updateConfig(cfg, func(c *utils.AppConfig) {
 		if server.Developer != nil {
 			c.Developer = *server.Developer
 		}

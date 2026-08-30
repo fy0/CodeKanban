@@ -89,6 +89,16 @@ func run(forceMigrate bool, bind string, port int) {
 	checker.CheckAsync()
 
 	cfg := utils.ReadConfig()
+	configDatabase, err := utils.InitConfigDatabase(cfg)
+	if err != nil {
+		fmt.Printf("Failed to initialize configuration database: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if closeErr := configDatabase.Close(); closeErr != nil {
+			fmt.Printf("Failed to close configuration database: %v\n", closeErr)
+		}
+	}()
 	if err := utils.EnsureAuthConfig(cfg); err != nil {
 		fmt.Printf("Failed to initialize auth config: %v\n", err)
 		os.Exit(1)
@@ -120,6 +130,17 @@ func run(forceMigrate bool, bind string, port int) {
 		logger.Fatal("Failed to initialize database", zap.Error(err))
 	}
 	defer model.DBClose()
+
+	if projects, listErr := model.NewProjectService().ListProjects(context.Background()); listErr == nil {
+		projectIDs := make([]string, 0, len(projects))
+		for _, project := range projects {
+			projectIDs = append(projectIDs, project.Id)
+		}
+		if cleanupErr := configDatabase.ReconcileProjectQuickInput(projectIDs); cleanupErr != nil &&
+			!errors.Is(cleanupErr, utils.ErrConfigStoreReadOnly) {
+			logger.Warn("Failed to reconcile project quick input history", zap.Error(cleanupErr))
+		}
+	}
 
 	logger.Info("Starting server", zap.String("listen", cfg.ServeAt))
 

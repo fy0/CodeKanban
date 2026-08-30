@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"code-kanban/utils"
-
-	"gopkg.in/yaml.v3"
 )
 
 type pageTitleSettingsResponse struct {
@@ -76,12 +74,8 @@ ui:
 	if err != nil {
 		t.Fatalf("read config failed: %v", err)
 	}
-	var persisted utils.AppConfig
-	if err := yaml.Unmarshal(rewritten, &persisted); err != nil {
-		t.Fatalf("parse persisted config failed: %v", err)
-	}
-	if got := persisted.UI.PageTitle; got != "工作实例 🚀" {
-		t.Fatalf("persisted title = %q, want %q", got, "工作实例 🚀")
+	if strings.Contains(string(rewritten), "pageTitle:") || strings.Contains(string(rewritten), "\nui:") {
+		t.Fatalf("bootstrap config retained runtime page title:\n%s", rewritten)
 	}
 }
 
