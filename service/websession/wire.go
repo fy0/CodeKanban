@@ -277,24 +277,26 @@ type wirePendingInput struct {
 }
 
 type wireScheduledInput struct {
-	ID              string   `json:"id"`
-	Action          string   `json:"a,omitempty"`
-	TargetID        string   `json:"tid,omitempty"`
-	Mode            string   `json:"m"`
-	ExitPlanMode    bool     `json:"epm,omitempty"`
-	Text            string   `json:"txt,omitempty"`
-	AttachmentIDs   []string `json:"atts,omitempty"`
-	ScheduleKind    string   `json:"sk,omitempty"`
-	ScheduledFor    *int64   `json:"sf,omitempty"`
-	IdleSince       *int64   `json:"is,omitempty"`
-	BlockingReasons []string `json:"br,omitempty"`
-	ConditionError  string   `json:"ce,omitempty"`
-	Status          string   `json:"st"`
-	LastError       string   `json:"err,omitempty"`
-	CreatedAt       int64    `json:"ca"`
-	UpdatedAt       int64    `json:"ua"`
-	SentAt          *int64   `json:"sa,omitempty"`
-	CanceledAt      *int64   `json:"xa,omitempty"`
+	ID               string   `json:"id"`
+	DependsOnID      string   `json:"dep,omitempty"`
+	DependencyStatus string   `json:"dst,omitempty"`
+	Action           string   `json:"a,omitempty"`
+	TargetID         string   `json:"tid,omitempty"`
+	Mode             string   `json:"m"`
+	ExitPlanMode     bool     `json:"epm,omitempty"`
+	Text             string   `json:"txt,omitempty"`
+	AttachmentIDs    []string `json:"atts,omitempty"`
+	ScheduleKind     string   `json:"sk,omitempty"`
+	ScheduledFor     *int64   `json:"sf,omitempty"`
+	IdleSince        *int64   `json:"is,omitempty"`
+	BlockingReasons  []string `json:"br,omitempty"`
+	ConditionError   string   `json:"ce,omitempty"`
+	Status           string   `json:"st"`
+	LastError        string   `json:"err,omitempty"`
+	CreatedAt        int64    `json:"ca"`
+	UpdatedAt        int64    `json:"ua"`
+	SentAt           *int64   `json:"sa,omitempty"`
+	CanceledAt       *int64   `json:"xa,omitempty"`
 }
 
 type wireResyncRequiredPayload struct {
@@ -686,24 +688,26 @@ func mapWireScheduledInputs(items []ScheduledInput) []wireScheduledInput {
 			canceledAt = &value
 		}
 		wireItems = append(wireItems, wireScheduledInput{
-			ID:              item.ID,
-			Action:          string(item.Action),
-			TargetID:        item.TargetID,
-			Mode:            string(item.Mode),
-			ExitPlanMode:    item.ExitPlanMode,
-			Text:            item.Text,
-			AttachmentIDs:   append([]string(nil), item.AttachmentIDs...),
-			ScheduleKind:    string(item.ScheduleKind),
-			ScheduledFor:    scheduledFor,
-			IdleSince:       idleSince,
-			BlockingReasons: blockingReasons,
-			ConditionError:  item.ConditionError,
-			Status:          string(item.Status),
-			LastError:       item.LastError,
-			CreatedAt:       item.CreatedAt.UnixMilli(),
-			UpdatedAt:       item.UpdatedAt.UnixMilli(),
-			SentAt:          sentAt,
-			CanceledAt:      canceledAt,
+			ID:               item.ID,
+			DependsOnID:      item.DependsOnID,
+			DependencyStatus: string(item.DependencyStatus),
+			Action:           string(item.Action),
+			TargetID:         item.TargetID,
+			Mode:             string(item.Mode),
+			ExitPlanMode:     item.ExitPlanMode,
+			Text:             item.Text,
+			AttachmentIDs:    append([]string(nil), item.AttachmentIDs...),
+			ScheduleKind:     string(item.ScheduleKind),
+			ScheduledFor:     scheduledFor,
+			IdleSince:        idleSince,
+			BlockingReasons:  blockingReasons,
+			ConditionError:   item.ConditionError,
+			Status:           string(item.Status),
+			LastError:        item.LastError,
+			CreatedAt:        item.CreatedAt.UnixMilli(),
+			UpdatedAt:        item.UpdatedAt.UnixMilli(),
+			SentAt:           sentAt,
+			CanceledAt:       canceledAt,
 		})
 	}
 	return wireItems

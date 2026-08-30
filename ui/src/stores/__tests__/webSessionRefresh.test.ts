@@ -1291,6 +1291,8 @@ describe('webSession loading behavior', () => {
     expect(store.getScheduledInputs(session.id)).toEqual([
       {
         id: 'scheduled-1',
+        dependsOnId: '',
+        dependencyStatus: 'none',
         action: 'message',
         targetId: '',
         mode: 'interrupt',
@@ -2435,6 +2437,8 @@ describe('webSession loading behavior', () => {
     expect(store.getScheduledInputs(session.id)).toEqual([
       {
         id: 'scheduled-ack-1',
+        dependsOnId: '',
+        dependencyStatus: 'none',
         action: 'message',
         targetId: '',
         mode: 'interrupt',
@@ -2870,6 +2874,8 @@ describe('webSession loading behavior', () => {
     expect(store.getScheduledInputs(session.id)).toEqual([
       {
         id: 'scheduled-evt-1',
+        dependsOnId: '',
+        dependencyStatus: 'none',
         action: 'execute_plan',
         targetId: 'plan-item-expired',
         mode: 'send',

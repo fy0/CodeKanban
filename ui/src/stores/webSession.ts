@@ -158,6 +158,8 @@ type WirePendingInput = {
 
 type WireScheduledInput = {
   id?: string;
+  dep?: string;
+  dst?: string;
   a?: 'message' | 'execute_plan' | string;
   tid?: string;
   m?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
@@ -597,6 +599,15 @@ type WebSessionStagedPendingInput = WebSessionPendingInput & {
 
 export interface WebSessionScheduledInput {
   id: string;
+  dependsOnId: string;
+  dependencyStatus:
+    | 'none'
+    | 'waiting'
+    | 'satisfied'
+    | 'failed'
+    | 'canceled'
+    | 'expired'
+    | 'missing';
   action: 'message' | 'execute_plan';
   targetId: string;
   mode: 'send' | 'interrupt' | 'queue';
@@ -3208,6 +3219,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function normalizeScheduledInput(item: {
     id?: string;
+    dependsOnId?: string;
+    dependencyStatus?: string;
     action?: 'message' | 'execute_plan' | string;
     targetId?: string;
     mode?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
@@ -3231,6 +3244,21 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return null;
     }
     const action = item.action === 'execute_plan' ? 'execute_plan' : 'message';
+    const dependsOnId = typeof item.dependsOnId === 'string' ? item.dependsOnId.trim() : '';
+    const validDependencyStatuses = new Set([
+      'none',
+      'waiting',
+      'satisfied',
+      'failed',
+      'canceled',
+      'expired',
+      'missing',
+    ]);
+    const dependencyStatus = validDependencyStatuses.has(item.dependencyStatus ?? '')
+      ? (item.dependencyStatus as WebSessionScheduledInput['dependencyStatus'])
+      : dependsOnId
+        ? 'waiting'
+        : 'none';
     const mode =
       item.mode === 'send'
         ? 'send'
@@ -3292,6 +3320,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
         : Date.parse(typeof item.canceledAt === 'string' ? item.canceledAt : '');
     return {
       id,
+      dependsOnId,
+      dependencyStatus,
       action,
       targetId: typeof item.targetId === 'string' ? item.targetId.trim() : '',
       mode,
@@ -5303,6 +5333,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 .map(item =>
                   normalizeScheduledInput({
                     id: item.id,
+                    dependsOnId: item.dep,
+                    dependencyStatus: item.dst,
                     action: item.a,
                     targetId: item.tid,
                     mode: item.m,
@@ -6856,7 +6888,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     attachmentIds: string[],
     scheduledForOrSchedule: number | WebSessionSchedule,
     mode: 'send' | 'interrupt' | 'queue' = 'send',
-    options: { exitPlanMode?: boolean } = {}
+    options: { exitPlanMode?: boolean; dependsOnId?: string } = {}
   ) {
     const session = findSessionById(sessionId);
     if (session?.archivedAt) {
@@ -6871,12 +6903,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
       atts: attachmentIds,
       mode,
       epm: options.exitPlanMode === true,
+      ...(options.dependsOnId ? { dep: options.dependsOnId } : {}),
       sk: schedule.scheduleKind,
       ...(schedule.scheduleKind === 'at_time' ? { at: schedule.scheduledFor } : {}),
     });
     const payload = asRecord(frame.p);
     const created = normalizeScheduledInput({
       id: typeof payload?.id === 'string' ? payload.id : '',
+      dependsOnId: typeof payload?.dep === 'string' ? payload.dep : (options.dependsOnId ?? ''),
+      dependencyStatus:
+        typeof payload?.dst === 'string' ? payload.dst : options.dependsOnId ? 'waiting' : 'none',
       action: typeof payload?.a === 'string' ? payload.a : 'message',
       targetId: typeof payload?.tid === 'string' ? payload.tid : '',
       mode: typeof payload?.m === 'string' ? payload.m : '',
@@ -6924,7 +6960,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
   async function schedulePlanExecution(
     sessionId: string,
     scheduledForOrSchedule: number | WebSessionSchedule,
-    target: WebSessionPlanExecutionTarget
+    target: WebSessionPlanExecutionTarget,
+    options: { dependsOnId?: string } = {}
   ) {
     const session = findSessionById(sessionId);
     if (session?.archivedAt) {
@@ -6939,12 +6976,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
       iid: target.pendingItemId ?? '',
       qid: target.questionId ?? '',
       opt: target.executeOptionLabel ?? '',
+      ...(options.dependsOnId ? { dep: options.dependsOnId } : {}),
       sk: schedule.scheduleKind,
       ...(schedule.scheduleKind === 'at_time' ? { at: schedule.scheduledFor } : {}),
     });
     const payload = asRecord(frame.p);
     const created = normalizeScheduledInput({
       id: typeof payload?.id === 'string' ? payload.id : '',
+      dependsOnId: typeof payload?.dep === 'string' ? payload.dep : (options.dependsOnId ?? ''),
+      dependencyStatus:
+        typeof payload?.dst === 'string' ? payload.dst : options.dependsOnId ? 'waiting' : 'none',
       action: typeof payload?.a === 'string' ? payload.a : 'execute_plan',
       targetId: typeof payload?.tid === 'string' ? payload.tid : target.planItemId,
       mode: typeof payload?.m === 'string' ? payload.m : 'send',
@@ -6997,6 +7038,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       text?: string;
       mode?: 'send' | 'interrupt' | 'queue';
       exitPlanMode?: boolean;
+      dependsOnId?: string;
     }
   ) {
     const current = getScheduledInputs(sessionId).find(item => item.id === inputId);
@@ -7010,10 +7052,21 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...(typeof update.text === 'string' ? { txt: update.text } : {}),
       ...(update.mode ? { mode: update.mode } : {}),
       ...(typeof update.exitPlanMode === 'boolean' ? { epm: update.exitPlanMode } : {}),
+      ...(typeof update.dependsOnId === 'string' ? { dep: update.dependsOnId } : {}),
     });
     const payload = asRecord(frame.p);
     const updated = normalizeScheduledInput({
       id: typeof payload?.id === 'string' ? payload.id : current.id,
+      dependsOnId:
+        typeof payload?.dep === 'string'
+          ? payload.dep
+          : (update.dependsOnId ?? current.dependsOnId),
+      dependencyStatus:
+        typeof payload?.dst === 'string'
+          ? payload.dst
+          : update.dependsOnId === ''
+            ? 'none'
+            : current.dependencyStatus,
       action: typeof payload?.a === 'string' ? payload.a : current.action,
       targetId: typeof payload?.tid === 'string' ? payload.tid : current.targetId,
       mode: typeof payload?.m === 'string' ? payload.m : (update.mode ?? current.mode),
@@ -7069,8 +7122,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return updated;
   }
 
-  async function dispatchScheduledInputNow(sessionId: string, inputId: string) {
-    await sendCommand('scheduled_now', sessionId, { id: inputId });
+  async function dispatchScheduledInputNow(
+    sessionId: string,
+    inputId: string,
+    bypassDependency = false
+  ) {
+    await sendCommand('scheduled_now', sessionId, {
+      id: inputId,
+      ...(bypassDependency ? { bd: true } : {}),
+    });
     setScheduledInputs(
       sessionId,
       getScheduledInputs(sessionId).filter(item => item.id !== inputId)

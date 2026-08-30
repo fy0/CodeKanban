@@ -286,6 +286,16 @@ export type WebSessionPendingInputRecord = {
 
 export type WebSessionScheduledInputRecord = {
   id?: string;
+  dependsOnId?: string;
+  dependencyStatus?:
+    | 'none'
+    | 'waiting'
+    | 'satisfied'
+    | 'failed'
+    | 'canceled'
+    | 'expired'
+    | 'missing'
+    | string;
   action?: 'message' | 'execute_plan' | string;
   targetId?: string;
   mode?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;

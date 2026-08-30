@@ -2298,6 +2298,13 @@
                               : scheduledModeLabel(item.mode)
                           }}
                         </span>
+                        <span
+                          v-if="item.dependsOnId"
+                          class="scheduled-input-dependency"
+                          :class="`state-${item.dependencyStatus}`"
+                        >
+                          {{ scheduledDependencyStatusLabel(item.dependencyStatus) }}
+                        </span>
                         <span class="scheduled-input-time" :title="scheduledInputTimeTitle(item)">
                           {{ scheduledInputTimeLabel(item) }}
                         </span>
@@ -2339,6 +2346,12 @@
                               ? scheduledIdleStatusLabel(item)
                               : formatDateTime(item.scheduledFor ?? item.createdAt)
                           }}
+                        </strong>
+                      </div>
+                      <div v-if="item.dependsOnId" class="scheduled-input-detail-row">
+                        <span>{{ t('webSession.scheduledDependencyDetailLabel') }}</span>
+                        <strong>
+                          {{ scheduledDependencyStatusLabel(item.dependencyStatus) }}
                         </strong>
                       </div>
                       <div
@@ -3028,6 +3041,8 @@
       :selected-preset-key="selectedScheduledSendPresetKey"
       :send-at="scheduledSendAt"
       :selected-time-label="scheduledDialogSelectedTimeLabel"
+      :dependency-id="scheduledDependsOnId"
+      :dependency-options="scheduledDependencyOptions"
       :mode="scheduledSendMode"
       :exit-plan-mode="scheduledExitPlanMode"
       :can-confirm="canConfirmScheduledSend"
@@ -3035,6 +3050,7 @@
       @update:edit-text="scheduledEditText = $event"
       @update:schedule-kind="scheduledScheduleKind = $event"
       @update:send-at="scheduledSendAt = $event"
+      @update:dependency-id="scheduledDependsOnId = $event"
       @update:mode="scheduledSendMode = $event"
       @update:exit-plan-mode="scheduledExitPlanMode = $event"
       @select-preset="handleScheduledSendPresetSelect"
@@ -3565,6 +3581,11 @@ type ScheduledSendPresetOption = {
   label: string;
   timestamp: number;
 };
+type ScheduledDependencyOption = {
+  label: string;
+  value: string;
+  disabled?: boolean;
+};
 
 type ScheduledPlanDialogTarget = {
   sessionId: string;
@@ -3803,6 +3824,7 @@ const scheduledEditText = ref('');
 const activeScheduledInputPopoverId = ref('');
 const scheduledInputActionId = ref('');
 const scheduledSendAt = ref<number | null>(null);
+const scheduledDependsOnId = ref('');
 const scheduledSendMode = ref<ScheduledSendMode>('send');
 const scheduledExitPlanMode = ref(false);
 const scheduledScheduleKind = ref<ScheduledScheduleKind>('at_time');
@@ -6246,6 +6268,34 @@ const pendingEditCanSave = computed(() => pendingEditText.value.trim().length > 
 const scheduledInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getScheduledInputs(currentRealSession.value.id) : []
 );
+const scheduledDependencyOptions = computed<ScheduledDependencyOption[]>(() => {
+  const editingID = scheduledEditingInput.value?.id ?? '';
+  const options: ScheduledDependencyOption[] = scheduledInputs.value
+    .filter(item => {
+      if (item.id === editingID || item.status !== 'scheduled') {
+        return false;
+      }
+      return !scheduledDependencyWouldCreateCycle(item.id, editingID);
+    })
+    .map(item => ({
+      label: scheduledDependencyOptionLabel(item),
+      value: item.id,
+    }));
+  const selectedID = scheduledDependsOnId.value;
+  if (selectedID && !options.some(option => option.value === selectedID)) {
+    const selectedItem = scheduledInputs.value.find(item => item.id === selectedID);
+    options.push({
+      label: selectedItem
+        ? scheduledDependencyOptionLabel(selectedItem)
+        : scheduledDependencyStatusLabel(
+            scheduledEditingInput.value?.dependencyStatus ?? 'missing'
+          ),
+      value: selectedID,
+      disabled: true,
+    });
+  }
+  return options;
+});
 const activeScheduledPlanTargetIds = computed(
   () =>
     new Set(
@@ -6430,19 +6480,24 @@ const scheduledDialogSelectedTimeLabel = computed(() =>
 );
 const canConfirmScheduledSend = computed(() => {
   const requiresScheduledTime = scheduledScheduleKind.value === 'at_time';
+  const editing = scheduledEditingInput.value;
+  const current = editing ? scheduledInputs.value.find(item => item.id === editing.id) : undefined;
+  const keepsExistingAtTime = Boolean(
+    isScheduledDialogEdit.value &&
+      current?.scheduleKind === 'at_time' &&
+      scheduledScheduleKind.value === 'at_time' &&
+      Number(scheduledSendAt.value) === current.scheduledFor
+  );
   if (
     isMessageCapabilityBlocked.value ||
     (requiresScheduledTime &&
-      (!Number.isFinite(scheduledSendAt.value) || Number(scheduledSendAt.value) <= Date.now())) ||
+      (!Number.isFinite(scheduledSendAt.value) ||
+        (Number(scheduledSendAt.value) <= Date.now() && !keepsExistingAtTime))) ||
     scheduledSendSubmitting.value
   ) {
     return false;
   }
   if (isScheduledDialogEdit.value) {
-    const editing = scheduledEditingInput.value;
-    const current = editing
-      ? scheduledInputs.value.find(item => item.id === editing.id)
-      : undefined;
     if (!current || (current.status !== 'scheduled' && current.status !== 'failed')) {
       return false;
     }
@@ -7181,6 +7236,7 @@ function openScheduledSendDialog(
     presets.find(option => option.key === '5m')?.timestamp ??
     presets[0]?.timestamp ??
     Date.now() + 5 * 60_000;
+  scheduledDependsOnId.value = '';
   scheduledSendMode.value = 'send';
   scheduledExitPlanMode.value = false;
   scheduledScheduleKind.value = 'at_time';
@@ -7206,8 +7262,8 @@ function openScheduledInputEditDialog(item: WebSessionScheduledInput) {
   scheduledEditingInput.value = item;
   scheduledEditText.value = item.text;
   scheduledSendPresetOptions.value = presets;
-  scheduledSendAt.value =
-    item.scheduledFor != null && item.scheduledFor > Date.now() ? item.scheduledFor : fallbackTime;
+  scheduledSendAt.value = item.scheduledFor ?? fallbackTime;
+  scheduledDependsOnId.value = item.dependsOnId;
   scheduledSendMode.value = item.mode;
   scheduledExitPlanMode.value = item.exitPlanMode;
   scheduledScheduleKind.value = item.scheduleKind;
@@ -7224,6 +7280,7 @@ function handleScheduledSendDialogVisibilityChange(show: boolean) {
     scheduledPlanDialogTarget.value = null;
     scheduledEditingInput.value = null;
     scheduledEditText.value = '';
+    scheduledDependsOnId.value = '';
     scheduledExitPlanMode.value = false;
     scheduledScheduleKind.value = 'at_time';
   }
@@ -12640,7 +12697,10 @@ async function handleConfirmScheduledSend() {
         ? { scheduleKind: 'when_idle' }
         : { scheduleKind: 'at_time', scheduledFor: executeAt },
       sendMode,
-      { exitPlanMode: scheduledExitPlanMode.value }
+      {
+        exitPlanMode: scheduledExitPlanMode.value,
+        dependsOnId: scheduledDependsOnId.value || undefined,
+      }
     );
     recordSubmittedPrompt(draftText, session.projectId || submitProjectId);
     clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
@@ -12698,6 +12758,9 @@ async function handleConfirmScheduledPlanExecution() {
         pendingItemId: target.pendingItemId,
         questionId: target.questionId,
         executeOptionLabel: target.executeOptionLabel,
+      },
+      {
+        dependsOnId: scheduledDependsOnId.value || undefined,
       }
     );
     if (prepared.navigateProjectId && isCurrentVisibleSession(prepared.session.id)) {
@@ -12720,12 +12783,17 @@ async function handleConfirmScheduledInputUpdate() {
   const current = editing ? scheduledInputs.value.find(item => item.id === editing.id) : undefined;
   const scheduleKind = scheduledScheduleKind.value;
   const requiresScheduledTime = scheduleKind === 'at_time';
+  const keepsExistingAtTime =
+    current?.scheduleKind === 'at_time' &&
+    scheduleKind === 'at_time' &&
+    executeAt === current.scheduledFor;
   if (
     !currentSession ||
     !current ||
     (current.status !== 'scheduled' && current.status !== 'failed') ||
     scheduledSendSubmitting.value ||
-    (requiresScheduledTime && (!Number.isFinite(executeAt) || executeAt <= Date.now()))
+    (requiresScheduledTime &&
+      (!Number.isFinite(executeAt) || (executeAt <= Date.now() && !keepsExistingAtTime)))
   ) {
     return;
   }
@@ -12742,9 +12810,17 @@ async function handleConfirmScheduledInputUpdate() {
     if (!(await ensureMessageCapabilityAvailable(currentSession.agent))) {
       return;
     }
+    const scheduleChanged =
+      scheduleKind !== current.scheduleKind ||
+      (requiresScheduledTime && executeAt !== current.scheduledFor);
     await webSessionStore.updateScheduledInput(currentSession.id, current.id, {
-      scheduleKind,
-      scheduledFor: requiresScheduledTime ? executeAt : null,
+      ...(scheduleChanged
+        ? {
+            scheduleKind,
+            scheduledFor: requiresScheduledTime ? executeAt : null,
+          }
+        : {}),
+      dependsOnId: scheduledDependsOnId.value,
       ...(current.action === 'message'
         ? {
             text: scheduledEditText.value,
@@ -13225,6 +13301,50 @@ function scheduledModeLabel(mode: WebSessionScheduledInput['mode']) {
   }
 }
 
+function scheduledDependencyWouldCreateCycle(candidateID: string, editingID: string) {
+  if (!candidateID || !editingID) {
+    return false;
+  }
+  const byID = new Map(scheduledInputs.value.map(item => [item.id, item]));
+  const seen = new Set<string>();
+  let currentID = candidateID;
+  while (currentID && !seen.has(currentID)) {
+    if (currentID === editingID) {
+      return true;
+    }
+    seen.add(currentID);
+    currentID = byID.get(currentID)?.dependsOnId ?? '';
+  }
+  return false;
+}
+
+function scheduledDependencyStatusLabel(status: WebSessionScheduledInput['dependencyStatus']) {
+  switch (status) {
+    case 'waiting':
+      return t('webSession.scheduledDependencyWaiting');
+    case 'satisfied':
+      return t('webSession.scheduledDependencySatisfied');
+    case 'failed':
+      return t('webSession.scheduledDependencyFailed');
+    case 'canceled':
+      return t('webSession.scheduledDependencyCanceled');
+    case 'expired':
+      return t('webSession.scheduledDependencyExpired');
+    case 'missing':
+      return t('webSession.scheduledDependencyMissing');
+    default:
+      return t('webSession.scheduledDependencyNone');
+  }
+}
+
+function scheduledDependencyOptionLabel(item: WebSessionScheduledInput) {
+  const actionLabel =
+    item.action === 'execute_plan'
+      ? t('webSession.scheduledPlanMode')
+      : scheduledModeLabel(item.mode);
+  return `${actionLabel} · ${scheduledInputTimeLabel(item)} · ${scheduledInputPreview(item)}`;
+}
+
 const scheduledIdleConfirmationWindowMs = 20_000;
 
 function scheduledIdleStatusLabel(item: WebSessionScheduledInput) {
@@ -13330,7 +13450,10 @@ function scheduledFailureReason(item: WebSessionScheduledInput) {
   return item.lastError || t('webSession.scheduledFailureUnknown');
 }
 
-async function performDispatchScheduledInputNow(item: WebSessionScheduledInput) {
+async function performDispatchScheduledInputNow(
+  item: WebSessionScheduledInput,
+  bypassDependency = false
+) {
   const session = currentRealSession.value;
   if (!session || scheduledInputActionId.value) {
     return;
@@ -13341,7 +13464,7 @@ async function performDispatchScheduledInputNow(item: WebSessionScheduledInput) 
     if (!(await ensureMessageCapabilityAvailable(session.agent))) {
       return;
     }
-    await webSessionStore.dispatchScheduledInputNow(session.id, item.id);
+    await webSessionStore.dispatchScheduledInputNow(session.id, item.id, bypassDependency);
     message.success(
       item.action === 'execute_plan'
         ? t('webSession.scheduledPlanStarted')
@@ -13354,7 +13477,10 @@ async function performDispatchScheduledInputNow(item: WebSessionScheduledInput) 
   }
 }
 
-function handleDispatchScheduledInputNow(item: WebSessionScheduledInput) {
+function dispatchScheduledInputNowAfterDependencyCheck(
+  item: WebSessionScheduledInput,
+  bypassDependency: boolean
+) {
   if (item.action === 'message' && item.mode === 'interrupt' && isRunActive.value) {
     closeScheduledInputPopover();
     dialog.warning({
@@ -13362,11 +13488,26 @@ function handleDispatchScheduledInputNow(item: WebSessionScheduledInput) {
       content: t('webSession.scheduledInterruptNowBody'),
       positiveText: t('webSession.scheduledInterruptNowConfirm'),
       negativeText: t('common.cancel'),
-      onPositiveClick: () => performDispatchScheduledInputNow(item),
+      onPositiveClick: () => performDispatchScheduledInputNow(item, bypassDependency),
     });
     return;
   }
-  void performDispatchScheduledInputNow(item);
+  void performDispatchScheduledInputNow(item, bypassDependency);
+}
+
+function handleDispatchScheduledInputNow(item: WebSessionScheduledInput) {
+  if (item.dependsOnId && item.dependencyStatus !== 'satisfied') {
+    closeScheduledInputPopover();
+    dialog.warning({
+      title: t('webSession.scheduledDependencyBypassTitle'),
+      content: t('webSession.scheduledDependencyBypassBody'),
+      positiveText: t('webSession.scheduledDependencyBypassConfirm'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: () => dispatchScheduledInputNowAfterDependencyCheck(item, true),
+    });
+    return;
+  }
+  dispatchScheduledInputNowAfterDependencyCheck(item, false);
 }
 
 async function handleRemovePendingInput(pendingId: string) {

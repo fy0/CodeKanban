@@ -1591,6 +1591,35 @@
   );
 }
 
+.scheduled-input-dependency {
+  min-width: 0;
+  max-width: 132px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--app-warning, #b45309) 10%, transparent);
+  color: var(--app-warning, #b45309);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+}
+
+.scheduled-input-dependency.state-satisfied {
+  background: color-mix(in srgb, var(--app-success, #15803d) 10%, transparent);
+  color: var(--app-success, #15803d);
+}
+
+.scheduled-input-dependency.state-failed,
+.scheduled-input-dependency.state-canceled,
+.scheduled-input-dependency.state-expired,
+.scheduled-input-dependency.state-missing {
+  background: color-mix(in srgb, var(--app-error, #b91c1c) 9%, transparent);
+  color: var(--app-error, #b91c1c);
+}
+
 .scheduled-input-time {
   font-size: 11px;
   color: var(--app-text-muted, color-mix(in srgb, var(--app-text-color, #333) 70%, transparent));

@@ -1490,6 +1490,268 @@ func waitForScheduledInputStatus(t *testing.T, inputID string, status ScheduledI
 	t.Fatalf("scheduled input %q did not reach status %q", inputID, status)
 }
 
+func TestScheduledInputDependencyValidationAndSnapshot(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexVersionCLI(t, "0.146.0"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	other, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error for other session: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.cancelScheduledInputTimersForSession(created.ID)
+		manager.cancelScheduledInputTimersForSession(other.ID)
+	})
+
+	parent, err := manager.ScheduleInput(
+		context.Background(),
+		created.ID,
+		"Parent delayed message",
+		nil,
+		ScheduledInputModeSend,
+		time.Now().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("ScheduleInput returned error for parent: %v", err)
+	}
+	child, err := manager.scheduleInput(
+		context.Background(),
+		created.ID,
+		"Dependent delayed message",
+		nil,
+		ScheduledInputModeQueue,
+		ScheduledInputScheduleAtTime,
+		time.Now().Add(2*time.Hour),
+		false,
+		parent.ID,
+	)
+	if err != nil {
+		t.Fatalf("scheduleInput returned error for child: %v", err)
+	}
+	if child.DependsOnID != parent.ID || child.DependencyStatus != ScheduledInputDependencyWaiting {
+		t.Fatalf("expected waiting dependency on %q, got %#v", parent.ID, child)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	var snapshotChild ScheduledInput
+	for _, item := range snapshot.ScheduledInputs {
+		if item.ID == child.ID {
+			snapshotChild = item
+			break
+		}
+	}
+	if snapshotChild.DependsOnID != parent.ID ||
+		snapshotChild.DependencyStatus != ScheduledInputDependencyWaiting {
+		t.Fatalf("expected snapshot dependency state, got %#v", snapshotChild)
+	}
+	wireChild := mapWireScheduledInputs([]ScheduledInput{snapshotChild})[0]
+	if wireChild.DependsOnID != parent.ID ||
+		wireChild.DependencyStatus != string(ScheduledInputDependencyWaiting) {
+		t.Fatalf("expected wire dependency state, got %#v", wireChild)
+	}
+
+	childID := child.ID
+	if _, err := manager.UpdateScheduledInput(
+		context.Background(),
+		created.ID,
+		parent.ID,
+		scheduledInputUpdate{DependsOnID: &childID},
+	); !errors.Is(err, errScheduledDependencyCycle) {
+		t.Fatalf("expected dependency cycle error, got %v", err)
+	}
+	if _, err := manager.scheduleInput(
+		context.Background(),
+		other.ID,
+		"Cross-session dependency",
+		nil,
+		ScheduledInputModeQueue,
+		ScheduledInputScheduleAtTime,
+		time.Now().Add(3*time.Hour),
+		false,
+		parent.ID,
+	); !errors.Is(err, errScheduledDependencyInvalid) {
+		t.Fatalf("expected cross-session dependency error, got %v", err)
+	}
+
+	if err := manager.RemoveScheduledInput(context.Background(), created.ID, parent.ID); err != nil {
+		t.Fatalf("RemoveScheduledInput returned error: %v", err)
+	}
+	snapshot, err = manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err != nil {
+		t.Fatalf("Snapshot returned error after cancel: %v", err)
+	}
+	for _, item := range snapshot.ScheduledInputs {
+		if item.ID == child.ID && item.DependencyStatus != ScheduledInputDependencyCanceled {
+			t.Fatalf("expected canceled dependency state, got %#v", item)
+		}
+	}
+}
+
+func TestScheduledPlanDependencyQueuesFollowUpAfterPlanStarts(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "approval"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.cancelScheduledInputTimersForSession(created.ID)
+	})
+
+	plan := insertScheduledPlanHistoryItem(t, manager, created.ID, "Implement dependency queue")
+	parent, err := manager.SchedulePlanExecution(
+		context.Background(),
+		created.ID,
+		plan.ID,
+		scheduledPlanExecutionPayload{},
+		time.Now().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("SchedulePlanExecution returned error: %v", err)
+	}
+	child, err := manager.scheduleInput(
+		context.Background(),
+		created.ID,
+		"Run after plan implementation",
+		nil,
+		ScheduledInputModeQueue,
+		ScheduledInputScheduleAtTime,
+		time.Now().Add(60*time.Millisecond),
+		false,
+		parent.ID,
+	)
+	if err != nil {
+		t.Fatalf("scheduleInput returned error for dependent child: %v", err)
+	}
+	time.Sleep(120 * time.Millisecond)
+	var childRecord tables.WebSessionScheduledInputTable
+	if err := model.GetDB().First(&childRecord, "id = ?", child.ID).Error; err != nil {
+		t.Fatalf("load dependent child: %v", err)
+	}
+	if childRecord.Status != string(ScheduledInputStatusScheduled) {
+		t.Fatalf("dependent child dispatched before its plan dependency: %#v", childRecord)
+	}
+
+	if err := manager.DispatchScheduledInputNow(context.Background(), created.ID, parent.ID); err != nil {
+		t.Fatalf("DispatchScheduledInputNow returned error for plan: %v", err)
+	}
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestFileChangeApproval)
+	if request == nil {
+		t.Fatal("expected active plan implementation run")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		pending := manager.pendingInputsSnapshot(created.ID)
+		if len(pending) == 1 && pending[0].Text == "Run after plan implementation" &&
+			pending[0].Mode == PendingInputModeQueue {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	pending := manager.pendingInputsSnapshot(created.ID)
+	if len(pending) != 1 || pending[0].Text != "Run after plan implementation" ||
+		pending[0].Mode != PendingInputModeQueue {
+		t.Fatalf("expected dependent message in the active-run queue, got %#v", pending)
+	}
+
+	if err := manager.respondToApproval(created.ID, "approve"); err != nil {
+		t.Fatalf("respondToApproval returned error: %v", err)
+	}
+	if request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestFileChangeApproval); request == nil {
+		t.Fatal("expected queued follow-up run")
+	}
+	if err := manager.respondToApproval(created.ID, "approve"); err != nil {
+		t.Fatalf("respondToApproval returned error for queued follow-up: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
+func TestDispatchScheduledInputNowRequiresExplicitDependencyBypass(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		manager.cancelScheduledInputTimersForSession(created.ID)
+	})
+
+	parent, err := manager.ScheduleInput(
+		context.Background(), created.ID, "Parent", nil, ScheduledInputModeSend, time.Now().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatalf("ScheduleInput returned error for parent: %v", err)
+	}
+	child, err := manager.scheduleInput(
+		context.Background(), created.ID, "Bypass dependency", nil, ScheduledInputModeSend,
+		ScheduledInputScheduleAtTime, time.Now().Add(2*time.Hour), false, parent.ID,
+	)
+	if err != nil {
+		t.Fatalf("scheduleInput returned error for child: %v", err)
+	}
+	if err := manager.DispatchScheduledInputNow(context.Background(), created.ID, child.ID); !errors.Is(err, errScheduledDependencyBlocked) {
+		t.Fatalf("expected blocked immediate dispatch, got %v", err)
+	}
+	if err := manager.dispatchScheduledInputNow(context.Background(), created.ID, child.ID, true); err != nil {
+		t.Fatalf("dispatchScheduledInputNow returned error with bypass: %v", err)
+	}
+	waitForScheduledInputStatus(t, child.ID, ScheduledInputStatusDispatched)
+	var childRecord tables.WebSessionScheduledInputTable
+	if err := model.GetDB().First(&childRecord, "id = ?", child.ID).Error; err != nil {
+		t.Fatalf("load bypassed child: %v", err)
+	}
+	if childRecord.DependsOnID != "" {
+		t.Fatalf("expected bypass to clear dependency, got %#v", childRecord)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
 func TestScheduledSendFollowsNormalSendBehaviorWhenRunActive(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

@@ -87,6 +87,23 @@
         </div>
       </div>
 
+      <div class="scheduled-send-section">
+        <div class="scheduled-send-section-label">
+          {{ t('webSession.scheduledDependencyTitle') }}
+        </div>
+        <n-select
+          :value="dependencyId || null"
+          :options="dependencyOptions"
+          clearable
+          filterable
+          :placeholder="t('webSession.scheduledDependencyNone')"
+          @update:value="emit('update:dependency-id', $event ?? '')"
+        />
+        <p class="scheduled-send-condition-description">
+          {{ t('webSession.scheduledDependencyDescription') }}
+        </p>
+      </div>
+
       <div
         v-if="purpose === 'message' || purpose === 'edit_message'"
         class="scheduled-send-section"
@@ -153,6 +170,11 @@ type ScheduledSendPreset = {
   label: string;
   timestamp: number;
 };
+type ScheduledDependencyOption = {
+  label: string;
+  value: string;
+  disabled?: boolean;
+};
 
 defineProps<{
   show: boolean;
@@ -167,6 +189,8 @@ defineProps<{
   selectedPresetKey: string;
   sendAt: number | null;
   selectedTimeLabel: string;
+  dependencyId: string;
+  dependencyOptions: ScheduledDependencyOption[];
   mode: ScheduledSendMode;
   exitPlanMode: boolean;
   canConfirm: boolean;
@@ -177,6 +201,7 @@ const emit = defineEmits<{
   (event: 'update:edit-text', text: string): void;
   (event: 'update:schedule-kind', kind: ScheduledScheduleKind): void;
   (event: 'update:send-at', timestamp: number | null): void;
+  (event: 'update:dependency-id', dependencyId: string): void;
   (event: 'update:mode', mode: ScheduledSendMode): void;
   (event: 'update:exit-plan-mode', exitPlanMode: boolean): void;
   (event: 'select-preset', timestamp: number): void;
