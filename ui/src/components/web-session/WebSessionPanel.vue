@@ -12478,10 +12478,11 @@ async function handleSubmit() {
   const draft = webSessionStore.getDraft(submitProjectId, initialSubmitOwnerId);
   const draftText = draft.text;
   const attachments = [...draft.attachments];
+  const goalCommand = parseComposerGoalCommand(draftText);
   if (
     !initialSubmitOwnerId ||
     isWebSessionSubmitting(submitStateBySessionId.value, initialSubmitOwnerId) ||
-    isRunActive.value ||
+    (isRunActive.value && !goalCommand) ||
     isDraftAttachmentUploading.value ||
     (draftText.trim().length === 0 && attachments.length === 0)
   ) {
@@ -12489,10 +12490,9 @@ async function handleSubmit() {
   }
   const submitAgent = initialRealSession?.agent ?? selectedAgent.value;
   const submitKind = resolveComposerSubmitKind();
-  const goalCommand = parseComposerGoalCommand(draftText);
   const isPiCompactCommand = submitAgent === 'pi' && draftText.trim() === '/compact';
   const shouldStageOutgoingMessage = !goalCommand && !isPiCompactCommand;
-  if (submitKind === 'execute_send') {
+  if (submitKind === 'execute_send' && !goalCommand) {
     if (!ensureSendConflictConfirmed(sendConfirmationSignature.value)) {
       return;
     }
@@ -12852,6 +12852,10 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
     isDraftAttachmentUploading.value ||
     (draftText.trim().length === 0 && attachments.length === 0)
   ) {
+    return;
+  }
+  if (parseComposerGoalCommand(draftText)) {
+    await handleSubmit();
     return;
   }
   let submissionSucceeded = false;

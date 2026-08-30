@@ -75,6 +75,35 @@ describe('web session composer submission', () => {
     );
   });
 
+  it('routes goal commands through the goal mutation while a run is active', () => {
+    const submitSource = sourceBetween(
+      'async function handleSubmit()',
+      'async function handleConfirmScheduledSend()'
+    );
+    const preinputSource = sourceBetween(
+      "async function handlePreinput(mode: 'redirect' | 'queue')",
+      'async function triggerPrimaryComposerAction()'
+    );
+
+    const goalParseIndex = submitSource.indexOf(
+      'const goalCommand = parseComposerGoalCommand(draftText);'
+    );
+    const activeRunGuardIndex = submitSource.indexOf('(isRunActive.value && !goalCommand)');
+    const goalMutationIndex = submitSource.indexOf('await webSessionStore.setGoal(');
+    const regularSendIndex = submitSource.indexOf('await webSessionStore.sendMessage(');
+    const preinputGoalIndex = preinputSource.indexOf('if (parseComposerGoalCommand(draftText))');
+    const preinputSendIndex = preinputSource.indexOf('await webSessionStore.sendMessage(');
+
+    expect(goalParseIndex).toBeGreaterThanOrEqual(0);
+    expect(activeRunGuardIndex).toBeGreaterThan(goalParseIndex);
+    expect(submitSource).toContain("submitKind === 'execute_send' && !goalCommand");
+    expect(goalMutationIndex).toBeGreaterThan(activeRunGuardIndex);
+    expect(regularSendIndex).toBeGreaterThan(goalMutationIndex);
+    expect(preinputGoalIndex).toBeGreaterThanOrEqual(0);
+    expect(preinputSource).toContain('await handleSubmit();');
+    expect(preinputSendIndex).toBeGreaterThan(preinputGoalIndex);
+  });
+
   it('routes exact Pi compact commands before session creation and rejects attachments', () => {
     const handlerSource = sourceBetween(
       'async function handleSubmit()',
