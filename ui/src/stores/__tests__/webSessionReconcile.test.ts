@@ -4,15 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWebSessionStore } from '@/stores/webSession';
 import type { WebSessionSummary } from '@/types/models';
 
-const { listMock, reconcileMock } = vi.hoisted(() => ({
+const { listMock, reconcileMock, snapshotMock } = vi.hoisted(() => ({
   listMock: vi.fn(),
   reconcileMock: vi.fn(),
+  snapshotMock: vi.fn(),
 }));
 
 vi.mock('@/api/webSession', () => ({
   webSessionApi: {
     list: listMock,
     reconcile: reconcileMock,
+    snapshot: snapshotMock,
   },
 }));
 
@@ -108,6 +110,7 @@ describe('web session resume reconciliation', () => {
     });
     listMock.mockReset();
     reconcileMock.mockReset();
+    snapshotMock.mockReset();
   });
 
   afterEach(() => {
@@ -250,5 +253,73 @@ describe('web session resume reconciliation', () => {
       status: 'done',
       assistantState: null,
     });
+  });
+
+  it('stops requesting fallback reconciliation after the last active session completes', async () => {
+    const running = makeSession({
+      id: 'active-running',
+      status: 'running',
+      assistantState: 'working',
+    });
+    const completed = makeSession({
+      ...running,
+      revision: '2',
+      status: 'done',
+      assistantState: null,
+    });
+    listMock.mockResolvedValue([running]);
+    reconcileMock.mockResolvedValue({ items: [completed], missingIds: [] });
+
+    const store = useWebSessionStore();
+    await store.loadSessions(running.projectId);
+    expect(store.hasReconcilePrioritySessions).toBe(true);
+
+    await store.reconcileRecentSessions();
+
+    expect(store.hasReconcilePrioritySessions).toBe(false);
+  });
+
+  it('hydrates a focused session when reconciliation observes a newer revision', async () => {
+    const running = makeSession({
+      id: 'focused-running',
+      status: 'running',
+      assistantState: 'working',
+    });
+    const completed = makeSession({
+      ...running,
+      revision: '2',
+      status: 'done',
+      assistantState: null,
+    });
+    listMock.mockResolvedValue([running]);
+    reconcileMock.mockResolvedValue({ items: [completed], missingIds: [] });
+    snapshotMock.mockResolvedValue({
+      revision: '2',
+      session: completed,
+      historyEpoch: '1',
+      eventCursor: '0:0',
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [],
+      scheduledInputs: [],
+      subAgents: [],
+    });
+
+    const store = useWebSessionStore();
+    await store.loadSessions(running.projectId);
+    store.setEventSessionFocus(running.id);
+
+    await store.reconcileRecentSessions();
+    await vi.waitFor(() => expect(snapshotMock).toHaveBeenCalledOnce());
+
+    expect(snapshotMock).toHaveBeenCalledWith(
+      running.projectId,
+      running.id,
+      expect.objectContaining({ limit: 80 })
+    );
+    expect(store.isSessionSnapshotCurrent(running.id, completed.revision)).toBe(true);
   });
 });

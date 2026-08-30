@@ -11,6 +11,7 @@ import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
 import { useResponsive } from '@/composables/useResponsive';
 import { useAiStatusSummary } from '@/composables/useAiStatusSummary';
+import { useWebSessionStatusReconciliation } from '@/composables/useWebSessionStatusReconciliation';
 import { isDarkHex } from '@/utils/color';
 import { formatBrowserTabTitle } from '@/utils/browserTitle';
 import { createThemeOverrides } from '@/utils/themeOverrides';
@@ -55,6 +56,7 @@ const browserTabTitle = computed(() =>
   })
 );
 const canLoadProtectedContent = computed(() => authStore.canAccessProtectedContent);
+useWebSessionStatusReconciliation(canLoadProtectedContent);
 const shouldRenderWorkspaceOverlays = computed(() => canLoadProtectedContent.value);
 const shouldShowGlobalNotepad = computed(() => {
   if (isMobile.value) {

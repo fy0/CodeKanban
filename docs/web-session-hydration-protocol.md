@@ -55,9 +55,14 @@ cursor.
 
 When a page becomes visible, receives window focus, is restored from page cache,
 or reconnects its event stream, the browser conditionally reconciles session
-summaries before hydrating the focused conversation. The request contains at
-most 256 `{ id, revision }` targets: every locally non-terminal session, the
-focused session, and up to 48 other sessions active within the last six hours.
+summaries before hydrating the focused conversation. While the page remains
+visible and has a locally non-terminal session, a singleton fallback loop also
+reconciles every 25 to 30 seconds. The loop stops when the page is hidden or no
+session needs reconciliation, and resumes immediately when visibility returns.
+
+The request contains at most 256 `{ id, revision }` targets: every locally
+non-terminal session, the focused session, and up to 48 other sessions active
+within the last six hours.
 
 The server reads only those IDs and returns:
 
@@ -69,6 +74,9 @@ when a user has hundreds of sessions and avoids loading any conversation history
 until the focused session actually requires hydration. Background sessions
 receive summaries only. Detailed history, scheduled-input, and sub-agent frames
 are sent only for the session named by the connection's focus heartbeat.
+When fallback reconciliation advances that focused session's revision, the
+client starts its ordinary cursor-based catch-up so the visible timeline and
+summary converge together.
 
 ## WebSocket envelope
 

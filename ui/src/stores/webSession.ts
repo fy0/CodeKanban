@@ -2129,6 +2129,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return ids;
   });
 
+  const hasReconcilePrioritySessions = computed(() =>
+    Object.values(sessionsByProject.value).some(sessions =>
+      sessions.some(session => !session.archivedAt && isSessionReconcilePriority(session))
+    )
+  );
+
   function getSessions(projectId: string) {
     return sessionsByProject.value[projectId] ?? [];
   }
@@ -6028,6 +6034,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
           hasScheduledPlanExecution: summary.hasScheduledPlanExecution === true,
         });
         sessionSync.markApplied(summary.id, summary.revision);
+        if (
+          summary.id === eventFocusedSessionId &&
+          !sessionSync.isSnapshotCurrent(summary.id, summary.revision)
+        ) {
+          void sessionSync.requestHydration(summary.id, summary.revision);
+        }
       });
       result.missingIds.forEach(sessionId => {
         const current = findSessionById(sessionId);
@@ -7820,6 +7832,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     eventLastDisconnectReason,
     eventRecoveryVersion,
     lastError,
+    hasReconcilePrioritySessions,
     getDraft,
     getSessions,
     getSessionCount,
