@@ -3463,6 +3463,10 @@ import {
   type SessionTab,
 } from '@/components/web-session/webSessionPanelSession';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
+import {
+  compareWebSessionAttentionRevisions,
+  normalizeWebSessionAttentionRevision,
+} from '@/utils/webSessionRevision';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
 import { createWebSessionCatchUpScheduler } from '@/components/web-session/webSessionCatchUpScheduler';
 import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
@@ -3873,7 +3877,7 @@ const importingCodexSessionId = ref('');
 const sendConfirmationState = ref<WebSessionSendConfirmationState | null>(null);
 const liveCardContinuePending = ref(false);
 const retryingUserMessageKey = ref('');
-const optimisticUnreadClearedVersionBySession = ref<Record<string, number>>({});
+const optimisticUnreadClearedRevisionBySession = ref<Record<string, string>>({});
 const webSessionCatchUpActive = ref(false);
 const isProjectSessionInitializing = ref(false);
 const pendingRouteActivationSessionId = ref('');
@@ -9120,13 +9124,17 @@ async function activateTabById(
     replaceDraftSessionState(draftSessions.value, '');
     activeArchivedPreviewId.value = '';
     rememberTabVisit(session.id);
+    let activated = true;
     if (options?.connectReal === false) {
       realSessionSnapshotLoadController.cancel();
       webSessionStore.setActiveSession(props.projectId, session.id);
-      return true;
     } else {
-      return await connectVisibleRealSession(props.projectId, session.id);
+      activated = await connectVisibleRealSession(props.projectId, session.id);
     }
+    if (activated) {
+      void acknowledgeVisibleSessionView(session.id);
+    }
+    return activated;
   }
 }
 
@@ -9343,9 +9351,9 @@ function markSessionViewed(sessionId?: string) {
   }
   const session = visibleSessionById.value.get(normalizedSessionId);
   if (session && !isDraftSession(session)) {
-    optimisticUnreadClearedVersionBySession.value = {
-      ...optimisticUnreadClearedVersionBySession.value,
-      [normalizedSessionId]: getSessionUnreadVersion(session),
+    optimisticUnreadClearedRevisionBySession.value = {
+      ...optimisticUnreadClearedRevisionBySession.value,
+      [normalizedSessionId]: getSessionAttentionRevision(session),
     };
   }
   webSessionStore.emitter.emit('web-session:viewed', {
@@ -9353,15 +9361,26 @@ function markSessionViewed(sessionId?: string) {
   });
 }
 
-function getSessionUnreadVersion(session: WebSessionSummary) {
-  return parseTimestamp(
-    session.statusUpdatedAt ||
-      session.assistantStateUpdatedAt ||
-      session.updatedAt ||
-      session.activityAt ||
-      session.lastMessageAt ||
-      session.createdAt
-  );
+async function acknowledgeVisibleSessionView(sessionId: string) {
+  await nextTick();
+  const session = visibleSessionById.value.get(sessionId);
+  if (
+    !props.isActive ||
+    !isDocumentVisible() ||
+    !isCurrentVisibleSession(sessionId) ||
+    !timelineScrollRef.value ||
+    !session ||
+    isDraftSession(session) ||
+    isArchivedPreviewSession(session)
+  ) {
+    return;
+  }
+  markSessionViewed(sessionId);
+  void webSessionStore.markSessionRead(sessionId);
+}
+
+function getSessionAttentionRevision(session: WebSessionSummary) {
+  return normalizeWebSessionAttentionRevision(session.attentionRevision) || '0';
 }
 
 function hasSessionUnread(session: (typeof sessions.value)[number]) {
@@ -9371,8 +9390,15 @@ function hasSessionUnread(session: (typeof sessions.value)[number]) {
   if (!session.hasUnread) {
     return false;
   }
-  const optimisticClearedVersion = optimisticUnreadClearedVersionBySession.value[session.id] ?? 0;
-  return getSessionUnreadVersion(session) > optimisticClearedVersion;
+  const optimisticClearedRevision = optimisticUnreadClearedRevisionBySession.value[session.id];
+  if (optimisticClearedRevision == null) {
+    return true;
+  }
+  const comparison = compareWebSessionAttentionRevisions(
+    getSessionAttentionRevision(session),
+    optimisticClearedRevision
+  );
+  return comparison == null || comparison === 1;
 }
 
 function getProjectName(projectId: string) {
@@ -11236,6 +11262,7 @@ async function handleSessionSelect(sessionId: string) {
     });
     rememberTabVisit(sessionId);
     scrollToBottom(true);
+    void acknowledgeVisibleSessionView(sessionId);
     return;
   }
   try {

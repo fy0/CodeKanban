@@ -663,6 +663,83 @@ describe('webSession loading behavior', () => {
     });
   });
 
+  it('keeps attention state monotonic across stale summaries', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-attention-race',
+      revision: '5',
+      attentionRevision: '3',
+      hasUnread: true,
+    });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const request = store.markSessionRead(session.id);
+    const commandSocket = await waitForCommandCount(1);
+    const sent = commandSocket?.sent[0] as { rid?: string } | undefined;
+    if (!sent?.rid) {
+      throw new Error('mark_read command was not sent');
+    }
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: sent.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'mark_read',
+      ok: 1,
+      p: { hasUnread: false, attentionRevision: '4' },
+    });
+    await request;
+
+    reconcileMock.mockResolvedValue({
+      items: [
+        makeSession({
+          ...session,
+          revision: '6',
+          attentionRevision: '3',
+          hasUnread: true,
+          status: 'done',
+          assistantState: null,
+          statusUpdatedAt: '2026-04-09T10:05:00.000Z',
+        }),
+      ],
+      missingIds: [],
+    });
+    await store.reconcileRecentSessions();
+
+    expect(store.getSessions(session.projectId)[0]).toMatchObject({
+      revision: '6',
+      status: 'done',
+      attentionRevision: '4',
+      hasUnread: false,
+    });
+
+    await store.openEventStream();
+    findSocket('/api/v1/web-sessions/events')?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      rev: '7',
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession({
+        ...session,
+        revision: '7',
+        attentionRevision: '5',
+        hasUnread: true,
+        status: 'done',
+        assistantState: null,
+      }),
+    });
+
+    expect(store.getSessions(session.projectId)[0]).toMatchObject({
+      revision: '7',
+      attentionRevision: '5',
+      hasUnread: true,
+    });
+  });
+
   it('invalidates cleaned histories without removing session summaries', async () => {
     const store = useWebSessionStore();
     const session = makeSession({

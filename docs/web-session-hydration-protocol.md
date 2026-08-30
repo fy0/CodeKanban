@@ -183,7 +183,9 @@ The database clears unread state only when both `hasUnread` and
 `attentionRevision` still match. A newer background event therefore wins over a
 stale mark-read request. Clearing unread advances the attention revision but not
 `snapshot_revision`, so viewing a session never creates another content
-hydration cycle.
+hydration cycle. Clients merge unread state independently by
+`attentionRevision`, so an older session summary cannot overwrite a newer
+mark-read acknowledgement.
 
 ## Pending clock
 

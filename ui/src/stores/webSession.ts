@@ -33,7 +33,9 @@ import {
 } from '@/stores/webSessionWireProtocol';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import {
+  compareWebSessionAttentionRevisions,
   compareWebSessionRevisions,
+  normalizeWebSessionAttentionRevision,
   normalizeWebSessionRevision,
 } from '@/utils/webSessionRevision';
 import { buildUploadImageFileName } from '@/utils/webSessionImages';
@@ -1970,6 +1972,38 @@ function defaultArchivedListMeta(scopeKey = ''): ArchivedListMeta {
   };
 }
 
+function normalizeSessionAttentionState(summary: WebSessionSummary): WebSessionSummary {
+  return {
+    ...summary,
+    attentionRevision: normalizeWebSessionAttentionRevision(summary.attentionRevision) || '0',
+    hasUnread: summary.hasUnread === true,
+  };
+}
+
+function mergeSessionAttentionState(
+  current: WebSessionSummary | null | undefined,
+  incoming: WebSessionSummary
+): WebSessionSummary {
+  const normalizedIncoming = normalizeSessionAttentionState(incoming);
+  if (!current) {
+    return normalizedIncoming;
+  }
+  const normalizedCurrent = normalizeSessionAttentionState(current);
+  if (
+    compareWebSessionAttentionRevisions(
+      normalizedIncoming.attentionRevision,
+      normalizedCurrent.attentionRevision
+    ) !== -1
+  ) {
+    return normalizedIncoming;
+  }
+  return {
+    ...normalizedIncoming,
+    attentionRevision: normalizedCurrent.attentionRevision,
+    hasUnread: normalizedCurrent.hasUnread,
+  };
+}
+
 export const useWebSessionStore = defineStore('web-session', () => {
   const sessionsByProject = ref<Record<string, WebSessionSummary[]>>({});
   const archivedSessionsById = ref<Record<string, WebSessionSummary>>({});
@@ -3044,7 +3078,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return {
       id: session.id,
       revision: normalizeWebSessionRevision(session.rev),
-      attentionRevision: String(session.ar ?? '0'),
+      attentionRevision: normalizeWebSessionAttentionRevision(session.ar) || '0',
       historyEpoch: String(session.he ?? '1'),
       eventCursor: String(session.ec ?? '0:0'),
       projectId: session.pid,
@@ -3708,11 +3742,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   ) {
     const previous = archivedSessionsById.value[summary.id];
+    const nextSummary = mergeSessionAttentionState(previous, summary);
     archivedSessionsById.value = {
       ...archivedSessionsById.value,
       [summary.id]: {
         ...previous,
-        ...summary,
+        ...nextSummary,
       },
     };
 
@@ -3843,26 +3878,29 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function upsertCurrentSession(summary: WebSessionSummary) {
-    const nextSummary = applyPendingActiveCallTimeoutOverride(
-      applyPendingAutoRetryDispatchOverride(applyPendingAutoRetryOverride(summary))
+    const incomingSummary = applyPendingActiveCallTimeoutOverride(
+      applyPendingAutoRetryDispatchOverride(
+        applyPendingAutoRetryOverride(normalizeSessionAttentionState(summary))
+      )
     );
-    const previousProjectId = currentSessionProjectById.get(nextSummary.id);
-    if (previousProjectId && previousProjectId !== nextSummary.projectId) {
-      removeCurrentSessionRecord(previousProjectId, nextSummary.id);
+    const previousProjectId = currentSessionProjectById.get(incomingSummary.id);
+    if (previousProjectId && previousProjectId !== incomingSummary.projectId) {
+      removeCurrentSessionRecord(previousProjectId, incomingSummary.id);
     }
-    const current = sessionsByProject.value[nextSummary.projectId] ?? [];
+    const current = sessionsByProject.value[incomingSummary.projectId] ?? [];
     const next = [...current];
-    const index = next.findIndex(item => item.id === nextSummary.id);
+    const index = next.findIndex(item => item.id === incomingSummary.id);
     if (index >= 0) {
+      const nextSummary = mergeSessionAttentionState(next[index], incomingSummary);
       next.splice(index, 1, {
         ...next[index],
         ...nextSummary,
       });
     } else {
-      next.unshift(nextSummary);
+      next.unshift(incomingSummary);
     }
-    replaceProjectSessions(nextSummary.projectId, sortSessions(next));
-    syncSessionCount(nextSummary.projectId);
+    replaceProjectSessions(incomingSummary.projectId, sortSessions(next));
+    syncSessionCount(incomingSummary.projectId);
   }
 
   function upsertSession(
@@ -5905,18 +5943,20 @@ export const useWebSessionStore = defineStore('web-session', () => {
       );
       const sessions = items.map(item => {
         sessionSync.observe(item.id, item.revision);
-        const session = applyPendingActiveCallTimeoutOverride(
-          applyPendingAutoRetryDispatchOverride(
-            applyPendingAutoRetryOverride({
-              ...item,
-              hasScheduledPlanExecution: item.hasScheduledPlanExecution === true,
-            })
+        const session = normalizeSessionAttentionState(
+          applyPendingActiveCallTimeoutOverride(
+            applyPendingAutoRetryDispatchOverride(
+              applyPendingAutoRetryOverride({
+                ...item,
+                hasScheduledPlanExecution: item.hasScheduledPlanExecution === true,
+              })
+            )
           )
         );
         const current = currentById.get(session.id);
         return current && compareWebSessionRevisions(current.revision, session.revision) === 1
           ? current
-          : session;
+          : mergeSessionAttentionState(current, session);
       });
       replaceProjectSessions(projectId, sortSessions(sessions));
       syncSessionCount(projectId);
@@ -6481,13 +6521,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
         const payload = asRecord(frame.p);
         updateSessionStatus(
           sessionId,
-          current => ({
-            ...current,
-            hasUnread: payload?.hasUnread === true,
-            attentionRevision: String(
-              payload?.attentionRevision ?? current.attentionRevision ?? attentionRevision
-            ),
-          }),
+          current =>
+            mergeSessionAttentionState(current, {
+              ...current,
+              hasUnread: payload?.hasUnread === true,
+              attentionRevision:
+                normalizeWebSessionAttentionRevision(payload?.attentionRevision) ||
+                current.attentionRevision ||
+                attentionRevision,
+            }),
           { preserveOrder: true }
         );
       })
