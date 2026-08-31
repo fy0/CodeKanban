@@ -4989,6 +4989,30 @@ function shouldShowToolPendingPlaceholder(tool: NonNullable<WebSessionBlock['too
   }
   return stringifyValue(tool.input).trim().length === 0;
 }
+
+const {
+  stringifyValue,
+  asRecord,
+  extractToolWorkingDirectory,
+  getImageViewToolData,
+  isImageViewTool,
+  getImageViewDisplayName,
+  getImageViewDisplayPath,
+  normalizeToolKindValue,
+  isCompactToolKind,
+  compactToolLabel,
+  isCompactTool,
+  isInteractiveDynamicTool,
+  toolCardClass,
+  getCompactToolSummary,
+  getCompactToolDisplaySummary,
+  toolKindLabel,
+  formatToolPreview,
+} = createWebSessionToolPresentation({
+  translate: t,
+  shouldShowPending: shouldShowToolPendingPlaceholder,
+});
+
 function normalizeChoiceText(value: string) {
   return String(value || '')
     .trim()
@@ -10746,28 +10770,6 @@ function getLiveTimeTooltipItems(state: WebSessionLiveState): WebSessionLiveTime
   }).tooltipItems;
 }
 
-const {
-  stringifyValue,
-  asRecord,
-  extractToolWorkingDirectory,
-  getImageViewToolData,
-  isImageViewTool,
-  getImageViewDisplayName,
-  getImageViewDisplayPath,
-  normalizeToolKindValue,
-  isCompactToolKind,
-  compactToolLabel,
-  isCompactTool,
-  isInteractiveDynamicTool,
-  toolCardClass,
-  getCompactToolSummary,
-  getCompactToolDisplaySummary,
-  toolKindLabel,
-  formatToolPreview,
-} = createWebSessionToolPresentation({
-  translate: t,
-  shouldShowPending: shouldShowToolPendingPlaceholder,
-});
 function getImageViewPreviewSrc(tool?: NonNullable<WebSessionBlock['tool']>) {
   if (!tool) {
     return '';

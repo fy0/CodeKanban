@@ -1,5 +1,8 @@
 // @vitest-environment happy-dom
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { WebSessionBlock } from '@/stores/webSession';
@@ -11,6 +14,11 @@ import {
   shouldHandleWebSessionConversationSearchShortcut,
   type WebSessionConversationSearchFilters,
 } from '@/components/web-session/webSessionConversationSearch';
+
+const webSessionPanelPath = resolve(
+  process.cwd(),
+  'src/components/web-session/WebSessionPanel.vue'
+);
 
 const dialogueFilters: WebSessionConversationSearchFilters = {
   user: true,
@@ -42,6 +50,19 @@ function makeBlock(
 describe('webSessionConversationSearch', () => {
   afterEach(() => {
     document.body.replaceChildren();
+  });
+
+  it('initializes tool presentation before conversation search evaluates timeline blocks', () => {
+    const source = readFileSync(webSessionPanelPath, 'utf8');
+    const pendingPlaceholderIndex = source.indexOf('function shouldShowToolPendingPlaceholder(');
+    const toolPresentationIndex = source.indexOf('createWebSessionToolPresentation({');
+    const filteredBlocksIndex = source.indexOf('const filteredTimelineBlocks = computed(');
+    const conversationSearchIndex = source.indexOf('useWebSessionConversationSearch({');
+
+    expect(pendingPlaceholderIndex).toBeGreaterThan(-1);
+    expect(toolPresentationIndex).toBeGreaterThan(pendingPlaceholderIndex);
+    expect(filteredBlocksIndex).toBeGreaterThan(toolPresentationIndex);
+    expect(conversationSearchIndex).toBeGreaterThan(filteredBlocksIndex);
   });
 
   it('handles Ctrl+F and Cmd+F in the regular conversation interface', () => {
