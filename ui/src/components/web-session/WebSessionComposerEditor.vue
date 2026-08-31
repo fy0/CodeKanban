@@ -1,5 +1,9 @@
 <template>
-  <div class="web-session-composer-editor" :style="editorStyleVars">
+  <div
+    class="web-session-composer-editor"
+    :class="{ 'is-disabled': disabled }"
+    :style="editorStyleVars"
+  >
     <EditorContent
       v-if="editorRef"
       :editor="editorRef"
@@ -55,6 +59,7 @@ import {
   composerOffsetToPosition,
   composerPositionToOffset,
   composerTextToJSON,
+  resolveWebSessionComposerCompositionEnd,
   resolveWebSessionComposerKeyAction,
   type WebSessionComposerCompletionOption,
   type WebSessionComposerEditorExposed,
@@ -76,6 +81,7 @@ const props = withDefaults(
     minRows?: number;
     maxRows?: number;
     compact?: boolean;
+    disabled?: boolean;
     skills?: CodexSkillSummary[];
     goalEnabled?: boolean;
   }>(),
@@ -84,6 +90,7 @@ const props = withDefaults(
     minRows: 3,
     maxRows: 10,
     compact: false,
+    disabled: false,
     skills: () => [],
     goalEnabled: true,
   }
@@ -101,6 +108,7 @@ const isComposing = ref(false);
 let applyingExternalValue = false;
 let pendingExternalValue: string | null = null;
 let lastLocallyEmittedValue: string | null = null;
+let compositionStartValue: string | null = null;
 let dismissedCompletionSignature = '';
 const completionState = reactive({
   open: false,
@@ -291,6 +299,9 @@ function dismissCompletion() {
 }
 
 function handleEditorKeydown(view: EditorView, event: KeyboardEvent) {
+  if (props.disabled) {
+    return false;
+  }
   const action = resolveWebSessionComposerKeyAction({
     key: event.key,
     altKey: event.altKey,
@@ -327,6 +338,10 @@ function handleEditorKeydown(view: EditorView, event: KeyboardEvent) {
 }
 
 function handleEditorPaste(event: ClipboardEvent) {
+  if (props.disabled) {
+    event.preventDefault();
+    return true;
+  }
   if (event.defaultPrevented) {
     return true;
   }
@@ -343,6 +358,13 @@ function handleEditorPaste(event: ClipboardEvent) {
 }
 
 function handleEditorDrop(event: DragEvent) {
+  if (props.disabled) {
+    if ((event.dataTransfer?.files.length ?? 0) > 0) {
+      event.preventDefault();
+      return true;
+    }
+    return false;
+  }
   const hasImage = Array.from(event.dataTransfer?.files ?? []).some(file =>
     file.type.toLowerCase().startsWith('image/')
   );
@@ -382,12 +404,15 @@ function syncExternalValue(value: string) {
 }
 
 function focus() {
+  if (props.disabled) {
+    return;
+  }
   editorRef.value?.commands.focus();
 }
 
 function setSelectionRange(start: number, end = start) {
   const editor = editorRef.value;
-  if (!editor) {
+  if (!editor || props.disabled) {
     return;
   }
 
@@ -403,11 +428,21 @@ watch(
   nextValue => {
     const editor = editorRef.value;
     const normalizedValue = String(nextValue ?? '');
+    const currentValue = getEditorText(editor);
+    if (normalizedValue === currentValue) {
+      if (pendingExternalValue === normalizedValue) {
+        pendingExternalValue = null;
+      }
+      if (lastLocallyEmittedValue === normalizedValue) {
+        lastLocallyEmittedValue = null;
+      }
+      return;
+    }
     if (normalizedValue === lastLocallyEmittedValue) {
       lastLocallyEmittedValue = null;
       return;
     }
-    if (!editor || normalizedValue === getEditorText(editor)) {
+    if (!editor) {
       return;
     }
     if (isComposing.value || editor.view.composing) {
@@ -415,6 +450,21 @@ watch(
       return;
     }
     syncExternalValue(normalizedValue);
+  }
+);
+
+watch(
+  () => props.disabled,
+  disabled => {
+    const editor = editorRef.value;
+    if (!editor) {
+      return;
+    }
+    editor.setEditable(!disabled, false);
+    editor.view.dom.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    if (disabled) {
+      closeCompletion();
+    }
   }
 );
 
@@ -446,6 +496,7 @@ watch(
 onMounted(() => {
   const editor = new Editor({
     content: composerTextToJSON(props.modelValue),
+    editable: !props.disabled,
     extensions: [
       ComposerDocument,
       ComposerParagraph,
@@ -465,6 +516,7 @@ onMounted(() => {
         role: 'textbox',
         'aria-label': props.placeholder || 'Message',
         'aria-multiline': 'true',
+        'aria-disabled': props.disabled ? 'true' : 'false',
         spellcheck: 'false',
         autocorrect: 'off',
         autocapitalize: 'off',
@@ -477,19 +529,37 @@ onMounted(() => {
       handleDOMEvents: {
         compositionstart: () => {
           isComposing.value = true;
+          compositionStartValue = getEditorText();
+          pendingExternalValue = null;
           closeCompletion();
           return false;
         },
         compositionend: () => {
           isComposing.value = false;
           nextTick(() => {
-            if (pendingExternalValue != null) {
-              const pending = pendingExternalValue;
+            const editor = editorRef.value;
+            if (!editor) {
               pendingExternalValue = null;
-              syncExternalValue(pending);
-            } else {
-              refreshCompletion();
+              compositionStartValue = null;
+              return;
             }
+            const action = resolveWebSessionComposerCompositionEnd({
+              startValue: compositionStartValue ?? getEditorText(editor),
+              localValue: getEditorText(editor),
+              modelValue: String(props.modelValue ?? ''),
+              pendingExternalValue,
+            });
+            pendingExternalValue = null;
+            compositionStartValue = null;
+            if (action.type === 'apply-external') {
+              syncExternalValue(action.value);
+              return;
+            }
+            if (action.type === 'emit-local') {
+              lastLocallyEmittedValue = action.value;
+              emit('update:modelValue', action.value);
+            }
+            refreshCompletion();
           });
           return false;
         },
@@ -544,6 +614,15 @@ defineExpose<WebSessionComposerEditorExposed>({
 .web-session-composer-editor__content {
   width: 100%;
   min-width: 0;
+}
+
+.web-session-composer-editor.is-disabled {
+  opacity: 0.72;
+}
+
+.web-session-composer-editor.is-disabled
+  :deep(.web-session-composer-editor__surface[contenteditable='false']) {
+  cursor: default;
 }
 
 .web-session-composer-editor :deep(.web-session-composer-editor__surface) {

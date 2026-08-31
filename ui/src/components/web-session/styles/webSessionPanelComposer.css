@@ -878,6 +878,10 @@
   position: relative;
 }
 
+.composer-input-shell.is-restoring {
+  cursor: progress;
+}
+
 .composer-input {
   flex: 1;
   min-width: 0;

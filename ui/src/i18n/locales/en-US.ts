@@ -1019,6 +1019,9 @@ export default {
     workTimingCalculating: 'Calculating history',
     workTimingCalculationFailed: 'Calculation failed; open again to retry',
     runDuration: 'Duration {duration}',
+    composerRestoringDraft: 'Restoring unsent draft...',
+    composerRestoreFailed: 'Draft restore failed. Refresh to try again.',
+    recoveredDraftTitle: 'Recovered draft',
     composerHintIdle:
       'Press Enter to send. Use Shift + Enter for a new line. Paste or drag images.',
     composerHintCodexMissing:

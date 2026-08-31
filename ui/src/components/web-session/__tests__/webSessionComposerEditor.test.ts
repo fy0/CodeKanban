@@ -8,6 +8,7 @@ import {
   composerOffsetToPosition,
   composerPositionToOffset,
   composerTextToJSON,
+  resolveWebSessionComposerCompositionEnd,
   resolveWebSessionComposerKeyAction,
 } from '@/components/web-session/webSessionComposerEditor';
 
@@ -171,5 +172,51 @@ describe('web session composer keyboard policy', () => {
   it('does not intercept IME confirmation keys', () => {
     expect(resolveWebSessionComposerKeyAction({ key: 'Enter', isComposing: true })).toBe('none');
     expect(resolveWebSessionComposerKeyAction({ key: 'Enter', keyCode: 229 })).toBe('none');
+  });
+});
+
+describe('web session composer IME synchronization', () => {
+  it('keeps the committed local composition over a stale external value', () => {
+    expect(
+      resolveWebSessionComposerCompositionEnd({
+        startValue: '',
+        localValue: '中文',
+        modelValue: '',
+        pendingExternalValue: '',
+      })
+    ).toEqual({ type: 'emit-local', value: '中文' });
+  });
+
+  it('does not emit the committed composition twice after the model catches up', () => {
+    expect(
+      resolveWebSessionComposerCompositionEnd({
+        startValue: '',
+        localValue: '中文',
+        modelValue: '中文',
+        pendingExternalValue: 'zhongwen',
+      })
+    ).toEqual({ type: 'none' });
+  });
+
+  it('applies a current external update when the composition made no local change', () => {
+    expect(
+      resolveWebSessionComposerCompositionEnd({
+        startValue: 'before',
+        localValue: 'before',
+        modelValue: 'external',
+        pendingExternalValue: 'external',
+      })
+    ).toEqual({ type: 'apply-external', value: 'external' });
+  });
+
+  it('applies the latest model value when an older queued update is stale', () => {
+    expect(
+      resolveWebSessionComposerCompositionEnd({
+        startValue: 'before',
+        localValue: 'before',
+        modelValue: 'latest',
+        pendingExternalValue: 'stale',
+      })
+    ).toEqual({ type: 'apply-external', value: 'latest' });
   });
 });

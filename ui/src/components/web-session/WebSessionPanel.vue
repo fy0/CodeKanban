@@ -1594,7 +1594,7 @@
                 <n-button
                   size="small"
                   tertiary
-                  :disabled="isCurrentSessionGoalModeBlocked"
+                  :disabled="isCurrentSessionGoalModeBlocked || !isComposerTargetReady"
                   @click="handleGoalCompose"
                 >
                   Edit
@@ -1668,6 +1668,7 @@
               type="file"
               accept="image/*"
               multiple
+              :disabled="!isComposerTargetReady"
               class="hidden-file-input"
               @change="handleFileChange"
             />
@@ -1861,7 +1862,9 @@
                             : 'Toggle goal card'
                           : 'Goal is only available for Codex'
                       "
-                      :disabled="selectedAgent !== 'codex' || !currentSession"
+                      :disabled="
+                        selectedAgent !== 'codex' || !currentSession || !isComposerTargetReady
+                      "
                       @click="toggleGoalCard"
                     >
                       <n-icon size="18"><IconGoal /></n-icon>
@@ -2466,7 +2469,14 @@
                 </div>
               </div>
 
-              <div class="composer-input-shell" :class="{ 'is-mobile': isMobile }">
+              <div
+                class="composer-input-shell"
+                :class="{
+                  'is-mobile': isMobile,
+                  'is-restoring': composerTargetStatus === 'loading',
+                }"
+                @pointerdown.capture="handleComposerPointerDown"
+              >
                 <WebSessionComposerEditor
                   :key="composerEditorKey"
                   ref="composerInputRef"
@@ -2476,6 +2486,7 @@
                   :min-rows="composerMinRows"
                   :max-rows="composerMaxRows"
                   :compact="isMobile"
+                  :disabled="!isComposerTargetReady"
                   :skills="codexSkills"
                   :goal-enabled="selectedAgent === 'codex'"
                   @focus="handleComposerFocus"
@@ -2500,6 +2511,7 @@
                         class="composer-icon-btn composer-icon-btn-mobile"
                         :title="quickInputButtonTitle"
                         :aria-label="quickInputButtonTitle"
+                        :disabled="!isComposerTargetReady"
                         @pointerdown.stop.prevent="handleMobileQuickInputTrigger"
                         @click.stop.prevent
                         @keydown.enter.stop.prevent="handleMobileQuickInputTrigger"
@@ -2585,6 +2597,7 @@
                     class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
                     :title="t('webSession.skills')"
                     :aria-label="t('webSession.skills')"
+                    :disabled="!isComposerTargetReady"
                     @pointerdown.stop.prevent="handleMobileSkillTrigger"
                     @click.stop.prevent
                     @keydown.enter.stop.prevent="handleMobileSkillTrigger"
@@ -2597,6 +2610,7 @@
                     class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
                     :title="t('webSession.attachImage')"
                     :aria-label="t('webSession.attachImage')"
+                    :disabled="!isComposerTargetReady"
                     @pointerdown.stop.prevent="handleMobileAttachmentTrigger"
                     @click.stop.prevent
                     @keydown.enter.stop.prevent="handleMobileAttachmentTrigger"
@@ -2619,6 +2633,7 @@
                         class="composer-icon-btn"
                         :title="quickInputButtonTitle"
                         :aria-label="quickInputButtonTitle"
+                        :disabled="!isComposerTargetReady"
                       >
                         <n-icon size="14"><FlashOutline /></n-icon>
                       </button>
@@ -2708,6 +2723,7 @@
                         class="composer-icon-btn"
                         :title="t('webSession.skills')"
                         :aria-label="t('webSession.skills')"
+                        :disabled="!isComposerTargetReady"
                       >
                         <n-icon size="14"><SparklesOutline /></n-icon>
                       </button>
@@ -2719,7 +2735,14 @@
                       @select-template="handleSkillTemplateInsert"
                     />
                   </n-popover>
-                  <button type="button" class="composer-icon-btn" @click="openFilePicker">
+                  <button
+                    type="button"
+                    class="composer-icon-btn"
+                    :disabled="!isComposerTargetReady"
+                    :title="t('webSession.attachImage')"
+                    :aria-label="t('webSession.attachImage')"
+                    @click="openFilePicker"
+                  >
                     <n-icon size="14"><ImageOutline /></n-icon>
                   </button>
                   <span class="composer-hint">{{ composerHint }}</span>
@@ -3303,6 +3326,10 @@ import {
   renderWebSessionComposerPastePlan,
   type WebSessionComposerPastePlan,
 } from '@/components/web-session/webSessionComposerPaste';
+import {
+  hasWebSessionComposerDraftContent,
+  resolveWebSessionComposerStartupTarget,
+} from '@/components/web-session/webSessionComposerStartup';
 import { resolveWebSessionMobileContextWorktree } from '@/components/web-session/webSessionMobileProjectContext';
 import { useWebSessionMobileProjectSwitch } from '@/components/web-session/useWebSessionMobileProjectSwitch';
 import { isFailedWebSessionUserMessage } from '@/components/web-session/webSessionMessageFailure';
@@ -3928,6 +3955,10 @@ const retryingUserMessageKey = ref('');
 const optimisticUnreadClearedRevisionBySession = ref<Record<string, string>>({});
 const webSessionCatchUpActive = ref(false);
 const isProjectSessionInitializing = ref(false);
+const composerTargetProjectId = ref('');
+const composerTargetOwnerId = ref('');
+const composerTargetStatus = ref<'loading' | 'ready' | 'error'>('loading');
+const composerFocusRequested = ref(false);
 const pendingRouteActivationSessionId = ref('');
 const frozenBlocks = ref<WebSessionBlock[] | null>(null);
 
@@ -4343,10 +4374,50 @@ function formatGoalDuration(totalSeconds: number) {
   return restMinutes > 0 ? `${hours}h ${restMinutes}m` : `${hours}h`;
 }
 const sendGuardProjectId = computed(() => currentRealSession.value?.projectId || props.projectId);
-const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
+const currentDraftSessionId = computed(() => {
+  if (composerTargetProjectId.value === props.projectId && composerTargetOwnerId.value) {
+    return composerTargetOwnerId.value;
+  }
+  return currentSession.value?.id ?? '';
+});
+const isComposerTargetReady = computed(
+  () =>
+    composerTargetProjectId.value === props.projectId &&
+    composerTargetStatus.value === 'ready' &&
+    Boolean(currentSession.value?.id) &&
+    currentSession.value?.id === currentDraftSessionId.value
+);
 const composerEditorKey = computed(
   () => `${currentDraftSessionId.value}:${composerEditorResetVersion.value}`
 );
+
+function setComposerTarget(
+  projectId: string,
+  ownerId: string,
+  status: 'loading' | 'ready' | 'error'
+) {
+  if (!projectId || projectId !== props.projectId) {
+    return;
+  }
+  composerTargetProjectId.value = projectId;
+  composerTargetOwnerId.value = String(ownerId || '').trim();
+  composerTargetStatus.value = status;
+  if (status !== 'ready' || !composerFocusRequested.value) {
+    return;
+  }
+  composerFocusRequested.value = false;
+  nextTick(() => {
+    if (props.isActive && isComposerTargetReady.value) {
+      composerInputRef.value?.focus();
+    }
+  });
+}
+
+function handleComposerPointerDown() {
+  if (!isComposerTargetReady.value) {
+    composerFocusRequested.value = true;
+  }
+}
 const currentSessionAutoRetryEnabled = computed(() =>
   Boolean(currentSession.value?.autoRetryEnabled)
 );
@@ -4581,7 +4652,7 @@ const composerText = computed({
   get: () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text,
   set: value => {
     const sessionId = currentDraftSessionId.value;
-    if (!sessionId) {
+    if (!sessionId || !isComposerTargetReady.value) {
       return;
     }
     webSessionStore.setDraftText(props.projectId, sessionId, value);
@@ -4668,6 +4739,9 @@ function parseComposerGoalCommand(raw: string) {
 }
 
 async function handleGoalCompose() {
+  if (!isComposerTargetReady.value) {
+    return;
+  }
   if (!(await ensureGoalModeAvailable())) {
     return;
   }
@@ -6508,6 +6582,7 @@ const hasDraftContent = computed(
 );
 const canSend = computed(
   () =>
+    isComposerTargetReady.value &&
     !isMessageCapabilityBlocked.value &&
     !isRunActive.value &&
     !isSubmittingMessage.value &&
@@ -6516,6 +6591,7 @@ const canSend = computed(
 );
 const canStageDuringRun = computed(
   () =>
+    isComposerTargetReady.value &&
     !isMessageCapabilityBlocked.value &&
     isRunActive.value &&
     !isSubmittingMessage.value &&
@@ -6641,18 +6717,30 @@ const canConfirmScheduledSend = computed(() => {
         !activeScheduledPlanTargetIds.value.has(target.planItemId)
     );
   }
-  return hasDraftContent.value && !isDraftAttachmentUploading.value;
+  return isComposerTargetReady.value && hasDraftContent.value && !isDraftAttachmentUploading.value;
 });
 const composerMinRows = computed(() => (isMobile.value ? 1 : 3));
 const composerMaxRows = computed(() => (isMobile.value ? 8 : 10));
-const composerPlaceholder = computed(() =>
-  isMobile.value
+const composerPlaceholder = computed(() => {
+  if (composerTargetStatus.value === 'error') {
+    return t('webSession.composerRestoreFailed');
+  }
+  if (!isComposerTargetReady.value) {
+    return t('webSession.composerRestoringDraft');
+  }
+  return isMobile.value
     ? locale.value === 'zh-CN'
       ? '输入消息'
       : 'Type a message'
-    : t('webSession.inputPlaceholder')
-);
+    : t('webSession.inputPlaceholder');
+});
 const composerHint = computed(() => {
+  if (composerTargetStatus.value === 'error') {
+    return t('webSession.composerRestoreFailed');
+  }
+  if (!isComposerTargetReady.value) {
+    return t('webSession.composerRestoringDraft');
+  }
   if (codexRuntimeConfig.value && selectedAgent.value === 'codex' && !runtimeHasCodex.value) {
     return t('webSession.composerHintCodexMissing');
   }
@@ -7125,7 +7213,7 @@ function handleMobileQuickInputClickOutside() {
 }
 
 function handleMobileQuickInputTrigger() {
-  if (!isMobile.value) {
+  if (!isMobile.value || !isComposerTargetReady.value) {
     return;
   }
   const nextShow = !showQuickInputPopover.value;
@@ -7139,14 +7227,14 @@ function handleMobileQuickInputTrigger() {
 }
 
 function handleMobileAttachmentTrigger() {
-  if (!isMobile.value) {
+  if (!isMobile.value || !isComposerTargetReady.value) {
     return;
   }
   openFilePicker();
 }
 
 function handleMobileSkillTrigger() {
-  if (!isMobile.value) {
+  if (!isMobile.value || !isComposerTargetReady.value) {
     return;
   }
   handleSkillBrowserVisibilityChange(!showSkillBrowser.value);
@@ -7179,6 +7267,9 @@ async function ensureCodexSkillsLoaded(force = false) {
 }
 
 function handleSkillBrowserVisibilityChange(nextShow: boolean) {
+  if (nextShow && !isComposerTargetReady.value) {
+    return;
+  }
   showSkillBrowser.value = nextShow;
   if (nextShow) {
     if (isMobile.value) {
@@ -7540,6 +7631,9 @@ function showComposerTransferError(detail?: string) {
 }
 
 async function handleQuickInputApply(text: string) {
+  if (!isComposerTargetReady.value) {
+    return;
+  }
   showQuickInputPopover.value = false;
   const applied = await applyQuickInputText(text);
   if (!applied || !quickInputDirectSendEnabled.value) {
@@ -9066,7 +9160,7 @@ function updateActiveDraftSession(updater: (draft: DraftSessionTab) => DraftSess
   updateDraftSession(activeDraftSessionId.value, updater);
 }
 
-function createDraftSession(forceAgent?: WebSessionAgent) {
+function createDraftSession(forceAgent?: WebSessionAgent, options?: { title?: string }) {
   const anchorId = underlyingTabSessionId.value;
   const source = currentSession.value;
   const nextAgent = forceAgent ?? source?.agent ?? draftAgent.value;
@@ -9081,7 +9175,7 @@ function createDraftSession(forceAgent?: WebSessionAgent) {
     orderIndex: Number.MAX_SAFE_INTEGER - draftSessions.value.length,
     agent: nextAgent,
     claudeRuntime: source?.claudeRuntime === 'ccr' ? 'ccr' : draftClaudeRuntime.value,
-    title: buildDraftTitle(nextAgent),
+    title: options?.title || buildDraftTitle(nextAgent),
     model: defaultModelForAgent(nextAgent),
     reasoningEffort: defaultReasoningEffortForAgent(nextAgent),
     workflowMode: source?.workflowMode || draftWorkflowMode.value,
@@ -9155,6 +9249,7 @@ function createDraftSession(forceAgent?: WebSessionAgent) {
   replaceDraftSessionState([...draftSessions.value, draft], draft.id);
   insertTabAfter(draft.id, anchorId);
   webSessionStore.setActiveSession(props.projectId, '');
+  setComposerTarget(props.projectId, draft.id, 'ready');
   return draft;
 }
 
@@ -9167,6 +9262,24 @@ function ensureDefaultDraftSession() {
     return;
   }
   createDraftSession();
+}
+
+function recoverOrphanedComposerDraft(projectId: string, ownerId: string) {
+  const normalizedOwnerId = String(ownerId || '').trim();
+  if (!projectId || projectId !== props.projectId || !normalizedOwnerId) {
+    return null;
+  }
+  const orphanedDraft = webSessionStore.getDraft(projectId, normalizedOwnerId);
+  if (!hasWebSessionComposerDraftContent(orphanedDraft) || draftSessions.value.length > 0) {
+    return null;
+  }
+
+  const recovered = createDraftSession(undefined, {
+    title: t('webSession.recoveredDraftTitle'),
+  });
+  webSessionStore.moveDraft(projectId, normalizedOwnerId, recovered.id);
+  setComposerTarget(projectId, recovered.id, 'ready');
+  return recovered;
 }
 
 function clearArchivedPreviewSession() {
@@ -9234,10 +9347,12 @@ async function activateTabById(
     activeArchivedPreviewId.value = '';
     webSessionStore.setActiveSession(props.projectId, '');
     rememberTabVisit(session.id);
+    setComposerTarget(props.projectId, session.id, 'ready');
     return true;
   } else if (isArchivedPreviewSession(session)) {
     realSessionSnapshotLoadController.cancel();
     activeArchivedPreviewId.value = session.id;
+    setComposerTarget(props.projectId, session.id, 'ready');
     return true;
   } else {
     replaceDraftSessionState(draftSessions.value, '');
@@ -9252,6 +9367,7 @@ async function activateTabById(
     }
     if (activated) {
       void acknowledgeVisibleSessionView(session.id);
+      setComposerTarget(props.projectId, session.id, 'ready');
     }
     return activated;
   }
@@ -9309,6 +9425,7 @@ async function openArchivedPreviewSession(
     }
   }
   syncArchivedPreviewSessionSummary(session.id);
+  setComposerTarget(props.projectId, session.id, 'ready');
 }
 
 async function connectVisibleRealSession(projectId: string, sessionId: string) {
@@ -11253,12 +11370,12 @@ async function initializeProjectSessions(projectId: string) {
     return;
   }
   isProjectSessionInitializing.value = true;
+  let sessionsLoaded = false;
+  if (composerTargetProjectId.value !== projectId) {
+    composerFocusRequested.value = false;
+  }
   realSessionSnapshotLoadController.cancel();
   try {
-    await loadComposerDeveloperConfig();
-    if (!isCurrentInitialization()) {
-      return;
-    }
     clearArchivedPreviewSession();
     activeArchivedPreviewId.value = '';
     tabOrderIds.value = loadPersistedTabOrderIds(projectId);
@@ -11277,19 +11394,29 @@ async function initializeProjectSessions(projectId: string) {
     const restoredDrafts = restoredDraftState.drafts;
     const activeDraftId = restoredDraftState.activeDraftId;
     replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
+    const routeSessionId = routeWebSessionId.value;
+    const rememberedSessionId = webSessionStore.getActiveSessionId(projectId);
+    const startupTarget = resolveWebSessionComposerStartupTarget({
+      routeSessionId,
+      activeDraftId,
+      rememberedSessionId,
+    });
+    setComposerTarget(projectId, startupTarget.ownerId, startupTarget.ready ? 'ready' : 'loading');
+
+    const developerConfigPromise = loadComposerDeveloperConfig();
     const loadedSessions = await webSessionStore.loadSessions(projectId);
     if (!isCurrentInitialization()) {
       return;
     }
+    sessionsLoaded = true;
     syncTabNavigationState(projectId, {
       orderIds: tabOrderIds.value,
       mruIds: tabMruIds.value,
     });
-    await webSessionStore.openEventStream();
-    if (!isCurrentInitialization()) {
-      return;
-    }
-    const routeSessionId = routeWebSessionId.value;
+    void webSessionStore.openEventStream().catch(error => {
+      console.warn('[Web Session] Failed to open event stream during initialization', error);
+    });
+
     if (routeSessionId) {
       pendingRouteActivationSessionId.value = routeSessionId;
       const handled = await activateSessionFromRoute(projectId, routeSessionId, {
@@ -11298,31 +11425,67 @@ async function initializeProjectSessions(projectId: string) {
       if (!isCurrentInitialization()) {
         return;
       }
-      if (handled) {
+      if (handled && routeWebSessionId.value === routeSessionId) {
         return;
+      }
+      if (!handled) {
+        await developerConfigPromise;
+        if (recoverOrphanedComposerDraft(projectId, routeSessionId)) {
+          return;
+        }
       }
     }
     if (activeDraftId) {
-      await activateTabById(activeDraftId, { connectReal: false });
-      return;
+      if (await activateTabById(activeDraftId, { connectReal: false })) {
+        return;
+      }
     }
-    const rememberedSessionId = webSessionStore.getActiveSessionId(projectId);
-    const targetSessionId =
-      loadedSessions.find(session => session.id === rememberedSessionId)?.id ??
-      selectMostRecentWebSession(loadedSessions)?.id;
-    if (targetSessionId) {
+
+    const rememberedSession = loadedSessions.find(session => session.id === rememberedSessionId);
+    if (rememberedSession) {
       try {
-        await activateTabById(targetSessionId);
+        if (await activateTabById(rememberedSession.id)) {
+          return;
+        }
       } catch (error) {
         if (isCurrentInitialization()) {
           console.warn('[Web Session] Failed to initialize current session', {
             projectId,
-            sessionId: targetSessionId,
+            sessionId: rememberedSession.id,
             error,
           });
+          if (currentSession.value?.id === rememberedSession.id) {
+            setComposerTarget(projectId, rememberedSession.id, 'ready');
+            return;
+          }
         }
       }
-      return;
+    } else if (rememberedSessionId) {
+      await developerConfigPromise;
+      if (recoverOrphanedComposerDraft(projectId, rememberedSessionId)) {
+        return;
+      }
+    }
+
+    const recentSession = selectMostRecentWebSession(loadedSessions);
+    if (recentSession) {
+      try {
+        if (await activateTabById(recentSession.id)) {
+          return;
+        }
+      } catch (error) {
+        if (isCurrentInitialization()) {
+          console.warn('[Web Session] Failed to initialize recent session', {
+            projectId,
+            sessionId: recentSession.id,
+            error,
+          });
+          if (currentSession.value?.id === recentSession.id) {
+            setComposerTarget(projectId, recentSession.id, 'ready');
+            return;
+          }
+        }
+      }
     }
     if (restoredDrafts.length > 0) {
       const fallbackDraftId =
@@ -11332,11 +11495,26 @@ async function initializeProjectSessions(projectId: string) {
         restoredDrafts[restoredDrafts.length - 1]?.id ??
         '';
       if (fallbackDraftId) {
-        await activateTabById(fallbackDraftId, { connectReal: false });
+        if (await activateTabById(fallbackDraftId, { connectReal: false })) {
+          return;
+        }
       }
-      return;
     }
+    await developerConfigPromise;
     ensureDefaultDraftSession();
+  } catch (error) {
+    if (isCurrentInitialization()) {
+      console.error('[Web Session] Failed to initialize project sessions', {
+        projectId,
+        error,
+      });
+      const activeSession = currentSession.value;
+      if (activeSession && (sessionsLoaded || isDraftSession(activeSession))) {
+        setComposerTarget(projectId, activeSession.id, 'ready');
+      } else {
+        setComposerTarget(projectId, currentDraftSessionId.value, 'error');
+      }
+    }
   } finally {
     if (isCurrentInitialization()) {
       isProjectSessionInitializing.value = false;
@@ -11352,6 +11530,7 @@ async function handleSessionSelect(sessionId: string) {
   if (sessionId === activeSessionId.value) {
     pendingRouteActivationSessionId.value = '';
     const session = currentSession.value;
+    setComposerTarget(props.projectId, sessionId, 'ready');
     void syncWebSessionRouteSessionId(
       session && !isDraftSession(session) && session.projectId === props.projectId ? session.id : ''
     ).catch(error => {
@@ -11968,6 +12147,10 @@ async function performDeleteSession(sessionId: string): Promise<boolean> {
 }
 
 function openFilePicker() {
+  if (!isComposerTargetReady.value) {
+    composerFocusRequested.value = true;
+    return;
+  }
   showQuickInputPopover.value = false;
   showSkillBrowser.value = false;
   fileInputRef.value?.click();
@@ -11995,7 +12178,7 @@ function resetComposerDragState() {
 
 async function uploadComposerImages(files: File[]) {
   const sessionId = currentDraftSessionId.value;
-  if (!sessionId) {
+  if (!sessionId || !isComposerTargetReady.value) {
     return;
   }
   clearComposerTransferError();
@@ -12107,7 +12290,7 @@ async function prepareComposerPaste(options: {
 function handleComposerPaste(event: ClipboardEvent) {
   const sessionId = currentDraftSessionId.value;
   const clipboardData = event.clipboardData;
-  if (!sessionId || !clipboardData) {
+  if (!sessionId || !clipboardData || !isComposerTargetReady.value) {
     return;
   }
 
@@ -12143,7 +12326,7 @@ function handleComposerPaste(event: ClipboardEvent) {
 }
 
 function handleComposerDragEnter(event: DragEvent) {
-  if (!hasFileTransfer(event.dataTransfer)) {
+  if (!isComposerTargetReady.value || !hasFileTransfer(event.dataTransfer)) {
     return;
   }
 
@@ -12154,7 +12337,7 @@ function handleComposerDragEnter(event: DragEvent) {
 }
 
 function handleComposerDragOver(event: DragEvent) {
-  if (!hasFileTransfer(event.dataTransfer)) {
+  if (!isComposerTargetReady.value || !hasFileTransfer(event.dataTransfer)) {
     return;
   }
 
@@ -12180,7 +12363,7 @@ function handleComposerDragLeave(event: DragEvent) {
 }
 
 async function handleComposerDrop(event: DragEvent) {
-  if (!hasFileTransfer(event.dataTransfer)) {
+  if (!isComposerTargetReady.value || !hasFileTransfer(event.dataTransfer)) {
     return;
   }
 
@@ -12205,6 +12388,10 @@ function removeAttachment(attachmentId: string) {
 
 function focusComposer() {
   ensureMobileComposerVisible();
+  if (!isComposerTargetReady.value) {
+    composerFocusRequested.value = true;
+    return;
+  }
   nextTick(() => {
     composerInputRef.value?.focus();
   });
@@ -12221,7 +12408,7 @@ function getComposerSelectionRange() {
 
 function setComposerTextAndSelection(text: string, cursor: number) {
   const sessionId = currentDraftSessionId.value;
-  if (!sessionId) {
+  if (!sessionId || !isComposerTargetReady.value) {
     return false;
   }
 
@@ -12406,7 +12593,7 @@ function enqueueComposerPaste(
 
 async function applyQuickInputText(text: string) {
   const sessionId = currentDraftSessionId.value;
-  if (!sessionId) {
+  if (!sessionId || !isComposerTargetReady.value) {
     return false;
   }
 
@@ -12441,7 +12628,7 @@ function insertUploadedImagePlaceholders(uploadedCount: number) {
 
 function handleSkillTokenInsert(skill: CodexSkillSummary) {
   const sessionId = currentDraftSessionId.value;
-  if (!sessionId) {
+  if (!sessionId || !isComposerTargetReady.value) {
     return;
   }
 
@@ -12458,7 +12645,7 @@ function handleSkillTokenInsert(skill: CodexSkillSummary) {
 
 function handleSkillTemplateInsert(skill: CodexSkillSummary) {
   const sessionId = currentDraftSessionId.value;
-  if (!sessionId || !skill.defaultPrompt) {
+  if (!sessionId || !skill.defaultPrompt || !isComposerTargetReady.value) {
     return;
   }
 
@@ -13047,7 +13234,7 @@ function handleComposerBlur() {
 }
 
 function handleComposerSubmitShortcut() {
-  if (isDraftAttachmentUploading.value || !hasDraftContent.value) {
+  if (!isComposerTargetReady.value || isDraftAttachmentUploading.value || !hasDraftContent.value) {
     return;
   }
   void triggerPrimaryComposerAction();
@@ -15268,6 +15455,10 @@ watch(
     } else {
       projectSessionInitializationGate.invalidate();
       isProjectSessionInitializing.value = false;
+      composerTargetProjectId.value = '';
+      composerTargetOwnerId.value = '';
+      composerTargetStatus.value = 'loading';
+      composerFocusRequested.value = false;
     }
   },
   { immediate: true }
@@ -15307,6 +15498,7 @@ watch(
     }
     if (isProjectSessionInitializing.value) {
       pendingRouteActivationSessionId.value = sessionId;
+      void initializeProjectSessions(props.projectId);
       return;
     }
     const session = currentSession.value;
@@ -15773,6 +15965,9 @@ watch(currentDraftSessionId, () => {
 watch(
   () => currentSession.value?.id,
   (sessionId, previousSessionId) => {
+    if (sessionId && !isProjectSessionInitializing.value) {
+      setComposerTarget(props.projectId, sessionId, 'ready');
+    }
     showPiTreeDrawer.value = false;
     showQuickInputPopover.value = false;
     pendingUserInputTimelineAnchor = null;

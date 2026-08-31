@@ -55,6 +55,32 @@ export interface WebSessionComposerKeyInput {
   completionOpen?: boolean;
 }
 
+export type WebSessionComposerCompositionAction =
+  | { type: 'none' }
+  | { type: 'apply-external'; value: string }
+  | { type: 'emit-local'; value: string };
+
+export function resolveWebSessionComposerCompositionEnd(input: {
+  startValue: string;
+  localValue: string;
+  modelValue: string;
+  pendingExternalValue: string | null;
+}): WebSessionComposerCompositionAction {
+  if (input.localValue !== input.startValue) {
+    return input.localValue === input.modelValue
+      ? { type: 'none' }
+      : { type: 'emit-local', value: input.localValue };
+  }
+
+  if (input.pendingExternalValue != null && input.modelValue !== input.localValue) {
+    return { type: 'apply-external', value: input.modelValue };
+  }
+
+  return input.localValue === input.modelValue
+    ? { type: 'none' }
+    : { type: 'emit-local', value: input.localValue };
+}
+
 export function composerTextToJSON(value: string): JSONContent {
   const text = String(value ?? '');
   const content: JSONContent[] = [];
