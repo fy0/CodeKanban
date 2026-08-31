@@ -9,6 +9,7 @@ import {
   resolveWebSessionMobileComposerBottomScrollAction,
   resolveWebSessionMobileComposerScrollState,
   resolveWebSessionTimelineFollowState,
+  resolveWebSessionTimelineVisualAnchorScrollTop,
   shouldApplyWebSessionTimelineAutoScroll,
 } from '@/components/web-session/webSessionTimelineScroll';
 
@@ -94,6 +95,106 @@ describe('webSessionTimelineScroll', () => {
     expect(shouldApplyWebSessionTimelineAutoScroll(1, 2, true, true)).toBe(false);
     expect(shouldApplyWebSessionTimelineAutoScroll(2, 2, true, false)).toBe(true);
     expect(shouldApplyWebSessionTimelineAutoScroll(2, 2, false, false)).toBe(false);
+  });
+
+  it('keeps a visible pending input card fixed when content grows above it', () => {
+    expect(
+      resolveWebSessionTimelineVisualAnchorScrollTop({
+        autoFollowBottom: false,
+        anchorMatches: true,
+        anchorWasVisible: true,
+        previousOffsetPx: 180,
+        currentOffsetPx: 260,
+        previousClientHeight: 600,
+        metrics: {
+          scrollTop: 900,
+          scrollHeight: 2200,
+          clientHeight: 600,
+        },
+      })
+    ).toBe(980);
+  });
+
+  it('preserves a pending input anchor across repeated small layout growth', () => {
+    const firstScrollTop = resolveWebSessionTimelineVisualAnchorScrollTop({
+      autoFollowBottom: false,
+      anchorMatches: true,
+      anchorWasVisible: true,
+      previousOffsetPx: 180,
+      currentOffsetPx: 192,
+      previousClientHeight: 600,
+      metrics: {
+        scrollTop: 900,
+        scrollHeight: 2200,
+        clientHeight: 600,
+      },
+    });
+    const secondScrollTop = resolveWebSessionTimelineVisualAnchorScrollTop({
+      autoFollowBottom: false,
+      anchorMatches: true,
+      anchorWasVisible: true,
+      previousOffsetPx: 180,
+      currentOffsetPx: 194,
+      previousClientHeight: 600,
+      metrics: {
+        scrollTop: firstScrollTop ?? 0,
+        scrollHeight: 2202,
+        clientHeight: 600,
+      },
+    });
+
+    expect(firstScrollTop).toBe(912);
+    expect(secondScrollTop).toBe(926);
+  });
+
+  it('supports shrinking content and clamps pending input anchor compensation', () => {
+    expect(
+      resolveWebSessionTimelineVisualAnchorScrollTop({
+        autoFollowBottom: false,
+        anchorMatches: true,
+        anchorWasVisible: true,
+        previousOffsetPx: 180,
+        currentOffsetPx: 120,
+        previousClientHeight: 600,
+        metrics: {
+          scrollTop: 40,
+          scrollHeight: 1200,
+          clientHeight: 600,
+        },
+      })
+    ).toBe(0);
+  });
+
+  it('does not preserve an invalid pending input visual anchor', () => {
+    const input = {
+      autoFollowBottom: false,
+      anchorMatches: true,
+      anchorWasVisible: true,
+      previousOffsetPx: 180,
+      currentOffsetPx: 260,
+      previousClientHeight: 600,
+      metrics: {
+        scrollTop: 900,
+        scrollHeight: 2200,
+        clientHeight: 600,
+      },
+    };
+
+    expect(
+      resolveWebSessionTimelineVisualAnchorScrollTop({ ...input, autoFollowBottom: true })
+    ).toBeNull();
+    expect(
+      resolveWebSessionTimelineVisualAnchorScrollTop({ ...input, anchorMatches: false })
+    ).toBeNull();
+    expect(
+      resolveWebSessionTimelineVisualAnchorScrollTop({ ...input, anchorWasVisible: false })
+    ).toBeNull();
+    expect(
+      resolveWebSessionTimelineVisualAnchorScrollTop({
+        ...input,
+        metrics: { ...input.metrics, clientHeight: 640 },
+      })
+    ).toBeNull();
   });
 
   it('waits for enough upward scrolling before collapsing the mobile composer', () => {
@@ -219,6 +320,18 @@ describe('webSessionTimelineScroll', () => {
     const source = readFileSync(webSessionTimelineStylePath, 'utf8');
 
     expect(source).toMatch(/\.runtime-strip\s*\{[^}]*overflow-anchor:\s*none;/s);
+  });
+
+  it('anchors the pending input card across timeline content and size updates', () => {
+    const source = readFileSync(webSessionPanelPath, 'utf8');
+
+    expect(source).toContain('ref="pendingUserInputCardRef"');
+    expect(source).toMatch(
+      /watch\(timelineContentVersion,[\s\S]*restorePendingUserInputTimelineAnchor/
+    );
+    expect(source).toMatch(
+      /useResizeObserver\(timelineListRef,[\s\S]*restorePendingUserInputTimelineAnchor/
+    );
   });
 
   it('only restores timeline position when project or session identity changes', () => {

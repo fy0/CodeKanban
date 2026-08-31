@@ -1500,6 +1500,7 @@
 
                   <div
                     v-else-if="pendingUserInput && !inlinePlanChoice"
+                    ref="pendingUserInputCardRef"
                     :key="pendingUserInput.itemId"
                     class="approval-card user-input-card"
                     :class="{ 'is-stale': pendingUserInput.stale }"
@@ -3362,6 +3363,7 @@ import {
   resolveWebSessionMobileComposerBottomScrollAction,
   resolveWebSessionMobileComposerScrollState,
   resolveWebSessionTimelineFollowState,
+  resolveWebSessionTimelineVisualAnchorScrollTop,
   shouldApplyWebSessionTimelineAutoScroll,
   type WebSessionMobileComposerScrollState,
   type WebSessionTimelineScrollMetrics,
@@ -3783,6 +3785,7 @@ const webSessionDevMode = computed(() => isWebSessionDevMode(route.query));
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const timelineListRef = ref<HTMLDivElement | null>(null);
+const pendingUserInputCardRef = ref<HTMLDivElement | null>(null);
 const timelineUserMessageElements = new Map<string, HTMLElement>();
 const timelineBlockElements = new Map<string, HTMLElement>();
 type TimelineNavigationAction = 'start' | 'end' | 'previous' | 'next';
@@ -3808,6 +3811,12 @@ const showJumpToBottom = ref(false);
 const devCyberPolicySessionId = ref('');
 const lastTimelineScrollTop = ref(0);
 let timelineScrollSyncVersion = 0;
+let pendingUserInputTimelineAnchor: {
+  sessionId: string;
+  requestKey: string;
+  offsetPx: number;
+  containerHeight: number;
+} | null = null;
 const pendingTimelinePositionRestore = ref<{
   projectId: string;
   sessionId: string;
@@ -14364,6 +14373,69 @@ function readTimelineScrollMetrics(container: HTMLDivElement): WebSessionTimelin
   };
 }
 
+function readPendingUserInputTimelineAnchor(container: HTMLDivElement) {
+  const element = pendingUserInputCardRef.value;
+  const sessionId = currentRealSession.value?.id ?? '';
+  const requestKey = pendingUserInputSyncKey.value;
+  if (!element?.isConnected || !sessionId || !requestKey || inlinePlanChoice.value) {
+    return null;
+  }
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  if (elementRect.bottom <= containerRect.top || elementRect.top >= containerRect.bottom) {
+    return null;
+  }
+  return {
+    sessionId,
+    requestKey,
+    offsetPx: elementRect.top - containerRect.top,
+    containerHeight: container.clientHeight,
+  };
+}
+
+function refreshPendingUserInputTimelineAnchor(container = timelineScrollRef.value) {
+  pendingUserInputTimelineAnchor = container ? readPendingUserInputTimelineAnchor(container) : null;
+  return pendingUserInputTimelineAnchor;
+}
+
+function restorePendingUserInputTimelineAnchor(
+  container: HTMLDivElement,
+  anchor = pendingUserInputTimelineAnchor
+) {
+  const element = pendingUserInputCardRef.value;
+  const sessionId = currentRealSession.value?.id ?? '';
+  const requestKey = pendingUserInputSyncKey.value;
+  if (!anchor || !element?.isConnected) {
+    refreshPendingUserInputTimelineAnchor(container);
+    return false;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const targetScrollTop = resolveWebSessionTimelineVisualAnchorScrollTop({
+    autoFollowBottom: autoFollowBottom.value,
+    anchorMatches: anchor.sessionId === sessionId && anchor.requestKey === requestKey,
+    anchorWasVisible: true,
+    previousOffsetPx: anchor.offsetPx,
+    currentOffsetPx: elementRect.top - containerRect.top,
+    previousClientHeight: anchor.containerHeight,
+    metrics: readTimelineScrollMetrics(container),
+  });
+  if (targetScrollTop == null) {
+    refreshPendingUserInputTimelineAnchor(container);
+    return false;
+  }
+
+  container.scrollTop = targetScrollTop;
+  updateBottomState(container);
+  resetMobileComposerScrollState(container);
+  refreshPendingUserInputTimelineAnchor(container);
+  if (!pendingTimelinePositionRestore.value) {
+    void scheduleTimelinePositionCapture();
+  }
+  return true;
+}
+
 function applyTimelineFollowState(state: {
   autoFollowBottom: boolean;
   showJumpToBottom: boolean;
@@ -14496,6 +14568,7 @@ function handleTimelineScroll(event: Event) {
     invalidateTimelineScrollSync();
   }
   handleMobileTimelineScrollForComposer(container);
+  refreshPendingUserInputTimelineAnchor(container);
   refreshTimelineViewportNavigation();
   void scheduleTimelinePositionCapture();
   if (
@@ -15641,6 +15714,7 @@ watch(
 );
 
 watch(timelineContentVersion, async () => {
+  const pendingInputAnchor = refreshPendingUserInputTimelineAnchor();
   await nextTick();
   refreshTimelineViewportNavigation();
   if (pendingTimelinePositionRestore.value) {
@@ -15648,6 +15722,7 @@ watch(timelineContentVersion, async () => {
     return;
   }
   if (restoreHistoryAnchor()) {
+    refreshPendingUserInputTimelineAnchor();
     markSessionViewed(currentRealSession.value?.id);
     ensureTimelineHistoryFilled();
     refreshTimelineViewportNavigation();
@@ -15659,13 +15734,23 @@ watch(timelineContentVersion, async () => {
   }
   if (autoFollowBottom.value) {
     scheduleScrollToBottom();
-  } else {
+  } else if (!restorePendingUserInputTimelineAnchor(container, pendingInputAnchor)) {
     updateBottomState(container);
   }
   markSessionViewed(currentRealSession.value?.id);
   ensureTimelineHistoryFilled();
   refreshTimelineViewportNavigation();
 });
+
+watch(
+  () => (pendingUserInput.value && !inlinePlanChoice.value ? pendingUserInputSyncKey.value : ''),
+  async () => {
+    pendingUserInputTimelineAnchor = null;
+    await nextTick();
+    refreshPendingUserInputTimelineAnchor();
+  },
+  { immediate: true }
+);
 
 watch(
   () =>
@@ -15690,6 +15775,7 @@ watch(
   (sessionId, previousSessionId) => {
     showPiTreeDrawer.value = false;
     showQuickInputPopover.value = false;
+    pendingUserInputTimelineAnchor = null;
     resetMobileComposerScrollState();
     if (isMobile.value) {
       isMobileComposerSettingsExpanded.value = false;
@@ -15724,6 +15810,7 @@ watch(
       webSessionStore.trimInactiveSessionEvents(currentRealSession.value?.id || '');
       mobileKeyboard.reset();
       setMobileComposerFocusState(false);
+      pendingUserInputTimelineAnchor = null;
       return;
     }
     refreshTabHeaderLayout();
@@ -15755,7 +15842,10 @@ useResizeObserver(timelineListRef, () => {
     void restorePendingTimelinePosition();
     return;
   }
-  scheduleScrollToBottom();
+  const container = timelineScrollRef.value;
+  if (!container || !restorePendingUserInputTimelineAnchor(container)) {
+    scheduleScrollToBottom();
+  }
 });
 
 useResizeObserver(timelineScrollRef, entries => {
@@ -15769,7 +15859,7 @@ useResizeObserver(timelineScrollRef, entries => {
   }
   if (autoFollowBottom.value) {
     scheduleScrollToBottom();
-  } else {
+  } else if (!restorePendingUserInputTimelineAnchor(container)) {
     updateBottomState(container);
   }
 });
@@ -15846,6 +15936,7 @@ onBeforeUnmount(() => {
   streamingMarkdownController.clear();
   timelineUserMessageElements.clear();
   timelineBlockElements.clear();
+  pendingUserInputTimelineAnchor = null;
   userMessageNavigationPending.value = null;
   if (liveStateClockTimer != null) {
     window.clearInterval(liveStateClockTimer);

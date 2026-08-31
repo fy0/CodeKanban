@@ -10,6 +10,16 @@ export interface WebSessionTimelineFollowState {
   lastScrollTop: number;
 }
 
+export interface WebSessionTimelineVisualAnchorAdjustment {
+  autoFollowBottom: boolean;
+  anchorMatches: boolean;
+  anchorWasVisible: boolean;
+  previousOffsetPx: number;
+  currentOffsetPx: number;
+  previousClientHeight: number;
+  metrics: WebSessionTimelineScrollMetrics;
+}
+
 export interface WebSessionMobileComposerScrollState {
   lastScrollTop: number;
   lastClientHeight: number;
@@ -29,6 +39,37 @@ export function shouldApplyWebSessionTimelineAutoScroll(
   autoFollowBottom: boolean
 ) {
   return scheduledVersion === currentVersion && (force || autoFollowBottom);
+}
+
+export function resolveWebSessionTimelineVisualAnchorScrollTop({
+  autoFollowBottom,
+  anchorMatches,
+  anchorWasVisible,
+  previousOffsetPx,
+  currentOffsetPx,
+  previousClientHeight,
+  metrics,
+}: WebSessionTimelineVisualAnchorAdjustment): number | null {
+  if (
+    autoFollowBottom ||
+    !anchorMatches ||
+    !anchorWasVisible ||
+    !Number.isFinite(previousOffsetPx) ||
+    !Number.isFinite(currentOffsetPx) ||
+    !Number.isFinite(previousClientHeight) ||
+    !Number.isFinite(metrics.scrollTop) ||
+    !Number.isFinite(metrics.scrollHeight) ||
+    !Number.isFinite(metrics.clientHeight) ||
+    Math.abs(previousClientHeight - metrics.clientHeight) >
+      WEB_SESSION_TIMELINE_SCROLL_UP_EPSILON_PX
+  ) {
+    return null;
+  }
+
+  const maxScrollTop = Math.max(0, metrics.scrollHeight - metrics.clientHeight);
+  const targetScrollTop =
+    normalizeScrollTop(metrics.scrollTop) + currentOffsetPx - previousOffsetPx;
+  return Math.min(maxScrollTop, Math.max(0, targetScrollTop));
 }
 
 function normalizeScrollTop(value: number) {
