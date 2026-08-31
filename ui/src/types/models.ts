@@ -475,6 +475,7 @@ export interface WebSessionSummary {
   orderIndex: number;
   agent: WebSessionAgent;
   claudeRuntime?: 'claude' | 'ccr';
+  backend?: 'legacy_exec' | 'codex_app_server' | 'pi_rpc';
   title: string;
   model: string;
   reasoningEffort: WebSessionReasoningEffort;

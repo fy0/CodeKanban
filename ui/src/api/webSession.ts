@@ -176,12 +176,22 @@ export type WebSessionWorkTimingBackfillResult = WebSessionWorkTimingBackfillSta
   failedResultCount: number;
 };
 
+export type CodexAppServerState = 'inactive' | 'starting' | 'active' | 'draining' | 'terminating';
+
+export type CodexAppServerRuntime = {
+  state: CodexAppServerState;
+  runId?: string;
+  processRootPid?: number;
+  canTerminate: boolean;
+};
+
 export type CodexAppServerTermination = {
   sessionId: string;
   runId: string;
   stateBefore: 'active' | 'draining';
   processRootPid: number;
   alreadyRequested: boolean;
+  runtime: CodexAppServerRuntime;
 };
 
 type CountsResponse = {
@@ -362,6 +372,7 @@ export type WebSessionSnapshot = {
   scheduledInputs?: WebSessionScheduledInputRecord[];
   pendingApproval?: WebSessionPendingApprovalRecord | null;
   subAgents?: WebSessionSubAgentRecord[];
+  codexAppServer?: CodexAppServerRuntime;
 };
 
 export type WebSessionCatchUp = {
@@ -380,6 +391,7 @@ export type WebSessionCatchUp = {
   scheduledInputs: WebSessionScheduledInputRecord[];
   pendingApproval?: WebSessionPendingApprovalRecord | null;
   subAgents: WebSessionSubAgentRecord[];
+  codexAppServer?: CodexAppServerRuntime;
 };
 
 export type WebSessionHydrationTarget = {
@@ -814,7 +826,7 @@ export const webSessionApi = {
         >(`/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/app-server/terminate`)
         .send()) ?? {};
     if (!body.item) {
-      throw new Error('failed to terminate Codex app-server');
+      throw new Error('failed to terminate Codex');
     }
     return body.item;
   },

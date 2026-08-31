@@ -9,6 +9,7 @@ export type WebSessionWireFrame<
   TSubAgent = unknown,
   TPendingInput = unknown,
   TScheduledInput = unknown,
+  TCodexAppServer = unknown,
 > = {
   v: typeof WEB_SESSION_WIRE_VERSION;
   k: WebSessionWireFrameKind;
@@ -30,6 +31,7 @@ export type WebSessionWireFrame<
   };
   i?: THistoryItem;
   ag?: TSubAgent;
+  cas?: TCodexAppServer;
   pi?: TPendingInput[];
   si?: TScheduledInput[];
   code?: string;
@@ -72,9 +74,17 @@ export function parseWebSessionWireFrame<
   TSubAgent = unknown,
   TPendingInput = unknown,
   TScheduledInput = unknown,
+  TCodexAppServer = unknown,
 >(
   raw: unknown
-): WebSessionWireFrame<TSession, THistoryItem, TSubAgent, TPendingInput, TScheduledInput> {
+): WebSessionWireFrame<
+  TSession,
+  THistoryItem,
+  TSubAgent,
+  TPendingInput,
+  TScheduledInput,
+  TCodexAppServer
+> {
   const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('web session websocket frame must be an object');
@@ -94,7 +104,8 @@ export function parseWebSessionWireFrame<
     THistoryItem,
     TSubAgent,
     TPendingInput,
-    TScheduledInput
+    TScheduledInput,
+    TCodexAppServer
   >;
 }
 

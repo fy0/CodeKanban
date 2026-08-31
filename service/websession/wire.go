@@ -23,6 +23,7 @@ const (
 	wireOpPending        = "pending"
 	wireOpScheduled      = "scheduled"
 	wireOpSubAgent       = "sub_agent"
+	wireOpAppServer      = "app_server"
 	wireOpResyncRequired = "resync_required"
 )
 
@@ -72,6 +73,7 @@ type wireFrame struct {
 	Pending        *[]wirePendingInput  `json:"pi,omitempty"`
 	Scheduled      []wireScheduledInput `json:"si,omitempty"`
 	SubAgent       *wireSubAgent        `json:"ag,omitempty"`
+	CodexAppServer *wireCodexAppServer  `json:"cas,omitempty"`
 	Code           string               `json:"code,omitempty"`
 	Message        string               `json:"msg,omitempty"`
 	Retry          bool                 `json:"retry,omitempty"`
@@ -85,6 +87,7 @@ type wireSess struct {
 	OrderIndex                        float64        `json:"oi"`
 	Agent                             string         `json:"ag"`
 	ClaudeRuntime                     string         `json:"cr,omitempty"`
+	Backend                           string         `json:"be"`
 	Model                             string         `json:"md"`
 	ReasoningEffort                   string         `json:"re"`
 	WorkflowMode                      string         `json:"wm"`
@@ -144,6 +147,13 @@ type wireWorkTiming struct {
 	CurrentRun          *wireWorkTimingCurrentRun `json:"cur,omitempty"`
 	BackfillState       string                    `json:"bs"`
 	BackfillVersion     int                       `json:"bv"`
+}
+
+type wireCodexAppServer struct {
+	State          string `json:"st"`
+	RunID          string `json:"rid,omitempty"`
+	ProcessRootPID int    `json:"pid,omitempty"`
+	CanTerminate   bool   `json:"ct"`
 }
 
 type wireWorkTimingCurrentRun struct {
@@ -431,6 +441,17 @@ func newSubAgentFrame(sessionID string, agent WebSessionSubAgent, summary *Sessi
 	return frame
 }
 
+func newCodexAppServerFrame(sessionID string, runtimeState CodexAppServerRuntime) wireFrame {
+	return wireFrame{
+		Version:        protocolVersion,
+		Kind:           wireKindEvent,
+		SessionID:      sessionID,
+		Timestamp:      nowUnixMilli(),
+		Operation:      wireOpAppServer,
+		CodexAppServer: mapWireCodexAppServer(runtimeState),
+	}
+}
+
 func newSessionFrame(sessionID string, summary SessionSummary) wireFrame {
 	return wireFrame{
 		Version:   protocolVersion,
@@ -514,6 +535,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		OrderIndex:                        session.OrderIndex,
 		Agent:                             string(session.Agent),
 		ClaudeRuntime:                     string(session.ClaudeRuntime),
+		Backend:                           string(session.Backend),
 		Model:                             session.Model,
 		ReasoningEffort:                   string(session.ReasoningEffort),
 		WorkflowMode:                      string(session.WorkflowMode),
@@ -587,6 +609,15 @@ func mapWireSession(session SessionSummary) *wireSess {
 		}
 	}
 	return wireSession
+}
+
+func mapWireCodexAppServer(runtimeState CodexAppServerRuntime) *wireCodexAppServer {
+	return &wireCodexAppServer{
+		State:          string(runtimeState.State),
+		RunID:          runtimeState.RunID,
+		ProcessRootPID: runtimeState.ProcessRootPID,
+		CanTerminate:   runtimeState.CanTerminate,
+	}
 }
 
 func mapWireWorkTiming(timing WorkTiming) wireWorkTiming {

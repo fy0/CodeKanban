@@ -440,6 +440,145 @@
   white-space: nowrap;
 }
 
+.composer-app-server-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  padding: 0;
+  border: 1px solid var(--n-border-color);
+  border-radius: 5px;
+  background: var(--app-surface-color, #fff);
+  color: var(--n-text-color-3);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.composer-app-server-trigger:hover,
+.composer-app-server-trigger:focus-visible {
+  border-color: currentColor;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, currentColor 8%);
+}
+
+.composer-app-server-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--app-focus-ring, #2563eb) 60%, transparent);
+  outline-offset: 2px;
+}
+
+.composer-app-server-trigger.is-active {
+  color: var(--n-success-color, #15803d);
+}
+
+.composer-app-server-trigger.is-starting,
+.composer-app-server-trigger.is-draining {
+  color: var(--n-warning-color, #b45309);
+}
+
+.composer-app-server-trigger.is-terminating {
+  color: var(--n-error-color, #dc2626);
+}
+
+.composer-app-server-dot {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--app-surface-color, #fff);
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.composer-app-server-trigger.is-starting .composer-app-server-dot,
+.composer-app-server-trigger.is-terminating .composer-app-server-dot {
+  animation: composerSubAgentPulse 1.6s ease-in-out infinite;
+}
+
+.composer-app-server-popover {
+  width: min(240px, 72vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.composer-app-server-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.composer-app-server-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--n-text-color-3);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.composer-app-server-state.is-active {
+  color: var(--n-success-color, #15803d);
+}
+
+.composer-app-server-state.is-starting,
+.composer-app-server-state.is-draining {
+  color: var(--n-warning-color, #b45309);
+}
+
+.composer-app-server-state.is-terminating {
+  color: var(--n-error-color, #dc2626);
+}
+
+.composer-app-server-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.composer-app-server-pid {
+  color: var(--n-text-color-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+
+.composer-app-server-terminate {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--n-error-color) 45%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--n-error-color) 8%, transparent);
+  color: var(--n-error-color);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.composer-app-server-terminate:hover:not(:disabled),
+.composer-app-server-terminate:focus-visible {
+  background: color-mix(in srgb, var(--n-error-color) 14%, transparent);
+}
+
+.composer-app-server-terminate:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .composer-sub-agent-trigger {
   display: inline-flex;
   align-items: center;
@@ -733,36 +872,6 @@
 
 .composer-settings-popover-tip.is-warning {
   color: var(--n-warning-color, #d97706);
-}
-
-.composer-settings-danger-zone {
-  padding-top: 10px;
-  border-top: 1px solid var(--n-border-color);
-}
-
-.composer-settings-danger-button {
-  width: 100%;
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border: 1px solid color-mix(in srgb, var(--n-error-color) 45%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--n-error-color) 8%, transparent);
-  color: var(--n-error-color);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.composer-settings-danger-button:hover:not(:disabled),
-.composer-settings-danger-button:focus-visible {
-  background: color-mix(in srgb, var(--n-error-color) 14%, transparent);
-}
-
-.composer-settings-danger-button:disabled {
-  cursor: wait;
-  opacity: 0.55;
 }
 
 .composer-input-shell {

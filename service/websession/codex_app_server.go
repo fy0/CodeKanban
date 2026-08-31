@@ -587,6 +587,7 @@ func (m *Manager) runCodexAppServerSession(
 	}
 	run.setCodexAppServer(client)
 	run.setCommand(client.cmd)
+	m.broadcastCodexAppServerRuntime(session.ID)
 
 	stderrBuffer := bytes.NewBuffer(nil)
 	stderrDone := make(chan struct{})

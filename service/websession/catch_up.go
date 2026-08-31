@@ -15,22 +15,23 @@ import (
 const maxEventCursorOrder = int64(^uint64(0) >> 1)
 
 type SessionCatchUpResponse struct {
-	Revision          string               `json:"revision"`
-	HistoryEpoch      string               `json:"historyEpoch"`
-	NextEventCursor   string               `json:"nextEventCursor"`
-	TargetEventCursor string               `json:"targetEventCursor"`
-	HasMore           bool                 `json:"hasMore"`
-	ResetRequired     bool                 `json:"resetRequired"`
-	Session           SessionSummary       `json:"session"`
-	Items             []HistoryItem        `json:"items"`
-	Total             int                  `json:"total"`
-	PendingEpoch      string               `json:"pendingEpoch"`
-	PendingVersion    uint64               `json:"pendingVersion"`
-	PendingInputs     []PendingInput       `json:"pendingInputs"`
-	ScheduledInputs   []ScheduledInput     `json:"scheduledInputs"`
-	PendingApproval   *PendingApproval     `json:"pendingApproval,omitempty"`
-	PendingUserInput  *PendingUserInput    `json:"pendingUserInput,omitempty"`
-	SubAgents         []WebSessionSubAgent `json:"subAgents"`
+	Revision          string                `json:"revision"`
+	HistoryEpoch      string                `json:"historyEpoch"`
+	NextEventCursor   string                `json:"nextEventCursor"`
+	TargetEventCursor string                `json:"targetEventCursor"`
+	HasMore           bool                  `json:"hasMore"`
+	ResetRequired     bool                  `json:"resetRequired"`
+	Session           SessionSummary        `json:"session"`
+	Items             []HistoryItem         `json:"items"`
+	Total             int                   `json:"total"`
+	PendingEpoch      string                `json:"pendingEpoch"`
+	PendingVersion    uint64                `json:"pendingVersion"`
+	PendingInputs     []PendingInput        `json:"pendingInputs"`
+	ScheduledInputs   []ScheduledInput      `json:"scheduledInputs"`
+	PendingApproval   *PendingApproval      `json:"pendingApproval,omitempty"`
+	PendingUserInput  *PendingUserInput     `json:"pendingUserInput,omitempty"`
+	SubAgents         []WebSessionSubAgent  `json:"subAgents"`
+	CodexAppServer    CodexAppServerRuntime `json:"codexAppServer"`
 }
 
 type sessionEventCursor struct {
@@ -200,6 +201,7 @@ func (m *Manager) CatchUpSession(
 		PendingInputs:     []PendingInput{},
 		ScheduledInputs:   []ScheduledInput{},
 		SubAgents:         []WebSessionSubAgent{},
+		CodexAppServer:    m.codexAppServerRuntime(sessionID),
 	}
 	if response.ResetRequired {
 		return response, nil

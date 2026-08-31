@@ -1255,7 +1255,8 @@ func TestForceTerminateCodexAppServerDistinguishesActiveAndDraining(t *testing.T
 		default:
 			t.Fatal("active app-server termination did not cancel the run")
 		}
-		if first.StateBefore != "active" || first.AlreadyRequested {
+		if first.StateBefore != "active" || first.AlreadyRequested ||
+			first.Runtime.State != CodexAppServerTerminating || first.Runtime.CanTerminate {
 			t.Fatalf("first termination = %#v", first)
 		}
 		manager.mu.Lock()
@@ -1286,7 +1287,8 @@ func TestForceTerminateCodexAppServerDistinguishesActiveAndDraining(t *testing.T
 		if err != nil {
 			t.Fatalf("ForceTerminateCodexAppServer: %v", err)
 		}
-		if cancelled || result.StateBefore != "draining" {
+		if cancelled || result.StateBefore != "draining" ||
+			result.Runtime.State != CodexAppServerTerminating || result.Runtime.CanTerminate {
 			t.Fatalf("draining termination cancelled completed context: cancelled=%v result=%#v", cancelled, result)
 		}
 		if _, err := manager.ForceTerminateCodexAppServer("wrong-project", "session-2"); !errors.Is(err, ErrCodexAppServerProjectMismatch) {
@@ -4199,6 +4201,9 @@ func TestCodexAppServerDrainTerminatesStuckProcess(t *testing.T) {
 	if drain == nil {
 		t.Fatal("completed app-server was not registered for drain")
 	}
+	if runtimeState := manager.codexAppServerRuntime(created.ID); runtimeState.State != CodexAppServerDraining || !runtimeState.CanTerminate {
+		t.Fatalf("runtime = %#v, want draining", runtimeState)
+	}
 	select {
 	case <-drain.done:
 	case <-time.After(codexRunDrainHardTimeout + 2*time.Second):
@@ -4209,6 +4214,9 @@ func TestCodexAppServerDrainTerminatesStuckProcess(t *testing.T) {
 	manager.mu.RUnlock()
 	if remaining != nil {
 		t.Fatal("completed app-server remained in the drain registry")
+	}
+	if runtimeState := manager.codexAppServerRuntime(created.ID); runtimeState.State != CodexAppServerInactive || runtimeState.CanTerminate {
+		t.Fatalf("runtime = %#v, want inactive", runtimeState)
 	}
 }
 

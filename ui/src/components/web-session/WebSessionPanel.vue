@@ -1866,6 +1866,57 @@
                       <n-icon size="18"><IconGoal /></n-icon>
                     </button>
                     <n-popover
+                      v-if="isCurrentCodexAppServerSession"
+                      trigger="click"
+                      placement="top-end"
+                      :show-arrow="true"
+                    >
+                      <template #trigger>
+                        <button
+                          type="button"
+                          class="composer-app-server-trigger"
+                          :class="`is-${currentCodexAppServerRuntime.state}`"
+                          :title="codexAppServerTriggerTitle"
+                          :aria-label="codexAppServerTriggerTitle"
+                        >
+                          <n-icon size="13" aria-hidden="true"><ServerOutline /></n-icon>
+                          <span class="composer-app-server-dot"></span>
+                        </button>
+                      </template>
+                      <div class="composer-app-server-popover">
+                        <div class="composer-app-server-heading">
+                          <span>{{ t('webSession.codexAppServer') }}</span>
+                          <span
+                            class="composer-app-server-state"
+                            :class="`is-${currentCodexAppServerRuntime.state}`"
+                          >
+                            <span class="composer-app-server-state-dot"></span>
+                            {{ codexAppServerStatusLabel }}
+                          </span>
+                        </div>
+                        <div
+                          v-if="currentCodexAppServerRuntime.processRootPid"
+                          class="composer-app-server-pid"
+                        >
+                          {{
+                            t('webSession.codexAppServerPid', {
+                              pid: currentCodexAppServerRuntime.processRootPid,
+                            })
+                          }}
+                        </div>
+                        <button
+                          v-if="canForceTerminateCodexAppServer"
+                          type="button"
+                          class="composer-app-server-terminate"
+                          :disabled="forceTerminateAppServerLoading"
+                          @click="confirmForceTerminateCodexAppServer"
+                        >
+                          <n-icon size="14" aria-hidden="true"><StopCircleOutline /></n-icon>
+                          <span>{{ t('webSession.forceTerminateAppServer') }}</span>
+                        </button>
+                      </div>
+                    </n-popover>
+                    <n-popover
                       v-if="hasKnownSubAgents"
                       trigger="click"
                       placement="top-end"
@@ -1986,20 +2037,6 @@
                         </n-checkbox>
                         <div class="composer-settings-popover-tip">
                           {{ activeCallTimeoutPopoverTip }}
-                        </div>
-                        <div
-                          v-if="canForceTerminateCodexAppServer"
-                          class="composer-settings-danger-zone"
-                        >
-                          <button
-                            type="button"
-                            class="composer-settings-danger-button"
-                            :disabled="forceTerminateAppServerLoading"
-                            @click="confirmForceTerminateCodexAppServer"
-                          >
-                            <n-icon size="15" aria-hidden="true"><WarningOutline /></n-icon>
-                            <span>{{ t('webSession.forceTerminateAppServer') }}</span>
-                          </button>
                         </div>
                       </div>
                     </n-popover>
@@ -3160,7 +3197,9 @@ import {
   RefreshOutline,
   SettingsOutline,
   SearchOutline,
+  ServerOutline,
   SparklesOutline,
+  StopCircleOutline,
   SyncOutline,
   TimeOutline,
   TrashOutline,
@@ -3220,7 +3259,7 @@ import {
   resolveImageAttachmentDisplayName,
   stripImagePlaceholdersFromText,
 } from '@/utils/webSessionImages';
-import { urlBase } from '@/api';
+import { ApiError, urlBase } from '@/api';
 import {
   webSessionApi,
   type WebSessionCommandExecutionGroupDetail,
@@ -4307,7 +4346,30 @@ const currentSessionAutoRetryDispatchPendingOnFailure = computed(() =>
 );
 
 const canConfigureActiveCallTimeout = computed(() => currentSession.value?.agent === 'codex');
-const canForceTerminateCodexAppServer = computed(() => currentRealSession.value?.agent === 'codex');
+const isCurrentCodexAppServerSession = computed(() => {
+  const session = currentRealSession.value;
+  return session?.agent === 'codex' && session.backend === 'codex_app_server';
+});
+const currentCodexAppServerRuntime = computed(() => {
+  const sessionId = currentRealSession.value?.id;
+  return sessionId
+    ? webSessionStore.getCodexAppServerRuntime(sessionId)
+    : { state: 'inactive' as const, canTerminate: false };
+});
+const codexAppServerStatusLabel = computed(() =>
+  t(`webSession.codexAppServerStatus.${currentCodexAppServerRuntime.value.state}`)
+);
+const codexAppServerTriggerTitle = computed(
+  () => `${t('webSession.codexAppServer')}: ${codexAppServerStatusLabel.value}`
+);
+const canForceTerminateCodexAppServer = computed(() => {
+  const runtimeState = currentCodexAppServerRuntime.value;
+  return (
+    isCurrentCodexAppServerSession.value &&
+    runtimeState.canTerminate &&
+    (runtimeState.state === 'active' || runtimeState.state === 'draining')
+  );
+});
 const forceTerminateAppServerLoading = ref(false);
 const currentSessionActiveCallTimeoutEnabled = computed(() => {
   const session = currentSession.value;
@@ -4453,7 +4515,7 @@ function handleComposerSettingsPopoverShow(show: boolean) {
 
 function confirmForceTerminateCodexAppServer() {
   const session = currentRealSession.value;
-  if (!session || session.agent !== 'codex' || forceTerminateAppServerLoading.value) {
+  if (!session || !canForceTerminateCodexAppServer.value || forceTerminateAppServerLoading.value) {
     return;
   }
   dialog.warning({
@@ -4465,10 +4527,34 @@ function confirmForceTerminateCodexAppServer() {
       forceTerminateAppServerLoading.value = true;
       try {
         const result = await webSessionApi.terminateCodexAppServer(session.projectId, session.id);
+        const currentRuntime = webSessionStore.getCodexAppServerRuntime(session.id);
+        const sameRun =
+          !currentRuntime.runId ||
+          !result.runtime.runId ||
+          currentRuntime.runId === result.runtime.runId;
+        if (
+          result.runtime.state === 'inactive' ||
+          (sameRun && currentRuntime.state !== 'inactive')
+        ) {
+          webSessionStore.setCodexAppServerRuntime(session.id, result.runtime);
+        }
         message.success(
           t('webSession.forceTerminateAppServerSuccess', { pid: result.processRootPid || '-' })
         );
       } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          try {
+            await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
+              rememberActive: false,
+              conditional: false,
+              ensureLatest: true,
+            });
+            message.info(t('webSession.forceTerminateAppServerAlreadyStopped'));
+            return true;
+          } catch {
+            // Report the original termination error below when reconciliation fails.
+          }
+        }
         message.error(
           t('webSession.forceTerminateAppServerFailed', {
             error: error instanceof Error ? error.message : t('common.error'),

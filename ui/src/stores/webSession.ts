@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { computed, reactive, ref } from 'vue';
 import {
   webSessionApi,
+  type CodexAppServerRuntime,
   type WebSessionAttachmentUploadProgress,
   type WebSessionCommandExecutionGroupDetail,
   type WebSessionImportResult,
@@ -61,6 +62,7 @@ type WireSession = {
   oi?: number;
   ag: WebSessionAgent;
   cr?: 'claude' | 'ccr';
+  be?: 'legacy_exec' | 'codex_app_server' | 'pi_rpc' | string;
   md: string;
   re?: WebSessionReasoningEffort;
   wm: 'default' | 'plan';
@@ -250,12 +252,20 @@ type WireSubAgent = {
   ea?: number | null;
 };
 
+type WireCodexAppServer = {
+  st?: string;
+  rid?: string;
+  pid?: number;
+  ct?: boolean;
+};
+
 type WireFrame = WebSessionWireFrame<
   WireSession,
   WireHistoryItem,
   WireSubAgent,
   WirePendingInput,
-  WireScheduledInput
+  WireScheduledInput,
+  WireCodexAppServer
 >;
 
 function parseWireFrame(raw: unknown): WireFrame {
@@ -264,8 +274,32 @@ function parseWireFrame(raw: unknown): WireFrame {
     WireHistoryItem,
     WireSubAgent,
     WirePendingInput,
-    WireScheduledInput
+    WireScheduledInput,
+    WireCodexAppServer
   >(raw);
+}
+
+function normalizeCodexAppServerRuntime(
+  value: CodexAppServerRuntime | WireCodexAppServer | null | undefined
+): CodexAppServerRuntime {
+  const record = (value ?? {}) as CodexAppServerRuntime & WireCodexAppServer;
+  const rawState = String(record.state ?? record.st ?? '').trim();
+  const state =
+    rawState === 'starting' ||
+    rawState === 'active' ||
+    rawState === 'draining' ||
+    rawState === 'terminating'
+      ? rawState
+      : 'inactive';
+  const runId = String(record.runId ?? record.rid ?? '').trim();
+  const rawPID = Number(record.processRootPid ?? record.pid ?? 0);
+  const processRootPid = Number.isInteger(rawPID) && rawPID > 0 ? rawPID : undefined;
+  return {
+    state,
+    ...(runId ? { runId } : {}),
+    ...(processRootPid ? { processRootPid } : {}),
+    canTerminate: (record.canTerminate ?? record.ct) === true,
+  };
 }
 
 export interface WebSessionToolBlock {
@@ -2030,6 +2064,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const scheduledInputsBySession = ref<Record<string, WebSessionScheduledInput[]>>({});
   const snapshotApprovalsBySession = ref<Record<string, WebSessionApprovalState>>({});
   const subAgentsBySession = ref<Record<string, WebSessionSubAgent[]>>({});
+  const codexAppServerBySession = ref<Record<string, CodexAppServerRuntime>>({});
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
   const cachedCounts = reactive(new Map<string, number>());
@@ -3086,6 +3121,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       orderIndex: Number(session.oi ?? 0),
       agent: session.ag,
       claudeRuntime: session.cr === 'ccr' ? 'ccr' : 'claude',
+      backend:
+        session.be === 'legacy_exec' || session.be === 'codex_app_server' || session.be === 'pi_rpc'
+          ? session.be
+          : undefined,
       title: session.ttl,
       model: session.md,
       reasoningEffort: session.re ?? 'default',
@@ -3861,6 +3900,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextSubAgents = { ...subAgentsBySession.value };
     delete nextSubAgents[sessionId];
     subAgentsBySession.value = nextSubAgents;
+    const nextCodexAppServers = { ...codexAppServerBySession.value };
+    delete nextCodexAppServers[sessionId];
+    codexAppServerBySession.value = nextCodexAppServers;
     runtimeProjectionCacheBySession.delete(sessionId);
     eventIndexBySession.delete(sessionId);
     const nextPendingInputs = { ...pendingInputsBySession.value };
@@ -4166,6 +4208,25 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const items = subAgentsBySession.value[sessionId] ?? [];
     const rootThreadId = String(findSessionById(sessionId)?.nativeSessionId ?? '').trim();
     return rootThreadId ? items.filter(item => item.id !== rootThreadId) : items;
+  }
+
+  function getCodexAppServerRuntime(sessionId: string): CodexAppServerRuntime {
+    return (
+      codexAppServerBySession.value[sessionId] ?? {
+        state: 'inactive',
+        canTerminate: false,
+      }
+    );
+  }
+
+  function setCodexAppServerRuntime(
+    sessionId: string,
+    runtimeState: CodexAppServerRuntime | WireCodexAppServer | null | undefined
+  ) {
+    codexAppServerBySession.value = {
+      ...codexAppServerBySession.value,
+      [sessionId]: normalizeCodexAppServerRuntime(runtimeState),
+    };
   }
 
   function hasAuthoritativeSubAgents(sessionId: string) {
@@ -5416,6 +5477,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
         return;
       }
 
+      if (frame.op === 'app_server' && frame.cas) {
+        setCodexAppServerRuntime(frame.sid, frame.cas);
+        sessionSync.markApplied(frame.sid, frame.rev);
+        return;
+      }
+
       if (frame.op === 'hist_page' && frame.h) {
         const historicalItems = Array.isArray(frame.h.its)
           ? frame.h.its.map(item => normalizeHistoryItem(item))
@@ -6299,6 +6366,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
       sessionSync.observe(sessionId, responseRevision);
       if (snapshot.unchanged) {
+        if (snapshot.codexAppServer && sessionSync.shouldApply(sessionId, responseRevision)) {
+          setCodexAppServerRuntime(sessionId, snapshot.codexAppServer);
+        }
         sessionSync.markHydrated(sessionId, responseRevision);
         hydratedHistoryEpochBySession.set(
           sessionId,
@@ -6350,6 +6420,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 : {}),
             }
           );
+          if (snapshot.codexAppServer) {
+            setCodexAppServerRuntime(sessionId, snapshot.codexAppServer);
+          }
           hydratedHistoryEpochBySession.set(
             sessionId,
             String(snapshot.historyEpoch ?? summary.historyEpoch ?? '1')
@@ -6468,6 +6541,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 .filter((item): item is WebSessionSubAgent => item != null)
             : []
         );
+        if (response.codexAppServer) {
+          setCodexAppServerRuntime(sessionId, response.codexAppServer);
+        }
         const currentMeta = getHistoryMeta(sessionId);
         historyBySession.value = {
           ...historyBySession.value,
@@ -7901,6 +7977,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     fetchHistoryWindow,
     loadCommandGroupDetail,
     getSubAgents,
+    getCodexAppServerRuntime,
+    setCodexAppServerRuntime,
     isSessionSnapshotCurrent,
     getBlocks,
     getTimelineBlocks,

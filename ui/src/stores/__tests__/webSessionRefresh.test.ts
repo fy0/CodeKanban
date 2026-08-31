@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { WebSessionSnapshot } from '@/api/webSession';
 import type { WebSessionSummary } from '@/types/models';
 import {
   isWebSessionMessageDeliveryError,
@@ -77,6 +78,7 @@ function makeSession(overrides: Partial<WebSessionSummary> = {}): WebSessionSumm
     worktreeId: null,
     orderIndex: 1000,
     agent: 'codex',
+    backend: 'codex_app_server',
     title: 'Codex Session',
     model: 'gpt-5.4',
     reasoningEffort: 'medium',
@@ -141,6 +143,7 @@ function toWireSession(session: WebSessionSummary) {
     wid: session.worktreeId,
     oi: session.orderIndex,
     ag: session.agent,
+    be: session.backend,
     md: session.model,
     re: session.reasoningEffort,
     wm: session.workflowMode,
@@ -344,6 +347,141 @@ describe('webSession loading behavior', () => {
       history: { items: [], hasMore: false, total: 0 },
     });
     await Promise.all([firstSnapshot, secondSnapshot]);
+  });
+
+  it('tracks Codex app-server runtime across snapshots and websocket events', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-app-server', revision: '2' });
+    listMock.mockResolvedValue([session]);
+    snapshotMock
+      .mockResolvedValueOnce({
+        revision: '2',
+        historyEpoch: '1',
+        eventCursor: '0:9223372036854775807',
+        session,
+        history: { items: [], hasMore: false, total: 0 },
+        codexAppServer: {
+          state: 'starting',
+          runId: 'run-1',
+          canTerminate: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        revision: '4',
+        historyEpoch: '1',
+        eventCursor: '0:9223372036854775807',
+        unchanged: true,
+        codexAppServer: {
+          state: 'inactive',
+          canTerminate: false,
+        },
+      });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    expect(store.getCodexAppServerRuntime(session.id)).toEqual({
+      state: 'starting',
+      runId: 'run-1',
+      canTerminate: false,
+    });
+
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      rev: '3',
+      ts: Date.now(),
+      op: 'app_server',
+      cas: { st: 'active', rid: 'run-1', pid: 4242, ct: true },
+    });
+    expect(store.getCodexAppServerRuntime(session.id)).toEqual({
+      state: 'active',
+      runId: 'run-1',
+      processRootPid: 4242,
+      canTerminate: true,
+    });
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      rev: '4',
+      ts: Date.now(),
+      op: 'app_server',
+      cas: { st: 'draining', rid: 'run-1', pid: 4242, ct: true },
+    });
+    expect(store.getCodexAppServerRuntime(session.id).state).toBe('draining');
+
+    await store.loadSessionSnapshot(session.projectId, session.id, { conditional: true });
+    expect(store.getCodexAppServerRuntime(session.id)).toEqual({
+      state: 'inactive',
+      canTerminate: false,
+    });
+  });
+
+  it('does not let a stale unchanged snapshot roll back app-server runtime', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-app-server-race', revision: '2' });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValueOnce({
+      revision: '2',
+      historyEpoch: '1',
+      eventCursor: '0:9223372036854775807',
+      session,
+      history: { items: [], hasMore: false, total: 0 },
+      codexAppServer: {
+        state: 'active',
+        runId: 'run-1',
+        processRootPid: 4242,
+        canTerminate: true,
+      },
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+
+    let resolveSnapshot!: (snapshot: WebSessionSnapshot) => void;
+    snapshotMock.mockReturnValueOnce(
+      new Promise<WebSessionSnapshot>(resolve => {
+        resolveSnapshot = resolve;
+      })
+    );
+    const staleSnapshot = store.loadSessionSnapshot(session.projectId, session.id, {
+      conditional: true,
+      skipTrailing: true,
+    });
+    await flushMicrotasks();
+
+    findSocket('/api/v1/web-sessions/events')?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      rev: '3',
+      ts: Date.now(),
+      op: 'app_server',
+      cas: { st: 'inactive', ct: false },
+    });
+    resolveSnapshot({
+      revision: '2',
+      historyEpoch: '1',
+      eventCursor: '0:9223372036854775807',
+      unchanged: true,
+      codexAppServer: {
+        state: 'active',
+        runId: 'run-1',
+        processRootPid: 4242,
+        canTerminate: true,
+      },
+    });
+    await staleSnapshot;
+
+    expect(store.getCodexAppServerRuntime(session.id)).toEqual({
+      state: 'inactive',
+      canTerminate: false,
+    });
   });
 
   it('rejects stale HTTP snapshots and uses knownRevision for unchanged probes', async () => {

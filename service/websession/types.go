@@ -25,6 +25,23 @@ const (
 	SessionBackendPiRPC          SessionBackend = "pi_rpc"
 )
 
+type CodexAppServerState string
+
+const (
+	CodexAppServerInactive    CodexAppServerState = "inactive"
+	CodexAppServerStarting    CodexAppServerState = "starting"
+	CodexAppServerActive      CodexAppServerState = "active"
+	CodexAppServerDraining    CodexAppServerState = "draining"
+	CodexAppServerTerminating CodexAppServerState = "terminating"
+)
+
+type CodexAppServerRuntime struct {
+	State          CodexAppServerState `json:"state"`
+	RunID          string              `json:"runId,omitempty"`
+	ProcessRootPID int                 `json:"processRootPid,omitempty"`
+	CanTerminate   bool                `json:"canTerminate"`
+}
+
 type WorkflowMode string
 
 const (
@@ -276,6 +293,7 @@ type SessionSummary struct {
 	OrderIndex                        float64                    `json:"orderIndex"`
 	Agent                             Agent                      `json:"agent"`
 	ClaudeRuntime                     ClaudeRuntime              `json:"claudeRuntime"`
+	Backend                           SessionBackend             `json:"backend"`
 	Title                             string                     `json:"title"`
 	Model                             string                     `json:"model"`
 	ReasoningEffort                   ReasoningEffort            `json:"reasoningEffort"`
@@ -529,34 +547,36 @@ type PendingApproval struct {
 }
 
 type SessionSnapshot struct {
-	Revision         string               `json:"revision"`
-	HistoryEpoch     string               `json:"historyEpoch"`
-	EventCursor      string               `json:"eventCursor"`
-	PendingEpoch     string               `json:"pendingEpoch"`
-	PendingVersion   uint64               `json:"pendingVersion"`
-	Session          SessionSummary       `json:"session"`
-	History          HistoryWindow        `json:"history"`
-	PendingInputs    []PendingInput       `json:"pendingInputs"`
-	ScheduledInputs  []ScheduledInput     `json:"scheduledInputs"`
-	PendingApproval  *PendingApproval     `json:"pendingApproval,omitempty"`
-	PendingUserInput *PendingUserInput    `json:"pendingUserInput,omitempty"`
-	SubAgents        []WebSessionSubAgent `json:"subAgents"`
+	Revision         string                `json:"revision"`
+	HistoryEpoch     string                `json:"historyEpoch"`
+	EventCursor      string                `json:"eventCursor"`
+	PendingEpoch     string                `json:"pendingEpoch"`
+	PendingVersion   uint64                `json:"pendingVersion"`
+	Session          SessionSummary        `json:"session"`
+	History          HistoryWindow         `json:"history"`
+	PendingInputs    []PendingInput        `json:"pendingInputs"`
+	ScheduledInputs  []ScheduledInput      `json:"scheduledInputs"`
+	PendingApproval  *PendingApproval      `json:"pendingApproval,omitempty"`
+	PendingUserInput *PendingUserInput     `json:"pendingUserInput,omitempty"`
+	SubAgents        []WebSessionSubAgent  `json:"subAgents"`
+	CodexAppServer   CodexAppServerRuntime `json:"codexAppServer"`
 }
 
 type SessionSnapshotResponse struct {
-	Revision         string               `json:"revision"`
-	HistoryEpoch     string               `json:"historyEpoch"`
-	EventCursor      string               `json:"eventCursor"`
-	PendingEpoch     string               `json:"pendingEpoch"`
-	PendingVersion   uint64               `json:"pendingVersion"`
-	Unchanged        bool                 `json:"unchanged"`
-	Session          *SessionSummary      `json:"session,omitempty"`
-	History          *HistoryWindow       `json:"history,omitempty"`
-	PendingInputs    []PendingInput       `json:"pendingInputs"`
-	ScheduledInputs  []ScheduledInput     `json:"scheduledInputs,omitempty"`
-	PendingApproval  *PendingApproval     `json:"pendingApproval,omitempty"`
-	PendingUserInput *PendingUserInput    `json:"pendingUserInput,omitempty"`
-	SubAgents        []WebSessionSubAgent `json:"subAgents"`
+	Revision         string                `json:"revision"`
+	HistoryEpoch     string                `json:"historyEpoch"`
+	EventCursor      string                `json:"eventCursor"`
+	PendingEpoch     string                `json:"pendingEpoch"`
+	PendingVersion   uint64                `json:"pendingVersion"`
+	Unchanged        bool                  `json:"unchanged"`
+	Session          *SessionSummary       `json:"session,omitempty"`
+	History          *HistoryWindow        `json:"history,omitempty"`
+	PendingInputs    []PendingInput        `json:"pendingInputs"`
+	ScheduledInputs  []ScheduledInput      `json:"scheduledInputs,omitempty"`
+	PendingApproval  *PendingApproval      `json:"pendingApproval,omitempty"`
+	PendingUserInput *PendingUserInput     `json:"pendingUserInput,omitempty"`
+	SubAgents        []WebSessionSubAgent  `json:"subAgents"`
+	CodexAppServer   CodexAppServerRuntime `json:"codexAppServer"`
 }
 
 // SessionHydrationTarget identifies state that the client hydrates through the
@@ -587,6 +607,7 @@ func NewSessionSnapshotResponse(snapshot SessionSnapshot) SessionSnapshotRespons
 		PendingApproval:  snapshot.PendingApproval,
 		PendingUserInput: snapshot.PendingUserInput,
 		SubAgents:        snapshot.SubAgents,
+		CodexAppServer:   snapshot.CodexAppServer,
 	}
 }
 

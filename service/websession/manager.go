@@ -222,11 +222,12 @@ type wsConn interface {
 }
 
 type CodexAppServerTermination struct {
-	SessionID        string `json:"sessionId"`
-	RunID            string `json:"runId"`
-	StateBefore      string `json:"stateBefore"`
-	ProcessRootPID   int    `json:"processRootPid"`
-	AlreadyRequested bool   `json:"alreadyRequested"`
+	SessionID        string                `json:"sessionId"`
+	RunID            string                `json:"runId"`
+	StateBefore      string                `json:"stateBefore"`
+	ProcessRootPID   int                   `json:"processRootPid"`
+	AlreadyRequested bool                  `json:"alreadyRequested"`
+	Runtime          CodexAppServerRuntime `json:"runtime"`
 }
 
 type codexTerminationRequest struct {
@@ -2050,6 +2051,7 @@ func (m *Manager) SnapshotIfChanged(
 			PendingVersion: pendingVersion,
 			PendingInputs:  pendingInputs,
 			Unchanged:      true,
+			CodexAppServer: m.codexAppServerRuntime(sessionID),
 		}, nil
 	}
 	snapshot, err := m.Snapshot(ctx, sessionID, limit)
@@ -2157,6 +2159,7 @@ func (m *Manager) loadSnapshotLocal(
 		PendingApproval:  m.pendingApprovalSnapshot(record),
 		PendingUserInput: pendingUserInputFromHistory(history.Items),
 		SubAgents:        subAgents,
+		CodexAppServer:   m.codexAppServerRuntime(record.ID),
 	}, nil
 }
 
@@ -4196,6 +4199,9 @@ func (m *Manager) startHiddenSessionRun(
 	delete(m.codexTerminationRequests, record.ID)
 	m.runs[record.ID] = run
 	m.mu.Unlock()
+	if run.backend == SessionBackendCodexAppServer && normalizeAgent(run.agent) == AgentCodex {
+		m.broadcastCodexAppServerRuntime(record.ID)
+	}
 
 	go m.runSession(runCtx, run, record, text, attachments)
 	if run.bootstrapResult == nil {
@@ -4360,6 +4366,9 @@ func (m *Manager) sendMessageInternal(
 	delete(m.codexTerminationRequests, sessionID)
 	m.runs[sessionID] = run
 	m.mu.Unlock()
+	if run.backend == SessionBackendCodexAppServer && normalizeAgent(run.agent) == AgentCodex {
+		m.broadcastCodexAppServerRuntime(sessionID)
+	}
 
 	go m.runSession(runCtx, run, record, text, attachments)
 	return nil
@@ -4457,6 +4466,9 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		close(run.done)
 		if m.releaseActiveRun(session.ID, run) && run.syncSourceAfterRun && !m.hasPendingSessionWork(session.ID) {
 			m.maybeSyncSessionAfterRun(session)
+		}
+		if run.backend == SessionBackendCodexAppServer && normalizeAgent(run.agent) == AgentCodex {
+			m.broadcastCodexAppServerRuntime(session.ID)
 		}
 	}()
 	if normalizeAgent(Agent(session.Agent)) == AgentClaude {
@@ -6578,6 +6590,7 @@ func (m *Manager) beginCodexRunDrain(sessionID string, run *activeRun) {
 		m.codexRunDrains[sessionID] = run
 	}
 	m.mu.Unlock()
+	m.broadcastCodexAppServerRuntime(sessionID)
 }
 
 func (m *Manager) finishCodexRunDrain(sessionID string, run *activeRun) {
@@ -6607,6 +6620,7 @@ func (m *Manager) waitForCodexRunDrain(ctx context.Context, sessionID string) er
 			return ctx.Err()
 		case <-timer.C:
 			m.terminateCodexAppServerRun(run, false)
+			m.broadcastCodexAppServerRuntime(sessionID)
 			return ErrCodexRunDrainTimeout
 		}
 	}
@@ -6632,6 +6646,7 @@ func (m *Manager) ForceTerminateCodexAppServer(projectID, sessionID string) (Cod
 			}
 			result := request.result
 			result.AlreadyRequested = true
+			result.Runtime = m.codexAppServerRuntime(sessionID)
 			return result, nil
 		}
 		delete(m.codexTerminationRequests, sessionID)
@@ -6646,12 +6661,14 @@ func (m *Manager) ForceTerminateCodexAppServer(projectID, sessionID string) (Cod
 	}
 
 	pid, alreadyRequested := m.terminateCodexAppServerRun(run, stateBefore == "active")
+	m.broadcastCodexAppServerRuntime(sessionID)
 	result := CodexAppServerTermination{
 		SessionID:        sessionID,
 		RunID:            run.runID,
 		StateBefore:      stateBefore,
 		ProcessRootPID:   pid,
 		AlreadyRequested: alreadyRequested,
+		Runtime:          m.codexAppServerRuntime(sessionID),
 	}
 	m.mu.Lock()
 	if m.codexTerminationRequests == nil {
@@ -6841,7 +6858,7 @@ func shouldSendFrameToClient(client *client, frame wireFrame) bool {
 	switch frame.Kind {
 	case wireKindEvent:
 		switch strings.ToLower(strings.TrimSpace(frame.Operation)) {
-		case wireOpHistoryItem, wireOpHistoryPage, wireOpPending, wireOpScheduled, wireOpSubAgent, wireOpResyncRequired:
+		case wireOpHistoryItem, wireOpHistoryPage, wireOpPending, wireOpScheduled, wireOpSubAgent, wireOpAppServer, wireOpResyncRequired:
 			return focusedSessionID != "" && focusedSessionID == strings.TrimSpace(frame.SessionID)
 		default:
 			return true
@@ -6912,6 +6929,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		OrderIndex:                        record.OrderIndex,
 		Agent:                             Agent(record.Agent),
 		ClaudeRuntime:                     effectiveClaudeRuntime(record),
+		Backend:                           effectiveSessionBackend(record),
 		Title:                             record.Title,
 		Model:                             record.Model,
 		ReasoningEffort:                   ReasoningEffort(record.ReasoningEffort),
