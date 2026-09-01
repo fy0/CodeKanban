@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"go.uber.org/zap"
 )
 
 const (
@@ -40,6 +41,12 @@ type piRuntimeProbeResult struct {
 	compatible bool
 	diagnostic string
 	models     []PiModelInfo
+}
+
+type piRuntimeProbeTimings struct {
+	version time.Duration
+	rpc     time.Duration
+	models  time.Duration
 }
 
 type piRuntimeProbeCache = runtimeCapabilityCache[piRuntimeProbeResult]
@@ -114,11 +121,27 @@ func (m *Manager) getPiRuntimeProbeWithRefresh(force bool) piRuntimeProbeResult 
 	)
 }
 
-func (m *Manager) probePiRuntimeCapabilities() (piRuntimeProbeResult, error) {
+func (m *Manager) probePiRuntimeCapabilities() (result piRuntimeProbeResult, probeErr error) {
+	startedAt := time.Now()
+	timings := piRuntimeProbeTimings{}
+	defer func() {
+		m.logRuntimeCapabilityProbe(
+			"pi_runtime",
+			startedAt,
+			probeErr,
+			zap.Bool("installed", result.installed),
+			zap.Bool("compatible", result.compatible),
+			zap.String("diagnostic", result.diagnostic),
+			zap.Int("modelCount", len(result.models)),
+			zap.Duration("versionDuration", timings.version),
+			zap.Duration("rpcDuration", timings.rpc),
+			zap.Duration("modelDuration", timings.models),
+		)
+	}()
 	if m.runtimeCapabilityProbes.pi != nil {
 		return m.runtimeCapabilityProbes.pi()
 	}
-	result := probePiRuntime(m.cfg.PiPath, m.cfg.DataDir)
+	result, timings = probePiRuntimeWithTimings(m.cfg.PiPath, m.cfg.DataDir)
 	switch result.diagnostic {
 	case "", piDiagnosticNotInstalled, piDiagnosticTooOld:
 		return result, nil
@@ -142,32 +165,42 @@ func clonePiRuntimeProbeResult(result piRuntimeProbeResult) piRuntimeProbeResult
 }
 
 func probePiRuntime(command, workingDir string) piRuntimeProbeResult {
+	result, _ := probePiRuntimeWithTimings(command, workingDir)
+	return result
+}
+
+func probePiRuntimeWithTimings(command, workingDir string) (piRuntimeProbeResult, piRuntimeProbeTimings) {
 	result := piRuntimeProbeResult{}
+	timings := piRuntimeProbeTimings{}
 	if !hasExecutable(command) {
 		result.diagnostic = piDiagnosticNotInstalled
-		return result
+		return result, timings
 	}
 	result.installed = true
 
+	versionStartedAt := time.Now()
 	version := detectPiVersion(command)
+	timings.version = time.Since(versionStartedAt)
 	if version == nil {
 		result.diagnostic = piDiagnosticVersion
-		return result
+		return result, timings
 	}
 	result.version = version
 	parsedVersion, err := semver.NewVersion(*version)
 	if err != nil {
 		result.diagnostic = piDiagnosticVersion
-		return result
+		return result, timings
 	}
 	if parsedVersion.LessThan(piMinimumVersion) {
 		result.diagnostic = piDiagnosticTooOld
-		return result
+		return result, timings
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), piProbeTimeout)
 	defer cancel()
+	rpcStartedAt := time.Now()
 	if err := runPiRPCProbe(ctx, command, workingDir); err != nil {
+		timings.rpc = time.Since(rpcStartedAt)
 		switch {
 		case errors.Is(err, context.DeadlineExceeded), errors.Is(ctx.Err(), context.DeadlineExceeded):
 			result.diagnostic = piDiagnosticTimeout
@@ -176,14 +209,17 @@ func probePiRuntime(command, workingDir string) piRuntimeProbeResult {
 		default:
 			result.diagnostic = piDiagnosticProtocol
 		}
-		return result
+		return result, timings
 	}
+	timings.rpc = time.Since(rpcStartedAt)
 
 	result.compatible = true
 	modelCtx, modelCancel := context.WithTimeout(context.Background(), piProbeTimeout)
+	modelStartedAt := time.Now()
 	result.models, _ = loadPiModelCatalog(modelCtx, command, workingDir)
+	timings.models = time.Since(modelStartedAt)
 	modelCancel()
-	return result
+	return result, timings
 }
 
 func loadPiModelCatalog(ctx context.Context, command, workingDir string) ([]PiModelInfo, error) {

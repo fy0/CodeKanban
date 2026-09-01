@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"code-kanban/model"
 	"code-kanban/model/tables"
@@ -69,6 +70,50 @@ func TestBuildTrustedPiRPCCommandRequiresTrustAndAddsApprove(t *testing.T) {
 		); err == nil {
 			t.Fatalf("expected caller-supplied managed flag %q to be rejected", managedFlag)
 		}
+	}
+}
+
+func TestMessagingAuthorizationRequiresPiTrustWithoutCapabilityProbes(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentPi,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	var codexProbeCalls atomic.Int32
+	var piProbeCalls atomic.Int32
+	manager.runtimeCapabilityProbes.codexBinary = func() (CodexRuntimeConfig, error) {
+		codexProbeCalls.Add(1)
+		return CodexRuntimeConfig{}, nil
+	}
+	manager.runtimeCapabilityProbes.pi = func() (piRuntimeProbeResult, error) {
+		piProbeCalls.Add(1)
+		return piRuntimeProbeResult{}, nil
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "blocked", nil); !errors.Is(err, service.ErrProjectAgentTrustRequired) {
+		t.Fatalf("untrusted send error = %v, want trust required", err)
+	}
+	if _, err := manager.ScheduleInput(
+		context.Background(),
+		created.ID,
+		"blocked later",
+		nil,
+		ScheduledInputModeSend,
+		time.Now().Add(time.Hour),
+	); !errors.Is(err, service.ErrProjectAgentTrustRequired) {
+		t.Fatalf("untrusted schedule error = %v, want trust required", err)
+	}
+	if codexProbeCalls.Load() != 0 || piProbeCalls.Load() != 0 {
+		t.Fatalf("trust checks invoked capability probes: codex=%d pi=%d", codexProbeCalls.Load(), piProbeCalls.Load())
 	}
 }
 

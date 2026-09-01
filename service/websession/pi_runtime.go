@@ -137,9 +137,6 @@ func (m *Manager) startPiRuntime(
 	ctx context.Context,
 	session tables.WebSessionTable,
 ) (*piSessionRuntime, error) {
-	if !m.GetWebSessionRuntimeConfig().SupportsPiWebSession {
-		return nil, errors.New(errPiWebSessionUnavailable)
-	}
 	bridgePath, err := m.materializePiBridge()
 	if err != nil {
 		return nil, err

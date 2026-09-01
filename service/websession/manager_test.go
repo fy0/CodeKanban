@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -21,6 +22,8 @@ import (
 	"code-kanban/utils"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type captureWSConn struct {
@@ -1207,15 +1210,17 @@ func TestManagerHandleHeartbeatPayloadRepliesToPing(t *testing.T) {
 }
 
 func TestManagerCommandQueueFullReturnsRetryableError(t *testing.T) {
+	core, observed := observer.New(zapcore.DebugLevel)
 	conn := &captureWSConn{}
 	client := &client{
 		conn:         conn,
+		logger:       zap.New(core),
 		kind:         clientKindCommand,
-		commandQueue: make(chan []byte, commandClientQueueCapacity),
+		commandQueue: make(chan queuedCommand, commandClientQueueCapacity),
 		done:         make(chan struct{}),
 	}
 	for index := 0; index < commandClientQueueCapacity; index++ {
-		client.commandQueue <- []byte(`{"v":1,"k":"cmd","op":"list"}`)
+		client.commandQueue <- queuedCommand{payload: []byte(`{"v":1,"k":"cmd","op":"list"}`)}
 	}
 	payload := []byte(`{"v":1,"k":"cmd","rid":"queue-full","sid":"session-1","op":"send"}`)
 	if err := (&Manager{}).EnqueueCommand(client, payload); err != nil {
@@ -1227,6 +1232,155 @@ func TestManagerCommandQueueFullReturnsRetryableError(t *testing.T) {
 	frame := conn.frames[0]
 	if frame.Kind != "err" || frame.Code != "command_queue_full" || !frame.Retry || frame.RequestID != "queue-full" {
 		t.Fatalf("unexpected queue saturation frame: %#v", frame)
+	}
+	entries := observed.FilterMessage("web session command completed").All()
+	if len(entries) != 1 || entries[0].Level != zapcore.WarnLevel {
+		t.Fatalf("unexpected queue saturation logs: %#v", entries)
+	}
+	fields := entries[0].ContextMap()
+	if fields["operation"] != "send" || fields["requestId"] != "queue-full" ||
+		fields["sessionId"] != "session-1" || fields["result"] != "queue_full" ||
+		fields["responseKind"] != wireKindError || fields["errorCode"] != "command_queue_full" ||
+		fields["retryable"] != true || fields["queueDepth"] != int64(commandClientQueueCapacity) {
+		t.Fatalf("unexpected queue saturation log fields: %#v", fields)
+	}
+}
+
+func TestScheduleSendCommandLogsStructuredTimingWithoutPayload(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	core, observed := observer.New(zapcore.DebugLevel)
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.New(core))
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	const secretText = "schedule-payload-must-not-appear-in-logs"
+	frame := wireCommandFrame{
+		Version:   protocolVersion,
+		Kind:      wireKindCommand,
+		RequestID: "schedule-log-request",
+		SessionID: created.ID,
+		Operation: "schedule_send",
+		Payload: json.RawMessage(fmt.Sprintf(
+			`{"txt":%q,"atts":[],"mode":"send","sk":"at_time","at":%d}`,
+			secretText,
+			time.Now().Add(time.Hour).UnixMilli(),
+		)),
+	}
+	encodedFrame, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatalf("marshal command frame: %v", err)
+	}
+	client := &client{conn: &captureWSConn{}, logger: zap.New(core)}
+	client.beginCommandObservation(frame)
+	handlerStartedAt := time.Now()
+	handlerErr := manager.HandleCommand(context.Background(), client, encodedFrame)
+	handlerDuration := time.Since(handlerStartedAt)
+	if handlerErr != nil {
+		t.Fatalf("HandleCommand returned error: %v", handlerErr)
+	}
+	manager.logCommandObservation(
+		client,
+		client.finishCommandObservation(),
+		nil,
+		2*time.Millisecond,
+		handlerDuration,
+		handlerDuration+2*time.Millisecond,
+		3,
+	)
+
+	entries := observed.FilterMessage("web session command completed").All()
+	if len(entries) != 1 || entries[0].Level != zapcore.InfoLevel {
+		t.Fatalf("unexpected schedule command logs: %#v", entries)
+	}
+	fields := entries[0].ContextMap()
+	for _, field := range []string{
+		"operation", "requestId", "sessionId", "result", "responseKind", "errorCode",
+		"retryable", "queueWait", "handlerDuration", "duration", "queueDepth",
+		"scheduleKind", "mode", "attachmentCount", "hasDependency", "exitPlanMode",
+		"scheduleDuration", "ackDuration", "scheduledInputId", "failureStage",
+	} {
+		if _, ok := fields[field]; !ok {
+			t.Fatalf("schedule command log is missing %q: %#v", field, fields)
+		}
+	}
+	if fields["result"] != "success" || fields["responseKind"] != wireKindAck ||
+		fields["scheduleKind"] != string(ScheduledInputScheduleAtTime) ||
+		fields["mode"] != string(ScheduledInputModeSend) || fields["queueDepth"] != int64(3) {
+		t.Fatalf("unexpected schedule command log fields: %#v", fields)
+	}
+	encodedLog, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("marshal observed fields: %v", err)
+	}
+	if strings.Contains(string(encodedLog), secretText) {
+		t.Fatalf("schedule command log leaked message text: %s", encodedLog)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err == nil && len(snapshot.ScheduledInputs) == 1 {
+		manager.cancelScheduledInputTimer(snapshot.ScheduledInputs[0].ID)
+	}
+}
+
+func TestRunCompletionLogsOutcomeAndDuration(t *testing.T) {
+	core, observed := observer.New(zapcore.DebugLevel)
+	manager := &Manager{logger: zap.New(core)}
+	session := tables.WebSessionTable{Agent: string(AgentCodex)}
+	session.ID = "session-observed"
+
+	manager.logRunCompletion(context.Background(), &activeRun{
+		runID:   "run-success",
+		agent:   AgentCodex,
+		backend: SessionBackendCodexAppServer,
+	}, session, 25*time.Millisecond)
+	failedRun := &activeRun{
+		runID:   "run-failed",
+		agent:   AgentCodex,
+		backend: SessionBackendCodexAppServer,
+	}
+	failedRun.setObservationFailure(codexRuntimeErrorCode)
+	manager.logRunCompletion(context.Background(), failedRun, session, 50*time.Millisecond)
+	canceledContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	manager.logRunCompletion(canceledContext, &activeRun{
+		runID:   "run-canceled",
+		agent:   AgentCodex,
+		backend: SessionBackendCodexAppServer,
+	}, session, 10*time.Millisecond)
+
+	entries := observed.FilterMessage("web session run completed").All()
+	if len(entries) != 3 {
+		t.Fatalf("run completion logs = %#v, want three", entries)
+	}
+	wantResults := []struct {
+		level     zapcore.Level
+		result    string
+		errorCode string
+	}{
+		{level: zapcore.InfoLevel, result: "success"},
+		{level: zapcore.WarnLevel, result: "failed", errorCode: codexRuntimeErrorCode},
+		{level: zapcore.InfoLevel, result: "canceled"},
+	}
+	for index, want := range wantResults {
+		fields := entries[index].ContextMap()
+		if entries[index].Level != want.level || fields["result"] != want.result ||
+			fields["errorCode"] != want.errorCode || fields["sessionId"] != session.ID {
+			t.Fatalf("unexpected run completion log %d: level=%s fields=%#v", index, entries[index].Level, fields)
+		}
+		if _, ok := fields["duration"]; !ok {
+			t.Fatalf("run completion log %d is missing duration: %#v", index, fields)
+		}
 	}
 }
 
@@ -1343,7 +1497,7 @@ func TestHandleSendCommandRepliesWithRevisionAck(t *testing.T) {
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
-func TestHandleSendCommandRejectsMissingCodexBinary(t *testing.T) {
+func TestHandleSendCommandAcknowledgesBeforeMissingCodexRunFails(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -1354,6 +1508,16 @@ func TestHandleSendCommandRejectsMissingCodexBinary(t *testing.T) {
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
+	}
+	var codexProbeCalls atomic.Int32
+	var piProbeCalls atomic.Int32
+	manager.runtimeCapabilityProbes.codexBinary = func() (CodexRuntimeConfig, error) {
+		codexProbeCalls.Add(1)
+		return CodexRuntimeConfig{}, nil
+	}
+	manager.runtimeCapabilityProbes.pi = func() (piRuntimeProbeResult, error) {
+		piProbeCalls.Add(1)
+		return piRuntimeProbeResult{}, nil
 	}
 
 	created, err := manager.CreateSession(context.Background(), CreateParams{
@@ -1376,14 +1540,26 @@ func TestHandleSendCommandRejectsMissingCodexBinary(t *testing.T) {
 		t.Fatalf("HandleCommand returned error: %v", err)
 	}
 
-	if len(conn.frames) != 1 {
-		t.Fatalf("expected a single error frame, got %#v", conn.frames)
+	if len(conn.frames) != 1 || conn.frames[0].Kind != wireKindAck {
+		t.Fatalf("expected send acknowledgement, got %#v", conn.frames)
 	}
-	if conn.frames[0].Kind != "err" {
-		t.Fatalf("expected error frame, got %#v", conn.frames[0])
+	waitForSessionToSettle(t, manager, created.ID)
+	events, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
 	}
-	if conn.frames[0].Message != errCodexNotInstalled {
-		t.Fatalf("expected message %q, got %q", errCodexNotInstalled, conn.frames[0].Message)
+	foundFailure := false
+	for _, event := range events {
+		if event.Type == "run_fail" && stringValue(event.Payload["code"]) == codexRuntimeErrorCode {
+			foundFailure = true
+			break
+		}
+	}
+	if !foundFailure {
+		t.Fatalf("expected authoritative runtime failure after ack, got %#v", events)
+	}
+	if codexProbeCalls.Load() != 0 || piProbeCalls.Load() != 0 {
+		t.Fatalf("ordinary Codex send invoked capability probes: codex=%d pi=%d", codexProbeCalls.Load(), piProbeCalls.Load())
 	}
 }
 
@@ -1732,7 +1908,7 @@ func TestHandleGoalBootstrapCommandStartsHiddenCodexRun(t *testing.T) {
 	}
 }
 
-func TestHandleScheduleSendCommandRejectsMissingCodexBinary(t *testing.T) {
+func TestHandleScheduleSendCommandAllowsMissingCodexBinary(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -1765,15 +1941,17 @@ func TestHandleScheduleSendCommandRejectsMissingCodexBinary(t *testing.T) {
 		t.Fatalf("HandleCommand returned error: %v", err)
 	}
 
-	if len(conn.frames) != 1 {
-		t.Fatalf("expected a single error frame, got %#v", conn.frames)
+	if len(conn.frames) != 1 || conn.frames[0].Kind != wireKindAck {
+		t.Fatalf("expected schedule acknowledgement, got %#v", conn.frames)
 	}
-	if conn.frames[0].Kind != "err" {
-		t.Fatalf("expected error frame, got %#v", conn.frames[0])
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
 	}
-	if conn.frames[0].Message != errCodexNotInstalled {
-		t.Fatalf("expected message %q, got %q", errCodexNotInstalled, conn.frames[0].Message)
+	if len(snapshot.ScheduledInputs) != 1 || snapshot.ScheduledInputs[0].Status != ScheduledInputStatusScheduled {
+		t.Fatalf("expected scheduled input to remain pending, got %#v", snapshot.ScheduledInputs)
 	}
+	manager.cancelScheduledInputTimer(snapshot.ScheduledInputs[0].ID)
 }
 
 func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {

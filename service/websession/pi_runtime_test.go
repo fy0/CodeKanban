@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -708,9 +709,15 @@ func TestManagerPiRPCSendReusesRuntimeAndPersistsIdentity(t *testing.T) {
 	if _, err := manager.TrustProjectForPi(context.Background(), project.ID); err != nil {
 		t.Fatalf("TrustProjectForPi returned error: %v", err)
 	}
-	config := manager.GetWebSessionRuntimeConfig()
-	if !config.SupportsPiWebSession {
-		t.Fatalf("fake Pi runtime unavailable: hasPi=%v version=%v compatible=%v diagnostics=%q", config.HasPi, config.PiVersion, config.PiRPCCompatible, config.PiDiagnostics)
+	var codexProbeCalls atomic.Int32
+	var piProbeCalls atomic.Int32
+	manager.runtimeCapabilityProbes.codexBinary = func() (CodexRuntimeConfig, error) {
+		codexProbeCalls.Add(1)
+		return CodexRuntimeConfig{HasCodex: true}, nil
+	}
+	manager.runtimeCapabilityProbes.pi = func() (piRuntimeProbeResult, error) {
+		piProbeCalls.Add(1)
+		return piRuntimeProbeResult{installed: true, compatible: true}, nil
 	}
 	created, err := manager.CreateSession(context.Background(), CreateParams{
 		ProjectID: project.ID, Agent: AgentPi, Model: "openai/gpt-test",
@@ -727,6 +734,9 @@ func TestManagerPiRPCSendReusesRuntimeAndPersistsIdentity(t *testing.T) {
 		t.Fatalf("SendMessage with image returned error: %v", err)
 	}
 	waitForSessionToSettle(t, manager, created.ID)
+	if codexProbeCalls.Load() != 0 || piProbeCalls.Load() != 0 {
+		t.Fatalf("ordinary Pi send invoked capability probes: codex=%d pi=%d", codexProbeCalls.Load(), piProbeCalls.Load())
+	}
 	if err := manager.SendMessage(context.Background(), created.ID, "second", nil); err != nil {
 		t.Fatalf("second SendMessage returned error: %v", err)
 	}

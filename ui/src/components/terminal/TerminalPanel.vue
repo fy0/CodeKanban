@@ -496,7 +496,7 @@ import type {
 } from '@/stores/settings';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
-import { buildWorkspaceRouteQuery } from '@/utils/workspaceRoute';
+import { buildWebSessionClearedWorkspaceRouteQuery } from '@/utils/webSessionRoute';
 import {
   calculateCardTabIndicatorStyle,
   hiddenCardTabIndicatorStyle,
@@ -605,7 +605,7 @@ function handleProjectSwitchSelect(key: string | number) {
   void router.push({
     name: 'project',
     params: { id: key },
-    query: buildWorkspaceRouteQuery(route.query, 'terminal'),
+    query: buildWebSessionClearedWorkspaceRouteQuery(route.query, 'terminal'),
   });
 }
 const sessionSnapshotStore = useTerminalSessionSnapshotStore();

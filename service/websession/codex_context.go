@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"go.uber.org/zap"
 
 	"code-kanban/model/tables"
 )
@@ -466,7 +467,18 @@ func mergeCodexBinaryCapabilities(config, binaryConfig CodexRuntimeConfig) Codex
 	return config
 }
 
-func (m *Manager) probeCodexBinaryCapabilities() (CodexRuntimeConfig, error) {
+func (m *Manager) probeCodexBinaryCapabilities() (result CodexRuntimeConfig, probeErr error) {
+	startedAt := time.Now()
+	defer func() {
+		m.logRuntimeCapabilityProbe(
+			"codex_binary",
+			startedAt,
+			probeErr,
+			zap.Bool("codexInstalled", result.HasCodex),
+			zap.Bool("claudeInstalled", result.HasClaudeCode),
+			zap.Bool("versionDetected", result.CodexVersion != nil),
+		)
+	}()
 	if m.runtimeCapabilityProbes.codexBinary != nil {
 		return m.runtimeCapabilityProbes.codexBinary()
 	}
@@ -475,7 +487,6 @@ func (m *Manager) probeCodexBinaryCapabilities() (CodexRuntimeConfig, error) {
 	codexVersion := (*string)(nil)
 	supportsMultiAgentV2 := false
 	supportsGoalMode := false
-	var probeErr error
 	if hasCodex {
 		if version := detectCodexVersion(m.cfg.CodexPath); version != nil {
 			copied := *version
@@ -532,7 +543,16 @@ func (m *Manager) getCodexModelCatalogBackground() ([]CodexModelInfo, bool) {
 	)
 }
 
-func (m *Manager) probeCodexModelCatalog() ([]CodexModelInfo, error) {
+func (m *Manager) probeCodexModelCatalog() (models []CodexModelInfo, probeErr error) {
+	startedAt := time.Now()
+	defer func() {
+		m.logRuntimeCapabilityProbe(
+			"codex_models",
+			startedAt,
+			probeErr,
+			zap.Int("modelCount", len(models)),
+		)
+	}()
 	if m.runtimeCapabilityProbes.codexModels != nil {
 		return m.runtimeCapabilityProbes.codexModels()
 	}

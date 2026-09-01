@@ -346,7 +346,7 @@ func TestScheduledIdleCheckDoesNotHoldManagementLock(t *testing.T) {
 	}
 }
 
-func TestScheduledInputDispatchRechecksCodexAvailability(t *testing.T) {
+func TestScheduledInputDispatchHandsOffBeforeMissingCodexRunFails(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
@@ -384,26 +384,33 @@ func TestScheduledInputDispatchRechecksCodexAvailability(t *testing.T) {
 	manager.codexContextWindow.mu.Unlock()
 
 	err = manager.DispatchScheduledInputNow(context.Background(), created.ID, item.ID)
-	expected := errCodexNotInstalled
-	if err == nil || err.Error() != expected {
-		t.Fatalf("expected error %q, got %v", expected, err)
+	if err != nil {
+		t.Fatalf("DispatchScheduledInputNow returned error: %v", err)
 	}
+	waitForSessionToSettle(t, manager, created.ID)
 	rawEvents, readErr := manager.store.readEvents(created.ID)
 	if readErr != nil {
 		t.Fatalf("readEvents returned error: %v", readErr)
 	}
-	if messages := userMessageTexts(rawEvents); len(messages) != 0 {
-		t.Fatalf("expected dispatch gate before message side effects, got %#v", messages)
+	if messages := userMessageTexts(rawEvents); len(messages) != 1 || messages[0] != "Do not dispatch without a runtime" {
+		t.Fatalf("expected the scheduled message to be handed to the runner, got %#v", messages)
 	}
-	snapshot, snapshotErr := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
-	if snapshotErr != nil {
-		t.Fatalf("Snapshot returned error: %v", snapshotErr)
+	foundFailure := false
+	for _, event := range rawEvents {
+		if event.Type == "run_fail" && stringValue(event.Payload["code"]) == codexRuntimeErrorCode {
+			foundFailure = true
+			break
+		}
 	}
-	if len(snapshot.ScheduledInputs) != 1 || snapshot.ScheduledInputs[0].Status != ScheduledInputStatusFailed {
-		t.Fatalf("expected failed scheduled input, got %#v", snapshot.ScheduledInputs)
+	if !foundFailure {
+		t.Fatalf("expected authoritative runner failure, got %#v", rawEvents)
 	}
-	if snapshot.ScheduledInputs[0].LastError != expected {
-		t.Fatalf("expected persisted runtime error, got %#v", snapshot.ScheduledInputs[0])
+	var dispatched tables.WebSessionScheduledInputTable
+	if err := model.GetDB().First(&dispatched, "id = ?", item.ID).Error; err != nil {
+		t.Fatalf("load dispatched scheduled input: %v", err)
+	}
+	if dispatched.Status != string(ScheduledInputStatusDispatched) || dispatched.LastError != "" {
+		t.Fatalf("expected dispatched scheduled input, got %#v", dispatched)
 	}
 }
 

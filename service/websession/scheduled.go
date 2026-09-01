@@ -619,10 +619,9 @@ func (m *Manager) scheduleInput(
 	if record.ArchivedAt != nil {
 		return ScheduledInput{}, fmt.Errorf("session is archived")
 	}
-	if err := m.ensureSessionMessagingAvailable(record); err != nil {
+	if err := m.ensureSessionMessagingAuthorized(ctx, record); err != nil {
 		return ScheduledInput{}, err
 	}
-
 	normalizedMode := normalizeScheduledInputMode(mode)
 	if normalizedMode == "" {
 		return ScheduledInput{}, errInvalidScheduledInputMode
@@ -854,7 +853,7 @@ func (m *Manager) validateScheduledPlanExecution(
 	if session.ArchivedAt != nil {
 		return tables.WebSessionTable{}, errScheduledPlanExpired
 	}
-	if err := m.ensureSessionMessagingAvailable(session); err != nil {
+	if err := m.ensureSessionMessagingAuthorized(ctx, session); err != nil {
 		return tables.WebSessionTable{}, err
 	}
 	if err := m.validateScheduledPlanHistory(ctx, session, targetID); err != nil {
@@ -1022,10 +1021,9 @@ func (m *Manager) UpdateScheduledInput(
 		if session.ArchivedAt != nil {
 			return fmt.Errorf("session is archived")
 		}
-		if err := m.ensureSessionMessagingAvailable(session); err != nil {
+		if err := m.ensureSessionMessagingAuthorized(ctx, session); err != nil {
 			return err
 		}
-
 		action := normalizeScheduledInputAction(ScheduledInputAction(record.Action))
 		originalScheduleKind := normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind))
 		scheduleKind := originalScheduleKind
@@ -1908,7 +1906,11 @@ func (m *Manager) executeScheduledInput(inputID string, expectedScheduledFor tim
 func (m *Manager) dispatchScheduledInputRecord(
 	ctx context.Context,
 	record tables.WebSessionScheduledInputTable,
-) error {
+) (resultErr error) {
+	startedAt := time.Now()
+	defer func() {
+		m.logScheduledInputDispatch(record, startedAt, resultErr)
+	}()
 	dependencyStatus, err := m.scheduledInputDependencyState(ctx, record)
 	if err != nil {
 		return err
@@ -1931,11 +1933,10 @@ func (m *Manager) dispatchScheduledInputRecord(
 		}
 		return err
 	}
-	if err := m.ensureSessionMessagingAvailable(session); err != nil {
+	if err := m.ensureSessionMessagingAuthorized(ctx, session); err != nil {
 		_ = m.failScheduledInputByID(ctx, record.ID, err.Error())
 		return err
 	}
-
 	switch action {
 	case ScheduledInputActionExecutePlan:
 		err = m.dispatchScheduledPlanExecution(ctx, record)
@@ -1981,6 +1982,63 @@ func (m *Manager) dispatchScheduledInputRecord(
 		return err
 	}
 	return nil
+}
+
+func (m *Manager) logScheduledInputDispatch(
+	record tables.WebSessionScheduledInputTable,
+	startedAt time.Time,
+	err error,
+) {
+	if m == nil || m.logger == nil {
+		return
+	}
+	triggerLag := time.Duration(0)
+	if normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind)) == ScheduledInputScheduleAtTime &&
+		!record.ScheduledFor.IsZero() {
+		triggerLag = startedAt.Sub(record.ScheduledFor)
+	}
+	result := "handed_off"
+	errorCode := ""
+	if err != nil {
+		result = "failed"
+		errorCode = scheduledInputDispatchErrorCode(err)
+	}
+	fields := []zap.Field{
+		zap.String("scheduledInputId", strings.TrimSpace(record.ID)),
+		zap.String("sessionId", strings.TrimSpace(record.WebSessionID)),
+		zap.String("action", string(normalizeScheduledInputAction(ScheduledInputAction(record.Action)))),
+		zap.String("mode", string(normalizeScheduledInputMode(ScheduledInputMode(record.Mode)))),
+		zap.String("scheduleKind", string(normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(record.ScheduleKind)))),
+		zap.Bool("hasDependency", strings.TrimSpace(record.DependsOnID) != ""),
+		zap.String("result", result),
+		zap.String("errorCode", errorCode),
+		zap.Duration("triggerLag", triggerLag),
+		zap.Duration("duration", time.Since(startedAt)),
+	}
+	if err != nil {
+		m.logger.Warn("web session scheduled input dispatch completed", fields...)
+		return
+	}
+	m.logger.Info("web session scheduled input dispatch completed", fields...)
+}
+
+func scheduledInputDispatchErrorCode(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, errScheduledDependencyBlocked):
+		return "dependency_blocked"
+	case errors.Is(err, errScheduledPlanExpired):
+		return "plan_expired"
+	case errors.Is(err, errInvalidScheduledInputAction):
+		return "invalid_action"
+	case errors.Is(err, errInvalidScheduledInputMode):
+		return "invalid_mode"
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return "not_found"
+	default:
+		return "dispatch_failed"
+	}
 }
 
 func shouldExpireScheduledPlanExecution(err error) bool {
@@ -2229,9 +2287,18 @@ func (m *Manager) handleScheduleSendCommand(ctx context.Context, client *client,
 		At           *int64   `json:"at"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		client.addCommandObservationFields(zap.String("failureStage", "decode_payload"))
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid schedule payload", false))
 	}
 	scheduleKind := normalizeScheduledInputScheduleKind(ScheduledInputScheduleKind(payload.ScheduleKind))
+	client.addCommandObservationFields(
+		zap.String("scheduleKind", string(scheduleKind)),
+		zap.String("mode", string(normalizeScheduledInputMode(ScheduledInputMode(payload.Mode)))),
+		zap.Int("attachmentCount", len(payload.Attachments)),
+		zap.Bool("hasDependency", strings.TrimSpace(payload.DependsOnID) != ""),
+		zap.Bool("exitPlanMode", payload.ExitPlanMode),
+	)
+	scheduleStartedAt := time.Now()
 	var created ScheduledInput
 	var err error
 	switch scheduleKind {
@@ -2249,6 +2316,10 @@ func (m *Manager) handleScheduleSendCommand(ctx context.Context, client *client,
 		)
 	case ScheduledInputScheduleAtTime:
 		if payload.At == nil {
+			client.addCommandObservationFields(
+				zap.Duration("scheduleDuration", time.Since(scheduleStartedAt)),
+				zap.String("failureStage", "validate_schedule"),
+			)
 			return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "scheduled time is required", false))
 		}
 		created, err = m.scheduleInput(
@@ -2263,17 +2334,32 @@ func (m *Manager) handleScheduleSendCommand(ctx context.Context, client *client,
 			payload.DependsOnID,
 		)
 	default:
+		client.addCommandObservationFields(
+			zap.Duration("scheduleDuration", time.Since(scheduleStartedAt)),
+			zap.String("failureStage", "validate_schedule"),
+		)
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid scheduled input kind", false))
 	}
+	client.addCommandObservationFields(zap.Duration("scheduleDuration", time.Since(scheduleStartedAt)))
 	if err != nil {
+		client.addCommandObservationFields(zap.String("failureStage", "schedule_input"))
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return m.sendMutationAck(
+	client.addCommandObservationFields(zap.String("scheduledInputId", created.ID))
+	ackStartedAt := time.Now()
+	ackErr := m.sendMutationAck(
 		ctx,
 		client,
 		frame,
 		mapWireScheduledInputs([]ScheduledInput{created})[0],
 	)
+	client.addCommandObservationFields(zap.Duration("ackDuration", time.Since(ackStartedAt)))
+	if ackErr != nil {
+		client.addCommandObservationFields(zap.String("failureStage", "send_ack"))
+	} else {
+		client.addCommandObservationFields(zap.String("failureStage", ""))
+	}
+	return ackErr
 }
 
 func (m *Manager) handleSchedulePlanCommand(ctx context.Context, client *client, frame wireCommandFrame) error {

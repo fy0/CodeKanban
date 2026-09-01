@@ -1,6 +1,6 @@
 import type { LocationQuery, LocationQueryRaw, RouteLocationRaw } from 'vue-router';
 
-import { buildWorkspaceRouteQuery } from '@/utils/workspaceRoute';
+import { buildWorkspaceRouteQuery, type WorkspaceRouteTab } from '@/utils/workspaceRoute';
 
 export const WEB_SESSION_ID_QUERY_KEY = 'webSessionId';
 
@@ -54,6 +54,13 @@ export function buildWebSessionRouteQuery(
   return nextQuery;
 }
 
+export function buildWebSessionClearedWorkspaceRouteQuery(
+  query?: RouteQueryLike | null,
+  tab?: WorkspaceRouteTab | ''
+): LocationQueryRaw {
+  return buildWebSessionRouteQuery(buildWorkspaceRouteQuery(query ?? undefined, tab));
+}
+
 export function isWebSessionRouteQuerySynced(
   query?: RouteQueryLike | null,
   sessionId?: string
@@ -72,6 +79,31 @@ function normalizeRouteText(value: unknown): string {
     return '';
   }
   return typeof value === 'string' ? value.trim() : '';
+}
+
+export function isWebSessionRouteActivationCurrent(options: {
+  currentProjectId?: unknown;
+  routeProjectId?: unknown;
+  requestedProjectId?: unknown;
+  routeSessionId?: unknown;
+  requestedSessionId?: unknown;
+}): boolean {
+  const currentProjectId = normalizeRouteText(options.currentProjectId);
+  const routeProjectId = normalizeRouteText(options.routeProjectId);
+  const requestedProjectId = normalizeRouteText(options.requestedProjectId);
+  const routeSessionId = normalizeWebSessionRouteSessionId(options.routeSessionId);
+  const requestedSessionId = normalizeWebSessionRouteSessionId(options.requestedSessionId);
+
+  return Boolean(
+    currentProjectId &&
+      routeProjectId &&
+      requestedProjectId &&
+      routeSessionId &&
+      requestedSessionId &&
+      currentProjectId === requestedProjectId &&
+      routeProjectId === requestedProjectId &&
+      routeSessionId === requestedSessionId
+  );
 }
 
 export function buildWebSessionProjectLocation(options: {

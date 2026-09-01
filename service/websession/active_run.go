@@ -30,6 +30,7 @@ type activeRun struct {
 	currentToolMessage        string
 	lastError                 string
 	lastErrorCode             string
+	observationErrorCode      string
 	transportRetrySeen        bool
 	transportRetryRecovered   bool
 	transportRemoteURL        string
@@ -80,6 +81,24 @@ type activeRun struct {
 	codexRolloutMonitor       *codexRolloutMonitor
 	syncSourceAfterRun        bool
 	piCompaction              bool
+}
+
+func (r *activeRun) setObservationFailure(code string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.observationErrorCode = strings.TrimSpace(code)
+	r.mu.Unlock()
+}
+
+func (r *activeRun) observationFailureCode() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.observationErrorCode
 }
 
 func (r *activeRun) setInput(stdin io.WriteCloser) {

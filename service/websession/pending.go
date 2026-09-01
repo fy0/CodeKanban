@@ -448,6 +448,16 @@ func (m *Manager) sendMessageWithModeResult(
 	pendingID string,
 ) (sendMessageModeResult, error) {
 	normalizedMode := normalizePendingInputMode(mode)
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return sendMessageModeResult{}, err
+	}
+	if record.ArchivedAt != nil {
+		return sendMessageModeResult{}, errors.New("session is archived")
+	}
+	if err := m.ensureSessionMessagingAuthorized(ctx, record); err != nil {
+		return sendMessageModeResult{}, err
+	}
 	if normalizedMode != "" {
 		m.mu.RLock()
 		run := m.runs[sessionID]
@@ -463,18 +473,6 @@ func (m *Manager) sendMessageWithModeResult(
 			return sendMessageModeResult{Pending: true}, err
 		}
 	}
-
-	record, err := m.GetSession(ctx, sessionID)
-	if err != nil {
-		return sendMessageModeResult{}, err
-	}
-	if record.ArchivedAt != nil {
-		return sendMessageModeResult{}, errors.New("session is archived")
-	}
-	if err := m.ensureSessionMessagingAvailable(record); err != nil {
-		return sendMessageModeResult{}, err
-	}
-
 	if normalizedMode != "" && (m.hasActiveRun(sessionID) || autoRetryDefersPending(record)) {
 		_, err := m.queuePendingInput(
 			sessionID,

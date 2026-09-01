@@ -3,6 +3,8 @@ package websession
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,7 +13,90 @@ import (
 	"code-kanban/model/tables"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+func TestRuntimeCapabilityProbesLogStructuredDurations(t *testing.T) {
+	core, observed := observer.New(zapcore.DebugLevel)
+	manager := &Manager{logger: zap.New(core)}
+	manager.runtimeCapabilityProbes = runtimeCapabilityProbeHooks{
+		codexBinary: func() (CodexRuntimeConfig, error) {
+			version := "1.2.3"
+			return CodexRuntimeConfig{HasCodex: true, HasClaudeCode: true, CodexVersion: &version}, nil
+		},
+		codexModels: func() ([]CodexModelInfo, error) {
+			return []CodexModelInfo{{Model: "codex-test"}}, nil
+		},
+		pi: func() (piRuntimeProbeResult, error) {
+			version := "1.2.3"
+			return piRuntimeProbeResult{
+				installed:  true,
+				version:    &version,
+				compatible: true,
+				models:     []PiModelInfo{{Provider: "test", ID: "pi-test"}},
+			}, nil
+		},
+	}
+
+	if _, err := manager.probeCodexBinaryCapabilities(); err != nil {
+		t.Fatalf("probeCodexBinaryCapabilities returned error: %v", err)
+	}
+	if _, err := manager.probeCodexModelCatalog(); err != nil {
+		t.Fatalf("probeCodexModelCatalog returned error: %v", err)
+	}
+	if _, err := manager.probePiRuntimeCapabilities(); err != nil {
+		t.Fatalf("probePiRuntimeCapabilities returned error: %v", err)
+	}
+
+	entries := observed.FilterMessage("web session runtime capability probe completed").All()
+	if len(entries) != 3 {
+		t.Fatalf("runtime capability logs = %#v, want three", entries)
+	}
+	byProbe := make(map[string]map[string]any, len(entries))
+	for _, entry := range entries {
+		if entry.Level != zapcore.InfoLevel {
+			t.Fatalf("successful runtime capability probe logged at %s", entry.Level)
+		}
+		fields := entry.ContextMap()
+		probe, _ := fields["probe"].(string)
+		byProbe[probe] = fields
+		if fields["result"] != "success" || fields["errorCode"] != "" {
+			t.Fatalf("unexpected runtime capability result fields: %#v", fields)
+		}
+		if _, ok := fields["duration"]; !ok {
+			t.Fatalf("runtime capability log is missing duration: %#v", fields)
+		}
+	}
+	for _, field := range []string{"versionDuration", "rpcDuration", "modelDuration"} {
+		if _, ok := byProbe["pi_runtime"][field]; !ok {
+			t.Fatalf("Pi runtime capability log is missing %q: %#v", field, byProbe["pi_runtime"])
+		}
+	}
+	if byProbe["codex_binary"]["codexInstalled"] != true ||
+		byProbe["codex_models"]["modelCount"] != int64(1) ||
+		byProbe["pi_runtime"]["modelCount"] != int64(1) {
+		t.Fatalf("unexpected capability-specific fields: %#v", byProbe)
+	}
+
+	const secretError = "runtime-probe-secret-must-not-appear"
+	manager.runtimeCapabilityProbes.codexModels = func() ([]CodexModelInfo, error) {
+		return nil, errors.New(secretError)
+	}
+	if _, err := manager.probeCodexModelCatalog(); err == nil {
+		t.Fatal("expected failed model probe")
+	}
+	failureEntries := observed.FilterMessage("web session runtime capability probe completed").All()
+	failure := failureEntries[len(failureEntries)-1]
+	if failure.Level != zapcore.WarnLevel || failure.ContextMap()["result"] != "failed" {
+		t.Fatalf("unexpected failed capability probe log: %#v", failure)
+	}
+	for _, field := range failure.Context {
+		if strings.Contains(fmt.Sprint(field.Interface), secretError) || strings.Contains(field.String, secretError) {
+			t.Fatalf("capability probe log leaked raw error: %#v", failure.Context)
+		}
+	}
+}
 
 func TestSessionMessagingAvailabilityDoesNotProbeUnrelatedAgents(t *testing.T) {
 	manager := &Manager{}

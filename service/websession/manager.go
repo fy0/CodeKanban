@@ -200,20 +200,41 @@ var (
 )
 
 type client struct {
-	conn          wsConn
-	logger        *zap.Logger
-	kind          clientKind
-	commandQueue  chan []byte
-	commandCancel context.CancelFunc
-	writeMu       sync.Mutex
-	focusMu       sync.RWMutex
-	focusedSID    string
-	done          chan struct{}
-	once          sync.Once
-	lastSeenAt    atomic.Int64
+	conn               wsConn
+	logger             *zap.Logger
+	kind               clientKind
+	commandQueue       chan queuedCommand
+	commandCancel      context.CancelFunc
+	commandMu          sync.Mutex
+	commandObservation *commandObservation
+	writeMu            sync.Mutex
+	focusMu            sync.RWMutex
+	focusedSID         string
+	done               chan struct{}
+	once               sync.Once
+	lastSeenAt         atomic.Int64
 }
 
-const commandClientQueueCapacity = 32
+const (
+	commandClientQueueCapacity     = 32
+	slowWebSessionCommandThreshold = time.Second
+)
+
+type queuedCommand struct {
+	payload    []byte
+	receivedAt time.Time
+	queueDepth int
+}
+
+type commandObservation struct {
+	requestID    string
+	operation    string
+	sessionID    string
+	responseKind string
+	errorCode    string
+	retryable    bool
+	fields       []zap.Field
+}
 
 type wsConn interface {
 	ReadMessage() (messageType int, p []byte, err error)
@@ -579,7 +600,7 @@ func (m *Manager) registerClient(conn wsConn, kind clientKind) *client {
 	}
 	if kind == clientKindCommand {
 		workerCtx, cancel := context.WithCancel(context.Background())
-		client.commandQueue = make(chan []byte, commandClientQueueCapacity)
+		client.commandQueue = make(chan queuedCommand, commandClientQueueCapacity)
 		client.commandCancel = cancel
 		go m.runCommandWorker(workerCtx, client)
 	}
@@ -788,7 +809,12 @@ func (m *Manager) EnqueueCommand(client *client, payload []byte) error {
 	if client == nil || client.kind != clientKindCommand || client.commandQueue == nil {
 		return fmt.Errorf("command client is not registered")
 	}
-	command := append([]byte(nil), payload...)
+	receivedAt := time.Now()
+	command := queuedCommand{
+		payload:    append([]byte(nil), payload...),
+		receivedAt: receivedAt,
+		queueDepth: len(client.commandQueue),
+	}
 	select {
 	case <-client.done:
 		return context.Canceled
@@ -797,13 +823,33 @@ func (m *Manager) EnqueueCommand(client *client, payload []byte) error {
 	default:
 		var frame wireCommandFrame
 		_ = json.Unmarshal(payload, &frame)
-		return client.send(newErrorFrame(
+		sendErr := client.send(newErrorFrame(
 			frame.RequestID,
 			frame.SessionID,
 			"command_queue_full",
 			"command queue is full; retry shortly",
 			true,
 		))
+		if client.logger != nil {
+			result := "queue_full"
+			if sendErr != nil {
+				result = "response_write_failed"
+			}
+			client.logger.Warn("web session command completed",
+				zap.String("operation", frame.Operation),
+				zap.String("requestId", frame.RequestID),
+				zap.String("sessionId", frame.SessionID),
+				zap.String("result", result),
+				zap.String("responseKind", wireKindError),
+				zap.String("errorCode", "command_queue_full"),
+				zap.Bool("retryable", true),
+				zap.Duration("queueWait", 0),
+				zap.Duration("handlerDuration", 0),
+				zap.Duration("duration", time.Since(receivedAt)),
+				zap.Int("queueDepth", len(client.commandQueue)),
+			)
+		}
+		return sendErr
 	}
 }
 
@@ -812,16 +858,137 @@ func (m *Manager) runCommandWorker(ctx context.Context, client *client) {
 		select {
 		case <-ctx.Done():
 			return
-		case payload := <-client.commandQueue:
+		case command := <-client.commandQueue:
 			if ctx.Err() != nil {
 				return
 			}
-			if err := m.HandleCommand(ctx, client, payload); err != nil && !errors.Is(err, context.Canceled) {
-				if client.logger != nil {
-					client.logger.Debug("failed to handle web session command", zap.Error(err))
-				}
-			}
+			var frame wireCommandFrame
+			_ = json.Unmarshal(command.payload, &frame)
+			client.beginCommandObservation(frame)
+			handlerStartedAt := time.Now()
+			handlerErr := m.HandleCommand(ctx, client, command.payload)
+			completedAt := time.Now()
+			observation := client.finishCommandObservation()
+			m.logCommandObservation(
+				client,
+				observation,
+				handlerErr,
+				handlerStartedAt.Sub(command.receivedAt),
+				completedAt.Sub(handlerStartedAt),
+				completedAt.Sub(command.receivedAt),
+				command.queueDepth,
+			)
 		}
+	}
+}
+
+func (c *client) beginCommandObservation(frame wireCommandFrame) {
+	if c == nil {
+		return
+	}
+	c.commandMu.Lock()
+	c.commandObservation = &commandObservation{
+		requestID: frame.RequestID,
+		operation: frame.Operation,
+		sessionID: frame.SessionID,
+	}
+	c.commandMu.Unlock()
+}
+
+func (c *client) addCommandObservationFields(fields ...zap.Field) {
+	if c == nil || len(fields) == 0 {
+		return
+	}
+	c.commandMu.Lock()
+	if c.commandObservation != nil {
+		c.commandObservation.fields = append(c.commandObservation.fields, fields...)
+	}
+	c.commandMu.Unlock()
+}
+
+func (c *client) observeCommandResponse(frame wireFrame) {
+	if c == nil || (frame.Kind != wireKindAck && frame.Kind != wireKindError) {
+		return
+	}
+	c.commandMu.Lock()
+	defer c.commandMu.Unlock()
+	observation := c.commandObservation
+	if observation == nil || frame.RequestID != observation.requestID {
+		return
+	}
+	observation.responseKind = frame.Kind
+	observation.errorCode = frame.Code
+	observation.retryable = frame.Retry
+}
+
+func (c *client) finishCommandObservation() commandObservation {
+	if c == nil {
+		return commandObservation{}
+	}
+	c.commandMu.Lock()
+	defer c.commandMu.Unlock()
+	if c.commandObservation == nil {
+		return commandObservation{}
+	}
+	result := *c.commandObservation
+	result.fields = append([]zap.Field(nil), c.commandObservation.fields...)
+	c.commandObservation = nil
+	return result
+}
+
+func (m *Manager) logCommandObservation(
+	client *client,
+	observation commandObservation,
+	handlerErr error,
+	queueWait time.Duration,
+	handlerDuration time.Duration,
+	duration time.Duration,
+	queueDepth int,
+) {
+	if client == nil || client.logger == nil {
+		return
+	}
+	if queueWait < 0 {
+		queueWait = 0
+	}
+	result := "success"
+	errorCode := observation.errorCode
+	switch {
+	case observation.responseKind == wireKindError:
+		result = "error"
+	case handlerErr != nil:
+		result = "response_write_failed"
+		if errorCode == "" {
+			errorCode = "response_write_failed"
+		}
+	case observation.responseKind == "":
+		result = "no_response"
+		if errorCode == "" {
+			errorCode = "missing_response"
+		}
+	}
+	fields := []zap.Field{
+		zap.String("operation", observation.operation),
+		zap.String("requestId", observation.requestID),
+		zap.String("sessionId", observation.sessionID),
+		zap.String("result", result),
+		zap.String("responseKind", observation.responseKind),
+		zap.String("errorCode", errorCode),
+		zap.Bool("retryable", observation.retryable),
+		zap.Duration("queueWait", queueWait),
+		zap.Duration("handlerDuration", handlerDuration),
+		zap.Duration("duration", duration),
+		zap.Int("queueDepth", queueDepth),
+	}
+	fields = append(fields, observation.fields...)
+
+	switch {
+	case result != "success", duration >= slowWebSessionCommandThreshold:
+		client.logger.Warn("web session command completed", fields...)
+	case observation.operation == "schedule_send":
+		client.logger.Info("web session command completed", fields...)
+	default:
+		client.logger.Debug("web session command completed", fields...)
 	}
 }
 
@@ -4235,7 +4402,7 @@ func (m *Manager) sendMessageInternal(
 	if record.ArchivedAt != nil {
 		return fmt.Errorf("session is archived")
 	}
-	if err := m.ensureSessionMessagingAvailable(record); err != nil {
+	if err := m.ensureSessionMessagingAuthorized(ctx, record); err != nil {
 		return err
 	}
 	m.cancelAutoRetryTimer(sessionID)
@@ -4381,6 +4548,20 @@ type sendMessageOptions struct {
 	userMessageID      string
 }
 
+func (m *Manager) ensureSessionMessagingAuthorized(
+	ctx context.Context,
+	record tables.WebSessionTable,
+) error {
+	agent, err := validateAgent(Agent(record.Agent))
+	if err != nil {
+		return err
+	}
+	if agent != AgentPi {
+		return nil
+	}
+	return m.EnsureProjectPiTrust(ctx, record.ProjectID, record.Cwd)
+}
+
 func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable) error {
 	agent, err := validateAgent(Agent(record.Agent))
 	if err != nil {
@@ -4401,11 +4582,8 @@ func (m *Manager) ensureSessionMessagingAvailable(record tables.WebSessionTable)
 		if !m.getPiRuntimeProbe().compatible {
 			return fmt.Errorf("%s", errPiWebSessionUnavailable)
 		}
-		if err := m.EnsureProjectPiTrust(context.Background(), record.ProjectID, record.Cwd); err != nil {
-			return err
-		}
 	}
-	return nil
+	return m.ensureSessionMessagingAuthorized(context.Background(), record)
 }
 
 func (m *Manager) ensureCodexMultiAgentV2Supported() error {
@@ -4455,7 +4633,9 @@ func (m *Manager) ensureSessionGoalModeSupported(record tables.WebSessionTable) 
 }
 
 func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables.WebSessionTable, text string, attachments []Attachment) {
+	startedAt := time.Now()
 	defer func() {
+		m.logRunCompletion(ctx, run, session, time.Since(startedAt))
 		run.stopCodexRolloutMonitor()
 		run.codexCollaboration.clear()
 		run.resetActiveCallTracking()
@@ -4643,6 +4823,39 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 	run.syncSourceAfterRun = true
 }
 
+func (m *Manager) logRunCompletion(
+	ctx context.Context,
+	run *activeRun,
+	session tables.WebSessionTable,
+	duration time.Duration,
+) {
+	if m == nil || m.logger == nil || run == nil {
+		return
+	}
+	result := "success"
+	errorCode := run.observationFailureCode()
+	if ctx != nil && ctx.Err() != nil {
+		result = "canceled"
+		errorCode = ""
+	} else if errorCode != "" {
+		result = "failed"
+	}
+	fields := []zap.Field{
+		zap.String("runId", run.runID),
+		zap.String("sessionId", session.ID),
+		zap.String("agent", string(normalizeAgent(Agent(session.Agent)))),
+		zap.String("backend", string(run.backend)),
+		zap.String("result", result),
+		zap.String("errorCode", errorCode),
+		zap.Duration("duration", duration),
+	}
+	if result == "failed" {
+		m.logger.Warn("web session run completed", fields...)
+		return
+	}
+	m.logger.Info("web session run completed", fields...)
+}
+
 func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, session tables.WebSessionTable) {
 	cmd, err := m.buildClaudeResumeCommand(ctx, session)
 	if err != nil {
@@ -4809,6 +5022,7 @@ func (m *Manager) handleRunFailureWithCode(
 	} else if normalizedCode == "" {
 		code = codexRuntimeErrorCode
 	}
+	run.setObservationFailure(code)
 	now := time.Now()
 	if normalizeAgent(Agent(session.Agent)) == AgentCodex {
 		_ = m.finalizeLatestTurnUsage(context.Background(), sessionID)
@@ -6908,7 +7122,11 @@ func (m *Manager) broadcastProjectSessionSummaries(ctx context.Context, projectI
 func (c *client) send(frame wireFrame) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	return c.conn.WriteJSON(frame)
+	if err := c.conn.WriteJSON(frame); err != nil {
+		return err
+	}
+	c.observeCommandResponse(frame)
+	return nil
 }
 
 func mapSessionRecord(record tables.WebSessionTable) SessionSummary {

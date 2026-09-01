@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"code-kanban/api/h"
 	"code-kanban/model"
@@ -526,11 +527,31 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			Refresh bool `query:"refresh" default:"false" doc:"强制刷新运行时能力"`
 		},
 	) (*h.ItemResponse[websession.WebSessionRuntimeConfig], error) {
+		startedAt := time.Now()
 		var config websession.WebSessionRuntimeConfig
 		if input.Refresh {
 			config = c.manager.RefreshWebSessionRuntimeConfigWithModels()
 		} else {
 			config = c.manager.GetWebSessionRuntimeConfigWithModels()
+		}
+		duration := time.Since(startedAt)
+		fields := []zap.Field{
+			zap.Bool("refresh", input.Refresh),
+			zap.String("result", "success"),
+			zap.Duration("duration", duration),
+			zap.Bool("capabilitiesRefreshing", config.CapabilitiesRefreshing),
+			zap.Bool("codexInstalled", config.HasCodex),
+			zap.Bool("claudeInstalled", config.HasClaudeCode),
+			zap.Bool("piInstalled", config.HasPi),
+			zap.Int("codexModelCount", len(config.Models)),
+			zap.Int("piModelCount", len(config.PiModels)),
+		}
+		if duration >= time.Second {
+			c.logger.Warn("web session runtime config loaded", fields...)
+		} else if input.Refresh {
+			c.logger.Info("web session runtime config loaded", fields...)
+		} else {
+			c.logger.Debug("web session runtime config loaded", fields...)
 		}
 		resp := h.NewItemResponse(config)
 		resp.Status = http.StatusOK

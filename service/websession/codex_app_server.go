@@ -584,7 +584,9 @@ func (m *Manager) runCodexAppServerSession(
 	text string,
 	attachments []Attachment,
 ) {
-	supportsMultiAgentV2 := m.GetCodexRuntimeConfig().SupportsMultiAgentV2
+	// Negotiate against the app-server that will execute this run. The V2
+	// request path already falls back to V1 when the running server rejects it.
+	supportsMultiAgentV2 := true
 	client, stderr, err := startCodexAppServer(ctx, m.cfg.CodexPath, session.Cwd)
 	if err != nil {
 		run.resolveBootstrap(err)

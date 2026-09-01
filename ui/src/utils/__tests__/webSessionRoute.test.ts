@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildWebSessionClearedWorkspaceRouteQuery,
   buildWebSessionProjectLocation,
   buildWebSessionRouteQuery,
   getWebSessionRouteSessionId,
+  isWebSessionRouteActivationCurrent,
   isWebSessionRouteQuerySynced,
   isWebSessionOnlyRouteChange,
   resolveWebSessionDeepLinkTarget,
@@ -43,6 +45,22 @@ describe('webSessionRoute', () => {
       })
     ).toEqual({
       filter: 'archived',
+      tab: 'terminal',
+    });
+  });
+
+  it('builds workspace project switch queries without carrying stale webSessionId', () => {
+    expect(
+      buildWebSessionClearedWorkspaceRouteQuery(
+        {
+          filter: 'active',
+          tab: 'web',
+          webSessionId: 'session-1',
+        },
+        'terminal'
+      )
+    ).toEqual({
+      filter: 'active',
       tab: 'terminal',
     });
   });
@@ -168,6 +186,38 @@ describe('webSessionRoute', () => {
         currentProjectId: 'project-1',
         currentSessionId: 'session-a',
         currentSessionProjectId: 'project-1',
+      })
+    ).toBe(false);
+  });
+
+  it('accepts route-driven activation only while project and session still match the route', () => {
+    expect(
+      isWebSessionRouteActivationCurrent({
+        currentProjectId: 'project-1',
+        routeProjectId: 'project-1',
+        requestedProjectId: 'project-1',
+        routeSessionId: 'session-1',
+        requestedSessionId: 'session-1',
+      })
+    ).toBe(true);
+
+    expect(
+      isWebSessionRouteActivationCurrent({
+        currentProjectId: 'project-2',
+        routeProjectId: 'project-2',
+        requestedProjectId: 'project-1',
+        routeSessionId: 'session-1',
+        requestedSessionId: 'session-1',
+      })
+    ).toBe(false);
+
+    expect(
+      isWebSessionRouteActivationCurrent({
+        currentProjectId: 'project-1',
+        routeProjectId: 'project-1',
+        requestedProjectId: 'project-1',
+        routeSessionId: 'session-2',
+        requestedSessionId: 'session-1',
       })
     ).toBe(false);
   });

@@ -7,9 +7,15 @@ const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', impo
 const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
 
 describe('webSession runtime capability guards', () => {
-  it('blocks send flows when runtime capability checks fail', () => {
-    expect(webSessionPanelSource).toContain('!isMessageCapabilityBlocked.value');
-    expect(webSessionPanelSource).toContain('ensureMessageCapabilityAvailable');
+  it('treats runtime availability as advisory for ordinary messaging', () => {
+    expect(webSessionPanelSource).not.toContain('isMessageCapabilityBlocked');
+    expect(webSessionPanelSource).not.toContain('ensureMessageCapabilityAvailable');
+    expect(webSessionPanelSource).not.toContain('refreshRuntimeCapabilities');
+    expect(webSessionPanelSource).not.toContain('loadCodexRuntimeConfig(true)');
+    expect(webSessionPanelSource).toContain('disabled: agentSwitchDisabled.value');
+    expect(webSessionPanelSource).not.toContain(
+      'runtimeConfig.value !== null && !runtimeCapabilityFor(option.value).supportsWebSession'
+    );
   });
 
   it('shows dedicated missing-runtime composer hints', () => {
@@ -21,10 +27,6 @@ describe('webSession runtime capability guards', () => {
 
   it('keeps pre-V2 Codex versions usable in compatibility mode', () => {
     expect(webSessionPanelSource).toContain('runtimeSupportsMultiAgentV2');
-    expect(webSessionPanelSource).toContain(
-      'if (!(await ensureMessageCapabilityAvailable(agent)))'
-    );
-    expect(webSessionPanelSource).toContain('return !runtimeHasCodex.value');
     expect(webSessionPanelSource).toContain("t('webSession.codexCompatibilityAgentLabel')");
     expect(webSessionPanelSource).toContain('function maybeNotifyCodexCompatibilityMode()');
     expect(webSessionPanelSource).toContain('message.warning(codexCompatibilityModeMessage());');
@@ -40,10 +42,6 @@ describe('webSession runtime capability guards', () => {
       webSessionPanelSource.indexOf('async function handleCreateSession('),
       webSessionPanelSource.indexOf('async function handleStartDraftSession(')
     );
-    const capabilityCheckSource = webSessionPanelSource.slice(
-      webSessionPanelSource.indexOf('async function ensureMessageCapabilityAvailable('),
-      webSessionPanelSource.indexOf('async function ensureGoalModeAvailable(')
-    );
     const agentSelectSource = webSessionPanelSource.slice(
       webSessionPanelSource.indexOf('function handleAgentDropdownSelect('),
       webSessionPanelSource.indexOf('function getKnownModelLabel(')
@@ -51,7 +49,6 @@ describe('webSession runtime capability guards', () => {
 
     expect(createSessionSource).toContain("if (agent === 'codex')");
     expect(createSessionSource).toContain('maybeNotifyCodexCompatibilityMode();');
-    expect(capabilityCheckSource).not.toContain('maybeNotifyCodexCompatibilityMode();');
     expect(agentSelectSource).not.toContain('maybeNotifyCodexCompatibilityMode();');
     expect(webSessionPanelSource).not.toContain('notifiedCodexCompatibilityKey');
   });

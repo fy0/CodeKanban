@@ -89,7 +89,7 @@ describe('webSession mobile composer', () => {
     )?.[0];
 
     expect(agentDropdownSource).not.toContain(':disabled="agentSwitchDisabled"');
-    expect(webSessionPanelSource).toMatch(/disabled:\s*agentSwitchDisabled\.value \|\|/);
+    expect(webSessionPanelSource).toContain('disabled: agentSwitchDisabled.value');
   });
 
   it('moves session toggles behind a settings gear', () => {

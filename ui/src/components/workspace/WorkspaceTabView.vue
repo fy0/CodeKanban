@@ -274,6 +274,7 @@ import {
   resolveDesktopWorkspaceRouteTab,
   type DesktopWorkspaceRouteTab,
 } from '@/utils/workspaceRoute';
+import { buildWebSessionClearedWorkspaceRouteQuery } from '@/utils/webSessionRoute';
 import { resolveWorkspaceShortcutTarget } from '@/utils/workspaceTabShortcut';
 import { gitOperationAvailable } from '@/utils/projectGitCapability';
 import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
@@ -629,7 +630,7 @@ function handleProjectSwitchSelect(key: string | number) {
   void router.push({
     name: 'project',
     params: { id: key },
-    query: buildWorkspaceRouteQuery(route.query, activeTab.value),
+    query: buildWebSessionClearedWorkspaceRouteQuery(route.query, activeTab.value),
   });
 }
 

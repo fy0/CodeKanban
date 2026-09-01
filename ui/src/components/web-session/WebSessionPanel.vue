@@ -3543,6 +3543,7 @@ import {
   buildWebSessionProjectLocation,
   buildWebSessionRouteQuery,
   getWebSessionRouteSessionId,
+  isWebSessionRouteActivationCurrent,
   isWebSessionRouteQuerySynced,
   resolveWebSessionDeepLinkTarget,
   shouldPreserveWebSessionRouteSessionId,
@@ -4321,21 +4322,6 @@ const runtimeGoalModeMinVersion = computed(
   () => codexRuntimeConfig.value?.goalModeMinCodexVersion?.trim() || '0.133.0'
 );
 const runtimeSupportsGoalMode = computed(() => runtimeCodexCapability.value.supportsGoal);
-const isMessageCapabilityBlocked = computed(() => {
-  if (selectedAgent.value === 'pi') {
-    return !runtimePiCapability.value.supportsWebSession;
-  }
-  if (!runtimeConfig.value) {
-    return false;
-  }
-  if (selectedAgent.value === 'codex') {
-    return !runtimeHasCodex.value;
-  }
-  if (selectedAgent.value === 'claude') {
-    return !runtimeHasClaudeCode.value;
-  }
-  return !runtimePiCapability.value.supportsWebSession;
-});
 const isCurrentSessionGoalModeBlocked = computed(() => {
   const session = currentSession.value;
   if (!session || session.agent !== 'codex') {
@@ -6583,7 +6569,6 @@ const hasDraftContent = computed(
 const canSend = computed(
   () =>
     isComposerTargetReady.value &&
-    !isMessageCapabilityBlocked.value &&
     !isRunActive.value &&
     !isSubmittingMessage.value &&
     hasDraftContent.value &&
@@ -6592,7 +6577,6 @@ const canSend = computed(
 const canStageDuringRun = computed(
   () =>
     isComposerTargetReady.value &&
-    !isMessageCapabilityBlocked.value &&
     isRunActive.value &&
     !isSubmittingMessage.value &&
     hasDraftContent.value &&
@@ -6688,7 +6672,6 @@ const canConfirmScheduledSend = computed(() => {
       Number(scheduledSendAt.value) === current.scheduledFor
   );
   if (
-    isMessageCapabilityBlocked.value ||
     (requiresScheduledTime &&
       (!Number.isFinite(scheduledSendAt.value) ||
         (Number(scheduledSendAt.value) <= Date.now() && !keepsExistingAtTime))) ||
@@ -9387,6 +9370,16 @@ function buildProjectRouteLocation(projectId: string, sessionId = '') {
   );
 }
 
+function isRouteDrivenSessionActivationCurrent(projectId: string, sessionId: string) {
+  return isWebSessionRouteActivationCurrent({
+    currentProjectId: props.projectId,
+    routeProjectId: route.params.id,
+    requestedProjectId: projectId,
+    routeSessionId: routeWebSessionId.value,
+    requestedSessionId: sessionId,
+  });
+}
+
 async function syncWebSessionRouteSessionId(sessionId = '') {
   if (isWebSessionRouteQuerySynced(route.query, sessionId)) {
     return;
@@ -9464,6 +9457,10 @@ async function activateSessionFromRoute(
     showError?: boolean;
   }
 ) {
+  if (!isRouteDrivenSessionActivationCurrent(projectId, requestedSessionId)) {
+    return false;
+  }
+
   const routeTarget = resolveWebSessionDeepLinkTarget({
     currentProjectId: projectId,
     requestedSessionId,
@@ -9476,6 +9473,9 @@ async function activateSessionFromRoute(
 
   if (routeTarget.action === 'activate-loaded') {
     const handled = await activateTabById(routeTarget.sessionId, { routeDriven: true });
+    if (!isRouteDrivenSessionActivationCurrent(projectId, routeTarget.sessionId)) {
+      return false;
+    }
     if (handled) {
       pendingRouteActivationSessionId.value = '';
     }
@@ -9493,7 +9493,10 @@ async function activateSessionFromRoute(
       signal: snapshotLoad.signal,
       preserveArchivedPosition: true,
     });
-    if (!realSessionSnapshotLoadController.isCurrent(snapshotLoad)) {
+    if (
+      !realSessionSnapshotLoadController.isCurrent(snapshotLoad) ||
+      !isRouteDrivenSessionActivationCurrent(projectId, routeTarget.sessionId)
+    ) {
       return false;
     }
     const snapshotTarget = resolveWebSessionDeepLinkTarget({
@@ -9507,6 +9510,9 @@ async function activateSessionFromRoute(
         connectReal: false,
         routeDriven: true,
       });
+      if (!isRouteDrivenSessionActivationCurrent(projectId, snapshotTarget.sessionId)) {
+        return false;
+      }
       if (handled) {
         pendingRouteActivationSessionId.value = '';
       }
@@ -9514,18 +9520,31 @@ async function activateSessionFromRoute(
     }
 
     if (snapshotTarget.action === 'open-archived-preview' && snapshot?.session) {
+      if (!isRouteDrivenSessionActivationCurrent(projectId, snapshotTarget.sessionId)) {
+        return false;
+      }
       await openArchivedPreviewSession(snapshot.session, {
         snapshotLoaded: true,
         routeDriven: true,
       });
+      if (!isRouteDrivenSessionActivationCurrent(projectId, snapshotTarget.sessionId)) {
+        return false;
+      }
       pendingRouteActivationSessionId.value = '';
       return true;
     }
 
+    if (!isRouteDrivenSessionActivationCurrent(projectId, routeTarget.sessionId)) {
+      return false;
+    }
     pendingRouteActivationSessionId.value = '';
     await syncWebSessionRouteSessionId('');
   } catch (error) {
-    if (isAbortLikeError(error) || !realSessionSnapshotLoadController.isCurrent(snapshotLoad)) {
+    if (
+      isAbortLikeError(error) ||
+      !realSessionSnapshotLoadController.isCurrent(snapshotLoad) ||
+      !isRouteDrivenSessionActivationCurrent(projectId, routeTarget.sessionId)
+    ) {
       return false;
     }
     pendingRouteActivationSessionId.value = '';
@@ -10124,11 +10143,7 @@ const agentDropdownOptions = computed<DropdownOption[]>(() =>
           : option.label,
     key: option.value,
     value: option.value,
-    disabled:
-      agentSwitchDisabled.value ||
-      (option.value === 'pi'
-        ? !runtimePiCapability.value.supportsWebSession
-        : runtimeConfig.value !== null && !runtimeCapabilityFor(option.value).supportsWebSession),
+    disabled: agentSwitchDisabled.value,
   }))
 );
 
@@ -11425,7 +11440,11 @@ async function initializeProjectSessions(projectId: string) {
       if (!isCurrentInitialization()) {
         return;
       }
-      if (handled && routeWebSessionId.value === routeSessionId) {
+      const currentRouteSessionId = routeWebSessionId.value;
+      if (currentRouteSessionId && currentRouteSessionId !== routeSessionId) {
+        return;
+      }
+      if (handled && currentRouteSessionId === routeSessionId) {
         return;
       }
       if (!handled) {
@@ -11847,9 +11866,6 @@ async function handleCreateSession(
     const source = currentSession.value;
     const sourceSessionId = source?.id ?? '';
     const agent = forceAgent ?? source?.agent ?? selectedAgent.value;
-    if (!(await ensureMessageCapabilityAvailable(agent))) {
-      return undefined;
-    }
     if (agent === 'codex') {
       maybeNotifyCodexCompatibilityMode();
     }
@@ -12733,9 +12749,6 @@ async function handleRetryTimelineUserMessage(item: WebSessionBlock) {
     const prepared = await prepareSessionForSend(initialSession, {
       shouldActivate: () => isCurrentVisibleSession(sourceSessionId),
     });
-    if (!(await ensureMessageCapabilityAvailable(prepared.session.agent))) {
-      return;
-    }
     await webSessionStore.sendMessage(prepared.session.id, item.text, attachmentIds, undefined, {
       outgoingMessageId: item.id,
       attachments: item.attachments,
@@ -12769,9 +12782,6 @@ async function continueErroredSession(session: WebSessionSummary) {
   const prepared = await prepareSessionForSend(session, {
     shouldActivate: () => isCurrentVisibleSession(sourceSessionId),
   });
-  if (!(await ensureMessageCapabilityAvailable(prepared.session.agent))) {
-    return;
-  }
   await webSessionStore.sendMessage(prepared.session.id, 'continue', []);
   if (prepared.navigateProjectId && isCurrentVisibleSession(prepared.session.id)) {
     projectStore.addRecentProject(prepared.navigateProjectId);
@@ -12907,9 +12917,6 @@ async function handleSubmit() {
       message.success('Goal updated');
       return;
     }
-    if (!(await ensureMessageCapabilityAvailable(session.agent))) {
-      return;
-    }
     await webSessionStore.sendMessage(
       session.id,
       draftText,
@@ -12998,9 +13005,6 @@ async function handleConfirmScheduledSend() {
       shouldActivate: () => isCurrentVisibleSession(sessionBeforePreparation.id),
     });
     session = prepared.session;
-    if (!(await ensureMessageCapabilityAvailable(session.agent))) {
-      return;
-    }
     await webSessionStore.scheduleMessage(
       session.id,
       draftText,
@@ -13051,7 +13055,7 @@ async function handleConfirmScheduledPlanExecution() {
   scheduledSendSubmitting.value = true;
   try {
     const current = currentRealSession.value;
-    if (!current || !(await ensureMessageCapabilityAvailable(current.agent))) {
+    if (!current) {
       return;
     }
     const prepared = await prepareSessionForSend(current, {
@@ -13119,9 +13123,6 @@ async function handleConfirmScheduledInputUpdate() {
 
   scheduledSendSubmitting.value = true;
   try {
-    if (!(await ensureMessageCapabilityAvailable(currentSession.agent))) {
-      return;
-    }
     const scheduleChanged =
       scheduleKind !== current.scheduleKind ||
       (requiresScheduledTime && executeAt !== current.scheduledFor);
@@ -13174,9 +13175,6 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
   beginSessionSubmit(draftSessionId, mode === 'redirect' ? 'redirect_message' : 'queue_message');
   clearComposerDraftAfterSubmit(draftSessionId, submitProjectId);
   try {
-    if (!(await ensureMessageCapabilityAvailable(session.agent, { refresh: false }))) {
-      return;
-    }
     await webSessionStore.sendMessage(
       session.id,
       draftText,
@@ -13777,9 +13775,6 @@ async function performDispatchScheduledInputNow(
   scheduledInputActionId.value = item.id;
   closeScheduledInputPopover();
   try {
-    if (!(await ensureMessageCapabilityAvailable(session.agent))) {
-      return;
-    }
     await webSessionStore.dispatchScheduledInputNow(session.id, item.id, bypassDependency);
     message.success(
       item.action === 'execute_plan'
@@ -13905,11 +13900,6 @@ function formatSessionInteractionError(error: unknown) {
   return rawMessage || t('common.error');
 }
 
-async function refreshRuntimeCapabilities() {
-  await loadCodexRuntimeConfig(true);
-  return codexRuntimeConfig.value;
-}
-
 function goalModeUnavailableMessage() {
   if (runtimeCodexVersion.value) {
     return t('webSession.goalModeUnavailableWithCurrent', {
@@ -13941,38 +13931,8 @@ function maybeNotifyCodexCompatibilityMode() {
   message.warning(codexCompatibilityModeMessage());
 }
 
-async function ensureMessageCapabilityAvailable(
-  agent: WebSessionAgent,
-  options: { refresh?: boolean } = {}
-) {
-  const config =
-    options.refresh === false ? codexRuntimeConfig.value : await refreshRuntimeCapabilities();
-  if (!config) {
-    if (agent === 'pi') {
-      message.warning(piUnavailableReason.value);
-      return false;
-    }
-    return true;
-  }
-  const capability = resolveWebSessionAgentCapability(config, agent);
-  if (capability.supportsWebSession) {
-    if (agent === 'pi') {
-      return ensurePiProjectTrust(false);
-    }
-    return true;
-  }
-  if (agent === 'codex') {
-    message.warning(t('webSession.codexNotInstalled'));
-  } else if (agent === 'claude') {
-    message.warning(t('webSession.claudeCodeNotInstalled'));
-  } else {
-    message.warning(piUnavailableReason.value);
-  }
-  return false;
-}
-
 async function ensureGoalModeAvailable() {
-  const config = await refreshRuntimeCapabilities();
+  const config = codexRuntimeConfig.value;
   if (!config) {
     return true;
   }
@@ -14050,9 +14010,6 @@ async function handlePlanCardImplement() {
 
     const answered = await answerInlinePlanChoice('execute');
     if (!answered) {
-      if (!(await ensureMessageCapabilityAvailable(targetSession.agent))) {
-        return;
-      }
       await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
     }
 
