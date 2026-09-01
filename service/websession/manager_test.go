@@ -132,6 +132,31 @@ func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	}
 }
 
+func TestManagerCreateSessionDefaultsStartSource(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.SessionStartSource != string(SessionStartSourceStartup) {
+		t.Fatalf("session start source = %q, want %q", record.SessionStartSource, SessionStartSourceStartup)
+	}
+}
+
 func TestManagerCreateSessionRejectsInvalidAgent(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -4068,6 +4093,125 @@ func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	}
 	if !historyHasToolKind(rawEvents, "reasoning") {
 		t.Fatalf("expected raw history to retain reasoning items, got %#v", rawEvents)
+	}
+}
+
+func TestSendMessageWithFreshContextReusesWebSessionAndStartsNewThread(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "verify_clear_start")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", created.ID).
+		Updates(map[string]any{
+			"native_session_id": "thread_old",
+			"native_leaf_id":    "turn_old",
+			"source_revision":   "revision_old",
+			"thread_path":       "C:/old/thread.jsonl",
+			"sync_state":        SyncStateFresh,
+			"last_sync_mode":    string(SyncModeFast),
+		}).Error; err != nil {
+		t.Fatalf("seed old Codex binding: %v", err)
+	}
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession before handoff: %v", err)
+	}
+	for _, event := range []Event{
+		{
+			ID:       "old_plan_start",
+			Type:     "tool_st",
+			ThreadID: "thread_old",
+			TurnID:   "turn_old",
+			Payload: map[string]any{
+				"tid": "plan_old", "name": "Plan", "kind": "plan",
+			},
+		},
+		{
+			ID:       "old_plan_end",
+			Type:     "tool_end",
+			ThreadID: "thread_old",
+			TurnID:   "turn_old",
+			Payload: map[string]any{
+				"tid": "plan_old", "name": "Plan", "kind": "plan",
+				"out": "## Existing plan\n- Keep this visible", "ok": true,
+			},
+		},
+	} {
+		if _, err := manager.appendAndBroadcast(context.Background(), created.ID, record, event); err != nil {
+			t.Fatalf("append old plan event %q: %v", event.Type, err)
+		}
+	}
+
+	const handoff = "Implement this plan in a fresh context."
+	if err := manager.SendMessageWithFreshContext(context.Background(), created.ID, handoff, nil); err != nil {
+		t.Fatalf("SendMessageWithFreshContext returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	after, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after handoff: %v", err)
+	}
+	if after.ID != created.ID {
+		t.Fatalf("web session id changed from %q to %q", created.ID, after.ID)
+	}
+	if after.NativeSessionID == nil || strings.TrimSpace(*after.NativeSessionID) != "thread_test" {
+		t.Fatalf("expected fresh native thread id thread_test, got %v", after.NativeSessionID)
+	}
+	if after.NativeLeafID != nil || after.SourceRevision != nil {
+		t.Fatalf("expected old native leaf metadata to be cleared, got leaf=%v revision=%v", after.NativeLeafID, after.SourceRevision)
+	}
+	if after.WorkflowMode != string(WorkflowModeDefault) {
+		t.Fatalf("workflow mode = %q, want %q", after.WorkflowMode, WorkflowModeDefault)
+	}
+	if after.SessionStartSource != string(SessionStartSourceStartup) {
+		t.Fatalf("session start source = %q, want one-shot reset to %q", after.SessionStartSource, SessionStartSourceStartup)
+	}
+	if _, err := os.Stat(codexPath + ".state.fresh-start"); err != nil {
+		t.Fatalf("expected verified fresh thread/start marker: %v", err)
+	}
+	var sessionCount int64
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).Count(&sessionCount).Error; err != nil {
+		t.Fatalf("count web sessions: %v", err)
+	}
+	if sessionCount != 1 {
+		t.Fatalf("expected one visible web session after handoff, got %d", sessionCount)
+	}
+
+	history, err := manager.History(context.Background(), created.ID, 200, nil)
+	if err != nil {
+		t.Fatalf("History after handoff: %v", err)
+	}
+	if _, ok := historyToolItemByKind(history.Items, "plan"); !ok {
+		t.Fatalf("expected old plan to remain in the same timeline, got %#v", history.Items)
+	}
+	foundHandoff := false
+	for _, item := range history.Items {
+		if item.Kind == "user" && item.Text == handoff {
+			foundHandoff = true
+			break
+		}
+	}
+	if !foundHandoff {
+		t.Fatalf("expected fresh implementation prompt in the same timeline, got %#v", history.Items)
 	}
 }
 
@@ -10256,6 +10400,18 @@ rl.on('line', line => {
   }
 
 	if (message.method === 'thread/start' || message.method === 'thread/resume') {
+	  if (mode === 'verify_clear_start') {
+	    if (
+	      message.method !== 'thread/start' ||
+	      !message.params ||
+	      message.params.sessionStartSource !== 'clear' ||
+	      message.params.threadId !== undefined
+	    ) {
+	      send({ id: message.id, error: { message: 'expected cleared thread/start' } });
+	      return;
+	    }
+	    fs.writeFileSync(stateFile + '.fresh-start', '1');
+	  }
 	  if (mode === 'resume_active_writer_then_success') {
 	    if (message.method !== 'thread/resume') {
 	      send({ id: message.id, error: { message: 'expected thread/resume for existing session' } });
@@ -10594,6 +10750,7 @@ rl.on('line', line => {
 	  mode === 'plan' ||
 	  mode === 'verify_yolo' ||
 	  mode === 'verify_compatibility' ||
+	  mode === 'verify_clear_start' ||
 	  mode === 'rollout_after_turn_start' ||
 	  mode === 'v2_thread_start_fallback' ||
 	  mode === 'rollout_attach_failure' ||

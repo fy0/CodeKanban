@@ -860,7 +860,7 @@
                           <div class="plan-tool-action-row">
                             <n-dropdown
                               trigger="manual"
-                              placement="bottom-end"
+                              :placement="isMobile ? 'top-end' : 'bottom-end'"
                               :show="showPlanQuickActions"
                               :options="planQuickActionOptions"
                               :x="planQuickActionsX"
@@ -3317,6 +3317,7 @@ import {
   shouldShowCyberPolicyWarning,
 } from '@/components/web-session/webSessionDevMode';
 import { resolveWebSessionAgentCapability } from '@/components/web-session/webSessionAgentCapabilities';
+import { buildWebSessionFreshContextPlanPrompt } from '@/components/web-session/webSessionPlanImplementation';
 import { isWebSessionLatestPlanActionable } from '@/components/web-session/webSessionPlanState';
 import {
   buildWebSessionComposerPastePlan,
@@ -5422,6 +5423,7 @@ const latestPlanBlock = computed(() => {
 });
 const latestPlanToolId = computed(() => latestPlanBlock.value?.tool?.id ?? '');
 const latestPlanItemId = computed(() => latestPlanBlock.value?.id ?? '');
+const latestPlanMarkdown = computed(() => latestPlanBlock.value?.tool?.output?.trim() ?? '');
 const hasUserMessageAfterLatestPlan = computed(() => {
   const planToolId = latestPlanToolId.value;
   if (!planToolId) {
@@ -6616,6 +6618,11 @@ const sendQuickActionOptions = computed<DropdownOption[]>(() => {
 });
 const planQuickActionOptions = computed<DropdownOption[]>(() => [
   {
+    key: 'implement-plan-fresh-context',
+    label: t('webSession.planActionImplementFreshContext'),
+    disabled: !latestPlanMarkdown.value,
+  },
+  {
     key: 'schedule-plan',
     label: t('webSession.planActionSchedule'),
   },
@@ -7557,13 +7564,17 @@ function handlePlanQuickActionTriggerClick(event: MouseEvent) {
   const rect = anchorEl.getBoundingClientRect();
   planQuickActionAnchor.value = anchorEl;
   planQuickActionsX.value = Math.round(rect.right);
-  planQuickActionsY.value = Math.round(rect.bottom);
+  planQuickActionsY.value = Math.round(isMobile.value ? rect.top : rect.bottom);
   showPlanQuickActions.value = true;
 }
 
 function handlePlanQuickActionSelect(key: string | number) {
   const action = String(key || '').trim();
   closePlanQuickActions();
+  if (action === 'implement-plan-fresh-context') {
+    void handlePlanCardImplementFreshContext();
+    return;
+  }
   if (action === 'schedule-plan') {
     const target = currentScheduledPlanTarget.value;
     if (target && !activeScheduledPlanTargetIds.value.has(target.planItemId)) {
@@ -12754,6 +12765,7 @@ async function handleRetryTimelineUserMessage(item: WebSessionBlock) {
     await webSessionStore.sendMessage(prepared.session.id, item.text, attachmentIds, undefined, {
       outgoingMessageId: item.id,
       attachments: item.attachments,
+      freshContext: item.freshContext,
     });
     recordSubmittedPrompt(item.text, prepared.session.projectId || props.projectId);
     if (prepared.navigateProjectId && isCurrentVisibleSession(prepared.session.id)) {
@@ -14027,6 +14039,35 @@ async function handlePlanCardImplement() {
     message.error(formatSessionInteractionError(error));
   } finally {
     endSessionSubmit(submitOwnerId);
+  }
+}
+
+async function handlePlanCardImplementFreshContext() {
+  closePlanQuickActions();
+  const sourceSession = currentRealSession.value;
+  const prompt = buildWebSessionFreshContextPlanPrompt(latestPlanMarkdown.value);
+  if (!sourceSession || !prompt || isSubmittingMessage.value) {
+    return;
+  }
+  if (
+    !ensureSendConflictConfirmed(planImplementConfirmationSignature.value, { notifyOnBlock: true })
+  ) {
+    return;
+  }
+
+  beginSessionSubmit(sourceSession.id, 'execute_plan');
+  try {
+    await webSessionStore.sendMessage(sourceSession.id, prompt, [], undefined, {
+      freshContext: true,
+    });
+    if (isCurrentVisibleSession(sourceSession.id)) {
+      autoFollowBottom.value = true;
+      scrollToBottom(true);
+    }
+  } catch (error) {
+    message.error(formatSessionInteractionError(error));
+  } finally {
+    endSessionSubmit(sourceSession.id);
   }
 }
 

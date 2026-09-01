@@ -3244,6 +3244,59 @@ describe('webSession loading behavior', () => {
     });
   });
 
+  it('sends a fresh-context handoff through the current web session', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-fresh-context',
+      status: 'done',
+      assistantState: 'waiting_plan_approval',
+      workflowMode: 'plan',
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const sendPromise = store.sendMessage(
+      session.id,
+      'Implement the existing plan in a fresh context.',
+      [],
+      undefined,
+      { freshContext: true }
+    );
+    const commandSocket = await waitForCommandCount(1);
+    const command = commandSocket?.sent.at(-1) as
+      | { rid?: string; op?: string; sid?: string; p?: Record<string, unknown> }
+      | undefined;
+
+    expect(command).toMatchObject({
+      op: 'fresh_send',
+      sid: session.id,
+      p: {
+        txt: 'Implement the existing plan in a fresh context.',
+        atts: [],
+      },
+    });
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: String(command?.rid ?? ''),
+      sid: session.id,
+      ts: Date.now(),
+      op: 'fresh_send',
+      ok: 1,
+    });
+
+    await sendPromise;
+    expect(store.getSessions(session.projectId)).toHaveLength(1);
+    expect(store.getTimelineBlocks(session.id)).toMatchObject([
+      {
+        kind: 'user',
+        text: 'Implement the existing plan in a fresh context.',
+        deliveryState: 'accepted',
+      },
+    ]);
+  });
+
   it('keeps a pre-ACK failure retryable and reconciles the same bubble after retry', async () => {
     const store = useWebSessionStore();
     const session = makeSession({

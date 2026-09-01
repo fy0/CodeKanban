@@ -92,6 +92,7 @@ describe('web session message failure', () => {
     );
     expect(handlerSource).toContain('outgoingMessageId: item.id');
     expect(handlerSource).toContain('attachments: item.attachments');
+    expect(handlerSource).toContain('freshContext: item.freshContext');
     expect(handlerSource).toContain('beginSessionSubmit(sourceSessionId, submitKind);');
     expect(handlerSource).toContain('ensureSendConflictConfirmed(');
     expect(handlerSource).toContain("message.success(t('webSession.userMessageRetrySuccess'));");

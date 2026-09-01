@@ -900,6 +900,7 @@ export default {
     planCardCaption: '可以开始实现，或先退出计划继续补充要求。',
     planActionImplement: '开始实现计划',
     planActionMenu: '计划快捷操作',
+    planActionImplementFreshContext: '清除上下文并实现',
     planActionSchedule: '延迟实现计划',
     planActionCancel: '暂时取消',
     permissionDefault: '默认权限',

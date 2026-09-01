@@ -30,10 +30,26 @@ describe('webSession plan scheduling', () => {
   it('keeps immediate implementation on the primary button and only delays in the menu', () => {
     expect(webSessionPanelSource).toContain('class="plan-tool-action-split"');
     expect(webSessionPanelSource).toContain(':aria-expanded="showPlanQuickActions"');
+    expect(webSessionPanelSource).toContain(":placement=\"isMobile ? 'top-end' : 'bottom-end'\"");
+    expect(webSessionPanelSource).toContain(
+      'planQuickActionsY.value = Math.round(isMobile.value ? rect.top : rect.bottom);'
+    );
     expect(webSessionPanelSource).toContain('@click="handlePlanCardImplement"');
     expect(webSessionPanelSource).not.toContain("key: 'implement'");
+    expect(webSessionPanelSource).toContain("key: 'implement-plan-fresh-context'");
     expect(webSessionPanelSource).toContain("key: 'schedule-plan'");
     expect(webSessionPanelSource).toContain("t('webSession.planActionSchedule')");
+  });
+
+  it('starts fresh-context implementation inside the current visible session', () => {
+    expect(webSessionPanelSource).toContain('buildWebSessionFreshContextPlanPrompt');
+    expect(webSessionPanelSource).toContain('handlePlanCardImplementFreshContext');
+    expect(webSessionPanelSource).toContain(
+      'await webSessionStore.sendMessage(sourceSession.id, prompt, [], undefined, {'
+    );
+    expect(webSessionPanelSource).toContain('freshContext: true');
+    expect(webSessionPanelSource).not.toContain('sessionStartSource:');
+    expect(webSessionPanelSource).not.toContain('sourceSession,\n      workflowMode:');
   });
 
   it('reuses the scheduling dialog without message delivery modes', () => {

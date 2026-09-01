@@ -49,6 +49,13 @@ const (
 	WorkflowModePlan    WorkflowMode = "plan"
 )
 
+type SessionStartSource string
+
+const (
+	SessionStartSourceStartup SessionStartSource = "startup"
+	SessionStartSourceClear   SessionStartSource = "clear"
+)
+
 type PermissionLevel string
 
 const (

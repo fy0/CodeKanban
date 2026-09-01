@@ -274,9 +274,10 @@ func TestCodexRawWaitUsesTypedLifecycleAndFallsBackOnValidationFailure(t *testin
 
 func TestCodexThreadParamsUseUpstreamRawHistoryContract(t *testing.T) {
 	session := tables.WebSessionTable{
-		Cwd:             "C:/project",
-		Model:           "gpt-test",
-		PermissionLevel: string(PermissionLevelElevated),
+		Cwd:                "C:/project",
+		Model:              "gpt-test",
+		PermissionLevel:    string(PermissionLevelElevated),
+		SessionStartSource: string(SessionStartSourceClear),
 	}
 	start := codexThreadStartParams(session, true)
 	if start["experimentalRawEvents"] != true || start["historyMode"] != "paginated" {
@@ -284,6 +285,9 @@ func TestCodexThreadParamsUseUpstreamRawHistoryContract(t *testing.T) {
 	}
 	if _, ok := start["persistExtendedHistory"]; ok {
 		t.Fatalf("thread/start must not send removed persistExtendedHistory: %#v", start)
+	}
+	if start["sessionStartSource"] != string(SessionStartSourceClear) {
+		t.Fatalf("fresh thread/start must preserve the clear source: %#v", start)
 	}
 	if config := decodeRawObject(start["config"]); config["features.multi_agent_v2.enabled"] != true ||
 		config["features.multi_agent_v2.tool_namespace"] != "collaboration" ||
@@ -301,6 +305,9 @@ func TestCodexThreadParamsUseUpstreamRawHistoryContract(t *testing.T) {
 	}
 	if _, ok := resume["persistExtendedHistory"]; ok {
 		t.Fatalf("thread/resume must not send removed persistExtendedHistory: %#v", resume)
+	}
+	if _, ok := resume["sessionStartSource"]; ok {
+		t.Fatalf("thread/resume must not send sessionStartSource: %#v", resume)
 	}
 	if config := decodeRawObject(resume["config"]); config["features.multi_agent_v2.enabled"] != true ||
 		config["features.multi_agent_v2.tool_namespace"] != "collaboration" ||
@@ -320,7 +327,7 @@ func TestCodexThreadParamsUseCompatibilityContractWithoutMultiAgentV2(t *testing
 	if start["persistExtendedHistory"] != true {
 		t.Fatalf("compatibility thread/start must preserve extended history: %#v", start)
 	}
-	for _, key := range []string{"historyMode", "experimentalRawEvents"} {
+	for _, key := range []string{"historyMode", "experimentalRawEvents", "sessionStartSource"} {
 		if _, ok := start[key]; ok {
 			t.Fatalf("compatibility thread/start must omit %s: %#v", key, start)
 		}

@@ -23,6 +23,7 @@ type WebSessionTable struct {
 	Model                             string `gorm:"type:text" json:"model"`
 	ReasoningEffort                   string `gorm:"type:text" json:"reasoningEffort"`
 	WorkflowMode                      string `gorm:"type:text;not null;default:default" json:"workflowMode"`
+	SessionStartSource                string `gorm:"type:text;not null;default:startup" json:"-"`
 	PermissionLevel                   string `gorm:"type:text;not null;default:elevated" json:"permissionLevel"`
 	ActiveCallTimeoutEnabled          *bool  `gorm:"type:boolean" json:"activeCallTimeoutEnabled,omitempty"`
 	AutoRetryEnabled                  bool   `gorm:"type:boolean;not null;default:false" json:"autoRetryEnabled"`

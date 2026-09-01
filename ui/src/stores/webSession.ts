@@ -399,11 +399,13 @@ export interface WebSessionBlock {
   detail?: WebSessionHistoryDetail;
   payload?: Record<string, unknown>;
   deliveryState?: WebSessionMessageDeliveryState;
+  freshContext?: boolean;
 }
 
 export interface WebSessionSendMessageOptions {
   outgoingMessageId?: string;
   attachments?: WebSessionBlock['attachments'];
+  freshContext?: boolean;
 }
 
 export class WebSessionMessageDeliveryError extends Error {
@@ -4324,6 +4326,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         text: normalizedText,
         attachments,
         deliveryState: 'sending',
+        freshContext: options?.freshContext ?? existing.freshContext,
       });
       setOutgoingMessages(sessionId, next);
       return existing.id;
@@ -4359,6 +4362,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         observedAt: timestamp,
         attachments,
         deliveryState: 'sending',
+        ...(options?.freshContext ? { freshContext: true } : {}),
       },
     ]);
     return id;
@@ -6776,12 +6780,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const outgoingMessageId = stageOutgoingMessage(sessionId, text, attachmentIds, options);
     const beforeState = snapshotRuntimeMutationState(sessionId);
 
+    const operation = options?.freshContext ? 'fresh_send' : 'send';
     const payload = {
       txt: text,
       atts: attachmentIds,
     };
     const hydration: RuntimeMutationHydrationOptions = {
-      label: 'send',
+      label: operation,
       predicate: () => {
         const liveState = getLiveState(sessionId);
         if (buildBlocks(sessionId).length > beforeState.blockCount) {
@@ -6808,7 +6813,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
     let acknowledgement: WireFrame;
     try {
-      acknowledgement = await sendCommand('send', sessionId, payload);
+      acknowledgement = await sendCommand(operation, sessionId, payload);
     } catch (error) {
       if (setOutgoingMessageDeliveryState(sessionId, outgoingMessageId, 'failed')) {
         throw new WebSessionMessageDeliveryError(outgoingMessageId, error);

@@ -934,6 +934,7 @@ export default {
     planCardCaption: 'Start implementation now, or exit planning and keep refining the request.',
     planActionImplement: 'Implement Plan',
     planActionMenu: 'Plan quick actions',
+    planActionImplementFreshContext: 'Clear Context and Implement',
     planActionSchedule: 'Delay Plan Implementation',
     planActionCancel: 'Cancel for Now',
     permissionDefault: 'Default Access',
