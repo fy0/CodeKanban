@@ -137,12 +137,13 @@ func TestWorktreeServiceDeleteAndSync(t *testing.T) {
 	}
 	found := false
 	for _, wt := range worktrees {
-		if wt.Path == filepath.Join(repoPath, "manual") {
+		if wt.BranchName == "feature/manual-sync" &&
+			model.NormalizePathCase(wt.Path) == model.NormalizePathCase(manualPath) {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected manual worktree to be synced into database")
+		t.Fatalf("expected manual worktree %q to be synced into database: %#v", manualPath, worktrees)
 	}
 }
 

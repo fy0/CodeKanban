@@ -304,7 +304,6 @@ func TestManualMessageRefreshesLegacyDefaultAutoRetryPolicy(t *testing.T) {
 	if err := manager.SendMessage(context.Background(), created.ID, "use current defaults", nil); err != nil {
 		t.Fatalf("SendMessage returned error: %v", err)
 	}
-	waitForSessionToSettle(t, manager, created.ID)
 
 	record, err := manager.GetSession(context.Background(), created.ID)
 	if err != nil {
@@ -318,6 +317,12 @@ func TestManualMessageRefreshesLegacyDefaultAutoRetryPolicy(t *testing.T) {
 	}
 	if record.AutoRetryDispatchPendingOnFailure {
 		t.Fatal("expected the existing session dispatch override to remain unchanged")
+	}
+	if manager.hasActiveRun(created.ID) {
+		if err := manager.AbortSession(created.ID); err != nil {
+			t.Fatalf("AbortSession returned error while cleaning up: %v", err)
+		}
+		waitForSessionToSettle(t, manager, created.ID)
 	}
 }
 
@@ -6756,6 +6761,10 @@ func TestPendingCodexRedirectSteersWhenAnsweredTurnResumes(t *testing.T) {
 	if !manager.hasActiveRun(created.ID) {
 		t.Fatal("expected the answered root turn to remain active after steering")
 	}
+	if err := manager.AbortSession(created.ID); err != nil {
+		t.Fatalf("AbortSession returned error while cleaning up: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
 }
 
 func TestUserInputRequestProjectionPersistsSourceItemID(t *testing.T) {

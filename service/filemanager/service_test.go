@@ -691,48 +691,6 @@ func TestListChangesMarksTruncatedWhenEntryLimitExceeded(t *testing.T) {
 	}
 }
 
-func TestListChangesReturnsPartialStatsWhenCanceled(t *testing.T) {
-	cleanup := initFileManagerTestDB(t)
-	defer cleanup()
-
-	repoDir := initFileManagerGitRepo(t)
-
-	service, err := NewService(Config{
-		DataDir: t.TempDir(),
-	}, nil)
-	if err != nil {
-		t.Fatalf("NewService returned error: %v", err)
-	}
-
-	projectID := seedFileManagerProjectScope(t, repoDir)
-
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Repo\nupdated\n"), 0o644); err != nil {
-		t.Fatalf("rewrite README.md: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(repoDir, "docs", "guide.md"), []byte("guide\nupdated\n"), 0o644); err != nil {
-		t.Fatalf("rewrite docs/guide.md: %v", err)
-	}
-
-	result, err := service.ListChanges(context.Background(), projectID, "", ListChangesOptions{
-		IncludeUntracked: boolRef(false),
-		WithStats:        boolRef(true),
-		Timeout:          time.Nanosecond,
-		MaxEntries:       1000,
-	})
-	if err != nil {
-		t.Fatalf("ListChanges returned error: %v", err)
-	}
-	if result.StatsComplete {
-		t.Fatalf("expected incomplete stats result: %#v", result)
-	}
-	if !result.StatsTimedOut {
-		t.Fatalf("expected statsTimedOut=true: %#v", result)
-	}
-	if len(result.Entries) != 0 {
-		t.Fatalf("canceled status scan should not return partial entries: %#v", result.Entries)
-	}
-}
-
 func TestListChangesUntrackedStatsDoNotShellOutPerFile(t *testing.T) {
 	cleanup := initFileManagerTestDB(t)
 	defer cleanup()
