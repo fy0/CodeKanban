@@ -42,6 +42,21 @@ type piAssistantMessageEvent struct {
 	} `json:"toolCall"`
 }
 
+type piRPCMessageEvent struct {
+	Type    string       `json:"type"`
+	Message piRPCMessage `json:"message"`
+}
+
+type piRPCToolExecutionEvent struct {
+	Type          string         `json:"type"`
+	ToolCallID    string         `json:"toolCallId"`
+	ToolName      string         `json:"toolName"`
+	Args          map[string]any `json:"args"`
+	PartialResult any            `json:"partialResult"`
+	Result        any            `json:"result"`
+	IsError       bool           `json:"isError"`
+}
+
 func (m *Manager) handlePiRuntimeEvent(dispatch *piRuntimeRun, event piRPCEvent) error {
 	if dispatch == nil || dispatch.run == nil {
 		return nil
@@ -53,9 +68,7 @@ func (m *Manager) handlePiRuntimeEvent(dispatch *piRuntimeRun, event piRPCEvent)
 			"status": string(StatusRunning), "updated_at": now,
 		}, AssistantStateWorking, now))
 	case "message_start":
-		var payload struct {
-			Message piRPCMessage `json:"message"`
-		}
+		var payload piRPCMessageEvent
 		if err := json.Unmarshal(event.Raw, &payload); err != nil {
 			return fmt.Errorf("decode Pi message_start: %w", err)
 		}
@@ -71,9 +84,7 @@ func (m *Manager) handlePiRuntimeEvent(dispatch *piRuntimeRun, event piRPCEvent)
 		}
 		return m.handlePiAssistantMessageEvent(dispatch, payload.AssistantMessageEvent)
 	case "message_end":
-		var payload struct {
-			Message piRPCMessage `json:"message"`
-		}
+		var payload piRPCMessageEvent
 		if err := json.Unmarshal(event.Raw, &payload); err != nil {
 			return fmt.Errorf("decode Pi message_end: %w", err)
 		}
@@ -145,6 +156,7 @@ func (m *Manager) handlePiAssistantMessageEvent(dispatch *piRuntimeRun, update p
 	if err := m.ensurePiAssistantMessage(dispatch); err != nil {
 		return err
 	}
+	now := time.Now()
 	dispatch.mu.Lock()
 	messageID := dispatch.assistantMessageID
 	state := dispatch.contents[update.ContentIndex]
@@ -152,6 +164,7 @@ func (m *Manager) handlePiAssistantMessageEvent(dispatch *piRuntimeRun, update p
 		state = &piRuntimeContentState{}
 		dispatch.contents[update.ContentIndex] = state
 	}
+	emitThinking := false
 	switch update.Type {
 	case "text_start", "text_delta", "text_end":
 		state.kind = "text"
@@ -166,6 +179,10 @@ func (m *Manager) handlePiAssistantMessageEvent(dispatch *piRuntimeRun, update p
 			state.text += update.Delta
 		} else if update.Type == "thinking_end" {
 			state.text = update.Content
+		}
+		emitThinking = update.Type != "thinking_delta" || state.lastEmit.IsZero() || now.Sub(state.lastEmit) >= piToolProgressInterval
+		if emitThinking {
+			state.lastEmit = now
 		}
 	case "toolcall_start", "toolcall_delta", "toolcall_end":
 		state.kind = "toolCall"
@@ -194,12 +211,14 @@ func (m *Manager) handlePiAssistantMessageEvent(dispatch *piRuntimeRun, update p
 			return nil
 		}
 		dispatch.run.markAssistantDeltaSeen(messageID)
-		_, err := m.appendAndBroadcast(context.Background(), dispatch.session.ID, dispatch.session, Event{
+		return m.enqueueTextDelta(context.Background(), dispatch.session.ID, dispatch.session, Event{
 			ID: utils.NewID(), Type: "txt_d", RunID: dispatch.run.runID, ParentID: messageID,
-			Timestamp: time.Now(), Payload: map[string]any{"mid": messageID, "txt": update.Delta},
+			Timestamp: now, Payload: map[string]any{"mid": messageID, "txt": update.Delta},
 		})
-		return err
 	case "thinking_start", "thinking_delta":
+		if !emitThinking {
+			return nil
+		}
 		return m.emitPiThinking(dispatch, messageID, update.ContentIndex, content, false)
 	case "thinking_end":
 		return m.emitPiThinking(dispatch, messageID, update.ContentIndex, content, true)
@@ -216,7 +235,8 @@ func (m *Manager) emitPiThinking(dispatch *piRuntimeRun, messageID string, index
 	_, err := m.appendAndBroadcast(context.Background(), dispatch.session.ID, dispatch.session, Event{
 		ID: utils.NewID(), Type: eventType, RunID: dispatch.run.runID, ParentID: messageID,
 		Timestamp: time.Now(), Payload: map[string]any{
-			"tid": toolID, "name": "Reasoning", "kind": "reasoning", "out": text, "ok": true,
+			"tid": toolID, "name": "Reasoning", "kind": "reasoning",
+			"out": truncateToolOutput("reasoning", text), "ok": true,
 		},
 	})
 	return err
@@ -257,14 +277,7 @@ func (m *Manager) finishPiAssistantMessage(dispatch *piRuntimeRun, message piRPC
 }
 
 func (m *Manager) handlePiToolExecution(dispatch *piRuntimeRun, event piRPCEvent) error {
-	var payload struct {
-		ToolCallID    string         `json:"toolCallId"`
-		ToolName      string         `json:"toolName"`
-		Args          map[string]any `json:"args"`
-		PartialResult any            `json:"partialResult"`
-		Result        any            `json:"result"`
-		IsError       bool           `json:"isError"`
-	}
+	var payload piRPCToolExecutionEvent
 	if err := json.Unmarshal(event.Raw, &payload); err != nil {
 		return fmt.Errorf("decode Pi %s: %w", event.Type, err)
 	}
@@ -293,7 +306,7 @@ func (m *Manager) handlePiToolExecution(dispatch *piRuntimeRun, event piRPCEvent
 		outputValue = payload.Result
 	}
 	if outputValue != nil {
-		tool.output = piToolResultText(outputValue)
+		tool.output = truncateToolOutput(tool.name, piToolResultText(outputValue))
 	}
 	if event.Type == "tool_execution_update" && !tool.lastEmit.IsZero() && now.Sub(tool.lastEmit) < piToolProgressInterval {
 		dispatch.mu.Unlock()

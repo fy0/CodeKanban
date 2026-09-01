@@ -25,9 +25,10 @@ import (
 const piSessionHeaderLimit = 1024 * 1024
 
 type piRuntimeContentState struct {
-	kind   string
-	text   string
-	toolID string
+	kind     string
+	text     string
+	toolID   string
+	lastEmit time.Time
 }
 
 type piRuntimeToolState struct {
