@@ -234,6 +234,28 @@ func (r *activeRun) codexSteerTarget() (*codexAppServerClient, string, string) {
 	return r.app, strings.TrimSpace(r.codexThreadID), strings.TrimSpace(r.codexTurnID)
 }
 
+func (r *activeRun) replaceCodexSteerTurnID(threadID, expectedTurnID, activeTurnID string) bool {
+	if r == nil {
+		return false
+	}
+	threadID = strings.TrimSpace(threadID)
+	expectedTurnID = strings.TrimSpace(expectedTurnID)
+	activeTurnID = strings.TrimSpace(activeTurnID)
+	if threadID == "" || expectedTurnID == "" || activeTurnID == "" ||
+		strings.EqualFold(expectedTurnID, activeTurnID) {
+		return false
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !strings.EqualFold(strings.TrimSpace(r.codexThreadID), threadID) ||
+		!strings.EqualFold(strings.TrimSpace(r.codexTurnID), expectedTurnID) {
+		return false
+	}
+	r.codexTurnID = activeTurnID
+	return true
+}
+
 func (r *activeRun) resolveBootstrap(err error) {
 	if r == nil || r.bootstrapResult == nil {
 		return

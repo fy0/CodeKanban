@@ -15,5 +15,8 @@ export function formatWebSessionTokenCount(value: number, exact = false) {
   if (!unit) {
     return String(normalized);
   }
+  if (unit.suffix === 'B') {
+    return (normalized / unit.threshold).toFixed(2).replace(/\.?0+$/, '') + unit.suffix;
+  }
   return (normalized / unit.threshold).toFixed(1).replace(/\.0$/, '') + unit.suffix;
 }

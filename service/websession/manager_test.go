@@ -7248,6 +7248,213 @@ func TestPendingCodexRedirectRetriesFailedSteer(t *testing.T) {
 	waitForSessionToSettle(t, manager, created.ID)
 }
 
+func TestPendingCodexRedirectRefreshesStaleTurnID(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "step_redirect_turn_mismatch")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if manager.hasActiveRun(created.ID) {
+			_ = manager.AbortSession(created.ID)
+		}
+	})
+
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
+
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"redirect after active turn changed",
+		nil,
+		PendingInputModeRedirect,
+		"pending-turn-mismatch",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode returned error: %v", err)
+	}
+
+	retryDeadline := time.Now().Add(2 * time.Second)
+	for {
+		pending := manager.pendingInputsSnapshot(created.ID)
+		if len(pending) == 1 && pending[0].Status == PendingInputStatusRetrying {
+			if pending[0].AttemptCount != 1 || pending[0].LastErrorCode != "active_turn_changed" ||
+				pending[0].ReadyAt == nil {
+				t.Fatalf("expected observable active turn retry metadata, got %#v", pending[0])
+			}
+			break
+		}
+		if time.Now().After(retryDeadline) {
+			t.Fatalf("expected stale active turn to enter retrying state, got %#v", pending)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	steerStatePath := codexPath + ".state.steer.json"
+	waitForFile(t, steerStatePath)
+	steerState, err := os.ReadFile(steerStatePath)
+	if err != nil {
+		t.Fatalf("read steer state: %v", err)
+	}
+	var steerRequest map[string]any
+	if err := json.Unmarshal(steerState, &steerRequest); err != nil {
+		t.Fatalf("decode steer state: %v", err)
+	}
+	if got := stringValue(steerRequest["expectedTurnId"]); got != "6addc087-dfc7-4a43-b290-caa0ce53e6ba" {
+		t.Fatalf("expected retry to use refreshed active turn id, got %q", got)
+	}
+
+	waitForUserMessageCount(t, manager, created.ID, 2)
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected stale turn retry to clear pending input, got %#v", pending)
+	}
+	steerAttempts, err := os.ReadFile(codexPath + ".state.steer-attempts")
+	if err != nil {
+		t.Fatalf("read steer attempts: %v", err)
+	}
+	if strings.TrimSpace(string(steerAttempts)) != "2" {
+		t.Fatalf("expected one stale target failure and one refreshed retry, got %q", steerAttempts)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|redirect after active turn changed" {
+		t.Fatalf("expected refreshed redirect to persist exactly once, got %#v", got)
+	}
+
+	if err := os.WriteFile(codexPath+".state.release-steer", []byte("1"), 0o644); err != nil {
+		t.Fatalf("release steered turn: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.TotalInputTokens != 5 || record.TotalOutputTokens != 3 {
+		t.Fatalf("expected replacement turn usage to be recorded, got input=%d output=%d", record.TotalInputTokens, record.TotalOutputTokens)
+	}
+}
+
+func TestCodexRootTurnFollowsLiveNotificationID(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "step_redirect_turn_alias")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if manager.hasActiveRun(created.ID) {
+			_ = manager.AbortSession(created.ID)
+		}
+	})
+
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
+
+	manager.mu.RLock()
+	run := manager.runs[created.ID]
+	manager.mu.RUnlock()
+	if run == nil {
+		t.Fatal("expected active run")
+	}
+	_, threadID, turnID := run.codexSteerTarget()
+	if threadID != "thread_test" || turnID != "6addc087-dfc7-4a43-b290-caa0ce53e6ba" {
+		t.Fatalf("expected live root notification to refresh steer target, got thread=%q turn=%q", threadID, turnID)
+	}
+
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"redirect after live turn correction",
+		nil,
+		PendingInputModeRedirect,
+		"pending-turn-alias",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode returned error: %v", err)
+	}
+
+	steerStatePath := codexPath + ".state.steer.json"
+	waitForFile(t, steerStatePath)
+	steerState, err := os.ReadFile(steerStatePath)
+	if err != nil {
+		t.Fatalf("read steer state: %v", err)
+	}
+	var steerRequest map[string]any
+	if err := json.Unmarshal(steerState, &steerRequest); err != nil {
+		t.Fatalf("decode steer state: %v", err)
+	}
+	if got := stringValue(steerRequest["expectedTurnId"]); got != "6addc087-dfc7-4a43-b290-caa0ce53e6ba" {
+		t.Fatalf("expected first steer to use the live turn id, got %q", got)
+	}
+
+	waitForUserMessageCount(t, manager, created.ID, 2)
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected live turn redirect to clear pending input, got %#v", pending)
+	}
+	steerAttempts, err := os.ReadFile(codexPath + ".state.steer-attempts")
+	if err != nil {
+		t.Fatalf("read steer attempts: %v", err)
+	}
+	if strings.TrimSpace(string(steerAttempts)) != "1" {
+		t.Fatalf("expected corrected live turn to steer on the first attempt, got %q", steerAttempts)
+	}
+
+	if err := os.WriteFile(codexPath+".state.release-steer", []byte("1"), 0o644); err != nil {
+		t.Fatalf("release steered turn: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.TotalInputTokens != 5 || record.TotalOutputTokens != 3 {
+		t.Fatalf("expected aliased root usage to be recorded, got input=%d output=%d", record.TotalInputTokens, record.TotalOutputTokens)
+	}
+	agents, err := manager.sessionSubAgents(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("sessionSubAgents returned error: %v", err)
+	}
+	if len(agents) != 0 {
+		t.Fatalf("expected the aliased root turn not to be registered as a sub-agent, got %#v", agents)
+	}
+}
+
 func TestPendingCodexRedirectRetriesPersistenceWithoutRepeatingSteer(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -9431,7 +9638,13 @@ const fs = require('fs');
 const mode = %q;
 const rolloutPath = %q;
 const threadId = 'thread_test';
-const turnId = 'turn_test';
+const replacementTurnId = '6addc087-dfc7-4a43-b290-caa0ce53e6ba';
+const hasReplacementTurn =
+  mode === 'step_redirect_turn_alias' || mode === 'step_redirect_turn_mismatch';
+const declaredTurnId = hasReplacementTurn
+  ? '01a05b0f-a8e6-78f0-a4ed-e917e512749b'
+  : 'turn_test';
+let turnId = mode === 'step_redirect_turn_alias' ? replacementTurnId : declaredTurnId;
 const childThreadId = 'thread_child';
 const childTurnId = 'turn_child';
 const stateFile = (process.env.CODEKANBAN_FAKE_CODEX_PATH || __filename) + '.state';
@@ -10261,9 +10474,37 @@ rl.on('line', line => {
       send({ id: message.id, error: { code: -32000, message: 'active turn is temporarily unavailable' } });
       return;
     }
+    if (
+      mode === 'step_redirect_turn_mismatch' &&
+      String((message.params || {}).expectedTurnId || '') !== replacementTurnId
+    ) {
+	  turnId = replacementTurnId;
+      send({
+        id: message.id,
+        error: {
+          code: -32600,
+          message:
+            'expected active turn id ' +
+            String((message.params || {}).expectedTurnId || '') +
+            ' but found ' +
+            replacementTurnId,
+        },
+      });
+      return;
+    }
     fs.writeFileSync(stateFile + '.steer.json', JSON.stringify(message.params || {}));
-    send({ id: message.id, result: { turnId } });
-    if (mode === 'step_redirect' || mode === 'step_redirect_retry') {
+    send({
+      id: message.id,
+      result: {
+        turnId: hasReplacementTurn ? replacementTurnId : turnId,
+      },
+    });
+    if (
+      mode === 'step_redirect' ||
+      mode === 'step_redirect_retry' ||
+      mode === 'step_redirect_turn_alias' ||
+      mode === 'step_redirect_turn_mismatch'
+    ) {
       steered = true;
       emitCommandExecutionCompleted('cmd_step_2', 'step-2');
       send({
@@ -10303,9 +10544,18 @@ rl.on('line', line => {
     send({
       id: message.id,
       result: {
-        turn: { id: turnId, items: [], status: 'inProgress', error: null },
+        turn: { id: declaredTurnId, items: [], status: 'inProgress', error: null },
       },
     });
+	if (mode === 'step_redirect_turn_alias') {
+	  send({
+	    method: 'turn/started',
+	    params: {
+	      threadId,
+	      turn: { id: turnId, items: [], status: 'inProgress', error: null },
+	    },
+	  });
+	}
 
     if (mode === 'incomplete_commentary_then_success') {
       if (startedTurns === 1) {
@@ -10573,7 +10823,12 @@ rl.on('line', line => {
       return;
     }
 
-    if (mode === 'step_redirect' || mode === 'step_redirect_retry') {
+    if (
+      mode === 'step_redirect' ||
+      mode === 'step_redirect_retry' ||
+      mode === 'step_redirect_turn_alias' ||
+      mode === 'step_redirect_turn_mismatch'
+    ) {
       const persistedTurns = readPersistentTurnCount() + 1;
       writePersistentTurnCount(persistedTurns);
       if (persistedTurns === 1) {

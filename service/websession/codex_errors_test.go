@@ -106,6 +106,44 @@ func TestCodexSteerErrorMetadataRetriesActiveTurnNotSteerable(t *testing.T) {
 	}
 }
 
+func TestCodexSteerErrorMetadataRetriesActiveTurnMismatch(t *testing.T) {
+	err := &codexAppServerErr{
+		Code: -32600,
+		Message: "expected active turn id \x6001a05b0f-a8e6-78f0-a4ed-e917e512749b\x60 " +
+			"but found \x606addc087-dfc7-4a43-b290-caa0ce53e6ba\x60",
+	}
+
+	expectedTurnID, activeTurnID, mismatch := codexSteerTurnMismatch(err)
+	if !mismatch || expectedTurnID != "01a05b0f-a8e6-78f0-a4ed-e917e512749b" ||
+		activeTurnID != "6addc087-dfc7-4a43-b290-caa0ce53e6ba" {
+		t.Fatalf(
+			"codexSteerTurnMismatch returned expected=%q active=%q mismatch=%v",
+			expectedTurnID,
+			activeTurnID,
+			mismatch,
+		)
+	}
+	if code, retryable := codexSteerErrorMetadata(err); code != "active_turn_changed" || !retryable {
+		t.Fatalf("codexSteerErrorMetadata returned code=%q retryable=%v", code, retryable)
+	}
+	if _, _, mismatch := codexSteerTurnMismatch(&codexAppServerErr{
+		Code:    -32000,
+		Message: err.Message,
+	}); mismatch {
+		t.Fatal("expected turn mismatch text on a different RPC code to be ignored")
+	}
+}
+
+func TestCodexSteerErrorMetadataRejectsOtherInvalidRequests(t *testing.T) {
+	code, retryable := codexSteerErrorMetadata(&codexAppServerErr{
+		Code:    -32600,
+		Message: "invalid request",
+	})
+	if code != "rpc_-32600" || retryable {
+		t.Fatalf("codexSteerErrorMetadata returned code=%q retryable=%v", code, retryable)
+	}
+}
+
 func TestCodexErrorInfoSupportsRolloutAndAppServerShapes(t *testing.T) {
 	tests := []struct {
 		name   string

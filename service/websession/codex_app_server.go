@@ -257,7 +257,13 @@ const (
 	codexRunDrainWaitTimeout         = 12 * time.Second
 )
 
-var codexReconnectProgressPattern = regexp.MustCompile(`(?i)reconnecting\.\.\.\s*(\d+)\s*/\s*(\d+)`)
+var (
+	codexReconnectProgressPattern = regexp.MustCompile(`(?i)reconnecting\.\.\.\s*(\d+)\s*/\s*(\d+)`)
+	codexSteerTurnMismatchPattern = regexp.MustCompile(
+		"(?i)expected active turn id\\s+[\\x60\\\"']?([0-9a-f]+(?:-[0-9a-f]+)+)[\\x60\\\"']?\\s+" +
+			"but found\\s+[\\x60\\\"']?([0-9a-f]+(?:-[0-9a-f]+)+)[\\x60\\\"']?",
+	)
+)
 
 type codexTransportRetryInfo struct {
 	Message     string
@@ -1187,6 +1193,21 @@ func (m *Manager) handleCodexAppServerMessage(
 ) (codexTurnOutcome, error) {
 	threadID := codexNotificationThreadID(message.Params)
 	turnID := codexNotificationTurnID(message.Params)
+	if run != nil && threadID != "" && turnID != "" &&
+		strings.EqualFold(threadID, strings.TrimSpace(rootScope.threadID)) {
+		// Codex 0.147 can return a submission id from turn/start while live
+		// notifications and turn/steer use the active task's turn id.
+		run.setCodexSteerTarget(threadID, turnID)
+	}
+	if run != nil {
+		_, activeThreadID, activeTurnID := run.codexSteerTarget()
+		if activeThreadID != "" {
+			rootScope.threadID = activeThreadID
+		}
+		if activeTurnID != "" {
+			rootScope.turnID = activeTurnID
+		}
+	}
 	isRootEvent := rootScope.contains(message.Params)
 	method := strings.TrimSpace(message.Method)
 	if isRootEvent && method != "" && run.releaseUserInputResponsePending() {
@@ -1452,9 +1473,32 @@ func codexSteerDataHasKey(value any, target string) bool {
 	return false
 }
 
+func codexSteerTurnMismatch(err error) (string, string, bool) {
+	if err == nil {
+		return "", "", false
+	}
+	var appErr *codexAppServerErr
+	if !errors.As(err, &appErr) || appErr.Code != -32600 {
+		return "", "", false
+	}
+	matches := codexSteerTurnMismatchPattern.FindStringSubmatch(strings.TrimSpace(appErr.Message))
+	if len(matches) != 3 {
+		return "", "", false
+	}
+	expectedTurnID := strings.TrimSpace(matches[1])
+	activeTurnID := strings.TrimSpace(matches[2])
+	if expectedTurnID == "" || activeTurnID == "" || strings.EqualFold(expectedTurnID, activeTurnID) {
+		return "", "", false
+	}
+	return expectedTurnID, activeTurnID, true
+}
+
 func codexSteerErrorMetadata(err error) (string, bool) {
 	if err == nil {
 		return "", false
+	}
+	if _, _, mismatch := codexSteerTurnMismatch(err); mismatch {
+		return "active_turn_changed", true
 	}
 	var appErr *codexAppServerErr
 	if errors.As(err, &appErr) {
@@ -1581,6 +1625,10 @@ func (m *Manager) steerActiveCodexTurn(
 		"clientUserMessageId": messageID,
 	})
 	if err != nil {
+		if expectedTurnID, activeTurnID, mismatch := codexSteerTurnMismatch(err); mismatch &&
+			strings.EqualFold(expectedTurnID, turnID) {
+			run.replaceCodexSteerTurnID(threadID, expectedTurnID, activeTurnID)
+		}
 		return true, nil, err
 	}
 	responseTurnID := strings.TrimSpace(stringValue(decodeRawObject(response.Result)["turnId"]))
