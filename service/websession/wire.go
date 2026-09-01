@@ -830,13 +830,6 @@ func parseBeforeCursor(raw json.RawMessage) (*int64, error) {
 	return &value, nil
 }
 
-func historyCursor(events []Event, hasMore bool) string {
-	if !hasMore || len(events) == 0 {
-		return ""
-	}
-	return strconv.FormatInt(events[0].Seq, 10)
-}
-
 func nowUnixMilli() int64 {
 	return time.Now().UnixMilli()
 }

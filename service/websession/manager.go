@@ -2362,41 +2362,23 @@ func (m *Manager) pendingApprovalSnapshot(record tables.WebSessionTable) *Pendin
 }
 
 func (m *Manager) History(ctx context.Context, sessionID string, limit int, beforeSeq *int64) (HistoryWindow, error) {
-	record, err := m.GetSession(ctx, sessionID)
-	if err != nil {
+	if _, err := m.GetSession(ctx, sessionID); err != nil {
 		return HistoryWindow{}, err
 	}
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
-	window, err := m.loadHistoryWindow(ctx, sessionID, limit, beforeSeq)
-	if err != nil {
-		return HistoryWindow{}, err
-	}
-	projected, err := m.projectedHistoryWindow(record, limit, beforeSeq)
-	if err == nil {
-		window.Events = projected.Events
-	}
-	return window, nil
+	return m.loadHistoryWindow(ctx, sessionID, limit, beforeSeq)
 }
 
 func (m *Manager) HistoryAfter(ctx context.Context, sessionID string, limit int, afterSeq int64) (HistoryWindow, error) {
-	record, err := m.GetSession(ctx, sessionID)
-	if err != nil {
+	if _, err := m.GetSession(ctx, sessionID); err != nil {
 		return HistoryWindow{}, err
 	}
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
-	window, err := m.loadHistoryWindowAfter(ctx, sessionID, limit, afterSeq)
-	if err != nil {
-		return HistoryWindow{}, err
-	}
-	projected, err := m.projectedHistoryWindowAfter(record, limit, afterSeq)
-	if err == nil {
-		window.Events = projected.Events
-	}
-	return window, nil
+	return m.loadHistoryWindowAfter(ctx, sessionID, limit, afterSeq)
 }
 
 func (m *Manager) RenameSession(ctx context.Context, sessionID, title string) (SessionSummary, error) {
@@ -6024,7 +6006,7 @@ func (m *Manager) decorateCompactToolGroupEvent(sessionID string, event *Event) 
 
 	if run != nil {
 		run.mu.Lock()
-		groupKey := compactToolGroupKey(*event, toolSnapshot{})
+		groupKey := compactToolGroupKey(*event)
 		if run.commandGroupKey != "" && run.commandGroupKey != groupKey {
 			run.commandGroupID = ""
 			run.commandGroupKind = ""

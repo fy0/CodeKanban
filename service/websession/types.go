@@ -480,7 +480,6 @@ type HistoryItem struct {
 }
 
 type HistoryWindow struct {
-	Events       []Event       `json:"events,omitempty"`
 	Items        []HistoryItem `json:"items"`
 	HasMore      bool          `json:"hasMore"`
 	BeforeCursor string        `json:"beforeCursor,omitempty"`

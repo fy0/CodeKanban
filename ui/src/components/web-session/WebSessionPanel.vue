@@ -3406,6 +3406,7 @@ import {
   resolveWebSessionTimelineRestoreScrollTop,
   type WebSessionTimelinePosition,
 } from '@/components/web-session/webSessionTimelinePosition';
+import { createWebSessionHistoryAutoLoadBudget } from '@/components/web-session/webSessionHistoryAutoLoadBudget';
 import {
   canNavigateWebSessionUserMessage,
   findViewportAdjacentWebSessionUserMessageKey,
@@ -4026,6 +4027,7 @@ let mobileQuickInputOpenedAt = 0;
 let mobileSkillBrowserOpenedAt = 0;
 const realSessionSnapshotLoadController = createWebSessionSnapshotLoadController();
 const projectSessionInitializationGate = createWebSessionProjectInitializationGate();
+const timelineHistoryAutoLoadBudget = createWebSessionHistoryAutoLoadBudget();
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 
@@ -14344,6 +14346,18 @@ async function restorePendingTimelinePosition() {
         position.anchorOrderIndex != null &&
         (!Number.isFinite(minimumOrderIndex) || minimumOrderIndex > position.anchorOrderIndex);
       if (needsEarlierHistory && currentRealSession.value && meta.hasMore && meta.beforeCursor) {
+        if (!timelineHistoryAutoLoadBudget.tryConsume()) {
+          const closest = findClosestWebSessionTimelineAnchor(
+            candidates,
+            position.anchorKey,
+            position.anchorOrderIndex
+          );
+          applyTimelinePositionRestore(container, position, closest?.element);
+          pendingTimelinePositionRestore.value = null;
+          captureTimelinePosition(projectId, sessionId, true);
+          ensureTimelineHistoryFilled();
+          return;
+        }
         const previousCursor = meta.beforeCursor;
         try {
           await webSessionStore.loadMoreHistory(
@@ -14749,6 +14763,9 @@ function ensureTimelineHistoryFilled() {
   }
   const lacksScrollableOverflow = container.scrollHeight <= container.clientHeight + 24;
   if (!lacksScrollableOverflow) {
+    return;
+  }
+  if (!timelineHistoryAutoLoadBudget.tryConsume()) {
     return;
   }
   void webSessionStore.loadMoreHistory(currentRealSession.value.id).catch(error => {
@@ -15661,6 +15678,7 @@ watch(
     ) {
       captureTimelinePosition(previousProjectId, previousSessionId, true);
     }
+    timelineHistoryAutoLoadBudget.reset();
     cancelTimelinePositionRestore();
     stopWebSessionCatchUp('session-change');
     streamingMarkdownController.clear();
@@ -15965,6 +15983,7 @@ watch(
       pendingUserInputTimelineAnchor = null;
       return;
     }
+    timelineHistoryAutoLoadBudget.reset();
     refreshTabHeaderLayout();
     if (currentSession.value?.id) {
       beginTimelinePositionRestore(props.projectId, currentSession.value.id);

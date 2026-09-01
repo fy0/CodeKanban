@@ -27,22 +27,8 @@ func TestHistoryWindowForTransportOmitsExpandableCommandDetails(t *testing.T) {
 	)
 	original.LastEventSeq = 7
 
-	originalEvent := Event{
-		Type: "tool_end",
-		Payload: map[string]any{
-			"in":  map[string]any{"command": "pwd"},
-			"out": "large output",
-			"meta": map[string]any{
-				"commandGroup": map[string]any{
-					"id":    "group-1",
-					"count": 2,
-				},
-			},
-		},
-	}
 	projected := HistoryWindowForTransport(HistoryWindow{
-		Items:  []HistoryItem{original},
-		Events: []Event{originalEvent},
+		Items: []HistoryItem{original},
 	})
 	if len(projected.Items) != 1 {
 		t.Fatalf("expected one projected history item, got %d", len(projected.Items))
@@ -73,16 +59,6 @@ func TestHistoryWindowForTransportOmitsExpandableCommandDetails(t *testing.T) {
 	if original.Tool == nil || original.Tool.Input == nil || original.Tool.Output == "" {
 		t.Fatal("expected the original history item to remain unchanged")
 	}
-	if _, exists := projected.Events[0].Payload["in"]; exists {
-		t.Fatal("expected raw event input to be removed from the transport payload")
-	}
-	if _, exists := projected.Events[0].Payload["out"]; exists {
-		t.Fatal("expected raw event output to be removed from the transport payload")
-	}
-	if _, exists := originalEvent.Payload["out"]; !exists {
-		t.Fatal("expected the original event to remain unchanged")
-	}
-
 	wireItem := mapWireHistoryItem(original)
 	if item.LastEventSeq != 7 || wireItem.LastEventSeq != 7 {
 		t.Fatalf("expected event sequence to survive transport projection, got item=%d wire=%d", item.LastEventSeq, wireItem.LastEventSeq)
@@ -200,21 +176,37 @@ func TestHistoryWindowForTransportPreservesLongPlanOutput(t *testing.T) {
 				Status: "done",
 			},
 		}},
-		Events: []Event{{
-			Type: "tool_end",
-			Payload: map[string]any{
-				"kind": "plan",
-				"out":  planText,
-			},
-		}},
 	}
 
 	projected := HistoryWindowForTransport(window)
 	if got := projected.Items[0].Tool.Output; got != planText {
 		t.Fatalf("expected full plan item output, got %d runes want %d", len([]rune(got)), len([]rune(planText)))
 	}
-	if got := stringValue(projected.Events[0].Payload["out"]); got != planText {
-		t.Fatalf("expected full plan event output, got %d runes want %d", len([]rune(got)), len([]rune(planText)))
+}
+
+func TestHistoryWindowTransportJSONOmitsLegacyEvents(t *testing.T) {
+	encoded, err := json.Marshal(HistoryWindowForTransport(HistoryWindow{
+		Items:        []HistoryItem{{ID: "item-1", OrderIndex: 10, Kind: "user", ItemType: "user_message", Text: "hello"}},
+		HasMore:      true,
+		BeforeCursor: "10",
+		HasLater:     true,
+		AfterCursor:  "20",
+		Total:        2,
+	}))
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if _, exists := payload["events"]; exists {
+		t.Fatalf("history response contains removed events field: %s", encoded)
+	}
+	for _, key := range []string{"items", "hasMore", "beforeCursor", "hasLater", "afterCursor", "total"} {
+		if _, exists := payload[key]; !exists {
+			t.Fatalf("history response is missing %q: %s", key, encoded)
+		}
 	}
 }
 

@@ -22,7 +22,7 @@ const (
 // tool record while keeping persisted command-group details available to the
 // detail API.
 func HistoryWindowForTransport(window HistoryWindow) HistoryWindow {
-	if len(window.Items) == 0 && len(window.Events) == 0 {
+	if len(window.Items) == 0 {
 		return window
 	}
 
@@ -30,12 +30,6 @@ func HistoryWindowForTransport(window HistoryWindow) HistoryWindow {
 	projected.Items = make([]HistoryItem, 0, len(window.Items))
 	for _, item := range window.Items {
 		projected.Items = append(projected.Items, historyItemForTransport(item))
-	}
-	if len(window.Events) > 0 {
-		projected.Events = make([]Event, 0, len(window.Events))
-		for _, event := range window.Events {
-			projected.Events = append(projected.Events, historyEventForTransport(event))
-		}
 	}
 	return projected
 }
@@ -97,66 +91,6 @@ func historyItemForTransport(item HistoryItem) HistoryItem {
 	return projected
 }
 
-func historyEventForTransport(event Event) Event {
-	if event.Type != "tool_st" && event.Type != "tool_end" {
-		return event
-	}
-
-	projected := event
-	projected.Payload = cloneMap(event.Payload)
-	delete(projected.Payload, "groupItems")
-	meta := projectHistoryTransportMeta(
-		eventToolKind(event),
-		eventToolInput(event),
-		eventToolMeta(event),
-		eventToolOutput(event),
-	)
-	if isExpandableCommandGroupEvent(event) {
-		delete(projected.Payload, "in")
-		delete(projected.Payload, "out")
-	} else {
-		if input := boundedHistoryTransportValue(
-			eventToolInput(event),
-			maxHistoryTransportToolInputBytes,
-			historyTransportInputFallback(eventToolKind(event), eventToolInput(event), stringValue(meta["subtitle"])),
-		); input != nil {
-			projected.Payload["in"] = input
-		} else {
-			delete(projected.Payload, "in")
-		}
-		if output := historyTransportToolOutput(eventToolKind(event), eventToolOutput(event)); output != "" {
-			projected.Payload["out"] = output
-		} else {
-			delete(projected.Payload, "out")
-		}
-	}
-	if len(meta) > 0 {
-		if projected.Payload == nil {
-			projected.Payload = make(map[string]any)
-		}
-		projected.Payload["meta"] = meta
-	} else {
-		delete(projected.Payload, "meta")
-	}
-	projected.Payload = boundedHistoryTransportMap(
-		projected.Payload,
-		maxHistoryTransportPayloadBytes+maxHistoryTransportToolInputBytes,
-		historyTransportMapFallback(projected.Payload, historyTransportEventKeys),
-	)
-	if strings.EqualFold(strings.TrimSpace(eventToolKind(event)), "plan") {
-		if projected.Payload == nil {
-			projected.Payload = make(map[string]any)
-		}
-		if output := eventToolOutput(event); output != "" {
-			projected.Payload["out"] = output
-		}
-	}
-	if len(projected.Payload) == 0 {
-		projected.Payload = nil
-	}
-	return projected
-}
-
 func historyTransportToolOutput(kind, output string) string {
 	if strings.EqualFold(strings.TrimSpace(kind), "plan") {
 		return output
@@ -203,10 +137,6 @@ var historyTransportMetaKeys = []string{
 
 var historyTransportPayloadKeys = []string{
 	"kind", "ok", "status", "code", "reason", "iid", "mid", "tid", "toolId", "threadId",
-}
-
-var historyTransportEventKeys = []string{
-	"kind", "ok", "status", "code", "reason", "iid", "mid", "tid", "toolId", "threadId", "in", "out", "meta",
 }
 
 func historyTransportInputFallback(kind string, input any, summary string) map[string]any {
@@ -371,17 +301,4 @@ func isExpandableCommandGroup(item HistoryItem) bool {
 		return false
 	}
 	return item.Tool.CommandGroup.Compacted || item.Tool.CommandGroup.Count > 1
-}
-
-func isExpandableCommandGroupEvent(event Event) bool {
-	if event.Type != "tool_st" && event.Type != "tool_end" {
-		return false
-	}
-	group := decodeRawObject(eventToolMeta(event)["commandGroup"])
-	if len(group) == 0 {
-		return false
-	}
-	compacted, _ := group["compacted"].(bool)
-	count := int(numberValue(group["count"]))
-	return compacted || count > 1
 }

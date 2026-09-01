@@ -3854,14 +3854,14 @@ func TestNewManagerRecoversInterruptedSessionsOnStartup(t *testing.T) {
 		t.Fatalf("expected active sub-agent to be interrupted on restart, got %#v", agents)
 	}
 
-	history, err := manager.History(context.Background(), session.ID, 10, nil)
+	events, err := manager.store.readEvents(session.ID)
 	if err != nil {
-		t.Fatalf("History returned error: %v", err)
+		t.Fatalf("readEvents returned error: %v", err)
 	}
-	if len(history.Events) != 2 {
-		t.Fatalf("expected 2 events after recovery, got %d", len(history.Events))
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events after recovery, got %d", len(events))
 	}
-	lastEvent := history.Events[len(history.Events)-1]
+	lastEvent := events[len(events)-1]
 	if lastEvent.Type != "run_abort" {
 		t.Fatalf("expected recovery event run_abort, got %q", lastEvent.Type)
 	}
@@ -4053,15 +4053,8 @@ func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if historyHasToolKind(history.Events, "reasoning") {
-		t.Fatalf("expected empty reasoning items to be filtered from projected history, got %#v", history.Events)
-	}
-	snapshot, err := manager.Snapshot(context.Background(), created.ID, 200)
-	if err != nil {
-		t.Fatalf("Snapshot returned error: %v", err)
-	}
-	if historyItemsHaveToolKind(snapshot.History.Items, "reasoning") {
-		t.Fatalf("expected empty reasoning items to be filtered from cached history items, got %#v", snapshot.History.Items)
+	if historyItemsHaveToolKind(history.Items, "reasoning") {
+		t.Fatalf("expected empty reasoning items to be filtered from cached history items, got %#v", history.Items)
 	}
 
 	rawEvents, err := manager.store.readEvents(created.ID)
@@ -5306,8 +5299,8 @@ func TestCodexAppServerTransportRetryRecoversOnHiddenReasoning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if historyHasToolKind(history.Events, "reasoning") {
-		t.Fatalf("expected hidden reasoning to remain absent from projected history, got %#v", history.Events)
+	if historyItemsHaveToolKind(history.Items, "reasoning") {
+		t.Fatalf("expected hidden reasoning to remain absent from cached history, got %#v", history.Items)
 	}
 }
 
@@ -6959,8 +6952,8 @@ func TestCodexPlanCompletionSetsWaitingApprovalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if !historyHasToolKind(history.Events, "plan") {
-		t.Fatalf("expected plan tool history, got %#v", history.Events)
+	if !historyItemsHaveToolKind(history.Items, "plan") {
+		t.Fatalf("expected plan tool history, got %#v", history.Items)
 	}
 }
 
@@ -8020,12 +8013,12 @@ func TestSendMessageResumesRecoveredCodexSession(t *testing.T) {
 		t.Fatalf("expected resumed native session id %q, got %v", nativeSessionID, record.NativeSessionID)
 	}
 
-	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	events, err := manager.store.readEvents(session.ID)
 	if err != nil {
-		t.Fatalf("History returned error: %v", err)
+		t.Fatalf("readEvents returned error: %v", err)
 	}
-	if historyHasEvent(history.Events, "run_fail") {
-		t.Fatalf("expected resume_only session to avoid run_fail, got %#v", history.Events)
+	if historyHasEvent(events, "run_fail") {
+		t.Fatalf("expected resume_only session to avoid run_fail, got %#v", events)
 	}
 }
 
@@ -8123,34 +8116,37 @@ func TestHistoryAggregatesConsecutiveCommandExecutions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if len(history.Events) != 2 {
-		t.Fatalf("expected 2 projected events, got %d", len(history.Events))
+	if len(history.Items) != 2 {
+		t.Fatalf("expected grouped tool and note items, got %d", len(history.Items))
 	}
 
-	grouped := history.Events[0]
-	if grouped.Type != "tool_end" {
-		t.Fatalf("expected grouped event type tool_end, got %q", grouped.Type)
+	grouped := history.Items[0]
+	if grouped.Kind != "tool" || grouped.Tool == nil {
+		t.Fatalf("expected grouped tool item, got %#v", grouped)
 	}
-	if grouped.Seq != 5 {
-		t.Fatalf("expected grouped event seq 5, got %d", grouped.Seq)
+	if grouped.LastEventSeq != 5 {
+		t.Fatalf("expected grouped item event seq 5, got %d", grouped.LastEventSeq)
 	}
-	if got := fmt.Sprint(grouped.Payload["tid"]); got != commandExecutionGroupID("cmd1") {
+	if grouped.Tool.CommandGroup == nil {
+		t.Fatalf("expected grouped command metadata, got %#v", grouped.Tool)
+	}
+	if got := grouped.Tool.CommandGroup.ID; got != commandExecutionGroupID("cmd1") {
 		t.Fatalf("expected grouped tool id %q, got %q", commandExecutionGroupID("cmd1"), got)
 	}
-	groupMeta := decodeRawObject(decodeRawObject(grouped.Payload["meta"])["commandGroup"])
-	if got := int(numberValue(groupMeta["count"])); got != 2 {
+	if grouped.Tool.CommandGroup.Count != 2 {
+		got := grouped.Tool.CommandGroup.Count
 		t.Fatalf("expected grouped count 2, got %d", got)
 	}
-	input := decodeRawObject(grouped.Payload["in"])
+	input := decodeRawObject(grouped.Tool.Input)
 	if got := stringValue(input["command"]); got != "pwd" {
 		t.Fatalf("expected latest grouped command pwd, got %q", got)
 	}
-	if got := stringValue(grouped.Payload["out"]); got != "pwd output" {
+	if got := grouped.Tool.Output; got != "pwd output" {
 		t.Fatalf("expected latest grouped output, got %q", got)
 	}
 
-	if history.Events[1].Type != "note" {
-		t.Fatalf("expected second event note, got %q", history.Events[1].Type)
+	if history.Items[1].ItemType != "note" {
+		t.Fatalf("expected second item note, got %q", history.Items[1].ItemType)
 	}
 }
 
@@ -8250,121 +8246,6 @@ func TestGetCommandExecutionGroupReturnsFullItems(t *testing.T) {
 	}
 }
 
-func TestProjectHistoryEventsSeparatesCompactToolsWhenExplicitGroupChanges(t *testing.T) {
-	events := []Event{
-		{
-			ID:        "evt_cmd1_st",
-			Seq:       1,
-			Type:      "tool_st",
-			Timestamp: time.UnixMilli(1_000),
-			Payload: map[string]any{
-				"tid":  "cmd1",
-				"name": "CommandExecution",
-				"kind": "command_execution",
-				"in":   map[string]any{"command": "ls"},
-				"meta": map[string]any{
-					"kind":  "command_execution",
-					"title": "CommandExecution",
-					"commandGroup": map[string]any{
-						"id":           commandExecutionGroupID("cmd1"),
-						"count":        1,
-						"latestToolId": "cmd1",
-						"compacted":    true,
-					},
-				},
-			},
-		},
-		{
-			ID:        "evt_cmd1_end",
-			Seq:       2,
-			Type:      "tool_end",
-			Timestamp: time.UnixMilli(2_000),
-			Payload: map[string]any{
-				"tid":  "cmd1",
-				"kind": "command_execution",
-				"out":  "ls output",
-				"ok":   true,
-				"meta": map[string]any{
-					"kind":  "command_execution",
-					"title": "CommandExecution",
-					"commandGroup": map[string]any{
-						"id":           commandExecutionGroupID("cmd1"),
-						"count":        1,
-						"latestToolId": "cmd1",
-						"compacted":    true,
-					},
-				},
-			},
-		},
-		{
-			ID:        "evt_cmd2_st",
-			Seq:       3,
-			Type:      "tool_st",
-			Timestamp: time.UnixMilli(3_000),
-			Payload: map[string]any{
-				"tid":  "cmd2",
-				"name": "CommandExecution",
-				"kind": "command_execution",
-				"in":   map[string]any{"command": "pwd"},
-				"meta": map[string]any{
-					"kind":  "command_execution",
-					"title": "CommandExecution",
-					"commandGroup": map[string]any{
-						"id":           commandExecutionGroupID("cmd2"),
-						"count":        1,
-						"latestToolId": "cmd2",
-						"compacted":    true,
-					},
-				},
-			},
-		},
-		{
-			ID:        "evt_cmd2_end",
-			Seq:       4,
-			Type:      "tool_end",
-			Timestamp: time.UnixMilli(4_000),
-			Payload: map[string]any{
-				"tid":  "cmd2",
-				"kind": "command_execution",
-				"out":  "pwd output",
-				"ok":   true,
-				"meta": map[string]any{
-					"kind":  "command_execution",
-					"title": "CommandExecution",
-					"commandGroup": map[string]any{
-						"id":           commandExecutionGroupID("cmd2"),
-						"count":        1,
-						"latestToolId": "cmd2",
-						"compacted":    true,
-					},
-				},
-			},
-		},
-	}
-
-	projected := projectHistoryEvents(events, AgentCodex)
-	if len(projected) != 2 {
-		t.Fatalf("expected 2 projected events, got %d", len(projected))
-	}
-	if got := eventCommandGroupID(projected[0]); got != commandExecutionGroupID("cmd1") {
-		t.Fatalf("expected first group id %q, got %q", commandExecutionGroupID("cmd1"), got)
-	}
-	if got := eventCommandGroupID(projected[1]); got != commandExecutionGroupID("cmd2") {
-		t.Fatalf("expected second group id %q, got %q", commandExecutionGroupID("cmd2"), got)
-	}
-
-	groups := buildCommandExecutionGroupLookup(events, AgentCodex)
-	if len(groups) != 2 {
-		t.Fatalf("expected 2 command group details, got %d", len(groups))
-	}
-	if _, ok := groups[commandExecutionGroupID("cmd1")]; !ok {
-		t.Fatalf("expected group %q in lookup", commandExecutionGroupID("cmd1"))
-	}
-	if _, ok := groups[commandExecutionGroupID("cmd2")]; !ok {
-		t.Fatalf("expected group %q in lookup", commandExecutionGroupID("cmd2"))
-	}
-}
-
 func TestHistoryReasoningWithContentDoesNotBreakCodexCommandExecutionGroup(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -8450,17 +8331,21 @@ func TestHistoryReasoningWithContentDoesNotBreakCodexCommandExecutionGroup(t *te
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if len(history.Events) != 2 {
-		t.Fatalf("expected 2 projected events, got %d", len(history.Events))
+	if len(history.Items) != 2 {
+		t.Fatalf("expected reasoning and grouped command items, got %d", len(history.Items))
 	}
-	if history.Events[0].Type != "tool_end" || eventToolKind(history.Events[0]) != "reasoning" {
-		t.Fatalf("expected first event reasoning, got %#v", history.Events[0])
+	if _, ok := historyToolItemByKind(history.Items, "reasoning"); !ok {
+		t.Fatalf("expected reasoning item, got %#v", history.Items)
 	}
-	if history.Events[1].Type != "tool_end" || eventToolKind(history.Events[1]) != "command_execution" {
-		t.Fatalf("expected second event grouped command execution, got %#v", history.Events[1])
+	grouped, ok := historyToolItemByKind(history.Items, "command_execution")
+	if !ok {
+		t.Fatalf("expected grouped command execution item, got %#v", history.Items)
 	}
-	groupMeta := decodeRawObject(decodeRawObject(history.Events[1].Payload["meta"])["commandGroup"])
-	if got := int(numberValue(groupMeta["count"])); got != 2 {
+	if grouped.Tool.CommandGroup == nil || grouped.Tool.CommandGroup.Count != 2 {
+		got := 0
+		if grouped.Tool.CommandGroup != nil {
+			got = grouped.Tool.CommandGroup.Count
+		}
 		t.Fatalf("expected grouped count 2, got %d", got)
 	}
 }
@@ -8550,17 +8435,17 @@ func TestHistoryReasoningWithContentBreaksClaudeCommandExecutionGroup(t *testing
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if len(history.Events) != 3 {
-		t.Fatalf("expected 3 projected events, got %d", len(history.Events))
+	if len(history.Items) != 3 {
+		t.Fatalf("expected 3 cached history items, got %d", len(history.Items))
 	}
-	if history.Events[0].Type != "tool_end" || eventToolKind(history.Events[0]) != "command_execution" {
-		t.Fatalf("expected first event grouped command execution, got %#v", history.Events[0])
+	if history.Items[0].Tool == nil || history.Items[0].Tool.Kind != "command_execution" {
+		t.Fatalf("expected first item grouped command execution, got %#v", history.Items[0])
 	}
-	if history.Events[1].Type != "tool_end" || eventToolKind(history.Events[1]) != "reasoning" {
-		t.Fatalf("expected second event reasoning, got %#v", history.Events[1])
+	if history.Items[1].Tool == nil || history.Items[1].Tool.Kind != "reasoning" {
+		t.Fatalf("expected second item reasoning, got %#v", history.Items[1])
 	}
-	if history.Events[2].Type != "tool_end" || eventToolKind(history.Events[2]) != "command_execution" {
-		t.Fatalf("expected third event grouped command execution, got %#v", history.Events[2])
+	if history.Items[2].Tool == nil || history.Items[2].Tool.Kind != "command_execution" {
+		t.Fatalf("expected third item grouped command execution, got %#v", history.Items[2])
 	}
 }
 
@@ -8644,17 +8529,21 @@ func TestHistoryAggregatesConsecutiveFileChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if len(history.Events) != 1 {
-		t.Fatalf("expected 1 projected file_change event, got %d", len(history.Events))
+	if len(history.Items) != 1 {
+		t.Fatalf("expected 1 grouped file_change item, got %d", len(history.Items))
 	}
-	if got := eventToolKind(history.Events[0]); got != "file_change" {
-		t.Fatalf("expected file_change kind, got %q", got)
+	item := history.Items[0]
+	if item.Tool == nil || item.Tool.Kind != "file_change" {
+		t.Fatalf("expected file_change tool, got %#v", item.Tool)
 	}
-	groupMeta := decodeRawObject(decodeRawObject(history.Events[0].Payload["meta"])["commandGroup"])
-	if got := int(numberValue(groupMeta["count"])); got != 2 {
+	if item.Tool.CommandGroup == nil || item.Tool.CommandGroup.Count != 2 {
+		got := 0
+		if item.Tool.CommandGroup != nil {
+			got = item.Tool.CommandGroup.Count
+		}
 		t.Fatalf("expected grouped count 2, got %d", got)
 	}
-	if got := stringValue(decodeRawObject(history.Events[0].Payload["meta"])["subtitle"]); got != "ui/src/components/Panel.vue" {
+	if got := stringValue(item.Tool.Meta["subtitle"]); got != "ui/src/components/Panel.vue" {
 		t.Fatalf("expected latest file path summary, got %q", got)
 	}
 }
@@ -8702,28 +8591,10 @@ func TestHistoryUsageDoesNotResetLiveFileChangeGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if len(history.Events) != 2 {
-		t.Fatalf("expected usage plus grouped file_change event, got %d", len(history.Events))
+	if len(history.Items) != 1 {
+		t.Fatalf("expected 1 grouped history item, got %d", len(history.Items))
 	}
-	if history.Events[0].Type != "usage" {
-		t.Fatalf("expected first projected event usage, got %#v", history.Events[0])
-	}
-	if got := eventToolKind(history.Events[1]); got != "file_change" {
-		t.Fatalf("expected grouped file_change event, got %q", got)
-	}
-	groupMeta := decodeRawObject(decodeRawObject(history.Events[1].Payload["meta"])["commandGroup"])
-	if got := int(numberValue(groupMeta["count"])); got != 2 {
-		t.Fatalf("expected grouped count 2, got %d", got)
-	}
-
-	snapshot, err := manager.Snapshot(context.Background(), session.ID, 20)
-	if err != nil {
-		t.Fatalf("Snapshot returned error: %v", err)
-	}
-	if len(snapshot.History.Items) != 1 {
-		t.Fatalf("expected 1 grouped history item, got %d", len(snapshot.History.Items))
-	}
-	item := snapshot.History.Items[0]
+	item := history.Items[0]
 	if item.Tool == nil || item.Tool.CommandGroup == nil {
 		t.Fatalf("expected grouped file_change history item, got %#v", item)
 	}
@@ -8732,56 +8603,6 @@ func TestHistoryUsageDoesNotResetLiveFileChangeGroup(t *testing.T) {
 	}
 	if got := len(decodeHistoryGroupItems(item.Payload)); got != 2 {
 		t.Fatalf("expected 2 file_change detail items, got %d", got)
-	}
-}
-
-func TestProjectHistoryEventsTreatsUsageAsTransparentBetweenExplicitFileChangeGroups(t *testing.T) {
-	events := []Event{
-		testFileChangeEvent("fc1", 1, "tool_st", "ui/src/App.vue", commandExecutionGroupID("fc1")),
-		testFileChangeEvent("fc1", 2, "tool_end", "ui/src/App.vue", commandExecutionGroupID("fc1")),
-		{
-			ID:        "evt_usage",
-			Seq:       3,
-			Type:      "usage",
-			Timestamp: time.UnixMilli(2_500),
-			Payload: map[string]any{
-				"in":  19585,
-				"cin": 5504,
-				"out": 648,
-			},
-		},
-		testFileChangeEvent("fc2", 4, "tool_st", "ui/src/components/Panel.vue", commandExecutionGroupID("fc2")),
-		testFileChangeEvent("fc2", 5, "tool_end", "ui/src/components/Panel.vue", commandExecutionGroupID("fc2")),
-	}
-
-	projected := projectHistoryEvents(events, AgentCodex)
-	if len(projected) != 2 {
-		t.Fatalf("expected usage plus one grouped file_change event, got %d", len(projected))
-	}
-	if projected[0].Type != "usage" {
-		t.Fatalf("expected usage event to be preserved, got %#v", projected[0])
-	}
-	if got := eventCommandGroupID(projected[1]); got != commandExecutionGroupID("fc1") {
-		t.Fatalf("expected projected group id %q, got %q", commandExecutionGroupID("fc1"), got)
-	}
-	groupMeta := decodeRawObject(decodeRawObject(projected[1].Payload["meta"])["commandGroup"])
-	if got := int(numberValue(groupMeta["count"])); got != 2 {
-		t.Fatalf("expected grouped count 2, got %d", got)
-	}
-
-	groups := buildCommandExecutionGroupLookup(events, AgentCodex)
-	if len(groups) != 1 {
-		t.Fatalf("expected 1 command group detail, got %d", len(groups))
-	}
-	group, ok := groups[commandExecutionGroupID("fc1")]
-	if !ok {
-		t.Fatalf("expected group %q in lookup", commandExecutionGroupID("fc1"))
-	}
-	if group.Count != 2 || len(group.Items) != 2 {
-		t.Fatalf("expected 2 file_change detail items, got count=%d items=%d", group.Count, len(group.Items))
-	}
-	if _, ok := groups[commandExecutionGroupID("fc2")]; ok {
-		t.Fatalf("expected usage-separated stale group id %q to be folded into %q", commandExecutionGroupID("fc2"), commandExecutionGroupID("fc1"))
 	}
 }
 
@@ -8951,58 +8772,14 @@ func TestHistorySeparatesDifferentCompactToolKinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if len(history.Events) != 2 {
-		t.Fatalf("expected 2 projected events, got %d", len(history.Events))
+	if len(history.Items) != 2 {
+		t.Fatalf("expected 2 cached history items, got %d", len(history.Items))
 	}
-	if got := eventToolKind(history.Events[0]); got != "command_execution" {
-		t.Fatalf("expected first kind command_execution, got %q", got)
+	if history.Items[0].Tool == nil || history.Items[0].Tool.Kind != "command_execution" {
+		t.Fatalf("expected first kind command_execution, got %#v", history.Items[0])
 	}
-	if got := eventToolKind(history.Events[1]); got != "mcp_tool_call" {
-		t.Fatalf("expected second kind mcp_tool_call, got %q", got)
-	}
-}
-
-func TestHistoryGroupsDynamicToolsByName(t *testing.T) {
-	toolEvent := func(seq int64, eventType, id, name string, input map[string]any) Event {
-		payload := map[string]any{
-			"tid":  id,
-			"name": name,
-			"kind": "dynamic_tool_call",
-			"meta": map[string]any{"kind": "dynamic_tool_call", "title": name},
-		}
-		if eventType == "tool_st" {
-			payload["in"] = input
-		} else {
-			payload["in"] = input
-			payload["out"] = name + " output"
-			payload["ok"] = true
-		}
-		return Event{ID: "event-" + id + "-" + eventType, Seq: seq, Type: eventType, Timestamp: time.UnixMilli(seq), Payload: payload}
-	}
-
-	projected := projectHistoryEvents([]Event{
-		toolEvent(1, "tool_st", "read-1", "Read", map[string]any{"file_path": "src/App.vue"}),
-		toolEvent(2, "tool_end", "read-1", "Read", map[string]any{"file_path": "src/App.vue"}),
-		toolEvent(3, "tool_st", "read-2", "Read", map[string]any{"file_path": "src/main.ts"}),
-		toolEvent(4, "tool_end", "read-2", "Read", map[string]any{"file_path": "src/main.ts"}),
-		toolEvent(5, "tool_st", "grep-1", "Grep", map[string]any{"pattern": "Goal", "path": "ui/src"}),
-		toolEvent(6, "tool_end", "grep-1", "Grep", map[string]any{"pattern": "Goal", "path": "ui/src"}),
-	}, AgentClaude)
-
-	if len(projected) != 2 {
-		t.Fatalf("expected Read and Grep projected groups, got %d: %#v", len(projected), projected)
-	}
-	if got := eventToolName(projected[0]); got != "Read" {
-		t.Fatalf("expected first dynamic group to remain Read, got %q", got)
-	}
-	if count := int(numberValue(decodeRawObject(eventToolMeta(projected[0])["commandGroup"])["count"])); count != 2 {
-		t.Fatalf("expected Read group count 2, got %d", count)
-	}
-	if got := eventToolName(projected[1]); got != "Grep" {
-		t.Fatalf("expected second dynamic group to be Grep, got %q", got)
-	}
-	if count := int(numberValue(decodeRawObject(eventToolMeta(projected[1])["commandGroup"])["count"])); count != 1 {
-		t.Fatalf("expected Grep group count 1, got %d", count)
+	if history.Items[1].Tool == nil || history.Items[1].Tool.Kind != "mcp_tool_call" {
+		t.Fatalf("expected second kind mcp_tool_call, got %#v", history.Items[1])
 	}
 }
 
@@ -9123,11 +8900,11 @@ func TestHandleCodexAppServerItemCompletedPreservesFullPlanOutput(t *testing.T) 
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	event, ok := historyToolEventByKind(history.Events, "plan")
+	item, ok := historyToolItemByKind(history.Items, "plan")
 	if !ok {
-		t.Fatalf("expected plan tool history, got %#v", history.Events)
+		t.Fatalf("expected plan tool history, got %#v", history.Items)
 	}
-	if got := eventToolOutput(event); got != planText {
+	if got := item.Tool.Output; got != planText {
 		t.Fatalf("expected app-server plan output to stay intact, got length %d want %d", len(got), len(planText))
 	}
 }
@@ -9164,11 +8941,11 @@ func TestHandleCodexEventPreservesFullPlanOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	event, ok := historyToolEventByKind(history.Events, "plan")
+	item, ok := historyToolItemByKind(history.Items, "plan")
 	if !ok {
-		t.Fatalf("expected plan tool history, got %#v", history.Events)
+		t.Fatalf("expected plan tool history, got %#v", history.Items)
 	}
-	if got := eventToolOutput(event); got != planText {
+	if got := item.Tool.Output; got != planText {
 		t.Fatalf("expected legacy plan output to stay intact, got length %d want %d", len(got), len(planText))
 	}
 }
@@ -11502,16 +11279,13 @@ func historyItemsHaveToolKind(items []HistoryItem, kind string) bool {
 	return false
 }
 
-func historyToolEventByKind(events []Event, kind string) (Event, bool) {
-	for _, event := range events {
-		if event.Type != "tool_st" && event.Type != "tool_end" {
-			continue
-		}
-		if eventToolKind(event) == kind {
-			return event, true
+func historyToolItemByKind(items []HistoryItem, kind string) (HistoryItem, bool) {
+	for _, item := range items {
+		if item.Kind == "tool" && item.Tool != nil && item.Tool.Kind == kind {
+			return item, true
 		}
 	}
-	return Event{}, false
+	return HistoryItem{}, false
 }
 
 func historyEventByID(events []Event, id string) (Event, bool) {

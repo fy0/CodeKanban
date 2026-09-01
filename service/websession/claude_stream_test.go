@@ -729,8 +729,8 @@ func TestHandleClaudeEventExitPlanModeCreatesPlanToolAndWaitingApproval(t *testi
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if !historyHasToolKind(history.Events, "plan") {
-		t.Fatalf("expected plan tool history, got %#v", history.Events)
+	if !historyItemsHaveToolKind(history.Items, "plan") {
+		t.Fatalf("expected plan tool history, got %#v", history.Items)
 	}
 	rawEvents, err := manager.store.readEvents(session.ID)
 	if err != nil {
