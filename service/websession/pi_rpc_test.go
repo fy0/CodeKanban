@@ -103,8 +103,11 @@ func TestPiRPCFakeProcess(t *testing.T) {
 				"success": true, "data": map[string]any{"ok": true},
 			})
 		}
-	case "exit":
+	case "exit", "exit_stderr":
 		if scanner.Scan() {
+			if mode == "exit_stderr" {
+				_, _ = fmt.Fprintln(os.Stderr, "portable launcher failed")
+			}
 			os.Exit(7)
 		}
 	case "hang":
@@ -393,5 +396,14 @@ func TestPiRPCClientBoundsStderrAndRejectsEarlyExit(t *testing.T) {
 	defer exiting.Close()
 	if err := exiting.Request(context.Background(), "get_state", nil, nil); err == nil || !strings.Contains(err.Error(), "exited") {
 		t.Fatalf("expected process exit error, got %v", err)
+	}
+
+	exitingWithStderr, err := startPiRPCClient(fakePiRPCCommand(t, "exit_stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exitingWithStderr.Close()
+	if err := exitingWithStderr.Request(context.Background(), "get_state", nil, nil); err == nil || !strings.Contains(err.Error(), "portable launcher failed") {
+		t.Fatalf("expected stderr in process exit error, got %v", err)
 	}
 }

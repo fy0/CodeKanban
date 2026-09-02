@@ -139,7 +139,7 @@ describe('webSession mobile composer', () => {
       /\.composer-mobile-toggle\.is-compact\s*\{[^}]*width:\s*36px;[^}]*height:\s*34px;[^}]*justify-content:\s*center;/s
     );
     expect(webSessionComposerStyles).toMatch(
-      /@media \(max-width:\s*359px\)[\s\S]*grid-template-columns:\s*38px minmax\(0, 96px\) minmax\(0, 72px\) minmax\(0, 1fr\);/
+      /@media \(max-width:\s*359px\)[\s\S]*grid-template-columns:\s*38px minmax\(0, 128px\) minmax\(0, 72px\) minmax\(0, 1fr\);/
     );
   });
 
@@ -154,7 +154,7 @@ describe('webSession mobile composer', () => {
 
   it('leaves intentional space after both mobile settings rows', () => {
     expect(webSessionComposerStyles).toMatch(
-      /grid-template-columns:\s*38px minmax\(0, 118px\) minmax\(0, 96px\) minmax\(0, 1fr\);/
+      /grid-template-columns:\s*38px minmax\(0, 148px\) minmax\(0, 82px\) minmax\(0, 1fr\);/
     );
     expect(webSessionComposerStyles).toMatch(
       /\.composer-config\.is-mobile \.composer-mode-row\s*\{[^}]*width:\s*auto;[^}]*justify-self:\s*start;/s
@@ -164,6 +164,10 @@ describe('webSession mobile composer', () => {
     );
     expect(webSessionComposerStyles).toMatch(
       /\.composer-config\.is-mobile \.permission-select\s*\{[^}]*width:\s*132px;/s
+    );
+    expect(webSessionComposerStyles).toMatch(/\.model-select\s*\{[^}]*width:\s*176px;/s);
+    expect(webSessionComposerStyles).toMatch(
+      /@media \(max-width:\s*359px\)[\s\S]*\.composer-config\.is-mobile \.model-select\s*\{[^}]*width:\s*128px\s*!important;/s
     );
   });
 

@@ -569,6 +569,25 @@ func TestPiRuntimeValidatesModelAndReasoningControls(t *testing.T) {
 	}
 }
 
+func TestResolvePiRuntimeSessionRootUsesReportedStandardLayout(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", t.TempDir())
+	actualRoot := filepath.Join(t.TempDir(), "agent", "sessions")
+	sessionFile := filepath.Join(actualRoot, "--portable-project--", "session.jsonl")
+
+	got, err := resolvePiRuntimeSessionRoot(sessionFile)
+	if err != nil {
+		t.Fatalf("resolvePiRuntimeSessionRoot returned error: %v", err)
+	}
+	if !samePiRuntimePath(got, actualRoot) {
+		t.Fatalf("session root = %q, want %q", got, actualRoot)
+	}
+
+	invalidFile := filepath.Join(t.TempDir(), "project", "session.jsonl")
+	if _, err := resolvePiRuntimeSessionRoot(invalidFile); err == nil || !strings.Contains(err.Error(), "outside the configured session root") {
+		t.Fatalf("expected non-standard fallback path rejection, got %v", err)
+	}
+}
+
 func TestValidatePiRuntimeStateRejectsSessionOutsideConfiguredRoot(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.jsonl")
@@ -683,6 +702,48 @@ func TestManagerImportPiSessionValidatesNativeIdentity(t *testing.T) {
 	}
 	if _, err := manager.ImportPiSessionBySessionID(context.Background(), project.ID, outsideID); err == nil || !strings.Contains(err.Error(), "outside the configured session root") {
 		t.Fatalf("expected outside-root import rejection, got %v", err)
+	}
+}
+
+func TestManagerPiRPCAcceptsStandardSessionRootReportedByLauncher(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+	project := seedProject(t)
+	configuredRoot := t.TempDir()
+	reportedRoot := filepath.Join(t.TempDir(), "agent", "sessions")
+	sessionPath := filepath.Join(reportedRoot, "--portable-project--", "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
+		t.Fatalf("create reported session directory: %v", err)
+	}
+	t.Setenv("CODEKANBAN_FAKE_PI_RUNTIME", "1")
+	t.Setenv("CODEKANBAN_FAKE_PI_SESSION", sessionPath)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", configuredRoot)
+	manager, err := NewManager(Config{
+		DataDir: t.TempDir(), PiPath: fmt.Sprintf("%q -test.run=^TestPiRuntimeFakeProcess$ --", os.Args[0]),
+		PiRuntimeIdleTTL: time.Minute,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	defer manager.StopProjectPiRuntimes(project.ID)
+	if _, err := manager.TrustProjectForPi(context.Background(), project.ID); err != nil {
+		t.Fatalf("TrustProjectForPi returned error: %v", err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentPi,
+		Model:     "openai/gpt-test",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "portable launcher", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+	record := mustGetSession(t, manager, created.ID)
+	if record.Status != string(StatusDone) || !samePiRuntimePath(pointerString(record.ThreadPath), sessionPath) {
+		t.Fatalf("portable session did not complete: status=%q error=%q path=%q", record.Status, pointerString(record.LastError), pointerString(record.ThreadPath))
 	}
 }
 

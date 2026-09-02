@@ -80,11 +80,12 @@ func (r *piRuntimeRun) settle(err error) {
 }
 
 type piSessionRuntime struct {
-	manager   *Manager
-	client    *piRPCClient
-	sessionID string
-	projectID string
-	cwd       string
+	manager     *Manager
+	client      *piRPCClient
+	sessionID   string
+	projectID   string
+	cwd         string
+	sessionRoot string
 
 	mu        sync.Mutex
 	active    *piRuntimeRun
@@ -171,7 +172,11 @@ func (m *Manager) startPiRuntime(
 	if err := client.Request(requestCtx, "get_state", nil, &state); err != nil {
 		return nil, err
 	}
-	if err := validatePiRuntimeStartupState(session, state, threadPath == ""); err != nil {
+	sessionRoot, err := resolvePiRuntimeSessionRoot(state.SessionFile)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePiRuntimeStartupStateWithinRoot(session, state, threadPath == "", sessionRoot); err != nil {
 		return nil, err
 	}
 	var commands struct {
@@ -215,11 +220,12 @@ func (m *Manager) startPiRuntime(
 
 	failed = false
 	return &piSessionRuntime{
-		manager:   m,
-		client:    client,
-		sessionID: session.ID,
-		projectID: session.ProjectID,
-		cwd:       session.Cwd,
+		manager:     m,
+		client:      client,
+		sessionID:   session.ID,
+		projectID:   session.ProjectID,
+		cwd:         session.Cwd,
+		sessionRoot: sessionRoot,
 	}, nil
 }
 
@@ -228,6 +234,14 @@ func validatePiRuntimeState(session tables.WebSessionTable, state piRPCState) er
 }
 
 func validatePiRuntimeStartupState(session tables.WebSessionTable, state piRPCState, allowMissingNewFile bool) error {
+	root, err := log_watcher.ResolvePiSessionDir()
+	if err != nil {
+		return fmt.Errorf("resolve Pi session root: %w", err)
+	}
+	return validatePiRuntimeStartupStateWithinRoot(session, state, allowMissingNewFile, root)
+}
+
+func validatePiRuntimeStartupStateWithinRoot(session tables.WebSessionTable, state piRPCState, allowMissingNewFile bool, sessionRoot string) error {
 	sessionID := strings.TrimSpace(state.SessionID)
 	sessionFile := strings.TrimSpace(state.SessionFile)
 	if sessionID == "" || sessionFile == "" || !filepath.IsAbs(sessionFile) {
@@ -239,7 +253,7 @@ func validatePiRuntimeStartupState(session tables.WebSessionTable, state piRPCSt
 	if expected := strings.TrimSpace(pointerString(session.ThreadPath)); expected != "" && !samePiRuntimePath(expected, sessionFile) {
 		return errors.New("Pi session file mismatch")
 	}
-	if err := validatePiSessionRoot(sessionFile); err != nil {
+	if err := validatePiSessionRootWithin(sessionFile, sessionRoot); err != nil {
 		return err
 	}
 	header, err := readPiRuntimeSessionHeader(sessionFile)
@@ -337,6 +351,10 @@ func validatePiSessionRoot(sessionFile string) error {
 	if err != nil {
 		return fmt.Errorf("resolve Pi session root: %w", err)
 	}
+	return validatePiSessionRootWithin(sessionFile, root)
+}
+
+func validatePiSessionRootWithin(sessionFile, root string) error {
 	canonicalRoot, err := canonicalPiRuntimePath(root)
 	if err != nil {
 		return fmt.Errorf("resolve Pi session root: %w", err)
@@ -350,6 +368,29 @@ func validatePiSessionRoot(sessionFile string) error {
 		return errors.New("Pi session file is outside the configured session root")
 	}
 	return nil
+}
+
+func resolvePiRuntimeSessionRoot(sessionFile string) (string, error) {
+	configuredRoot, err := log_watcher.ResolvePiSessionDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve Pi session root: %w", err)
+	}
+	if validatePiSessionRootWithin(sessionFile, configuredRoot) == nil {
+		return configuredRoot, nil
+	}
+
+	cleanFile := filepath.Clean(strings.TrimSpace(sessionFile))
+	projectDir := filepath.Dir(cleanFile)
+	inferredRoot := filepath.Dir(projectDir)
+	if !filepath.IsAbs(cleanFile) || !strings.EqualFold(filepath.Ext(cleanFile), ".jsonl") ||
+		projectDir == cleanFile || inferredRoot == projectDir ||
+		!strings.EqualFold(filepath.Base(inferredRoot), "sessions") {
+		return "", errors.New("Pi session file is outside the configured session root")
+	}
+	if err := validatePiSessionRootWithin(cleanFile, inferredRoot); err != nil {
+		return "", err
+	}
+	return inferredRoot, nil
 }
 
 func piSourceRevision(path, leafID string) string {
@@ -916,7 +957,7 @@ func (m *Manager) syncPiRuntimeSnapshot(ctx context.Context, runtime *piSessionR
 	if err := runtime.client.Request(ctx, "get_state", nil, &state); err != nil {
 		return err
 	}
-	if err := validatePiRuntimeState(session, state); err != nil {
+	if err := validatePiRuntimeStartupStateWithinRoot(session, state, false, runtime.sessionRoot); err != nil {
 		return err
 	}
 	var entries piHistoryEntriesResponse

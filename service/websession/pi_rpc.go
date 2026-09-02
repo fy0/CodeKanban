@@ -55,6 +55,7 @@ type piRPCClient struct {
 	closing    chan struct{}
 	done       chan struct{}
 	readerDone chan struct{}
+	stderrDone chan struct{}
 	seq        atomic.Uint64
 
 	stderrBuffer *piRPCBoundedBuffer
@@ -91,6 +92,7 @@ func startPiRPCClient(cmd *exec.Cmd) (*piRPCClient, error) {
 		closing:      make(chan struct{}),
 		done:         make(chan struct{}),
 		readerDone:   make(chan struct{}),
+		stderrDone:   make(chan struct{}),
 		stderrBuffer: newPiRPCBoundedBuffer(piRPCStderrLimit),
 	}
 	if err := cmd.Start(); err != nil {
@@ -102,6 +104,7 @@ func startPiRPCClient(cmd *exec.Cmd) (*piRPCClient, error) {
 	go client.writeStdin()
 	go client.readStdout()
 	go func() {
+		defer close(client.stderrDone)
 		_, _ = io.Copy(client.stderrBuffer, stderr)
 	}()
 	go client.wait()
@@ -561,8 +564,13 @@ func (c *piRPCClient) handleLine(line []byte) error {
 func (c *piRPCClient) wait() {
 	err := c.cmd.Wait()
 	<-c.readerDone
+	<-c.stderrDone
 	if err != nil {
-		c.fail(fmt.Errorf("Pi RPC process exited: %w", err))
+		processErr := fmt.Errorf("Pi RPC process exited: %w", err)
+		if stderr := strings.TrimSpace(c.Stderr()); stderr != "" {
+			processErr = fmt.Errorf("%w: %s", processErr, stderr)
+		}
+		c.fail(processErr)
 	} else {
 		c.fail(errPiRPCClosed)
 	}

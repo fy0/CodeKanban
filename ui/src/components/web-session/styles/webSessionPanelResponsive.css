@@ -174,20 +174,20 @@
 
   .composer-config.is-mobile .composer-config-row {
     display: grid;
-    grid-template-columns: 38px minmax(0, 118px) minmax(0, 96px) minmax(0, 1fr);
+    grid-template-columns: 38px minmax(0, 148px) minmax(0, 82px) minmax(0, 1fr);
     align-items: center;
     column-gap: 6px;
     row-gap: 8px;
   }
 
   .composer-config.is-mobile .model-select {
-    width: 118px !important;
+    width: 148px !important;
     min-width: 0;
   }
 
   .composer-config.is-mobile .reasoning-select,
   .composer-config.is-mobile .claude-runtime-select {
-    width: 96px !important;
+    width: 82px !important;
     min-width: 0;
   }
 
@@ -247,11 +247,11 @@
 
 @media (max-width: 359px) {
   .composer.is-mobile-settings-expanded .composer-config.is-mobile .composer-config-row {
-    grid-template-columns: 38px minmax(0, 96px) minmax(0, 72px) minmax(0, 1fr);
+    grid-template-columns: 38px minmax(0, 128px) minmax(0, 72px) minmax(0, 1fr);
   }
 
   .composer.is-mobile-settings-expanded .composer-config.is-mobile .model-select {
-    width: 96px !important;
+    width: 128px !important;
   }
 
   .composer.is-mobile-settings-expanded .composer-config.is-mobile .reasoning-select,

@@ -11,9 +11,12 @@ import {
   defaultModelForAgent,
   defaultPermissionLevelForAgent,
   defaultReasoningEffortForAgent,
+  filterPiModelOptionGroups,
+  rememberPiFrequentModel,
   resolveCodexReasoningEfforts,
   resolvePiModelOptionGroups,
   resolvePiModelOptions,
+  resolvePiPrimaryModelOptions,
   resolvePiReasoningEfforts,
 } from '@/components/web-session/webSessionModelOptions';
 
@@ -183,6 +186,102 @@ describe('webSessionModelOptions', () => {
     ]);
     expect(resolvePiReasoningEfforts(catalog, 'anthropic/claude-sonnet-4')).toContain('max');
     expect(resolvePiReasoningEfforts(catalog, 'openai/gpt-4.1')).toEqual(['default', 'none']);
+  });
+
+  it('builds a concise Pi primary list and keeps selected catalog models there', () => {
+    const model = (provider: string, id: string, name = id) => ({
+      provider,
+      id,
+      name,
+      reasoning: true,
+      input: ['text'],
+      contextWindow: 200000,
+      maxTokens: 32000,
+    });
+    const catalog = [
+      model('openrouter', 'gpt-5.4', 'Routed GPT-5.4'),
+      model('openai', 'gpt-5.4', 'GPT-5.4'),
+      model('openai', 'gpt-5.5', 'GPT-5.5'),
+      model('openai', 'gpt-5.6-sol', 'GPT-5.6 Sol'),
+      model('openai', 'gpt-5.6-terra', 'GPT-5.6 Terra'),
+      model('openai', 'gpt-5.6-luna', 'GPT-5.6 Luna'),
+      model('deepseek', 'deepseek-v4-flash', 'DeepSeek V4 Flash'),
+      model('deepseek', 'deepseek-v4-pro', 'DeepSeek V4 Pro'),
+      model('moonshot', 'kimi-k2.5', 'Kimi K2.5'),
+    ];
+
+    expect(resolvePiPrimaryModelOptions(catalog, ['moonshot/kimi-k2.5'])).toEqual([
+      { label: 'GPT-5.4', value: 'openai/gpt-5.4', menuLabel: 'GPT-5.4' },
+      { label: 'GPT-5.5', value: 'openai/gpt-5.5', menuLabel: 'GPT-5.5' },
+      { label: 'GPT-5.6 Sol', value: 'openai/gpt-5.6-sol', menuLabel: 'GPT-5.6 Sol' },
+      { label: 'GPT-5.6 Terra', value: 'openai/gpt-5.6-terra', menuLabel: 'GPT-5.6 Terra' },
+      { label: 'GPT-5.6 Luna', value: 'openai/gpt-5.6-luna', menuLabel: 'GPT-5.6 Luna' },
+      {
+        label: 'DeepSeek V4 Flash',
+        value: 'deepseek/deepseek-v4-flash',
+        menuLabel: 'DeepSeek V4 Flash',
+      },
+      {
+        label: 'DeepSeek V4 Pro',
+        value: 'deepseek/deepseek-v4-pro',
+        menuLabel: 'DeepSeek V4 Pro',
+      },
+      { label: 'Kimi K2.5', value: 'moonshot/kimi-k2.5', menuLabel: 'Kimi K2.5' },
+    ]);
+
+    expect(
+      resolvePiPrimaryModelOptions([
+        model('gateway', 'deepseek-next-vision-exp', 'DeepSeek Next Vision Exp'),
+        model('gateway', 'deepseek-next', 'DeepSeek Next'),
+      ]).map(option => option.value)
+    ).toEqual(['gateway/deepseek-next']);
+
+    const customModels = Array.from({ length: 7 }, (_, index) => model('custom', `model-${index}`));
+    const frequentValues = customModels.map(item => `${item.provider}/${item.id}`);
+    expect(
+      resolvePiPrimaryModelOptions([...catalog, ...customModels], frequentValues)
+        .map(option => option.value)
+        .filter(value => value.startsWith('custom/'))
+    ).toEqual(frequentValues.slice(0, 6));
+  });
+
+  it('filters the full Pi catalog by provider, model name, or model id', () => {
+    const groups = resolvePiModelOptionGroups([
+      {
+        provider: 'anthropic',
+        id: 'claude-sonnet-4',
+        name: 'Claude Sonnet 4',
+        reasoning: true,
+        input: ['text'],
+        contextWindow: 200000,
+        maxTokens: 32000,
+      },
+      {
+        provider: 'openai',
+        id: 'gpt-4.1',
+        name: 'GPT 4.1',
+        reasoning: false,
+        input: ['text'],
+        contextWindow: 1000000,
+        maxTokens: 32000,
+      },
+    ]);
+
+    expect(filterPiModelOptionGroups(groups, 'OPENAI')).toEqual([groups[1]]);
+    expect(filterPiModelOptionGroups(groups, 'sonnet')).toEqual([groups[0]]);
+    expect(filterPiModelOptionGroups(groups, 'gpt-4.1')).toEqual([groups[1]]);
+    expect(filterPiModelOptionGroups(groups, 'missing')).toEqual([]);
+  });
+
+  it('keeps Pi user-selected primary models unique and bounded', () => {
+    expect(rememberPiFrequentModel(['provider/one', 'provider/two'], ' provider/two ')).toEqual([
+      'provider/two',
+      'provider/one',
+    ]);
+    expect(rememberPiFrequentModel(['provider/one', 'provider/two'], 'provider/three', 2)).toEqual([
+      'provider/three',
+      'provider/one',
+    ]);
   });
 
   it('falls back per 5.6 model without exposing none or Luna ultra', () => {

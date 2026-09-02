@@ -911,6 +911,8 @@ export default {
     agentSelectorTitle: '当前助手：{agent}',
     customModel: '自定义...',
     moreModels: '更多',
+    allModels: '全部模型',
+    modelSearchPlaceholder: '搜索模型或提供商',
     customModelTitle: '自定义模型',
     customModelPlaceholder: '输入模型名称，例如 gpt-5.5',
     customModelEmpty: '模型名称不能为空',
@@ -993,6 +995,7 @@ export default {
     codexCompatibilityModeWithCurrent:
       'Codex {currentVersion} 正在使用兼容模式；基础会话、审批和用户输入可用，多代理 V2 需要 Codex >= {requiredVersion}。',
     composerHintClaudeMissing: '未检测到 Claude Code，请先安装后再发送会话消息。',
+    composerHintPiChecking: '正在检测 Pi 命令和 RPC 能力…',
     composerHintPiUnavailable: '当前版本尚未开放 Pi 网页会话。',
     piUnavailableAgentLabel: 'Pi（即将支持）',
     piNotInstalledAgentLabel: 'Pi（未安装）',

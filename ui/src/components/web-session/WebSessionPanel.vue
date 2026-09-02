@@ -1788,7 +1788,25 @@
                     :render-option="renderModelOption"
                     size="small"
                     :options="modelOptions"
-                  />
+                  >
+                    <template v-if="selectedAgent === 'pi' && showAllPiModels" #header>
+                      <div class="pi-model-search-header">
+                        <n-input
+                          ref="piModelSearchInputRef"
+                          v-model:value="piModelSearchQuery"
+                          clearable
+                          size="small"
+                          :placeholder="t('webSession.modelSearchPlaceholder')"
+                          :aria-label="t('webSession.modelSearchPlaceholder')"
+                          @keydown.esc.stop="handleModelSelectorShowChange(false)"
+                        >
+                          <template #prefix>
+                            <n-icon size="15" aria-hidden="true"><SearchOutline /></n-icon>
+                          </template>
+                        </n-input>
+                      </div>
+                    </template>
+                  </n-select>
                   <n-select
                     v-if="selectedAgent === 'claude'"
                     v-model:value="selectedClaudeRuntime"
@@ -3349,9 +3367,12 @@ import {
   defaultModelForAgent as resolveDefaultModelForAgent,
   defaultPermissionLevelForAgent as resolveDefaultPermissionLevelForAgent,
   defaultReasoningEffortForAgent as resolveDefaultReasoningEffortForAgent,
+  filterPiModelOptionGroups,
+  rememberPiFrequentModel,
   resolveCodexReasoningEfforts,
   resolvePiModelOptionGroups,
   resolvePiModelOptions,
+  resolvePiPrimaryModelOptions,
   resolvePiReasoningEfforts,
   type WebSessionClaudeRuntimeOption,
   type WebSessionModelOptionGroup,
@@ -4269,6 +4290,9 @@ const runtimeCapabilityFor = (agent: WebSessionAgent) =>
 const runtimeCodexCapability = computed(() => runtimeCapabilityFor('codex'));
 const runtimeClaudeCapability = computed(() => runtimeCapabilityFor('claude'));
 const runtimePiCapability = computed(() => runtimeCapabilityFor('pi'));
+const runtimeCapabilitiesLoading = computed(
+  () => !codexRuntimeConfigReady.value || runtimeConfig.value?.capabilitiesRefreshing === true
+);
 const piUnavailableReason = computed(() => {
   const config = runtimeConfig.value;
   switch (config?.piDiagnostics) {
@@ -6729,6 +6753,9 @@ const composerHint = computed(() => {
   }
   if (codexRuntimeConfig.value && selectedAgent.value === 'claude' && !runtimeHasClaudeCode.value) {
     return t('webSession.composerHintClaudeMissing');
+  }
+  if (selectedAgent.value === 'pi' && runtimeCapabilitiesLoading.value) {
+    return t('webSession.composerHintPiChecking');
   }
   if (selectedAgent.value === 'pi' && !runtimePiCapability.value.supportsWebSession) {
     return piUnavailableReason.value;
@@ -10092,9 +10119,14 @@ const agentOptions: Array<{ label: string; value: WebSessionAgent }> = [
   { label: 'Pi', value: 'pi' },
 ];
 const showAdditionalCodexModels = ref(false);
+const showAllPiModels = ref(false);
 const showModelSelector = ref(false);
 const showReasoningSelector = ref(false);
 const keepAdditionalCodexModelsForNextOpen = ref(false);
+const keepAllPiModelsForNextOpen = ref(false);
+const piModelSearchQuery = ref('');
+const piModelSearchInputRef = ref<InstanceType<typeof NInput> | null>(null);
+const piFrequentModelValues = useStorage<string[]>('codekanban-web-session-pi-frequent-models', []);
 type ComposerHoverSelector = 'model' | 'reasoning';
 const COMPOSER_SELECTOR_HOVER_CLOSE_DELAY = 120;
 const composerSelectorHoverCloseTimers: Record<ComposerHoverSelector, number | null> = {
@@ -10102,15 +10134,22 @@ const composerSelectorHoverCloseTimers: Record<ComposerHoverSelector, number | n
   reasoning: null,
 };
 const MODEL_SELECT_MIN_WIDTH = 66;
-const MODEL_SELECT_MAX_WIDTH = 112;
-const MODEL_SELECT_BASE_WIDTH = 46;
-const MODEL_SELECT_CHAR_WIDTH = 6.5;
-const modelSelectMenuProps = {
-  class: 'web-session-model-select-menu',
-  style: { minWidth: '132px', maxWidth: '180px' },
-  onMouseenter: () => handleComposerSelectorPointerEnter('model'),
-  onMouseleave: () => handleComposerSelectorPointerLeave('model'),
-};
+const MODEL_SELECT_MAX_WIDTH = 176;
+const MODEL_SELECT_BASE_WIDTH = 48;
+const MODEL_SELECT_CHAR_WIDTH = 7;
+const modelSelectMenuProps = computed(() => {
+  const piCatalogOpen = selectedAgent.value === 'pi' && showAllPiModels.value;
+  return {
+    class: piCatalogOpen
+      ? 'web-session-model-select-menu is-pi-model-catalog'
+      : 'web-session-model-select-menu',
+    style: piCatalogOpen
+      ? { width: 'min(340px, calc(100vw - 64px))', maxWidth: 'calc(100vw - 64px)' }
+      : { minWidth: '132px', maxWidth: '180px' },
+    onMouseenter: () => handleComposerSelectorPointerEnter('model'),
+    onMouseleave: () => handleComposerSelectorPointerLeave('model'),
+  };
+});
 const reasoningSelectMenuProps = {
   class: 'web-session-reasoning-select-menu',
   onMouseenter: () => handleComposerSelectorPointerEnter('reasoning'),
@@ -10138,7 +10177,9 @@ const agentDropdownOptions = computed<DropdownOption[]>(() =>
     label:
       option.value === 'codex' && isCodexCompatibilityMode.value
         ? t('webSession.codexCompatibilityAgentLabel')
-        : option.value === 'pi' && !runtimePiCapability.value.supportsWebSession
+        : option.value === 'pi' &&
+            !runtimeCapabilitiesLoading.value &&
+            !runtimePiCapability.value.supportsWebSession
           ? piUnavailableAgentLabel.value
           : option.label,
     key: option.value,
@@ -10403,11 +10444,19 @@ function withCurrentReasoningEffortOption(
 }
 
 function handleModelSelectorShowChange(show: boolean) {
-  if (show && !keepAdditionalCodexModelsForNextOpen.value) {
+  if (show && selectedAgent.value === 'codex' && !keepAdditionalCodexModelsForNextOpen.value) {
     showAdditionalCodexModels.value = false;
+  }
+  if (show && selectedAgent.value === 'pi' && !keepAllPiModelsForNextOpen.value) {
+    showAllPiModels.value = false;
+    piModelSearchQuery.value = '';
   }
   if (show) {
     keepAdditionalCodexModelsForNextOpen.value = false;
+    keepAllPiModelsForNextOpen.value = false;
+    if (selectedAgent.value === 'pi' && showAllPiModels.value) {
+      nextTick(() => piModelSearchInputRef.value?.focus());
+    }
   }
   showModelSelector.value = show;
 }
@@ -10467,6 +10516,15 @@ const claudeRuntimeOptions = computed(() =>
 const piModelOptionGroups = computed(() =>
   resolvePiModelOptionGroups(runtimeConfig.value?.piModels ?? [])
 );
+const filteredPiModelOptionGroups = computed(() =>
+  filterPiModelOptionGroups(piModelOptionGroups.value, piModelSearchQuery.value)
+);
+const piDefaultPrimaryModelOptions = computed(() =>
+  resolvePiPrimaryModelOptions(runtimeConfig.value?.piModels ?? [])
+);
+const piPrimaryModelOptions = computed(() =>
+  resolvePiPrimaryModelOptions(runtimeConfig.value?.piModels ?? [], piFrequentModelValues.value)
+);
 
 const modelOptions = computed(() => {
   const activeModel = currentSession.value?.model ?? draftModel.value;
@@ -10477,7 +10535,15 @@ const modelOptions = computed(() => {
     ];
   }
   if (selectedAgent.value === 'pi') {
-    return withCurrentPiModelOption(piModelOptionGroups.value, activeModel);
+    if (!showAllPiModels.value) {
+      return [
+        ...withCurrentModelOption(piPrimaryModelOptions.value, activeModel),
+        { label: t('webSession.allModels'), value: MORE_MODELS_VALUE },
+      ];
+    }
+    return piModelSearchQuery.value.trim()
+      ? filteredPiModelOptionGroups.value
+      : withCurrentPiModelOption(filteredPiModelOptionGroups.value, activeModel);
   }
   if (!showAdditionalCodexModels.value) {
     return [
@@ -10532,11 +10598,8 @@ const selectedAgent = computed({
   get: () => currentSession.value?.agent ?? draftAgent.value,
   set: value => {
     const next = value as WebSessionAgent;
-    const firstPiModel = runtimeConfig.value?.piModels?.[0];
-    const nextModel =
-      next === 'pi' && firstPiModel
-        ? `${firstPiModel.provider}/${firstPiModel.id}`
-        : defaultModelForAgent(next);
+    const firstPiModel = piPrimaryModelOptions.value[0]?.value;
+    const nextModel = next === 'pi' && firstPiModel ? firstPiModel : defaultModelForAgent(next);
     const nextReasoningEffort = defaultReasoningEffortForAgent(next);
     const nextPermissionLevel = defaultPermissionLevelForAgent(next);
     draftAgent.value = next;
@@ -10576,8 +10639,14 @@ const selectedModel = computed({
   set: value => {
     const next = String(value);
     if (next === MORE_MODELS_VALUE) {
-      showAdditionalCodexModels.value = true;
-      keepAdditionalCodexModelsForNextOpen.value = true;
+      if (selectedAgent.value === 'pi') {
+        showAllPiModels.value = true;
+        keepAllPiModelsForNextOpen.value = true;
+        piModelSearchQuery.value = '';
+      } else {
+        showAdditionalCodexModels.value = true;
+        keepAdditionalCodexModelsForNextOpen.value = true;
+      }
       nextTick(() => {
         handleModelSelectorShowChange(true);
       });
@@ -10586,6 +10655,12 @@ const selectedModel = computed({
     if (next === CUSTOM_MODEL_VALUE) {
       openCustomModelDialog();
       return;
+    }
+    if (
+      selectedAgent.value === 'pi' &&
+      !piDefaultPrimaryModelOptions.value.some(option => option.value === next)
+    ) {
+      piFrequentModelValues.value = rememberPiFrequentModel(piFrequentModelValues.value, next);
     }
     const currentEffort = currentSession.value?.reasoningEffort ?? draftReasoningEffort.value;
     const nextEffort =

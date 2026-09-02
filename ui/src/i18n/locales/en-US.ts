@@ -947,6 +947,8 @@ export default {
     agentSelectorTitle: 'Current assistant: {agent}',
     customModel: 'Custom...',
     moreModels: 'More',
+    allModels: 'All Models',
+    modelSearchPlaceholder: 'Search models or providers',
     customModelTitle: 'Custom Model',
     customModelPlaceholder: 'Enter a model name, for example gpt-5.5',
     customModelEmpty: 'Model name cannot be empty',
@@ -1033,6 +1035,7 @@ export default {
       'Codex {currentVersion} is running in compatibility mode. Basic sessions, approvals, and user input remain available; multi-agent V2 requires Codex >= {requiredVersion}.',
     composerHintClaudeMissing:
       'Claude Code was not detected. Install Claude Code before sending web session messages.',
+    composerHintPiChecking: 'Checking the Pi command and RPC capabilities...',
     composerHintPiUnavailable: 'Pi web sessions are not available in this version yet.',
     piUnavailableAgentLabel: 'Pi (coming soon)',
     piNotInstalledAgentLabel: 'Pi (not installed)',

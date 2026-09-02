@@ -36,19 +36,13 @@ type npmRegistry struct {
 
 // NewVersionChecker 创建版本检查器
 func NewVersionChecker(currentVersion, packageName string) *VersionChecker {
-	userConfigDir, err := os.UserConfigDir()
-	if err != nil {
-		// 如果无法获取用户配置目录，使用临时目录
-		userConfigDir = os.TempDir()
-	}
-
-	configDir := filepath.Join(userConfigDir, "codekanban")
-	os.MkdirAll(configDir, 0755)
+	dataDir := GetDataDir()
+	_ = os.MkdirAll(dataDir, 0755)
 
 	return &VersionChecker{
 		currentVersion: currentVersion,
 		packageName:    packageName,
-		cacheFile:      filepath.Join(configDir, "version-cache.json"),
+		cacheFile:      filepath.Join(dataDir, "version-cache.json"),
 	}
 }
 

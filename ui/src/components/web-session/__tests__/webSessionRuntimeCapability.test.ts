@@ -18,9 +18,11 @@ describe('webSession runtime capability guards', () => {
     );
   });
 
-  it('shows dedicated missing-runtime composer hints', () => {
+  it('shows dedicated probing and missing-runtime composer hints', () => {
     expect(webSessionPanelSource).toContain("t('webSession.composerHintCodexMissing')");
     expect(webSessionPanelSource).toContain("t('webSession.composerHintClaudeMissing')");
+    expect(webSessionPanelSource).toContain("t('webSession.composerHintPiChecking')");
+    expect(webSessionPanelSource).toContain('runtimeCapabilitiesLoading');
     expect(webSessionPanelSource).toContain('codexCompatibilityModeMessage()');
     expect(webSessionPanelSource).toContain('isCodexCompatibilityMode');
   });

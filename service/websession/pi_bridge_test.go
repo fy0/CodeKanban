@@ -54,6 +54,41 @@ func TestPiBridgeMaterializerConcurrentInstall(t *testing.T) {
 	}
 }
 
+func TestPiBridgeMaterializerResolvesRelativeDataDir(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	workDir := t.TempDir()
+	previousDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(previousDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	}()
+
+	manager, err := NewManager(Config{DataDir: "data"}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	path, err := manager.materializePiBridge()
+	if err != nil {
+		t.Fatalf("materializePiBridge: %v", err)
+	}
+	if !filepath.IsAbs(path) {
+		t.Fatalf("bridge path = %q, want absolute", path)
+	}
+	expectedRoot := filepath.Join(workDir, "data", "pi-bridge")
+	if filepath.Dir(filepath.Dir(path)) != filepath.Clean(expectedRoot) {
+		t.Fatalf("bridge path = %q, want path under %q", path, expectedRoot)
+	}
+}
+
 func TestPiBridgeMaterializerAndProvenance(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
