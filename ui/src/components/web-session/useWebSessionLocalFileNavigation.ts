@@ -1,9 +1,11 @@
 import { h, ref, toValue, type MaybeRefOrGetter, type Ref } from 'vue';
 import { useDialog, useMessage } from 'naive-ui';
+import { useRoute, useRouter } from 'vue-router';
 import { ApiError } from '@/api';
 import { webSessionApi } from '@/api/webSession';
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
+import { useFileManagerStore } from '@/stores/fileManager';
 import {
   getClickedMarkdownCodeCopyText,
   getClickedMarkdownLink,
@@ -11,9 +13,11 @@ import {
   resolveNavigableHref,
 } from '@/utils/messageLinkNavigation';
 import {
+  resolveMessageFileTarget,
   resolveMessageLocalFileName,
   resolveMessageLocalFilePath,
 } from '@/utils/messageFileNavigation';
+import { buildWorkspaceRouteQuery } from '@/utils/workspaceRoute';
 
 type LocalFileSession = {
   id: string;
@@ -21,7 +25,7 @@ type LocalFileSession = {
   cwd: string;
 };
 
-export type WebSessionLocalFileAction = '' | 'download' | 'open-location';
+export type WebSessionLocalFileAction = '' | 'download' | 'open-file-view' | 'open-location';
 export type WebSessionLocalFileTarget = {
   projectId: string;
   sessionId: string;
@@ -40,8 +44,11 @@ export function useWebSessionLocalFileNavigation({
 }: WebSessionLocalFileNavigationOptions) {
   const dialog = useDialog();
   const message = useMessage();
+  const route = useRoute();
+  const router = useRouter();
   const { copyText } = useAppClipboard();
   const { t } = useLocale();
+  const fileManagerStore = useFileManagerStore();
   const show = ref(false);
   const target = ref<WebSessionLocalFileTarget | null>(null);
   const action = ref<WebSessionLocalFileAction>('');
@@ -121,6 +128,45 @@ export function useWebSessionLocalFileNavigation({
       clear();
     } catch (error) {
       message.error(formatActionError(error, t('webSession.localFileOpenLocationFailed')));
+    } finally {
+      action.value = '';
+    }
+  }
+
+  async function openInFileView() {
+    const currentTarget = target.value;
+    if (!currentTarget || action.value) {
+      return;
+    }
+    action.value = 'open-file-view';
+    try {
+      const scopes = await fileManagerStore.ensureScopes(currentTarget.projectId);
+      if (target.value !== currentTarget) {
+        return;
+      }
+      const fileTarget = resolveMessageFileTarget(
+        currentTarget.path,
+        window.location.href,
+        scopes,
+        {
+          preferredScopeId: fileManagerStore.getActiveScope(currentTarget.projectId)?.id,
+        }
+      );
+      if (!fileTarget) {
+        message.warning(t('webSession.localFileOutsideFileView'));
+        return;
+      }
+      fileManagerStore.requestFileOpen(currentTarget.projectId, fileTarget);
+      await router.replace({
+        query: buildWorkspaceRouteQuery(route.query, 'files'),
+      });
+      if (target.value !== currentTarget) {
+        return;
+      }
+      message.success(t('webSession.localFileOpenInFileViewSuccess'));
+      clear();
+    } catch (error) {
+      message.error(formatActionError(error, t('webSession.localFileOpenInFileViewFailed')));
     } finally {
       action.value = '';
     }
@@ -215,6 +261,7 @@ export function useWebSessionLocalFileNavigation({
     action,
     clear,
     handleVisibilityChange,
+    openInFileView,
     openLocation,
     download,
     handleTimelineLinkClick,

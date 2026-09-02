@@ -3122,6 +3122,7 @@
       :target="localFileDialogTarget"
       :action="localFileAction"
       @update:show="handleLocalFileDialogVisibilityChange"
+      @open-file-view="handleOpenLocalFileInFileView"
       @open-location="handleOpenLocalFileLocation"
       @download="handleDownloadLocalFile"
     />
@@ -4176,6 +4177,7 @@ const {
   action: localFileAction,
   clear: clearLocalFileDialog,
   handleVisibilityChange: handleLocalFileDialogVisibilityChange,
+  openInFileView: handleOpenLocalFileInFileView,
   openLocation: handleOpenLocalFileLocation,
   download: handleDownloadLocalFile,
   handleTimelineLinkClick,
