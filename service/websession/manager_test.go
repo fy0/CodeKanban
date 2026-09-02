@@ -8013,11 +8013,15 @@ func TestPausedPendingCodexRedirectCanBeCanceledBeforeResume(t *testing.T) {
 	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
 		t.Fatalf("SendMessage returned error: %v", err)
 	}
-	t.Cleanup(func() {
+	defer func() {
 		if manager.hasActiveRun(created.ID) {
-			_ = manager.AbortSession(created.ID)
+			if err := manager.AbortSession(created.ID); err != nil {
+				t.Errorf("AbortSession returned error while cleaning up: %v", err)
+				return
+			}
+			waitForSessionToSettle(t, manager, created.ID)
 		}
-	})
+	}()
 	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
 
 	manager.mu.Lock()
