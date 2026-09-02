@@ -755,6 +755,8 @@ export default {
     syncClearExisting: '完全清除记录再进行同步',
     deleteConfirm: '确认删除会话「{title}」？',
     jumpToBottom: '回到底部',
+    restartRecoveryContinue: '继续会话',
+    restartRecoveryContinuing: '正在继续...',
     editUserMessage: '编辑此消息',
     editUserMessageRunning: '请先停止当前运行再编辑',
     editUserMessageTitle: '编辑用户消息',

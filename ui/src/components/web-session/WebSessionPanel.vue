@@ -1264,6 +1264,8 @@
                         {
                           'is-raw-capable': shouldShowMessageRawToggle(item),
                           'is-raw-active': isTimelineRawBlockActive(item, 'message'),
+                          'is-continuable-recovery': isContinuableRecoveryBlock(item),
+                          'is-continuing-recovery': isContinuingRecoveryBlock(item),
                         },
                       ]"
                       :data-raw-toggle-card="
@@ -1271,14 +1273,25 @@
                           ? getTimelineRawModeKey(item, 'message')
                           : undefined
                       "
-                      :tabindex="shouldShowMessageRawToggle(item) ? 0 : undefined"
+                      :tabindex="
+                        isContinuableRecoveryBlock(item) || shouldShowMessageRawToggle(item)
+                          ? 0
+                          : undefined
+                      "
+                      :role="isContinuableRecoveryBlock(item) ? 'button' : undefined"
+                      :aria-label="
+                        isContinuableRecoveryBlock(item)
+                          ? t('webSession.restartRecoveryContinue')
+                          : undefined
+                      "
+                      :aria-busy="isContinuingRecoveryBlock(item) || undefined"
                       @mouseenter="handleMessageBubbleMouseEnter(item)"
                       @mouseleave="handleMessageBubbleMouseLeave(item)"
                       @click="handleMessageBubbleClick(item)"
                       @focusin="activateTimelineRawBlock(item, 'message')"
                       @focusout="handleMessageBubbleFocusOut(item, $event)"
-                      @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'message')"
-                      @keydown.space.self.prevent="activateTimelineRawBlock(item, 'message')"
+                      @keydown.enter.self.prevent="handleMessageBubbleKeyboardActivate(item)"
+                      @keydown.space.self.prevent="handleMessageBubbleKeyboardActivate(item)"
                     >
                       <button
                         v-if="shouldShowTimelineRawToggle(item, 'message')"
@@ -1313,6 +1326,23 @@
                           )
                         "
                       ></div>
+                      <span
+                        v-if="isContinuableRecoveryBlock(item)"
+                        class="restart-recovery-action"
+                        aria-hidden="true"
+                      >
+                        <n-icon
+                          size="15"
+                          :class="{ 'is-spinning': isContinuingRecoveryBlock(item) }"
+                        >
+                          <RefreshOutline />
+                        </n-icon>
+                        <span>{{
+                          isContinuingRecoveryBlock(item)
+                            ? t('webSession.restartRecoveryContinuing')
+                            : t('webSession.restartRecoveryContinue')
+                        }}</span>
+                      </span>
                       <div v-if="item.attachments.length > 0" class="attachment-row">
                         <span
                           v-for="attachment in item.attachments"
@@ -3335,6 +3365,7 @@ import {
 import { resolveWebSessionMobileContextWorktree } from '@/components/web-session/webSessionMobileProjectContext';
 import { useWebSessionMobileProjectSwitch } from '@/components/web-session/useWebSessionMobileProjectSwitch';
 import { isFailedWebSessionUserMessage } from '@/components/web-session/webSessionMessageFailure';
+import { resolveContinuableRecoveryBlockKey } from '@/components/web-session/webSessionRecoveryAction';
 import { useWebSessionMobileChangesSummary } from '@/components/web-session/useWebSessionMobileChangesSummary';
 import {
   insertCodexSkillTokenAtCursor,
@@ -5258,7 +5289,18 @@ function handleMessageBubbleMouseLeave(block: WebSessionBlock) {
   deactivateTimelineRawBlock(block, 'message');
 }
 function handleMessageBubbleClick(block: WebSessionBlock) {
+  if (isContinuableRecoveryBlock(block)) {
+    void handleRestartRecoveryContinue(block);
+    return;
+  }
   if (!isMobile.value || !shouldShowMessageRawToggle(block)) {
+    return;
+  }
+  activateTimelineRawBlock(block, 'message');
+}
+function handleMessageBubbleKeyboardActivate(block: WebSessionBlock) {
+  if (isContinuableRecoveryBlock(block)) {
+    void handleRestartRecoveryContinue(block);
     return;
   }
   activateTimelineRawBlock(block, 'message');
@@ -7859,6 +7901,19 @@ const shouldAutoContinueOnLiveCardClick = computed(
     Boolean(currentRealSession.value) &&
     !liveCardContinuePending.value
 );
+const continuableRecoveryBlockKey = computed(() =>
+  liveState.value.phase === 'error' && currentRealSession.value
+    ? resolveContinuableRecoveryBlockKey(timelineBlocks.value)
+    : ''
+);
+function isContinuableRecoveryBlock(block: WebSessionBlock) {
+  return Boolean(
+    continuableRecoveryBlockKey.value && block.key === continuableRecoveryBlockKey.value
+  );
+}
+function isContinuingRecoveryBlock(block: WebSessionBlock) {
+  return isContinuableRecoveryBlock(block) && liveCardContinuePending.value;
+}
 const liveCardAriaLabel = computed(() =>
   shouldAutoContinueOnLiveCardClick.value ? 'continue' : t('webSession.jumpToBottom')
 );
@@ -14747,6 +14802,24 @@ async function handleLiveCardClick() {
     }
   }
   scrollToBottom(true);
+}
+
+async function handleRestartRecoveryContinue(block: WebSessionBlock) {
+  if (
+    !isContinuableRecoveryBlock(block) ||
+    !currentRealSession.value ||
+    liveCardContinuePending.value
+  ) {
+    return;
+  }
+  liveCardContinuePending.value = true;
+  try {
+    await continueErroredSession(currentRealSession.value);
+  } catch (error) {
+    message.error(formatSessionInteractionError(error));
+  } finally {
+    liveCardContinuePending.value = false;
+  }
 }
 
 function readTimelineScrollMetrics(container: HTMLDivElement): WebSessionTimelineScrollMetrics {

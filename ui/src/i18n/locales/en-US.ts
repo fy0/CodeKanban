@@ -779,6 +779,8 @@ export default {
     syncClearExisting: 'Fully clear existing records before syncing',
     deleteConfirm: 'Delete session "{title}"?',
     jumpToBottom: 'Jump to Bottom',
+    restartRecoveryContinue: 'Continue session',
+    restartRecoveryContinuing: 'Continuing...',
     editUserMessage: 'Edit this message',
     editUserMessageRunning: 'Stop the current run before editing',
     editUserMessageTitle: 'Edit User Message',
