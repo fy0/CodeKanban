@@ -349,6 +349,93 @@ describe('webSession loading behavior', () => {
     await Promise.all([firstSnapshot, secondSnapshot]);
   });
 
+  it('does not attach a full snapshot consumer to a conditional flight', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-flight-profile', revision: '1' });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValueOnce({
+      revision: '1',
+      historyEpoch: '1',
+      eventCursor: '0:9223372036854775807',
+      session,
+      history: { items: [], hasMore: false, total: 0 },
+    });
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    let resolveConditional!: (snapshot: WebSessionSnapshot) => void;
+    snapshotMock.mockImplementationOnce(
+      () =>
+        new Promise<WebSessionSnapshot>(resolve => {
+          resolveConditional = resolve;
+        })
+    );
+    const conditional = store.loadSessionSnapshot(session.projectId, session.id, {
+      conditional: true,
+      skipTrailing: true,
+    });
+    await vi.waitFor(() => expect(snapshotMock).toHaveBeenCalledTimes(2));
+
+    snapshotMock.mockResolvedValueOnce({
+      revision: '1',
+      session,
+      history: { items: [], hasMore: false, total: 0 },
+    });
+    const full = store.loadSessionSnapshot(session.projectId, session.id, {
+      skipTrailing: true,
+    });
+    await vi.waitFor(() => expect(snapshotMock).toHaveBeenCalledTimes(3));
+    expect(snapshotMock.mock.calls[1]?.[2]).toMatchObject({ knownRevision: '1' });
+    expect(snapshotMock.mock.calls[2]?.[2]).not.toHaveProperty('knownRevision');
+
+    resolveConditional({ revision: '1', unchanged: true });
+    await Promise.all([conditional, full]);
+  });
+
+  it('starts a fresh flight after the last snapshot consumer aborts', async () => {
+    const store = useWebSessionStore();
+    let resolveFirst!: (snapshot: WebSessionSnapshot) => void;
+    snapshotMock.mockImplementationOnce(
+      () =>
+        new Promise<WebSessionSnapshot>(resolve => {
+          resolveFirst = resolve;
+        })
+    );
+    const firstController = new AbortController();
+    const first = store.loadSessionSnapshot('project-flight-abort', 'session-flight-abort', {
+      signal: firstController.signal,
+      skipTrailing: true,
+    });
+    await vi.waitFor(() => expect(snapshotMock).toHaveBeenCalledOnce());
+
+    firstController.abort();
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+
+    snapshotMock.mockResolvedValueOnce({ revision: '1', unchanged: true });
+    const second = store.loadSessionSnapshot('project-flight-abort', 'session-flight-abort', {
+      skipTrailing: true,
+    });
+    await vi.waitFor(() => expect(snapshotMock).toHaveBeenCalledTimes(2));
+    resolveFirst({ revision: '1', unchanged: true });
+    await second;
+  });
+
+  it('settles a consumer when session removal aborts a transport that ignores abort', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-transport-ignores-abort' });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockImplementationOnce(() => new Promise<WebSessionSnapshot>(() => undefined));
+    deleteMock.mockResolvedValue(undefined);
+
+    await store.loadSessions(session.projectId);
+    const request = store.loadSessionSnapshot(session.projectId, session.id);
+    await vi.waitFor(() => expect(snapshotMock).toHaveBeenCalledOnce());
+
+    await store.deleteSession(session.projectId, session.id);
+
+    await expect(request).resolves.toBeNull();
+  });
+
   it('tracks Codex app-server runtime across snapshots and websocket events', async () => {
     const store = useWebSessionStore();
     const session = makeSession({ id: 'session-app-server', revision: '2' });
@@ -482,6 +569,99 @@ describe('webSession loading behavior', () => {
       state: 'inactive',
       canTerminate: false,
     });
+  });
+
+  it('does not start a snapshot when its caller is already aborted', async () => {
+    const store = useWebSessionStore();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      store.loadSessionSnapshot('project-aborted', 'session-aborted', {
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(snapshotMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores a snapshot that resolves after its caller is aborted', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-late-abort', revision: '1', itemCount: 1 });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValueOnce({
+      revision: '1',
+      session,
+      history: {
+        items: [makeWireHistoryItem(1, { txt: 'baseline' })],
+        hasMore: false,
+        total: 1,
+      },
+    });
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    let resolveLate!: (snapshot: WebSessionSnapshot) => void;
+    snapshotMock.mockReturnValueOnce(
+      new Promise<WebSessionSnapshot>(resolve => {
+        resolveLate = resolve;
+      })
+    );
+    const controller = new AbortController();
+    const request = store.loadSessionSnapshot(session.projectId, session.id, {
+      signal: controller.signal,
+      skipTrailing: true,
+    });
+    await vi.waitFor(() => expect(snapshotMock).toHaveBeenCalledTimes(2));
+
+    controller.abort();
+    resolveLate({
+      revision: '2',
+      session: { ...session, revision: '2', itemCount: 99 },
+      history: {
+        items: [makeWireHistoryItem(1, { txt: 'late state' })],
+        hasMore: false,
+        total: 1,
+      },
+    });
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+    expect(store.getSessions(session.projectId)[0]).toMatchObject({
+      id: session.id,
+      revision: '1',
+      itemCount: 1,
+    });
+    expect(store.getBlocks(session.id).map(block => block.text)).toEqual(['baseline']);
+  });
+
+  it('does not resurrect a session from a snapshot that finishes after deletion', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-delete-race', revision: '1' });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    let resolveLate!: (snapshot: WebSessionSnapshot) => void;
+    snapshotMock.mockReturnValueOnce(
+      new Promise<WebSessionSnapshot>(resolve => {
+        resolveLate = resolve;
+      })
+    );
+    const request = store.loadSessionSnapshot(session.projectId, session.id);
+    await vi.waitFor(() => expect(snapshotMock).toHaveBeenCalledOnce());
+
+    await store.deleteSession(session.projectId, session.id);
+    resolveLate({
+      revision: '2',
+      session: { ...session, revision: '2', itemCount: 2 },
+      history: {
+        items: [makeWireHistoryItem(1, { txt: 'stale resurrection' })],
+        hasMore: false,
+        total: 1,
+      },
+    });
+
+    await expect(request).resolves.toBeNull();
+    expect(store.getSessions(session.projectId)).toEqual([]);
+    expect(store.getBlocks(session.id)).toEqual([]);
   });
 
   it('rejects stale HTTP snapshots and uses knownRevision for unchanged probes', async () => {
@@ -758,6 +938,69 @@ describe('webSession loading behavior', () => {
     expect(store.getBlocks(baseline.id).map(item => item.text)).toEqual(['rebuilt']);
   });
 
+  it('falls back once when catch-up returns a hasMore page without cursor progress', async () => {
+    const store = useWebSessionStore();
+    const baseline = makeSession({
+      id: 'session-catch-up-stalled',
+      revision: '5',
+      historyEpoch: '1',
+      eventCursor: '5:9223372036854775807',
+    });
+    const rebuilt = makeSession({
+      ...baseline,
+      revision: '6',
+      eventCursor: '6:9223372036854775807',
+    });
+    listMock.mockResolvedValue([baseline]);
+    snapshotMock
+      .mockResolvedValueOnce({
+        revision: '5',
+        historyEpoch: '1',
+        eventCursor: '5:9223372036854775807',
+        session: baseline,
+        history: {
+          items: [makeWireHistoryItem(1, { id: 'old-item', txt: 'old' })],
+          hasMore: false,
+          total: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        revision: '6',
+        historyEpoch: '1',
+        eventCursor: '6:9223372036854775807',
+        session: rebuilt,
+        history: {
+          items: [makeWireHistoryItem(1, { id: 'new-item', txt: 'rebuilt' })],
+          hasMore: false,
+          total: 1,
+        },
+      });
+    catchUpMock.mockResolvedValue({
+      revision: '5',
+      historyEpoch: '1',
+      nextEventCursor: '5:9223372036854775807',
+      targetEventCursor: '5:9223372036854775807',
+      hasMore: true,
+      resetRequired: false,
+      session: baseline,
+      items: [],
+      total: 1,
+      pendingEpoch: 'process-1',
+      pendingVersion: 0,
+      pendingInputs: [],
+      scheduledInputs: [],
+      subAgents: [],
+    });
+
+    await store.loadSessions(baseline.projectId);
+    await store.loadSessionSnapshot(baseline.projectId, baseline.id);
+    await store.catchUpSession(baseline.projectId, baseline.id);
+
+    expect(catchUpMock).toHaveBeenCalledOnce();
+    expect(snapshotMock).toHaveBeenCalledTimes(2);
+    expect(store.getBlocks(baseline.id).map(item => item.text)).toEqual(['rebuilt']);
+  });
+
   it('marks unread state with the attention revision instead of content revision', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
@@ -1012,6 +1255,11 @@ describe('webSession loading behavior', () => {
       p: { reason: 'history_reconciled' },
     };
     eventSocket?.dispatch(resyncFrame);
+    await flushMicrotasks();
+    expect(snapshotMock).toHaveBeenCalledTimes(1);
+
+    store.setEventSessionFocus(baseline.id);
+    eventSocket?.dispatch(resyncFrame);
     eventSocket?.dispatch(resyncFrame);
 
     await vi.waitFor(() =>
@@ -1032,6 +1280,125 @@ describe('webSession loading behavior', () => {
     eventSocket?.dispatch(resyncFrame);
     await flushMicrotasks();
     expect(snapshotMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('aborts resync hydration and ignores later notices after event focus is cleared', async () => {
+    const store = useWebSessionStore();
+    const baseline = makeSession({
+      id: 'session-resync-focus-cleared',
+      revision: '5',
+      itemCount: 1,
+    });
+    listMock.mockResolvedValue([baseline]);
+    snapshotMock.mockResolvedValueOnce({
+      revision: '5',
+      session: baseline,
+      history: {
+        items: [makeWireHistoryItem(1, { txt: 'baseline' })],
+        hasMore: false,
+        total: 1,
+      },
+    });
+    snapshotMock.mockImplementationOnce(
+      (
+        _projectId: string,
+        _sessionId: string,
+        options: { signal: AbortSignal }
+      ): Promise<WebSessionSnapshot> =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              const error = new Error('aborted');
+              error.name = 'AbortError';
+              reject(error);
+            },
+            { once: true }
+          );
+        })
+    );
+
+    await store.loadSessions(baseline.projectId);
+    await store.loadSessionSnapshot(baseline.projectId, baseline.id);
+    await store.openEventStream();
+    store.setEventSessionFocus(baseline.id);
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    const resyncFrame = {
+      v: 1,
+      k: 'evt',
+      sid: baseline.id,
+      rev: '6',
+      ts: Date.now(),
+      op: 'resync_required',
+      p: { reason: 'history_reconciled' },
+    };
+
+    eventSocket?.dispatch(resyncFrame);
+    await vi.waitFor(() => expect(snapshotMock).toHaveBeenCalledTimes(2));
+    const hydrationSignal = snapshotMock.mock.calls[1]?.[2]?.signal as AbortSignal | undefined;
+    expect(hydrationSignal?.aborted).toBe(false);
+
+    store.setEventSessionFocus('');
+    await vi.waitFor(() => expect(hydrationSignal?.aborted).toBe(true));
+    eventSocket?.dispatch(resyncFrame);
+    await flushMicrotasks();
+    expect(snapshotMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds snapshot requests when resync notices keep advancing ahead of stale HTTP data', async () => {
+    vi.useFakeTimers();
+    window.setTimeout = setTimeout;
+    window.clearTimeout = clearTimeout;
+    window.setInterval = setInterval;
+    window.clearInterval = clearInterval;
+
+    try {
+      const store = useWebSessionStore();
+      const baseline = makeSession({
+        id: 'session-resync-hot-stream',
+        revision: '5',
+        itemCount: 1,
+      });
+      listMock.mockResolvedValue([baseline]);
+      snapshotMock.mockResolvedValue({
+        revision: '5',
+        historyEpoch: '1',
+        eventCursor: '5:9223372036854775807',
+        session: baseline,
+        history: {
+          items: [makeWireHistoryItem(1, { txt: 'baseline' })],
+          hasMore: false,
+          total: 1,
+        },
+      });
+
+      await store.loadSessions(baseline.projectId);
+      await store.loadSessionSnapshot(baseline.projectId, baseline.id);
+      await store.openEventStream();
+      store.setEventSessionFocus(baseline.id);
+      const eventSocket = findSocket('/api/v1/web-sessions/events');
+      for (let revision = 6; revision <= 40; revision += 1) {
+        eventSocket?.dispatch({
+          v: 1,
+          k: 'evt',
+          sid: baseline.id,
+          rev: String(revision),
+          ts: Date.now(),
+          op: 'resync_required',
+          p: { reason: 'history_reconciled' },
+        });
+      }
+
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(20_000);
+      await flushMicrotasks();
+
+      // One initial load plus at most the three attempts in the unresolved
+      // circuit. Newer notices must not create one request per revision.
+      expect(snapshotMock.mock.calls.length).toBeLessThanOrEqual(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('loads archived session snapshots over HTTP without replacing the active session', async () => {
@@ -3255,6 +3622,7 @@ describe('webSession loading behavior', () => {
 
     listMock.mockResolvedValue([session]);
     await store.loadSessions(session.projectId);
+    await store.openEventStream();
 
     const sendPromise = store.sendMessage(
       session.id,
@@ -3285,8 +3653,22 @@ describe('webSession loading behavior', () => {
       op: 'fresh_send',
       ok: 1,
     });
+    findSocket('/api/v1/web-sessions/events')?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession({
+        ...session,
+        status: 'running',
+        assistantState: 'working',
+        updatedAt: '2026-04-09T10:00:01.000Z',
+      }),
+    });
 
     await sendPromise;
+    expect(snapshotMock).not.toHaveBeenCalled();
     expect(store.getSessions(session.projectId)).toHaveLength(1);
     expect(store.getTimelineBlocks(session.id)).toMatchObject([
       {
@@ -3545,6 +3927,7 @@ describe('webSession loading behavior', () => {
 
     listMock.mockResolvedValue([session]);
     snapshotMock.mockResolvedValue({
+      revision: '2',
       session: hydratedSession,
       history: {
         items: [

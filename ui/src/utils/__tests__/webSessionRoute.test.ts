@@ -4,6 +4,7 @@ import {
   buildWebSessionClearedWorkspaceRouteQuery,
   buildWebSessionProjectLocation,
   buildWebSessionRouteQuery,
+  createWebSessionRouteSnapshotBudget,
   getWebSessionRouteSessionId,
   isWebSessionRouteActivationCurrent,
   isWebSessionRouteQuerySynced,
@@ -109,6 +110,46 @@ describe('webSessionRoute', () => {
   it('compares the current query and target session id after normalization', () => {
     expect(isWebSessionRouteQuerySynced({ webSessionId: ' session-1 ' }, 'session-1')).toBe(true);
     expect(isWebSessionRouteQuerySynced({ webSessionId: 'session-1' }, 'session-2')).toBe(false);
+  });
+
+  it('backs off and bounds repeated route snapshot attempts', () => {
+    let now = 0;
+    const budget = createWebSessionRouteSnapshotBudget({
+      now: () => now,
+      retryBaseDelayMs: 100,
+      maxAttemptsPerWindow: 3,
+      attemptWindowMs: 1_000,
+    });
+
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(true);
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(false);
+
+    now = 100;
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(true);
+    now = 299;
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(false);
+    now = 300;
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(true);
+
+    now = 999;
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(false);
+    now = 1_000;
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(true);
+  });
+
+  it('resets the route snapshot circuit only after the target resolves', () => {
+    const budget = createWebSessionRouteSnapshotBudget({
+      retryBaseDelayMs: 10_000,
+    });
+
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(true);
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(false);
+
+    budget.markResolved('project-1', 'session-1');
+
+    expect(budget.tryAcquire('project-1', 'session-1')).toBe(true);
+    expect(budget.tryAcquire('project-1', 'session-2')).toBe(true);
+    expect(budget.tryAcquire('', 'session-2')).toBe(false);
   });
 
   it('preserves explicit web deep links while a different remembered session is selected', () => {

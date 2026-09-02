@@ -816,8 +816,23 @@ type LoadSessionSnapshotOptions = {
   preserveArchivedPosition?: boolean;
   conditional?: boolean;
   ensureLatest?: boolean;
+  minimumRevision?: string;
+  /**
+   * Hydration callers need a revision to advance the reconciliation clock.
+   * Ordinary previews remain tolerant of older/partial response fixtures.
+   */
+  requireRevision?: boolean;
   limit?: number;
   skipTrailing?: boolean;
+};
+
+type SnapshotFlight = {
+  promise: Promise<WebSessionSnapshot>;
+  controller: AbortController;
+  consumers: Set<symbol>;
+  projectId: string;
+  sessionId: string;
+  generation: number;
 };
 
 type PendingAutoRetryOverride = {
@@ -862,11 +877,18 @@ const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_WAIT_MS = 150;
 const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_POLL_MS = 16;
 const WEB_SESSION_RUNTIME_MUTATION_TIMEOUT_MS = 2500;
 const WEB_SESSION_RUNTIME_ABORT_TIMEOUT_MS = 5000;
+const WEB_SESSION_MAX_CATCH_UP_PAGES = 32;
 const WEB_SESSION_MAX_RETAINED_BLOCKS = 400;
 const WEB_SESSION_MIN_RETAINED_BLOCKS = 160;
 const PROCESS_RESTART_REASON = 'process_restart';
 const DEFAULT_RECOVERY_MESSAGE =
   'The previous run was interrupted because the app restarted. Send a new message to continue.';
+
+function createWebSessionAbortError() {
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
+}
 
 function normalizeAutoRetryMaxAttempts(value: unknown) {
   const parsed = Number(value);
@@ -2112,14 +2134,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (!session?.projectId || session.archivedAt) {
         return;
       }
-      if (request.reason) {
+      if (request.mode === 'snapshot') {
         await loadSessionSnapshot(session.projectId, request.sessionId, {
           rememberActive: false,
           ensureLatest: true,
+          minimumRevision: request.revision,
+          requireRevision: true,
+          signal: request.signal,
         });
         return;
       }
-      await catchUpSession(session.projectId, request.sessionId);
+      await catchUpSession(session.projectId, request.sessionId, {
+        signal: request.signal,
+      });
     },
     onError: (request, error) => {
       console.warn('[Web Session] Failed to hydrate requested session revision', {
@@ -2137,14 +2164,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
     string,
     ReturnType<typeof webSessionApi.calculateWorkTiming>
   >();
-  const inFlightSnapshots = new Map<
-    string,
-    {
-      promise: Promise<WebSessionSnapshot>;
-      controller: AbortController;
-      consumers: Set<symbol>;
+  const inFlightSnapshots = new Map<string, SnapshotFlight>();
+
+  function abortSnapshotFlight(key: string, flight: SnapshotFlight) {
+    if (inFlightSnapshots.get(key) !== flight) {
+      return;
     }
-  >();
+    // Remove the flight before aborting the transport. Some transports (and
+    // several test doubles) settle asynchronously after abort; a new caller
+    // must never attach to that already-cancelled request in the meantime.
+    inFlightSnapshots.delete(key);
+    flight.controller.abort();
+  }
+  const sessionHydrationGenerationById = new Map<string, number>();
   const hydratedEventCursorBySession = new Map<string, string>();
   const hydratedHistoryEpochBySession = new Map<string, string>();
   const inFlightMarkReadBySession = new Map<string, Promise<void>>();
@@ -2159,6 +2191,27 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const eventIndexBySession = new Map<string, Map<string, number>>();
   const emptySessionBlocks: WebSessionBlock[] = [];
   let draftAttachmentUploadSeed = 0;
+
+  function getSessionHydrationGeneration(sessionId: string) {
+    return sessionHydrationGenerationById.get(sessionId) ?? 0;
+  }
+
+  function invalidateSessionSnapshotRequests(sessionId: string) {
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedSessionId) {
+      return;
+    }
+    sessionHydrationGenerationById.set(
+      normalizedSessionId,
+      getSessionHydrationGeneration(normalizedSessionId) + 1
+    );
+    for (const [key, flight] of inFlightSnapshots) {
+      if (flight.sessionId !== normalizedSessionId) {
+        continue;
+      }
+      abortSnapshotFlight(key, flight);
+    }
+  }
 
   function compareEventCursors(left: string, right: string) {
     const leftParts = /^(\d+):(\d+)$/.exec(left.trim());
@@ -3878,6 +3931,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function clearSessionRuntimeState(sessionId: string, projectId?: string) {
+    invalidateSessionSnapshotRequests(sessionId);
     const nextEvents = { ...eventsBySession.value };
     delete nextEvents[sessionId];
     eventsBySession.value = nextEvents;
@@ -3921,6 +3975,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
+  function cancelSessionHydration(sessionId: string, clearFocus = false) {
+    invalidateSessionSnapshotRequests(sessionId);
+    sessionSync.cancelHydration(sessionId);
+    if (clearFocus && eventFocusedSessionId === sessionId) {
+      setEventSessionFocus('');
+    }
+  }
+
   function upsertCurrentSession(summary: WebSessionSummary) {
     const incomingSummary = applyPendingActiveCallTimeoutOverride(
       applyPendingAutoRetryDispatchOverride(
@@ -3952,6 +4014,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     options?: { preserveArchivedPosition?: boolean }
   ) {
     if (summary.archivedAt) {
+      cancelSessionHydration(summary.id, true);
       const wasCurrentSession = Boolean(
         (sessionsByProject.value[summary.projectId] ?? []).some(item => item.id === summary.id)
       );
@@ -3973,6 +4036,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function removeSession(projectId: string, sessionId: string) {
+    cancelSessionHydration(sessionId, true);
     const removed =
       removeCurrentSessionRecord(projectId, sessionId) ??
       archivedSessionsById.value[sessionId] ??
@@ -5405,8 +5469,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
         return;
       }
       if (frame.op === 'resync_required') {
+        if (eventFocusedSessionId !== frame.sid) {
+          return;
+        }
         const payload = asRecord(frame.p);
-        sessionSync.requestHydration(frame.sid, frame.rev, String(payload?.reason ?? '').trim());
+        sessionSync.requestHydration(frame.sid, frame.rev, String(payload?.reason ?? '').trim(), {
+          mode: 'snapshot',
+        });
         return;
       }
       sessionSync.observe(frame.sid, frame.rev);
@@ -5429,7 +5498,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
           frameSummary.historyEpoch !== hydratedHistoryEpoch
         ) {
           if (eventFocusedSessionId === frame.sid) {
-            sessionSync.requestHydration(frame.sid, frame.rev, 'history_epoch_changed');
+            sessionSync.requestHydration(frame.sid, frame.rev, 'history_epoch_changed', {
+              mode: 'snapshot',
+            });
           }
           return;
         }
@@ -5621,8 +5692,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (eventFocusedSessionId === normalizedSessionId) {
       return;
     }
+    if (eventFocusedSessionId) {
+      sessionSync.cancelHydration(eventFocusedSessionId);
+    }
     eventFocusedSessionId = normalizedSessionId;
     sendEventSessionFocus(normalizedSessionId);
+  }
+
+  function clearEventSessionFocus(expectedSessionId: string) {
+    const expected = String(expectedSessionId || '').trim();
+    if (!expected || eventFocusedSessionId !== expected) {
+      return;
+    }
+    setEventSessionFocus('');
   }
 
   function handleSocketHeartbeat(kind: WebSessionSocketKind, socket: WebSocket, frame: WireFrame) {
@@ -6029,6 +6111,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
           ? current
           : mergeSessionAttentionState(current, session);
       });
+      const nextSessionIds = new Set(sessions.map(session => session.id));
+      currentById.forEach((_session, sessionId) => {
+        if (!nextSessionIds.has(sessionId)) {
+          // A forced list is authoritative for the project. Do not leave a
+          // queued resync alive for a session that disappeared remotely.
+          cancelSessionHydration(sessionId, true);
+          sessionSync.clear(sessionId);
+        }
+      });
       replaceProjectSessions(projectId, sortSessions(sessions));
       syncSessionCount(projectId);
       loadedProjects.value = {
@@ -6171,6 +6262,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return request;
   }
 
+  function getSessionHydrationPromise(sessionId: string) {
+    return sessionSync.getHydrationPromise(sessionId);
+  }
+
+  function hasPendingSessionHydration(sessionId: string) {
+    return sessionSync.hasPendingHydration(sessionId);
+  }
+
   async function loadSessionCounts() {
     try {
       const counts = await webSessionApi.counts();
@@ -6284,16 +6383,36 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!projectId || !sessionId) {
       return null;
     }
+    if (options?.signal?.aborted) {
+      throw createWebSessionAbortError();
+    }
+    const requestGeneration = getSessionHydrationGeneration(sessionId);
     if (getBlocks(sessionId).length === 0) {
       setHistoryLoading(sessionId, true);
     }
     try {
       const limit = Math.max(1, Math.trunc(options?.limit ?? 80));
-      const key = `${projectId}:${sessionId}:${limit}`;
+      // Conditional probes carry a known revision and may legitimately return
+      // `unchanged`. They cannot share a flight with an unconditional request:
+      // the latter requires the complete history window even when the former
+      // is satisfied by a lightweight response.
+      const knownRevision = options?.conditional ? sessionSync.getHydrated(sessionId) : '';
+      const minimumRevision = normalizeWebSessionRevision(options?.minimumRevision);
+      const strictProfile =
+        options?.requireRevision === true ? `strict:${minimumRevision || '*'}` : 'full';
+      const requestProfile = knownRevision
+        ? `conditional:${knownRevision}${
+            options?.requireRevision === true ? `:strict:${minimumRevision || '*'}` : ''
+          }`
+        : strictProfile;
+      const key = `${projectId}:${sessionId}:${limit}:${requestProfile}`;
       let flight = inFlightSnapshots.get(key);
+      if (flight && flight.generation !== requestGeneration) {
+        abortSnapshotFlight(key, flight);
+        flight = undefined;
+      }
       if (!flight) {
         const controller = new AbortController();
-        const knownRevision = options?.conditional ? sessionSync.getHydrated(sessionId) : '';
         const promise = webSessionApi.snapshot(projectId, sessionId, {
           limit,
           signal: controller.signal,
@@ -6303,6 +6422,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
           promise,
           controller,
           consumers: new Set<symbol>(),
+          projectId,
+          sessionId,
+          generation: requestGeneration,
         };
         inFlightSnapshots.set(key, flight);
         const activeFlight = flight;
@@ -6321,131 +6443,209 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
 
       const consumer = Symbol(sessionId);
-      flight.consumers.add(consumer);
+      const attachedFlight = flight;
+      attachedFlight.consumers.add(consumer);
       let abortHandler: (() => void) | null = null;
+      let transportAbortHandler: (() => void) | null = null;
       const snapshot = await new Promise<WebSessionSnapshot>((resolve, reject) => {
+        let settled = false;
         const release = () => {
-          options?.signal?.removeEventListener('abort', abortHandler!);
-          flight?.consumers.delete(consumer);
-          if (flight && flight.consumers.size === 0 && inFlightSnapshots.get(key) === flight) {
-            flight.controller.abort();
+          if (abortHandler) {
+            options?.signal?.removeEventListener('abort', abortHandler);
+          }
+          if (transportAbortHandler) {
+            attachedFlight.controller.signal.removeEventListener('abort', transportAbortHandler);
+          }
+          attachedFlight.consumers.delete(consumer);
+          if (attachedFlight.consumers.size === 0) {
+            abortSnapshotFlight(key, attachedFlight);
           }
         };
-        abortHandler = () => {
+        const rejectAborted = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
           release();
-          const error = new Error('The operation was aborted.');
-          error.name = 'AbortError';
-          reject(error);
+          reject(createWebSessionAbortError());
         };
+        abortHandler = rejectAborted;
+        transportAbortHandler = rejectAborted;
         if (options?.signal?.aborted) {
-          abortHandler();
+          rejectAborted();
+          return;
+        }
+        if (attachedFlight.controller.signal.aborted) {
+          rejectAborted();
           return;
         }
         options?.signal?.addEventListener('abort', abortHandler, { once: true });
-        flight!.promise.then(
+        attachedFlight.controller.signal.addEventListener('abort', transportAbortHandler, {
+          once: true,
+        });
+        attachedFlight.promise.then(
           value => {
+            if (settled) {
+              return;
+            }
+            settled = true;
             release();
             resolve(value);
           },
           error => {
+            if (settled) {
+              return;
+            }
+            settled = true;
             release();
             reject(error);
           }
         );
       });
+      if (options?.signal?.aborted) {
+        throw createWebSessionAbortError();
+      }
+      if (requestGeneration !== getSessionHydrationGeneration(sessionId)) {
+        // Session removal/archive can invalidate an HTTP request whose
+        // transport does not honor abort. Never let that response recreate the
+        // session or overwrite the next incarnation with stale state.
+        setHistoryLoading(sessionId, false);
+        return null;
+      }
       const responseRevision = normalizeWebSessionRevision(
         snapshot.revision ?? snapshot.session?.revision
       );
+      const responseMissingRevision = !responseRevision;
       let result = snapshot;
       let accepted = true;
-      if (Array.isArray(snapshot.pendingInputs)) {
-        applyAuthoritativePendingState(
-          sessionId,
-          snapshot.pendingEpoch,
-          snapshot.pendingVersion,
-          snapshot.pendingInputs
-            .map(item => normalizePendingInput(item))
-            .filter((item): item is WebSessionPendingInput => item != null)
-        );
-      }
+      const observedBeforeResponse = sessionSync.getObserved(sessionId);
       sessionSync.observe(sessionId, responseRevision);
-      if (snapshot.unchanged) {
-        if (snapshot.codexAppServer && sessionSync.shouldApply(sessionId, responseRevision)) {
-          setCodexAppServerRuntime(sessionId, snapshot.codexAppServer);
-        }
-        sessionSync.markHydrated(sessionId, responseRevision);
-        hydratedHistoryEpochBySession.set(
-          sessionId,
-          String(snapshot.historyEpoch ?? findSessionById(sessionId)?.historyEpoch ?? '1')
-        );
-        advanceHydratedEventCursor(
-          sessionId,
-          String(snapshot.eventCursor ?? findSessionById(sessionId)?.eventCursor ?? '0:0')
-        );
+      const responseBelowMinimum = Boolean(
+        minimumRevision &&
+          (!responseRevision ||
+            compareWebSessionRevisions(responseRevision, minimumRevision) === -1)
+      );
+      const responseBelowObserved = Boolean(
+        responseRevision &&
+          observedBeforeResponse &&
+          compareWebSessionRevisions(responseRevision, observedBeforeResponse) === -1
+      );
+      if (
+        (options?.requireRevision === true && responseMissingRevision) ||
+        responseBelowMinimum ||
+        responseBelowObserved
+      ) {
+        // A response that predates an event already observed by the browser is
+        // a race, not a new baseline. Hydration callers also reject a response
+        // without a revision because it cannot establish a clock. Standalone
+        // preview loads remain compatible with older partial responses.
+        accepted = false;
         setHistoryLoading(sessionId, false);
-      } else if (snapshot.session && snapshot.history) {
-        const summary = {
-          ...snapshot.session,
-          revision: responseRevision || snapshot.session.revision,
+        result = {
+          revision: responseRevision || observedBeforeResponse,
+          unchanged: true,
         };
-        if (!sessionSync.shouldApply(sessionId, responseRevision)) {
-          accepted = false;
-          setHistoryLoading(sessionId, false);
-          result = {
-            revision: sessionSync.getApplied(sessionId),
-            unchanged: true,
-          };
-        } else {
-          applySessionSnapshot(
+      } else {
+        if (Array.isArray(snapshot.pendingInputs)) {
+          applyAuthoritativePendingState(
             sessionId,
-            summary,
-            Array.isArray(snapshot.history?.items)
-              ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
-              : [],
-            normalizePendingApproval(snapshot.pendingApproval),
-            Array.isArray(snapshot.scheduledInputs)
-              ? snapshot.scheduledInputs
-                  .map(item => normalizeScheduledInput(item))
-                  .filter((item): item is WebSessionScheduledInput => item != null)
-              : [],
-            {
-              hasMore: Boolean(snapshot.history?.hasMore),
-              beforeCursor: String(snapshot.history?.beforeCursor ?? ''),
-              total: Number(snapshot.history?.total ?? 0),
-            },
-            {
-              preserveArchivedPosition: options?.preserveArchivedPosition === true,
-              ...(Array.isArray(snapshot.subAgents)
-                ? {
-                    subAgents: snapshot.subAgents
-                      .map(item => normalizeSubAgent(item))
-                      .filter((item): item is WebSessionSubAgent => item != null),
-                  }
-                : {}),
-            }
+            snapshot.pendingEpoch,
+            snapshot.pendingVersion,
+            snapshot.pendingInputs
+              .map(item => normalizePendingInput(item))
+              .filter((item): item is WebSessionPendingInput => item != null)
           );
-          if (snapshot.codexAppServer) {
+        }
+        if (snapshot.unchanged) {
+          if (snapshot.codexAppServer && sessionSync.shouldApply(sessionId, responseRevision)) {
             setCodexAppServerRuntime(sessionId, snapshot.codexAppServer);
           }
-          hydratedHistoryEpochBySession.set(
-            sessionId,
-            String(snapshot.historyEpoch ?? summary.historyEpoch ?? '1')
-          );
-          advanceHydratedEventCursor(
-            sessionId,
-            String(snapshot.eventCursor ?? summary.eventCursor ?? '0:0')
-          );
+          if (responseRevision) {
+            sessionSync.markHydrated(sessionId, responseRevision);
+            hydratedHistoryEpochBySession.set(
+              sessionId,
+              String(snapshot.historyEpoch ?? findSessionById(sessionId)?.historyEpoch ?? '1')
+            );
+            advanceHydratedEventCursor(
+              sessionId,
+              String(snapshot.eventCursor ?? findSessionById(sessionId)?.eventCursor ?? '0:0')
+            );
+          }
+          setHistoryLoading(sessionId, false);
+        } else if (snapshot.session && snapshot.history) {
+          const summary = {
+            ...snapshot.session,
+            // Preserve the current clock when a legacy preview response omits
+            // its top-level revision. Never erase a revision already known for
+            // the session merely because this response is partial.
+            revision:
+              responseRevision ||
+              snapshot.session.revision ||
+              sessionSync.getApplied(sessionId) ||
+              sessionSync.getHydrated(sessionId) ||
+              findSessionById(sessionId)?.revision,
+          };
+          if (!sessionSync.shouldApply(sessionId, responseRevision)) {
+            accepted = false;
+            setHistoryLoading(sessionId, false);
+            result = {
+              revision: sessionSync.getApplied(sessionId),
+              unchanged: true,
+            };
+          } else {
+            applySessionSnapshot(
+              sessionId,
+              summary,
+              Array.isArray(snapshot.history?.items)
+                ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+                : [],
+              normalizePendingApproval(snapshot.pendingApproval),
+              Array.isArray(snapshot.scheduledInputs)
+                ? snapshot.scheduledInputs
+                    .map(item => normalizeScheduledInput(item))
+                    .filter((item): item is WebSessionScheduledInput => item != null)
+                : [],
+              {
+                hasMore: Boolean(snapshot.history?.hasMore),
+                beforeCursor: String(snapshot.history?.beforeCursor ?? ''),
+                total: Number(snapshot.history?.total ?? 0),
+              },
+              {
+                preserveArchivedPosition: options?.preserveArchivedPosition === true,
+                ...(Array.isArray(snapshot.subAgents)
+                  ? {
+                      subAgents: snapshot.subAgents
+                        .map(item => normalizeSubAgent(item))
+                        .filter((item): item is WebSessionSubAgent => item != null),
+                    }
+                  : {}),
+              }
+            );
+            if (snapshot.codexAppServer) {
+              setCodexAppServerRuntime(sessionId, snapshot.codexAppServer);
+            }
+            hydratedHistoryEpochBySession.set(
+              sessionId,
+              String(snapshot.historyEpoch ?? summary.historyEpoch ?? '1')
+            );
+            advanceHydratedEventCursor(
+              sessionId,
+              String(snapshot.eventCursor ?? summary.eventCursor ?? '0:0')
+            );
+          }
+        } else {
+          setHistoryLoading(sessionId, false);
         }
-      } else {
-        setHistoryLoading(sessionId, false);
       }
       if (accepted && options?.rememberActive !== false) {
         rememberActiveSession(projectId, sessionId);
       }
       const observedRevision = sessionSync.getObserved(sessionId);
       if (
+        accepted &&
         (options?.conditional || options?.ensureLatest) &&
         !options.skipTrailing &&
+        responseRevision &&
         compareWebSessionRevisions(responseRevision, observedRevision) === -1
       ) {
         return loadSessionSnapshot(projectId, sessionId, {
@@ -6456,6 +6656,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return result;
     } catch (error) {
       setHistoryLoading(sessionId, false);
+      // Session removal/archive invalidates an in-flight request. Preserve the
+      // established API contract for that lifecycle race (resolve `null`),
+      // while still surfacing an explicit caller cancellation as AbortError.
+      if (
+        requestGeneration !== getSessionHydrationGeneration(sessionId) &&
+        error instanceof Error &&
+        error.name === 'AbortError'
+      ) {
+        return null;
+      }
       throw error;
     }
   }
@@ -6469,6 +6679,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
       skipTrailing?: boolean;
     }
   ) {
+    const requestGeneration = getSessionHydrationGeneration(sessionId);
+    const isCurrentGeneration = () =>
+      requestGeneration === getSessionHydrationGeneration(sessionId);
+    const throwIfAborted = () => {
+      if (!options?.signal?.aborted) {
+        return;
+      }
+      throw createWebSessionAbortError();
+    };
+    if (!isCurrentGeneration()) {
+      return null;
+    }
+    throwIfAborted();
     let cursor = hydratedEventCursorBySession.get(sessionId);
     let historyEpoch = hydratedHistoryEpochBySession.get(sessionId);
     if (!cursor || !historyEpoch) {
@@ -6477,12 +6700,30 @@ export const useWebSessionStore = defineStore('web-session', () => {
         preserveArchivedPosition: options?.preserveArchivedPosition === true,
         signal: options?.signal,
         ensureLatest: true,
+        minimumRevision: sessionSync.getObserved(sessionId),
+        requireRevision: true,
       });
     }
 
+    const loadResetSnapshot = () =>
+      loadSessionSnapshot(projectId, sessionId, {
+        rememberActive: false,
+        preserveArchivedPosition: options?.preserveArchivedPosition === true,
+        signal: options?.signal,
+        ensureLatest: true,
+        minimumRevision: sessionSync.getObserved(sessionId),
+        requireRevision: true,
+      });
+
     let targetCursor = '';
     let latestRevision = '';
+    let pageCount = 0;
     while (true) {
+      throwIfAborted();
+      if (pageCount >= WEB_SESSION_MAX_CATCH_UP_PAGES) {
+        return loadResetSnapshot();
+      }
+      pageCount += 1;
       const response = await webSessionApi.catchUp(projectId, sessionId, {
         afterEventCursor: cursor,
         ...(targetCursor ? { targetEventCursor: targetCursor } : {}),
@@ -6490,20 +6731,47 @@ export const useWebSessionStore = defineStore('web-session', () => {
         limit: 80,
         signal: options?.signal,
       });
+      if (!isCurrentGeneration()) {
+        return null;
+      }
+      throwIfAborted();
       if (hydratedHistoryEpochBySession.get(sessionId) !== historyEpoch) {
         return response;
       }
       if (response.resetRequired) {
-        return loadSessionSnapshot(projectId, sessionId, {
-          rememberActive: false,
-          preserveArchivedPosition: options?.preserveArchivedPosition === true,
-          signal: options?.signal,
-          ensureLatest: true,
-        });
+        return loadResetSnapshot();
       }
 
-      targetCursor = response.targetEventCursor;
-      latestRevision = normalizeWebSessionRevision(response.revision ?? response.session.revision);
+      const responseHistoryEpoch = String(response.historyEpoch ?? '').trim();
+      if (!responseHistoryEpoch || responseHistoryEpoch !== historyEpoch) {
+        return loadResetSnapshot();
+      }
+
+      const nextCursor = String(response.nextEventCursor ?? '').trim();
+      const cursorProgress = compareEventCursors(nextCursor, cursor);
+      if (
+        !nextCursor ||
+        cursorProgress == null ||
+        cursorProgress === -1 ||
+        (response.hasMore && cursorProgress !== 1)
+      ) {
+        // A broken cursor must not keep issuing the same catch-up request
+        // forever. Re-establish a bounded baseline instead.
+        return loadResetSnapshot();
+      }
+
+      latestRevision = normalizeWebSessionRevision(response.revision ?? response.session?.revision);
+      if (!latestRevision || !response.session) {
+        // A catch-up page without a usable revision cannot advance either the
+        // applied or hydrated clock. Reset once through the bounded snapshot
+        // path instead of leaving a seemingly successful request pending.
+        return loadResetSnapshot();
+      }
+      const nextTargetCursor = String(response.targetEventCursor ?? '').trim();
+      if (response.hasMore && !nextTargetCursor) {
+        return loadResetSnapshot();
+      }
+      targetCursor = nextTargetCursor;
       const previousProjection = getRuntimeProjection(sessionId);
       const catchUpItems = Array.isArray(response.items)
         ? response.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
@@ -6565,11 +6833,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
         emitStateTransition(sessionId, previousProjection, getRuntimeProjection(sessionId));
       }
 
-      cursor = response.nextEventCursor;
+      cursor = nextCursor;
       advanceHydratedEventCursor(sessionId, cursor);
-      hydratedHistoryEpochBySession.set(sessionId, response.historyEpoch);
-      historyEpoch = response.historyEpoch;
+      hydratedHistoryEpochBySession.set(sessionId, responseHistoryEpoch);
+      historyEpoch = responseHistoryEpoch;
       if (!response.hasMore) {
+        if (!isCurrentGeneration()) {
+          return null;
+        }
+        throwIfAborted();
         sessionSync.markHydrated(sessionId, latestRevision);
         const observedRevision = sessionSync.getObserved(sessionId);
         if (
@@ -6651,13 +6923,23 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   async function archiveSession(projectId: string, sessionId: string) {
-    const summary = await webSessionApi.archive(projectId, sessionId);
-    invalidateRuntimeProjection(sessionId);
-    removeCurrentSessionRecord(projectId, sessionId);
-    setPendingInputs(sessionId, []);
-    setScheduledInputs(sessionId, []);
-    upsertArchivedSession(summary, { includeInMatchingScopes: true });
-    return summary;
+    const wasFocused = eventFocusedSessionId === sessionId;
+    cancelSessionHydration(sessionId, true);
+    try {
+      const summary = await webSessionApi.archive(projectId, sessionId);
+      invalidateRuntimeProjection(sessionId);
+      removeCurrentSessionRecord(projectId, sessionId);
+      setPendingInputs(sessionId, []);
+      setScheduledInputs(sessionId, []);
+      upsertArchivedSession(summary, { includeInMatchingScopes: true });
+      return summary;
+    } catch (error) {
+      const existing = findSessionById(sessionId);
+      if (wasFocused && existing && !existing.archivedAt) {
+        setEventSessionFocus(sessionId);
+      }
+      throw error;
+    }
   }
 
   async function unarchiveSession(projectId: string, sessionId: string) {
@@ -6741,8 +7023,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   async function deleteSession(projectId: string, sessionId: string) {
-    await webSessionApi.delete(projectId, sessionId);
-    removeSession(projectId, sessionId);
+    const wasFocused = eventFocusedSessionId === sessionId;
+    cancelSessionHydration(sessionId, true);
+    try {
+      await webSessionApi.delete(projectId, sessionId);
+      removeSession(projectId, sessionId);
+    } catch (error) {
+      if (wasFocused && findSessionById(sessionId)) {
+        setEventSessionFocus(sessionId);
+      }
+      throw error;
+    }
   }
 
   async function sendMessage(
@@ -7990,10 +8281,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getLatestEventSeq,
     loadSessions,
     reconcileRecentSessions,
+    getSessionHydrationPromise,
+    hasPendingSessionHydration,
     loadSessionCounts,
     loadArchivedSessions,
     invalidateArchivedSessions,
     setActiveSession,
+    clearEventSessionFocus,
     loadSessionSnapshot,
     catchUpSession,
     markSessionRead,

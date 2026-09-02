@@ -169,6 +169,18 @@ describe('web session composer submission', () => {
     expect(catchUpSource).toContain('signal: abortController.signal');
   });
 
+  it('does not retry missing approval details for every summary timestamp', () => {
+    const approvalSource = sourceBetween(
+      'function currentApprovalRecoveryKey()',
+      'function handleRecoverApprovalDetails()'
+    );
+
+    expect(approvalSource).toContain('return `${session.id}:waiting_approval`;');
+    expect(approvalSource).not.toContain('assistantStateUpdatedAt || liveState.value.updatedAt');
+    expect(approvalSource).toContain('if (!props.isActive)');
+    expect(approvalSource).toContain('approvalRecoveryAbortController?.abort()');
+  });
+
   it('guards delayed send completion side effects by the target session', () => {
     const handlerSource = sourceBetween(
       'async function handleSubmit()',

@@ -226,10 +226,24 @@ For each session, the client hydration queue:
 2. coalesces duplicate notices into one in-flight hydration request;
 3. retains only the highest requested revision;
 4. runs one trailing request when a higher revision arrives during hydration;
-5. does not automatically loop on a failed request, but allows a later notice
-   for the same revision to retry.
+5. accepts detailed resync notices only for the event stream's currently
+   focused session and cancels queued or in-flight hydration when focus leaves;
+6. retries an unresolved sequence only after exponential backoff, with a
+   bounded attempt budget shared across revisions in a short time window;
+   useful progress does not reset that budget until the observed revision is
+   covered, and the circuit stops scheduling work when the budget is exhausted.
 
 Ordinary revision recovery uses event-cursor catch-up. A changed history epoch
 or explicit resync reason uses snapshot. This keeps recovery idempotent while
 preventing command ack, HTTP fallback, and event reconciliation from starting
-parallel full hydrations.
+parallel full hydrations. Catch-up also aborts to one snapshot when a page limit
+is reached or the server returns a non-advancing cursor, so malformed responses
+cannot create an unbounded request loop.
+
+Route-driven activation is coordinated separately because an unknown deep-link
+session has no revision clock yet. The client locks the route target before
+loading the project session list, coalesces URL writes and duplicate activations,
+and applies the same exponential backoff and bounded attempt window to snapshots
+needed to resolve an unknown target. A newer route, an inactive panel, or leaving
+the web-session workspace cancels the previous activation without restarting
+project initialization.
