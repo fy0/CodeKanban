@@ -18,7 +18,7 @@
     <template #footer>
       <div class="local-file-modal-footer">
         <n-button secondary :disabled="Boolean(action)" @click="emit('update:show', false)">
-          {{ t('common.cancel') }}
+          {{ t('common.close') }}
         </n-button>
         <n-button
           secondary
@@ -119,7 +119,7 @@ const { t } = useLocale();
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .local-file-modal-footer :deep(.n-button) {
