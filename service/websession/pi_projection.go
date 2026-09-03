@@ -446,8 +446,11 @@ func (m *Manager) handlePiExtensionUIRequest(dispatch *piRuntimeRun, raw json.Ra
 	if err := json.Unmarshal(raw, &request); err != nil {
 		return fmt.Errorf("decode Pi extension_ui_request: %w", err)
 	}
-	request.ID = strings.TrimSpace(request.ID)
 	request.Method = strings.TrimSpace(request.Method)
+	if request.Method == "setStatus" {
+		return nil
+	}
+	request.ID = strings.TrimSpace(request.ID)
 	if request.ID == "" || request.Method == "" {
 		return errors.New("Pi extension UI request is missing id or method")
 	}

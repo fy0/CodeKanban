@@ -574,6 +574,13 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
 		return nil, err
 	}
+	removedStatusNotes, err := manager.cleanupLegacyPiStatusNotes(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if removedStatusNotes > 0 {
+		manager.logger.Info("legacy Pi extension status notes removed", zap.Int64("rowCount", removedStatusNotes))
+	}
 	if err := manager.backfillSessionActivityAt(context.Background()); err != nil {
 		return nil, err
 	}

@@ -45,20 +45,24 @@ type piRPCImage struct {
 	MimeType string `json:"mimeType"`
 }
 
+type piRPCTokenUsage struct {
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
+	Total      int64 `json:"total"`
+}
+
+type piRPCContextUsage struct {
+	Tokens        *int64   `json:"tokens"`
+	ContextWindow int64    `json:"contextWindow"`
+	Percent       *float64 `json:"percent"`
+}
+
 type piRPCSessionStats struct {
-	Tokens struct {
-		Input      int64 `json:"input"`
-		Output     int64 `json:"output"`
-		CacheRead  int64 `json:"cacheRead"`
-		CacheWrite int64 `json:"cacheWrite"`
-		Total      int64 `json:"total"`
-	} `json:"tokens"`
-	Cost         float64 `json:"cost"`
-	SessionID    string  `json:"sessionId"`
-	SessionFile  string  `json:"sessionFile"`
-	ContextUsage *struct {
-		Tokens        int64   `json:"tokens"`
-		ContextWindow int64   `json:"contextWindow"`
-		Percent       float64 `json:"percent"`
-	} `json:"contextUsage"`
+	Tokens       piRPCTokenUsage    `json:"tokens"`
+	Cost         float64            `json:"cost"`
+	SessionID    string             `json:"sessionId"`
+	SessionFile  string             `json:"sessionFile"`
+	ContextUsage *piRPCContextUsage `json:"contextUsage"`
 }

@@ -6,6 +6,13 @@ import { describe, expect, it } from 'vitest';
 const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
 
 describe('webSessionContextPopover', () => {
+  it('enables the shared context indicator for Pi with the agent baseline', () => {
+    const source = readFileSync(webSessionPanelPath, 'utf8');
+
+    expect(source).toContain('supportsContextUsageIndicator(session.agent)');
+    expect(source).toContain('baselineTokens: contextUsageBaselineTokens(session.agent)');
+  });
+
   it('shows the context card on hover with both cumulative usage metrics', () => {
     const source = readFileSync(webSessionPanelPath, 'utf8');
     const popoverStart = source.indexOf('v-if="contextUsageIndicator"');

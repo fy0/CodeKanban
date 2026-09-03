@@ -925,7 +925,7 @@ export default {
       '检测到 {count} 张远程图片。是否由服务器下载并转为附件？下载失败时将保留原链接。',
     remoteImageDownloadFailed: '远程图片下载失败，已保留原链接。',
     contextUsageTitle: '剩余预算估算',
-    contextUsageTitleClaude: '上下文窗口剩余估算',
+    contextUsageTitleWindow: '上下文窗口剩余估算',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
     contextUsageCurrent: '当前占用',
@@ -974,7 +974,7 @@ export default {
       '注意：这是按累计 session usage 估算，不代表当前真实上下文占用。',
     contextUsageUnavailableTitle: 'Context 估算暂不可用',
     contextUsageUnavailableDescription:
-      '会话尚未上报可用的 context window；Claude 通常会在首轮 result 返回后提供。',
+      '会话尚未上报可用的 context window；通常会在首轮结果返回后提供。',
     workTimingTitle: '累计工作时间',
     workTimingCurrentRun: '本次运行：{duration}',
     workTimingComplete: '已完成计时',

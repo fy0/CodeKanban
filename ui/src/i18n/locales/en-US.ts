@@ -961,7 +961,7 @@ export default {
       'Found {count} remote image(s). Should the server download them as attachments? Original URLs will be kept if downloading fails.',
     remoteImageDownloadFailed: 'Remote image download failed. The original URL was kept.',
     contextUsageTitle: 'Remaining Budget Estimate',
-    contextUsageTitleClaude: 'Remaining Context Window Estimate',
+    contextUsageTitleWindow: 'Remaining Context Window Estimate',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
     contextUsageCurrent: 'Current',
@@ -1011,7 +1011,7 @@ export default {
       'Note: this is estimated from cumulative session usage and does not represent the true current context occupancy.',
     contextUsageUnavailableTitle: 'Context estimate unavailable',
     contextUsageUnavailableDescription:
-      'The session has not reported a usable context window yet. Claude normally provides it after the first result.',
+      'The session has not reported a usable context window yet. It normally becomes available after the first result.',
     workTimingTitle: 'Cumulative Work Time',
     workTimingCurrentRun: 'Current run: {duration}',
     workTimingComplete: 'Timing complete',

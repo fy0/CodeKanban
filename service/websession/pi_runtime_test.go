@@ -23,6 +23,46 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestNormalizePiSessionUsageIncludesCachedReadsAndWrites(t *testing.T) {
+	stats := piRPCSessionStats{
+		Tokens: piRPCTokenUsage{
+			Input:      100,
+			Output:     25,
+			CacheRead:  60,
+			CacheWrite: 15,
+		},
+		Cost: 1.25,
+	}
+
+	usage := normalizePiSessionUsage(stats)
+	if usage.InputTokens != 175 || usage.CachedInputTokens != 75 || usage.OutputTokens != 25 || usage.Cost != 1.25 {
+		t.Fatalf("unexpected normalized Pi usage: %#v", usage)
+	}
+}
+
+func TestPiRPCSessionStatsPreservesUnavailableContextUsage(t *testing.T) {
+	var stats piRPCSessionStats
+	if err := json.Unmarshal([]byte(`{
+		"tokens":{"input":10,"output":5,"cacheRead":2,"cacheWrite":1,"total":18},
+		"contextUsage":{"tokens":null,"contextWindow":32000,"percent":null}
+	}`), &stats); err != nil {
+		t.Fatal(err)
+	}
+	if stats.ContextUsage == nil || stats.ContextUsage.Tokens != nil || stats.ContextUsage.Percent != nil {
+		t.Fatalf("Pi context usage nullability was lost: %#v", stats.ContextUsage)
+	}
+
+	observedAt := time.Now()
+	updates := map[string]any{}
+	applyPiContextUsageUpdates(updates, stats.ContextUsage, true, observedAt)
+	if updates["session_context_window_tokens"] != 0 || updates["session_context_window_observed_at"] != nil {
+		t.Fatalf("unavailable Pi context usage retained a usable window: %#v", updates)
+	}
+	if updates["latest_token_count_updated_at"] != nil || updates["latest_token_count_total_tokens"] != 0 {
+		t.Fatalf("unavailable Pi context usage retained a latest snapshot: %#v", updates)
+	}
+}
+
 func TestPiRuntimeFakeProcess(t *testing.T) {
 	if os.Getenv("CODEKANBAN_FAKE_PI_RUNTIME") != "1" {
 		return
@@ -838,6 +878,12 @@ func TestManagerPiRPCSendReusesRuntimeAndPersistsIdentity(t *testing.T) {
 	if record.Model != "openai/gpt-test" || record.ReasoningEffort != string(ReasoningEffortHigh) {
 		t.Fatalf("model/thinking = %q/%q", record.Model, record.ReasoningEffort)
 	}
+	if record.TotalInputTokens != 12 || record.TotalCachedInputTokens != 2 || record.TotalOutputTokens != 5 {
+		t.Fatalf("Pi usage was not normalized: input=%d cached=%d output=%d", record.TotalInputTokens, record.TotalCachedInputTokens, record.TotalOutputTokens)
+	}
+	if record.SessionContextWindowTokens != 32000 || record.LatestTokenCountTotalTokens != 17 || record.LatestTokenCountUpdatedAt == nil {
+		t.Fatalf("Pi context usage was not persisted: window=%d used=%d observed=%v", record.SessionContextWindowTokens, record.LatestTokenCountTotalTokens, record.LatestTokenCountUpdatedAt)
+	}
 	window, err := manager.History(context.Background(), created.ID, DefaultHistoryWindow, nil)
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
@@ -1641,7 +1687,7 @@ func TestManagerPiRPCManualCompactionUsesNativeRuntime(t *testing.T) {
 	if pointerString(record.NativeLeafID) == "" || pointerString(record.NativeLeafID) == beforeLeaf || pointerString(record.SourceRevision) == "" {
 		t.Fatalf("manual compaction did not refresh native identity: before=%q after=%q revision=%q", beforeLeaf, pointerString(record.NativeLeafID), pointerString(record.SourceRevision))
 	}
-	if record.LastContextCompactionAt == nil || record.ContextBaselineInputTokens != 10 || record.ContextBaselineCachedInputTokens != 2 || record.ContextBaselineOutputTokens != 5 {
+	if record.LastContextCompactionAt == nil || record.ContextBaselineInputTokens != 12 || record.ContextBaselineCachedInputTokens != 2 || record.ContextBaselineOutputTokens != 5 {
 		t.Fatalf("manual compaction did not reset the Pi context baseline: %#v", record)
 	}
 	if record.LatestTokenCountUpdatedAt != nil || record.LatestTurnUsageUpdatedAt != nil {

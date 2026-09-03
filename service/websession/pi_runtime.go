@@ -968,25 +968,28 @@ func (m *Manager) syncPiRuntimeSnapshot(ctx context.Context, runtime *piSessionR
 	if err := runtime.client.Request(ctx, "get_session_stats", nil, &stats); err != nil {
 		return err
 	}
+	usage := normalizePiSessionUsage(stats)
+	now := time.Now()
 	updates := map[string]any{
 		"native_session_id":         state.SessionID,
 		"thread_path":               filepath.Clean(state.SessionFile),
 		"native_leaf_id":            nilIfEmpty(pointerString(entries.LeafID)),
 		"source_revision":           nilIfEmpty(piSourceRevision(state.SessionFile, pointerString(entries.LeafID))),
-		"total_input_tokens":        stats.Tokens.Input,
-		"total_cached_input_tokens": stats.Tokens.CacheRead,
-		"total_output_tokens":       stats.Tokens.Output,
-		"total_cost":                stats.Cost,
-		"last_synced_at":            time.Now(),
+		"total_input_tokens":        usage.InputTokens,
+		"total_cached_input_tokens": usage.CachedInputTokens,
+		"total_output_tokens":       usage.OutputTokens,
+		"total_cost":                usage.Cost,
+		"last_synced_at":            now,
 		"sync_state":                string(SyncStateFresh),
 		"sync_error":                nil,
-		"updated_at":                time.Now(),
+		"updated_at":                now,
 	}
-	if len(compactionAt) > 0 && compactionAt[0] != nil && !compactionAt[0].IsZero() {
+	compacted := len(compactionAt) > 0 && compactionAt[0] != nil && !compactionAt[0].IsZero()
+	if compacted {
 		updates["last_context_compaction_at"] = *compactionAt[0]
-		updates["context_baseline_input_tokens"] = stats.Tokens.Input
-		updates["context_baseline_cached_input_tokens"] = stats.Tokens.CacheRead
-		updates["context_baseline_output_tokens"] = stats.Tokens.Output
+		updates["context_baseline_input_tokens"] = usage.InputTokens
+		updates["context_baseline_cached_input_tokens"] = usage.CachedInputTokens
+		updates["context_baseline_output_tokens"] = usage.OutputTokens
 		updates["latest_token_count_input_tokens"] = 0
 		updates["latest_token_count_cached_input_tokens"] = 0
 		updates["latest_token_count_output_tokens"] = 0
@@ -997,14 +1000,7 @@ func (m *Manager) syncPiRuntimeSnapshot(ctx context.Context, runtime *piSessionR
 		updates["latest_turn_output_tokens"] = 0
 		updates["latest_turn_usage_updated_at"] = nil
 	}
-	if stats.ContextUsage != nil {
-		updates["session_context_window_tokens"] = stats.ContextUsage.ContextWindow
-		updates["session_context_window_observed_at"] = time.Now()
-		if len(compactionAt) == 0 || compactionAt[0] == nil || compactionAt[0].IsZero() {
-			updates["latest_token_count_total_tokens"] = stats.ContextUsage.Tokens
-			updates["latest_token_count_updated_at"] = time.Now()
-		}
-	}
+	applyPiContextUsageUpdates(updates, stats.ContextUsage, !compacted, now)
 	if model := canonicalPiModel(state.Model); model != "" {
 		updates["model"] = model
 	}
@@ -1012,6 +1008,46 @@ func (m *Manager) syncPiRuntimeSnapshot(ctx context.Context, runtime *piSessionR
 		updates["reasoning_effort"] = string(effort)
 	}
 	return m.reconcileLivePiHistory(ctx, session, state.SessionID, entries, updates)
+}
+
+func normalizePiSessionUsage(stats piRPCSessionStats) Usage {
+	cachedInputTokens := stats.Tokens.CacheRead + stats.Tokens.CacheWrite
+	return Usage{
+		InputTokens:       stats.Tokens.Input + cachedInputTokens,
+		CachedInputTokens: cachedInputTokens,
+		OutputTokens:      stats.Tokens.Output,
+		Cost:              stats.Cost,
+	}
+}
+
+func applyPiContextUsageUpdates(
+	updates map[string]any,
+	contextUsage *piRPCContextUsage,
+	includeLatest bool,
+	observedAt time.Time,
+) {
+	if contextUsage == nil || contextUsage.Tokens == nil || contextUsage.ContextWindow <= 0 {
+		updates["session_context_window_tokens"] = 0
+		updates["session_context_window_observed_at"] = nil
+		if includeLatest {
+			updates["latest_token_count_input_tokens"] = 0
+			updates["latest_token_count_cached_input_tokens"] = 0
+			updates["latest_token_count_output_tokens"] = 0
+			updates["latest_token_count_total_tokens"] = 0
+			updates["latest_token_count_updated_at"] = nil
+		}
+		return
+	}
+
+	updates["session_context_window_tokens"] = contextUsage.ContextWindow
+	updates["session_context_window_observed_at"] = observedAt
+	if includeLatest {
+		updates["latest_token_count_input_tokens"] = 0
+		updates["latest_token_count_cached_input_tokens"] = 0
+		updates["latest_token_count_output_tokens"] = 0
+		updates["latest_token_count_total_tokens"] = *contextUsage.Tokens
+		updates["latest_token_count_updated_at"] = observedAt
+	}
 }
 
 func (m *Manager) finishPiAbortedRun(session tables.WebSessionTable, run *activeRun) {

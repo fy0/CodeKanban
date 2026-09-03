@@ -282,18 +282,15 @@ func validatePiMutationStats(state piRPCState, stats piRPCSessionStats) error {
 }
 
 func applyPiMutationStats(updates map[string]any, state piRPCState, stats piRPCSessionStats) {
+	usage := normalizePiSessionUsage(stats)
+	now := time.Now()
 	updates["native_session_id"] = strings.TrimSpace(state.SessionID)
 	updates["thread_path"] = filepath.Clean(state.SessionFile)
-	updates["total_input_tokens"] = stats.Tokens.Input
-	updates["total_cached_input_tokens"] = stats.Tokens.CacheRead
-	updates["total_output_tokens"] = stats.Tokens.Output
-	updates["total_cost"] = stats.Cost
-	if stats.ContextUsage != nil {
-		updates["session_context_window_tokens"] = stats.ContextUsage.ContextWindow
-		updates["session_context_window_observed_at"] = time.Now()
-		updates["latest_token_count_total_tokens"] = stats.ContextUsage.Tokens
-		updates["latest_token_count_updated_at"] = time.Now()
-	}
+	updates["total_input_tokens"] = usage.InputTokens
+	updates["total_cached_input_tokens"] = usage.CachedInputTokens
+	updates["total_output_tokens"] = usage.OutputTokens
+	updates["total_cost"] = usage.Cost
+	applyPiContextUsageUpdates(updates, stats.ContextUsage, true, now)
 }
 
 func (m *Manager) createProjectedPiTreeSession(

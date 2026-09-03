@@ -3490,8 +3490,10 @@ import {
 } from '@/components/web-session/webSessionLiveTime';
 import {
   calculateBillableTokenUsage,
-  calculateCodexRemainingContext,
+  calculateRemainingContext,
   calculateTotalTokenUsage,
+  contextUsageBaselineTokens,
+  supportsContextUsageIndicator,
 } from '@/components/web-session/webSessionContextUsage';
 import { formatWebSessionTokenCount } from '@/components/web-session/webSessionContextDisplay';
 import { resolveCopyableAgentSessionId } from '@/components/web-session/webSessionSessionId';
@@ -6969,7 +6971,7 @@ const contextUsageIndicator = computed<ContextUsageIndicator | null>(() => {
       ? contextWindowTokens
       : (runtimeCompactLimitTokens ?? contextWindowTokens);
   if (
-    (session.agent !== 'codex' && session.agent !== 'claude') ||
+    !supportsContextUsageIndicator(session.agent) ||
     !contextWindowTokens ||
     !compactLimitTokens
   ) {
@@ -6977,10 +6979,10 @@ const contextUsageIndicator = computed<ContextUsageIndicator | null>(() => {
   }
 
   const usedTokens = Math.max(0, Number(session.contextEstimate.usedTokens || 0));
-  const { remainingPercent } = calculateCodexRemainingContext({
+  const { remainingPercent } = calculateRemainingContext({
     compactLimitTokens,
     usedTokens,
-    baselineTokens: session.agent === 'claude' ? 0 : undefined,
+    baselineTokens: contextUsageBaselineTokens(session.agent),
   });
   const usedPercent = Math.max(
     0,
@@ -6999,9 +7001,9 @@ const contextUsageIndicator = computed<ContextUsageIndicator | null>(() => {
     state: remainingPercent <= 10 ? 'warning' : remainingPercent <= 25 ? 'active' : 'idle',
     label: t('webSession.contextUsageLabel', { percent: remainingPercent }),
     title: t(
-      session.agent === 'claude'
-        ? 'webSession.contextUsageTitleClaude'
-        : 'webSession.contextUsageTitle'
+      session.agent === 'codex'
+        ? 'webSession.contextUsageTitle'
+        : 'webSession.contextUsageTitleWindow'
     ),
     available: true,
     hasUsage,
