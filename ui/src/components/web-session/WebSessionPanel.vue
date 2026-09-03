@@ -54,7 +54,7 @@
       @select-category="setMobileSessionCategory"
       @toggle-group="toggleSessionGroup"
       @select-session="handleMobileTabSessionSelect"
-      @load-more="loadMoreMobileArchivedSessions"
+      @load-more="handleLoadMoreArchived"
       @toggle-scope="toggleSidebarScope"
       @new-session="handleMobileTabNewSession"
     />
@@ -3116,6 +3116,7 @@
           @select-session="handleSidebarVirtualSessionSelect"
           @session-action="handleSidebarSessionActionSelect"
           @load-more="handleLoadMoreArchived"
+          @reach-end="handleSidebarReachEnd"
         />
       </div>
     </div>
@@ -3319,6 +3320,7 @@ import {
   webSessionApi,
   type WebSessionCommandExecutionGroupDetail,
   type WebSessionCommandExecutionGroupItem,
+  type SessionPageResult,
   type SessionSearchChunkResult,
   type WebSessionPiTreeMutationResult,
 } from '@/api/webSession';
@@ -4039,7 +4041,6 @@ let timelineStartConfirmationTimer: number | null = null;
 let lastEmittedMobileComposerChromeHidden = false;
 let mobileTimelineTouchY: number | null = null;
 let scheduledSendLongPressAnchor: HTMLElement | null = null;
-const loadedSidebarProjectIds = new Set<string>();
 const streamingMarkdownController = createWebSessionStreamingMarkdownController({
   delayMs: webSessionStreamingMarkdownThrottleMs.value,
   onStateChange: state => {
@@ -4051,6 +4052,12 @@ const sidebarSearchQuery = ref('');
 const sidebarSearchArchived = useStorage<boolean>(SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY, false);
 const sidebarSearchBody = useStorage<boolean>(SIDEBAR_SEARCH_BODY_STORAGE_KEY, true);
 const sidebarSearchState = ref<SidebarSearchState>(createSidebarSearchState());
+const activeSidebarSessions = ref<WebSessionSummary[]>([]);
+const activeSidebarTotal = ref(0);
+const activeSidebarOffset = ref(0);
+const activeSidebarHasMore = ref(false);
+const activeSidebarLoading = ref(false);
+let activeSidebarRequestVersion = 0;
 let sidebarSearchRequestVersion = 0;
 let sidebarSearchAbortController: AbortController | null = null;
 const composerTransferErrorMessage = ref('');
@@ -8179,24 +8186,7 @@ async function setMobileSessionCategory(section: 'current' | 'archived') {
     return;
   }
   try {
-    await ensureArchivedScopeLoaded(mobileArchivedProjectIds.value, 20);
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : t('common.error'));
-  }
-}
-
-async function loadMoreMobileArchivedSessions() {
-  if (
-    !mobileArchivedScopeKey.value ||
-    mobileArchivedMeta.value.loading ||
-    !mobileArchivedMeta.value.hasMore
-  ) {
-    return;
-  }
-  try {
-    await webSessionStore.loadArchivedSessions(mobileArchivedProjectIds.value, {
-      limit: 20,
-    });
+    await ensureArchivedScopeLoaded(mobileArchivedProjectIds.value, 100);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -10034,18 +10024,18 @@ function mergeSidebarSearchResults(
 }
 
 const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
-  const rawItems: CrossProjectSessionItem[] = [];
-  sidebarVisibleProjectIds.value.forEach(projectId => {
-    webSessionStore.getSessions(projectId).forEach(session => {
-      rawItems.push({
-        session,
-        projectId,
-        projectName: getProjectName(projectId),
-        isCurrent: projectId === props.projectId && session.id === activeSessionId.value,
-      });
-    });
+  return activeSidebarSessions.value.map(session => {
+    const current = webSessionStore
+      .getSessions(session.projectId)
+      .find(item => item.id === session.id);
+    const resolved = current ?? session;
+    return {
+      session: resolved,
+      projectId: resolved.projectId,
+      projectName: getProjectName(resolved.projectId),
+      isCurrent: resolved.projectId === props.projectId && resolved.id === activeSessionId.value,
+    };
   });
-  return sortCrossProjectSessionItems(rawItems);
 });
 
 const filteredCrossProjectSessions = computed(() => {
@@ -10218,7 +10208,7 @@ const scheduleSidebarSearch = useDebounceFn(() => {
   void loadSidebarSearch();
 }, 300);
 
-async function ensureArchivedScopeLoaded(projectIds: string[], limit = 20) {
+async function ensureArchivedScopeLoaded(projectIds: string[], limit = 100) {
   if (!projectIds.length || webSessionStore.hasArchivedScope(projectIds)) {
     return;
   }
@@ -10226,6 +10216,62 @@ async function ensureArchivedScopeLoaded(projectIds: string[], limit = 20) {
     reset: true,
     limit,
   });
+}
+
+async function loadActiveSidebar(projectIds: string[], reset = false) {
+  if (!projectIds.length) {
+    activeSidebarRequestVersion += 1;
+    activeSidebarSessions.value = [];
+    activeSidebarTotal.value = 0;
+    activeSidebarOffset.value = 0;
+    activeSidebarHasMore.value = false;
+    return;
+  }
+  if (!reset && (activeSidebarLoading.value || !activeSidebarHasMore.value)) {
+    return;
+  }
+  const version = reset ? ++activeSidebarRequestVersion : activeSidebarRequestVersion;
+  const offset = reset ? 0 : activeSidebarOffset.value;
+  activeSidebarLoading.value = true;
+  let result: SessionPageResult;
+  try {
+    result = await webSessionApi.querySessions({ projectIds, archived: false, offset, limit: 100 });
+  } catch (error) {
+    if (version === activeSidebarRequestVersion) {
+      activeSidebarLoading.value = false;
+    }
+    throw error;
+  }
+  if (version !== activeSidebarRequestVersion) {
+    return;
+  }
+  webSessionStore.cacheSessionSummaries(result.items);
+  activeSidebarSessions.value = reset
+    ? result.items
+    : [...activeSidebarSessions.value, ...result.items];
+  activeSidebarTotal.value = result.total;
+  activeSidebarOffset.value = result.nextOffset;
+  activeSidebarHasMore.value = result.hasMore;
+  activeSidebarLoading.value = false;
+}
+
+async function handleLoadMoreArchived() {
+  if (archivedSidebarMeta.value.loading || !archivedSidebarMeta.value.hasMore) {
+    return;
+  }
+  await webSessionStore.loadArchivedSessions(sidebarVisibleProjectIds.value, { limit: 100 });
+}
+
+async function handleSidebarReachEnd() {
+  try {
+    if (activeSidebarHasMore.value) {
+      await loadActiveSidebar(sidebarVisibleProjectIds.value);
+    } else {
+      await handleLoadMoreArchived();
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
 }
 
 const isSingleSidebarProject = computed(() => {
@@ -10273,6 +10319,8 @@ const sidebarIsEmpty = computed(
     normalizedSidebarSearchQuery.value.length === 0 &&
     crossProjectSessions.value.length === 0 &&
     baseCrossProjectArchivedSessions.value.length === 0 &&
+    activeSidebarTotal.value === 0 &&
+    !activeSidebarLoading.value &&
     baseArchivedSidebarMeta.value.total === 0 &&
     !baseArchivedSidebarMeta.value.loading
 );
@@ -10284,8 +10332,10 @@ const sidebarHasNoSearchResults = computed(
     filteredCrossProjectSessions.value.length === 0 &&
     crossProjectArchivedSessions.value.length === 0
 );
-const sidebarVisibleSessionCount = computed(
-  () => filteredCrossProjectSessions.value.length + archivedSidebarMeta.value.total
+const sidebarVisibleSessionCount = computed(() =>
+  normalizedSidebarSearchQuery.value.length > 0
+    ? filteredCrossProjectSessions.value.length + archivedSidebarMeta.value.total
+    : activeSidebarTotal.value + archivedSidebarMeta.value.total
 );
 const sidebarSearchError = computed(
   () => normalizedSidebarSearchQuery.value.length > 0 && sidebarSearchState.value.error
@@ -11885,16 +11935,6 @@ async function handleSidebarVirtualSessionSelect(
   await handleSidebarSessionSelect(item.entry.source);
 }
 
-async function handleLoadMoreArchived() {
-  try {
-    await webSessionStore.loadArchivedSessions(sidebarVisibleProjectIds.value, {
-      limit: 20,
-    });
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : t('common.error'));
-  }
-}
-
 async function handleSidebarSessionActionSelect(
   key: string | number,
   item: CrossProjectSessionItem
@@ -12305,7 +12345,7 @@ function openSessionRenameDialog(session: WebSessionSummary | SessionTab) {
 async function refreshArchivedSidebar() {
   await webSessionStore.loadArchivedSessions(sidebarVisibleProjectIds.value, {
     reset: true,
-    limit: 20,
+    limit: 100,
   });
   if (normalizedSidebarSearchQuery.value) {
     await loadSidebarSearch();
@@ -15938,15 +15978,9 @@ watch(
 watch(
   sidebarVisibleProjectIds,
   projectIds => {
-    projectIds.forEach(projectId => {
-      if (!projectId || loadedSidebarProjectIds.has(projectId)) {
-        return;
-      }
-      loadedSidebarProjectIds.add(projectId);
-      void webSessionStore.loadSessions(projectId).catch(error => {
-        loadedSidebarProjectIds.delete(projectId);
-        console.error('[Web Session] Failed to preload sidebar sessions', projectId, error);
-      });
+    void loadActiveSidebar(projectIds, true).catch(error => {
+      activeSidebarLoading.value = false;
+      console.error('[Web Session] Failed to load sidebar sessions', error);
     });
   },
   { immediate: true }
@@ -15971,7 +16005,7 @@ watch(
 watch(
   sidebarVisibleProjectIds,
   projectIds => {
-    void ensureArchivedScopeLoaded(projectIds, 20).catch(error => {
+    void ensureArchivedScopeLoaded(projectIds, 100).catch(error => {
       console.error('[Web Session] Failed to preload archived sidebar sessions', error);
     });
   },

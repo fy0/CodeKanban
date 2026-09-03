@@ -365,6 +365,13 @@ type SessionReconcileResult struct {
 	MissingIDs []string         `json:"missingIds"`
 }
 
+type SessionPageResult struct {
+	Items      []SessionSummary `json:"items"`
+	Total      int              `json:"total"`
+	HasMore    bool             `json:"hasMore"`
+	NextOffset int              `json:"nextOffset"`
+}
+
 type SessionGoal struct {
 	ThreadID        string     `json:"threadId"`
 	Objective       string     `json:"objective"`
@@ -374,13 +381,6 @@ type SessionGoal struct {
 	TimeUsedSeconds int64      `json:"timeUsedSeconds"`
 	CreatedAt       time.Time  `json:"createdAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
-}
-
-type ArchivedQueryResult struct {
-	Items      []SessionSummary `json:"items"`
-	Total      int              `json:"total"`
-	HasMore    bool             `json:"hasMore"`
-	NextOffset int              `json:"nextOffset"`
 }
 
 type SessionSearchChunkResult struct {

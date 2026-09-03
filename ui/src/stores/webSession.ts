@@ -3983,7 +3983,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
-  function upsertCurrentSession(summary: WebSessionSummary) {
+  function upsertCurrentSession(summary: WebSessionSummary, options?: { syncCount?: boolean }) {
     const incomingSummary = applyPendingActiveCallTimeoutOverride(
       applyPendingAutoRetryDispatchOverride(
         applyPendingAutoRetryOverride(normalizeSessionAttentionState(summary))
@@ -4006,7 +4006,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
       next.unshift(incomingSummary);
     }
     replaceProjectSessions(incomingSummary.projectId, sortSessions(next));
-    syncSessionCount(incomingSummary.projectId);
+    if (options?.syncCount !== false) {
+      syncSessionCount(incomingSummary.projectId);
+    }
+  }
+
+  function cacheSessionSummaries(summaries: WebSessionSummary[]) {
+    summaries.forEach(summary => {
+      if (!summary.archivedAt) {
+        upsertCurrentSession(summary, { syncCount: false });
+      }
+    });
   }
 
   function upsertSession(
@@ -8250,6 +8260,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getDraft,
     getSessions,
     getSessionCount,
+    cacheSessionSummaries,
     getArchivedSessions,
     getArchivedMeta,
     hasArchivedScope,

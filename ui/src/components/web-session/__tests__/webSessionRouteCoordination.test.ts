@@ -57,4 +57,21 @@ describe('web session route coordination', () => {
     expect(activation).toContain('routeSnapshotBudget.tryAcquire');
     expect(activation).toContain('routeSnapshotBudget.markResolved');
   });
+
+  it('loads the cross-project sidebar through the backend aggregate query', () => {
+    const scopeLoader = sourceBetween(
+      'async function loadActiveSidebar',
+      'const isSingleSidebarProject'
+    );
+    const scopeWatcher = sourceBetween(
+      'watch(\n  sidebarVisibleProjectIds,',
+      'watch(\n  [\n    normalizedSidebarSearchQuery'
+    );
+
+    expect(scopeLoader).toContain('webSessionApi.querySessions({');
+    expect(scopeLoader).toContain('archived: false');
+    expect(scopeWatcher).toContain('loadActiveSidebar(projectIds, true)');
+    expect(scopeWatcher).not.toContain('projectIds.forEach');
+    expect(scopeWatcher).not.toContain('webSessionStore.loadSessions(projectId)');
+  });
 });

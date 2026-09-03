@@ -1167,16 +1167,16 @@ func (m *Manager) CountSessionsByProject(ctx context.Context) (map[string]int, e
 	return counts, nil
 }
 
-func (m *Manager) ListArchivedSessions(
+func (m *Manager) QuerySessions(
 	ctx context.Context,
 	projectIDs []string,
-	searchQuery string,
+	archived bool,
 	limit int,
 	offset int,
-) (ArchivedQueryResult, error) {
+) (SessionPageResult, error) {
 	db := model.GetReaderDB()
 	if db == nil {
-		return ArchivedQueryResult{}, model.ErrDBNotInitialized
+		return SessionPageResult{}, model.ErrDBNotInitialized
 	}
 
 	normalizedProjectIDs := make([]string, 0, len(projectIDs))
@@ -1193,35 +1193,26 @@ func (m *Manager) ListArchivedSessions(
 		normalizedProjectIDs = append(normalizedProjectIDs, trimmed)
 	}
 
-	if limit <= 0 {
-		limit = 20
+	query := db.WithContext(ctx).Model(&tables.WebSessionTable{})
+	if archived {
+		query = query.Where("archived_at IS NOT NULL")
+	} else {
+		query = query.Where("archived_at IS NULL")
 	}
-	if limit > 100 {
+	if len(normalizedProjectIDs) > 0 {
+		query = query.Where("project_id IN ?", normalizedProjectIDs)
+	}
+	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
 	}
 
-	query := db.WithContext(ctx).
-		Model(&tables.WebSessionTable{}).
-		Where("archived_at IS NOT NULL")
-	if len(normalizedProjectIDs) > 0 {
-		query = query.Where("project_id IN ?", normalizedProjectIDs)
-	}
-	if normalizedSearchQuery := strings.ToLower(strings.TrimSpace(searchQuery)); normalizedSearchQuery != "" {
-		query = query.Where(
-			"instr(lower(title), ?) > 0 OR instr(lower(coalesce(thread_preview, '')), ?) > 0",
-			normalizedSearchQuery,
-			normalizedSearchQuery,
-		)
-	}
-
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
-		return ArchivedQueryResult{}, err
+		return SessionPageResult{}, err
 	}
-
 	var records []tables.WebSessionTable
 	if err := query.
 		Order("activity_at DESC").
@@ -1229,7 +1220,7 @@ func (m *Manager) ListArchivedSessions(
 		Offset(offset).
 		Limit(limit).
 		Find(&records).Error; err != nil {
-		return ArchivedQueryResult{}, err
+		return SessionPageResult{}, err
 	}
 
 	contextConfig := m.cachedCodexSessionContextConfig()
@@ -1238,11 +1229,10 @@ func (m *Manager) ListArchivedSessions(
 		items = append(items, m.mapSessionSummaryWithContext(record, contextConfig))
 	}
 	if err := m.decorateScheduledPlanExecutionState(ctx, items); err != nil {
-		return ArchivedQueryResult{}, err
+		return SessionPageResult{}, err
 	}
-
 	nextOffset := offset + len(items)
-	return ArchivedQueryResult{
+	return SessionPageResult{
 		Items:      items,
 		Total:      int(total),
 		HasMore:    int64(nextOffset) < total,
