@@ -201,8 +201,8 @@ func TestListIncludesGitStatus(t *testing.T) {
 	if readmeStatus == nil || readmeStatus.Kind != GitStatusKindModified {
 		t.Fatalf("README.md git status = %#v", readmeStatus)
 	}
-	if docsStatus == nil || docsStatus.Kind != GitStatusKindDirty {
-		t.Fatalf("docs git status = %#v", docsStatus)
+	if docsStatus != nil {
+		t.Fatalf("directory status must not scan descendants: %#v", docsStatus)
 	}
 }
 

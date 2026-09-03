@@ -43,6 +43,7 @@ func registerFileManagerRoutes(app *fiber.App, cfg *utils.AppConfig, logger *zap
 	app.Get(base+"/changes", ctrl.handleListChanges)
 	app.Get(base+"/changes-summary", ctrl.handleChangesSummary)
 	app.Get(base+"/list", ctrl.handleList)
+	app.Get(base+"/statuses", ctrl.handleStatuses)
 	app.Get(base+"/search", ctrl.handleSearch)
 	app.Get(base+"/preview", ctrl.handlePreview)
 	app.Get(base+"/diff", ctrl.handleDiff)
@@ -167,6 +168,17 @@ func (c *fileManagerController) handleList(ctx *fiber.Ctx) error {
 	scopeID := ctx.Query("scopeId")
 	path := ctx.Query("path")
 	item, err := c.service.List(ctx.UserContext(), projectID, scopeID, path)
+	if err != nil {
+		return c.writeError(ctx, err)
+	}
+	resp := h.NewItemResponse(item)
+	resp.Status = http.StatusOK
+	return ctx.Status(http.StatusOK).JSON(resp)
+}
+
+func (c *fileManagerController) handleStatuses(ctx *fiber.Ctx) error {
+	projectID := strings.TrimSpace(ctx.Params("projectId"))
+	item, err := c.service.ListStatuses(ctx.UserContext(), projectID, ctx.Query("scopeId"), ctx.Query("path"))
 	if err != nil {
 		return c.writeError(ctx, err)
 	}

@@ -11,6 +11,7 @@ import type {
   FileManagerListResult,
   FileManagerPreviewResult,
   FileManagerSearchResult,
+  FileManagerStatusesResult,
   FileManagerScope,
   FileManagerUploadSession,
 } from '@/types/fileManager';
@@ -111,6 +112,23 @@ export const fileManagerApi = {
     if (!item) {
       throw new Error('failed to load files');
     }
+    return item;
+  },
+
+  async statuses(
+    projectId: string,
+    scopeId: string,
+    path = ''
+  ): Promise<FileManagerStatusesResult> {
+    const params = new URLSearchParams({ scopeId, path });
+    const payload =
+      (await http
+        .Get<
+          ItemResponse<FileManagerStatusesResult>
+        >(`/projects/${projectId}/files/statuses?${params.toString()}`)
+        .send(true)) ?? {};
+    const item = extractItem<FileManagerStatusesResult>(payload);
+    if (!item) throw new Error('failed to load file statuses');
     return item;
   },
 

@@ -422,6 +422,7 @@ const isDragOver = ref(false);
 let dragDepth = 0;
 let previewRequestToken = 0;
 let searchRequestToken = 0;
+let statusRequestToken = 0;
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 const treeMetaFieldOrder = ['type', 'size', 'modifiedAt'] as const;
@@ -642,6 +643,25 @@ function syncTreeFromList(result: FileManagerListResult | null) {
   upsertTreeNodes(result.entries, result.currentPath);
 }
 
+async function loadDirectoryStatuses(result: FileManagerListResult | null) {
+  if (!result || !activeScope.value) return;
+  const token = ++statusRequestToken;
+  try {
+    const response = await fileManagerApi.statuses(
+      props.projectId,
+      result.scope.id,
+      result.currentPath
+    );
+    if (token !== statusRequestToken) return;
+    for (const item of response.statuses) {
+      const node = treeNodeMap.value[item.path];
+      if (node) node.entry = { ...node.entry, gitStatus: item.status };
+    }
+  } catch {
+    // Statuses are advisory; directory browsing remains usable when Git is slow/unavailable.
+  }
+}
+
 function clearPreviewState() {
   previewRequestToken += 1;
   previewPath.value = '';
@@ -728,6 +748,7 @@ async function handleRefresh() {
   try {
     const result = await fileManagerStore.refreshProject(props.projectId);
     syncTreeFromList(result);
+    void loadDirectoryStatuses(result);
     if (isSearchActive.value) {
       void runSearch();
     }
@@ -746,6 +767,7 @@ async function handleNavigate(path: string) {
       path,
     });
     syncTreeFromList(result);
+    void loadDirectoryStatuses(result);
     selectedPaths.value = [];
     clearPreviewState();
   } catch (error) {
@@ -765,6 +787,7 @@ async function handleScopeChange(scopeId: string | null) {
       path: '',
     });
     syncTreeFromList(result);
+    void loadDirectoryStatuses(result);
     selectedPaths.value = [];
     clearPreviewState();
     clearSearchState();
@@ -920,6 +943,7 @@ async function toggleTreeNode(node: VisibleTreeNode) {
   try {
     const result = await fileManagerApi.list(props.projectId, activeScope.value.id, state.path);
     upsertTreeNodes(result.entries, state.path);
+    void loadDirectoryStatuses(result);
   } catch {
     state.loading = false;
   }

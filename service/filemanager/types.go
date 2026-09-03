@@ -80,6 +80,17 @@ type ListResult struct {
 	Entries     []Entry      `json:"entries"`
 }
 
+type EntryStatus struct {
+	Path   string     `json:"path"`
+	Status *GitStatus `json:"status"`
+}
+
+type StatusesResult struct {
+	Scope       Scope         `json:"scope"`
+	CurrentPath string        `json:"currentPath"`
+	Statuses    []EntryStatus `json:"statuses"`
+}
+
 type SearchResult struct {
 	Scope       Scope   `json:"scope"`
 	CurrentPath string  `json:"currentPath"`

@@ -78,6 +78,24 @@ func ListFileStatusesFastContext(ctx context.Context, path string, includeUntrac
 	return listFileStatusesLimitedContext(ctx, path, includeUntracked, maxEntries, true)
 }
 
+// ListFileStatusesForPathsContext checks only the supplied repository-relative paths.
+// It is intended for file browser badges and must not walk unrelated directories.
+func ListFileStatusesForPathsContext(ctx context.Context, root string, paths []string, includeUntracked bool) (map[string]FileStatus, error) {
+	if len(paths) == 0 {
+		return map[string]FileStatus{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if systemGitRepositoryAvailable(ctx, root) {
+		return listFileStatusesSystemPaths(ctx, root, paths, includeUntracked)
+	}
+	// The built-in engine has no pathspec primitive. Do not fall back to a
+	// repository-wide scan here; callers can still browse immediately and the
+	// dedicated Changes view provides full status details.
+	return map[string]FileStatus{}, nil
+}
+
 func listFileStatusesLimitedContext(ctx context.Context, path string, includeUntracked bool, maxEntries int, fast bool) (FileStatusResult, error) {
 	if ctx == nil {
 		ctx = context.Background()

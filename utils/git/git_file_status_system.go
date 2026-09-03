@@ -44,6 +44,24 @@ func listFileStatusesSystem(ctx context.Context, path string, includeUntracked b
 	return result, nil
 }
 
+func listFileStatusesSystemPaths(ctx context.Context, root string, paths []string, includeUntracked bool) (map[string]FileStatus, error) {
+	untracked := "--untracked-files=no"
+	if includeUntracked {
+		untracked = "--untracked-files=all"
+	}
+	args := []string{"--no-optional-locks", "status", "--porcelain=v1", "-z", untracked, "--no-renames", "--"}
+	for _, path := range paths {
+		if normalized := normalizeGitRelativePath(path); normalized != "" {
+			args = append(args, normalized)
+		}
+	}
+	output, err := runSystemGitOutput(ctx, root, OperationStatus, args...)
+	if err != nil {
+		return nil, err
+	}
+	return parseSystemFileStatuses(output), nil
+}
+
 func parseSystemFileStatuses(output []byte) map[string]FileStatus {
 	result := make(map[string]FileStatus)
 	records := bytes.Split(output, []byte{0})

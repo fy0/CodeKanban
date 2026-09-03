@@ -239,7 +239,6 @@ func (s *Service) List(ctx context.Context, projectID, scopeID, currentPath stri
 		return nil, err
 	}
 
-	gitStatuses := s.loadGitStatuses(scope.RootPath)
 	items := make([]Entry, 0, len(entries))
 	for _, entry := range entries {
 		name := strings.TrimSpace(entry.Name())
@@ -254,10 +253,25 @@ func (s *Service) List(ctx context.Context, projectID, scopeID, currentPath stri
 			continue
 		}
 
-		items = append(items, buildFileManagerEntry(relativePath, lstat, gitStatuses))
+		items = append(items, buildFileManagerEntry(relativePath, lstat, nil))
 	}
 
 	sortEntriesByName(items)
+	if git.IsRepositoryPath(scope.RootPath) {
+		paths := make([]string, 0, len(items))
+		for _, item := range items {
+			if item.Kind != EntryKindDirectory {
+				paths = append(paths, item.Path)
+			}
+		}
+		if statuses, statusErr := git.ListFileStatusesForPathsContext(ctx, scope.RootPath, paths, true); statusErr == nil {
+			for i := range items {
+				if status, ok := statuses[items[i].Path]; ok {
+					items[i].GitStatus = &GitStatus{Kind: GitStatusKind(status.Kind), PreviousPath: status.PreviousPath}
+				}
+			}
+		}
+	}
 
 	return &ListResult{
 		Scope:       scope,
@@ -266,6 +280,46 @@ func (s *Service) List(ctx context.Context, projectID, scopeID, currentPath stri
 		Breadcrumbs: buildBreadcrumbs(normalizedPath),
 		Entries:     items,
 	}, nil
+}
+
+// ListStatuses returns Git statuses for files directly inside currentPath.
+// Directory descendants are intentionally excluded from this operation.
+func (s *Service) ListStatuses(ctx context.Context, projectID, scopeID, currentPath string) (*StatusesResult, error) {
+	scope, err := s.scopeByID(ctx, projectID, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	normalizedPath, absPath, info, err := s.resolveExisting(scope, currentPath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("target path is not a directory")
+	}
+	entries, err := os.ReadDir(absPath)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Name() == "" || entry.Name() == ".git" || entry.IsDir() {
+			continue
+		}
+		paths = append(paths, joinRelativePath(normalizedPath, entry.Name()))
+	}
+	statuses := map[string]git.FileStatus{}
+	if git.IsRepositoryPath(scope.RootPath) {
+		statuses, err = git.ListFileStatusesForPathsContext(ctx, scope.RootPath, paths, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	result := &StatusesResult{Scope: scope, CurrentPath: toSlashPath(normalizedPath), Statuses: []EntryStatus{}}
+	for path, status := range statuses {
+		result.Statuses = append(result.Statuses, EntryStatus{Path: toSlashPath(path), Status: &GitStatus{Kind: GitStatusKind(status.Kind), PreviousPath: status.PreviousPath}})
+	}
+	sort.Slice(result.Statuses, func(i, j int) bool { return result.Statuses[i].Path < result.Statuses[j].Path })
+	return result, nil
 }
 
 func (s *Service) Search(ctx context.Context, projectID, scopeID, currentPath, query string, useRegex bool) (*SearchResult, error) {
@@ -296,7 +350,6 @@ func (s *Service) Search(ctx context.Context, projectID, scopeID, currentPath, q
 		return result, nil
 	}
 
-	gitStatuses := s.loadGitStatuses(scope.RootPath)
 	walkErr := filepath.WalkDir(absPath, func(path string, entry fs.DirEntry, walkErr error) error {
 		select {
 		case <-ctx.Done():
@@ -345,7 +398,7 @@ func (s *Service) Search(ctx context.Context, projectID, scopeID, currentPath, q
 		if err != nil {
 			return nil
 		}
-		result.Entries = append(result.Entries, buildFileManagerEntry(relativePath, lstat, gitStatuses))
+		result.Entries = append(result.Entries, buildFileManagerEntry(relativePath, lstat, nil))
 		return nil
 	})
 	if walkErr != nil && !errors.Is(walkErr, errSearchResultLimitHit) {
@@ -374,7 +427,7 @@ func (s *Service) Preview(ctx context.Context, projectID, scopeID, path string) 
 	if err != nil {
 		return nil, err
 	}
-	entry.GitStatus = buildEntryGitStatus(entry, s.loadGitStatuses(scope.RootPath))
+	entry.GitStatus = nil
 
 	result := &PreviewResult{
 		Entry:       entry,

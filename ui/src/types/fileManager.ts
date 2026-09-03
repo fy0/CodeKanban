@@ -56,6 +56,17 @@ export interface FileManagerListResult {
   entries: FileManagerEntry[];
 }
 
+export interface FileManagerEntryStatus {
+  path: string;
+  status: FileManagerGitStatus;
+}
+
+export interface FileManagerStatusesResult {
+  scope: FileManagerScope;
+  currentPath: string;
+  statuses: FileManagerEntryStatus[];
+}
+
 export interface FileManagerSearchResult {
   scope: FileManagerScope;
   currentPath: string;
