@@ -562,9 +562,10 @@ func (c *piRPCClient) handleLine(line []byte) error {
 }
 
 func (c *piRPCClient) wait() {
-	err := c.cmd.Wait()
+	// StdoutPipe and StderrPipe must be fully drained before Wait closes them.
 	<-c.readerDone
 	<-c.stderrDone
+	err := c.cmd.Wait()
 	if err != nil {
 		processErr := fmt.Errorf("Pi RPC process exited: %w", err)
 		if stderr := strings.TrimSpace(c.Stderr()); stderr != "" {
