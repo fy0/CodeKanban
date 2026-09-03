@@ -1798,7 +1798,11 @@
                           size="small"
                           :placeholder="t('webSession.modelSearchPlaceholder')"
                           :aria-label="t('webSession.modelSearchPlaceholder')"
-                          @keydown.esc.stop="handleModelSelectorShowChange(false)"
+                          @focus="handlePiModelSearchFocus"
+                          @blur="handlePiModelSearchBlur"
+                          @compositionstart="handlePiModelSearchCompositionStart"
+                          @compositionend="handlePiModelSearchCompositionEnd"
+                          @keydown.esc.stop="handlePiModelSearchEscape"
                         >
                           <template #prefix>
                             <n-icon size="15" aria-hidden="true"><SearchOutline /></n-icon>
@@ -3334,7 +3338,10 @@ import {
   isWebSessionDevMode,
   shouldShowCyberPolicyWarning,
 } from '@/components/web-session/webSessionDevMode';
-import { resolveWebSessionAgentCapability } from '@/components/web-session/webSessionAgentCapabilities';
+import {
+  isPiRuntimeCapabilityPending,
+  resolveWebSessionAgentCapability,
+} from '@/components/web-session/webSessionAgentCapabilities';
 import { isWebSessionLatestPlanActionable } from '@/components/web-session/webSessionPlanState';
 import {
   buildWebSessionComposerPastePlan,
@@ -3370,6 +3377,7 @@ import {
   filterPiModelOptionGroups,
   rememberPiFrequentModel,
   resolveCodexReasoningEfforts,
+  shouldSuppressPiModelMenuClose,
   resolvePiModelOptionGroups,
   resolvePiModelOptions,
   resolvePiPrimaryModelOptions,
@@ -4292,8 +4300,8 @@ const runtimeCapabilityFor = (agent: WebSessionAgent) =>
 const runtimeCodexCapability = computed(() => runtimeCapabilityFor('codex'));
 const runtimeClaudeCapability = computed(() => runtimeCapabilityFor('claude'));
 const runtimePiCapability = computed(() => runtimeCapabilityFor('pi'));
-const runtimeCapabilitiesLoading = computed(
-  () => !codexRuntimeConfigReady.value || runtimeConfig.value?.capabilitiesRefreshing === true
+const piRuntimeCapabilitiesLoading = computed(() =>
+  isPiRuntimeCapabilityPending(codexRuntimeConfigReady.value, runtimeConfig.value)
 );
 const piUnavailableReason = computed(() => {
   const config = runtimeConfig.value;
@@ -6756,7 +6764,7 @@ const composerHint = computed(() => {
   if (codexRuntimeConfig.value && selectedAgent.value === 'claude' && !runtimeHasClaudeCode.value) {
     return t('webSession.composerHintClaudeMissing');
   }
-  if (selectedAgent.value === 'pi' && runtimeCapabilitiesLoading.value) {
+  if (selectedAgent.value === 'pi' && piRuntimeCapabilitiesLoading.value) {
     return t('webSession.composerHintPiChecking');
   }
   if (selectedAgent.value === 'pi' && !runtimePiCapability.value.supportsWebSession) {
@@ -10128,6 +10136,8 @@ const keepAdditionalCodexModelsForNextOpen = ref(false);
 const keepAllPiModelsForNextOpen = ref(false);
 const piModelSearchQuery = ref('');
 const piModelSearchInputRef = ref<InstanceType<typeof NInput> | null>(null);
+const piModelSearchFocused = ref(false);
+const piModelSearchComposing = ref(false);
 const piFrequentModelValues = useStorage<string[]>('codekanban-web-session-pi-frequent-models', []);
 type ComposerHoverSelector = 'model' | 'reasoning';
 const COMPOSER_SELECTOR_HOVER_CLOSE_DELAY = 120;
@@ -10180,7 +10190,7 @@ const agentDropdownOptions = computed<DropdownOption[]>(() =>
       option.value === 'codex' && isCodexCompatibilityMode.value
         ? t('webSession.codexCompatibilityAgentLabel')
         : option.value === 'pi' &&
-            !runtimeCapabilitiesLoading.value &&
+            !piRuntimeCapabilitiesLoading.value &&
             !runtimePiCapability.value.supportsWebSession
           ? piUnavailableAgentLabel.value
           : option.label,
@@ -10445,20 +10455,75 @@ function withCurrentReasoningEffortOption(
   ];
 }
 
+function piModelMenuInteractionState() {
+  return {
+    catalogOpen: selectedAgent.value === 'pi' && showAllPiModels.value,
+    searchFocused: piModelSearchFocused.value,
+    searchComposing: piModelSearchComposing.value,
+  };
+}
+
+function resetPiModelSearchInteraction() {
+  piModelSearchFocused.value = false;
+  piModelSearchComposing.value = false;
+}
+
+function refocusPiModelSearch() {
+  if (selectedAgent.value === 'pi' && showAllPiModels.value) {
+    nextTick(() => piModelSearchInputRef.value?.focus());
+  }
+}
+
+function handlePiModelSearchFocus() {
+  piModelSearchFocused.value = true;
+  clearComposerSelectorHoverCloseTimer('model');
+}
+
+function handlePiModelSearchBlur() {
+  if (!piModelSearchComposing.value) {
+    piModelSearchFocused.value = false;
+  }
+}
+
+function handlePiModelSearchCompositionStart() {
+  piModelSearchFocused.value = true;
+  piModelSearchComposing.value = true;
+  clearComposerSelectorHoverCloseTimer('model');
+}
+
+function handlePiModelSearchCompositionEnd() {
+  piModelSearchComposing.value = false;
+  piModelSearchFocused.value = true;
+  refocusPiModelSearch();
+}
+
+function handlePiModelSearchEscape(event: KeyboardEvent) {
+  if (event.isComposing || piModelSearchComposing.value) {
+    return;
+  }
+  handleModelSelectorShowChange(false);
+}
+
 function handleModelSelectorShowChange(show: boolean) {
+  if (!show && shouldSuppressPiModelMenuClose('show-change', piModelMenuInteractionState())) {
+    return;
+  }
   if (show && selectedAgent.value === 'codex' && !keepAdditionalCodexModelsForNextOpen.value) {
     showAdditionalCodexModels.value = false;
   }
   if (show && selectedAgent.value === 'pi' && !keepAllPiModelsForNextOpen.value) {
     showAllPiModels.value = false;
     piModelSearchQuery.value = '';
+    resetPiModelSearchInteraction();
   }
   if (show) {
     keepAdditionalCodexModelsForNextOpen.value = false;
     keepAllPiModelsForNextOpen.value = false;
     if (selectedAgent.value === 'pi' && showAllPiModels.value) {
-      nextTick(() => piModelSearchInputRef.value?.focus());
+      refocusPiModelSearch();
     }
+  } else {
+    resetPiModelSearchInteraction();
   }
   showModelSelector.value = show;
 }
@@ -10498,6 +10563,12 @@ function handleComposerSelectorPointerLeave(selector: ComposerHoverSelector) {
     return;
   }
   clearComposerSelectorHoverCloseTimer(selector);
+  if (
+    selector === 'model' &&
+    shouldSuppressPiModelMenuClose('pointer-leave', piModelMenuInteractionState())
+  ) {
+    return;
+  }
   composerSelectorHoverCloseTimers[selector] = window.setTimeout(() => {
     composerSelectorHoverCloseTimers[selector] = null;
     setComposerSelectorShow(selector, false);
@@ -16152,6 +16223,7 @@ onBeforeUnmount(() => {
   clearRuntimeConfigRetry();
   clearComposerSelectorHoverCloseTimer('model');
   clearComposerSelectorHoverCloseTimer('reasoning');
+  resetPiModelSearchInteraction();
   if (!pendingTimelinePositionRestore.value) {
     captureTimelinePosition(props.projectId, currentSession.value?.id ?? '', true);
   }

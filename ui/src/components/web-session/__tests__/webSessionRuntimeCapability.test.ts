@@ -22,9 +22,22 @@ describe('webSession runtime capability guards', () => {
     expect(webSessionPanelSource).toContain("t('webSession.composerHintCodexMissing')");
     expect(webSessionPanelSource).toContain("t('webSession.composerHintClaudeMissing')");
     expect(webSessionPanelSource).toContain("t('webSession.composerHintPiChecking')");
-    expect(webSessionPanelSource).toContain('runtimeCapabilitiesLoading');
+    expect(webSessionPanelSource).toContain('piRuntimeCapabilitiesLoading');
     expect(webSessionPanelSource).toContain('codexCompatibilityModeMessage()');
     expect(webSessionPanelSource).toContain('isCodexCompatibilityMode');
+  });
+
+  it('protects the full Pi model search during IME composition', () => {
+    expect(webSessionPanelSource).toContain(
+      '@compositionstart="handlePiModelSearchCompositionStart"'
+    );
+    expect(webSessionPanelSource).toContain('@compositionend="handlePiModelSearchCompositionEnd"');
+    expect(webSessionPanelSource).toContain(
+      "shouldSuppressPiModelMenuClose('show-change', piModelMenuInteractionState())"
+    );
+    expect(webSessionPanelSource).toContain(
+      "shouldSuppressPiModelMenuClose('pointer-leave', piModelMenuInteractionState())"
+    );
   });
 
   it('keeps pre-V2 Codex versions usable in compatibility mode', () => {

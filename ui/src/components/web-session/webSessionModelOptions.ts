@@ -35,6 +35,25 @@ export const CUSTOM_MODEL_VALUE = '__custom_model__';
 export const MORE_MODELS_VALUE = '__more_models__';
 export const PI_FREQUENT_MODEL_LIMIT = 6;
 
+export type PiModelMenuCloseSource = 'show-change' | 'pointer-leave';
+
+export function shouldSuppressPiModelMenuClose(
+  source: PiModelMenuCloseSource,
+  state: {
+    catalogOpen: boolean;
+    searchFocused: boolean;
+    searchComposing: boolean;
+  }
+) {
+  if (!state.catalogOpen) {
+    return false;
+  }
+  if (source === 'pointer-leave') {
+    return state.searchFocused || state.searchComposing;
+  }
+  return state.searchComposing;
+}
+
 const PI_PRIMARY_MODEL_ID_ORDER = [
   'gpt-5.4',
   'gpt-5.5',

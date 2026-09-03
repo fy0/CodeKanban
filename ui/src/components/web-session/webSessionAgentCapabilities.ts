@@ -25,6 +25,22 @@ function unavailableCapability(): WebSessionAgentCapability {
   };
 }
 
+export function isPiRuntimeCapabilityPending(
+  configReady: boolean,
+  config: WebSessionRuntimeConfig | null | undefined
+) {
+  if (!configReady) {
+    return true;
+  }
+  if (!config || config.capabilitiesRefreshing !== true) {
+    return false;
+  }
+  if (resolveWebSessionAgentCapability(config, 'pi').supportsWebSession) {
+    return false;
+  }
+  return !String(config.piDiagnostics ?? '').trim();
+}
+
 export function resolveWebSessionAgentCapability(
   config: WebSessionRuntimeConfig | null | undefined,
   agent: WebSessionAgent

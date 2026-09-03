@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveWebSessionAgentCapability } from '../webSessionAgentCapabilities';
+import {
+  isPiRuntimeCapabilityPending,
+  resolveWebSessionAgentCapability,
+} from '../webSessionAgentCapabilities';
 import type { WebSessionRuntimeConfig } from '@/types/models';
 
 function legacyRuntimeConfig(): WebSessionRuntimeConfig {
@@ -42,6 +45,29 @@ describe('web session agent capabilities', () => {
     expect(capability.installed).toBe(true);
     expect(capability.supportsTree).toBe(true);
     expect(capability.permissionModes).toEqual([{ id: 'unrestricted', available: true }]);
+  });
+
+  it('tracks only unresolved Pi capability probes as pending', () => {
+    const config = legacyRuntimeConfig();
+
+    expect(isPiRuntimeCapabilityPending(false, null)).toBe(true);
+    expect(isPiRuntimeCapabilityPending(true, null)).toBe(false);
+
+    config.capabilitiesRefreshing = true;
+    expect(isPiRuntimeCapabilityPending(true, config)).toBe(true);
+
+    config.piDiagnostics = 'not_installed';
+    expect(isPiRuntimeCapabilityPending(true, config)).toBe(false);
+
+    config.piDiagnostics = '';
+    config.hasPi = true;
+    config.supportsPiWebSession = true;
+    expect(isPiRuntimeCapabilityPending(true, config)).toBe(false);
+
+    config.hasPi = false;
+    config.supportsPiWebSession = false;
+    config.capabilitiesRefreshing = false;
+    expect(isPiRuntimeCapabilityPending(true, config)).toBe(false);
   });
 
   it('keeps old services compatible through legacy top-level fields', () => {

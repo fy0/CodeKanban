@@ -23,6 +23,7 @@ const (
 	piMinVersion             = "0.84.1"
 	piProbeSuccessCacheTTL   = 5 * time.Minute
 	piProbeFailureCacheTTL   = time.Minute
+	piVersionProbeTimeout    = 5 * time.Second
 	piProbeTimeout           = 5 * time.Second
 	piProbeMaxFrameBytes     = 1024 * 1024
 	piDiagnosticNotInstalled = "not_installed"
@@ -279,7 +280,11 @@ func loadPiModelCatalog(ctx context.Context, command, workingDir string) ([]PiMo
 }
 
 func detectPiVersion(command string) *string {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	return detectPiVersionWithTimeout(command, piVersionProbeTimeout)
+}
+
+func detectPiVersionWithTimeout(command string, timeout time.Duration) *string {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd, err := buildPiCommand(ctx, command, "--version")
 	if err != nil {

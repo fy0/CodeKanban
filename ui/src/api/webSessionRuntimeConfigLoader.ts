@@ -9,7 +9,8 @@ type RuntimeConfigFlight<T> = {
 
 export function createRuntimeConfigRequestLoader<T>(
   ttlMs: number,
-  now: () => number = () => Date.now()
+  now: () => number = () => Date.now(),
+  shouldCache: (value: T) => boolean = () => true
 ) {
   let cached: { value: T; expiresAt: number } | null = null;
   let flight: RuntimeConfigFlight<T> | null = null;
@@ -35,10 +36,12 @@ export function createRuntimeConfigRequestLoader<T>(
     const request = Promise.resolve()
       .then(() => fetchConfig(force))
       .then(value => {
-        cached = {
-          value,
-          expiresAt: now() + Math.max(0, ttlMs),
-        };
+        cached = shouldCache(value)
+          ? {
+              value,
+              expiresAt: now() + Math.max(0, ttlMs),
+            }
+          : null;
         return value;
       })
       .finally(() => {

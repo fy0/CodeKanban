@@ -18,6 +18,7 @@ import {
   resolvePiModelOptions,
   resolvePiPrimaryModelOptions,
   resolvePiReasoningEfforts,
+  shouldSuppressPiModelMenuClose,
 } from '@/components/web-session/webSessionModelOptions';
 
 describe('webSessionModelOptions', () => {
@@ -243,6 +244,37 @@ describe('webSessionModelOptions', () => {
         .map(option => option.value)
         .filter(value => value.startsWith('custom/'))
     ).toEqual(frequentValues.slice(0, 6));
+  });
+
+  it('keeps the Pi catalog open for IME composition without blocking explicit closes', () => {
+    expect(
+      shouldSuppressPiModelMenuClose('show-change', {
+        catalogOpen: true,
+        searchFocused: true,
+        searchComposing: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldSuppressPiModelMenuClose('pointer-leave', {
+        catalogOpen: true,
+        searchFocused: true,
+        searchComposing: false,
+      })
+    ).toBe(true);
+    expect(
+      shouldSuppressPiModelMenuClose('show-change', {
+        catalogOpen: true,
+        searchFocused: true,
+        searchComposing: false,
+      })
+    ).toBe(false);
+    expect(
+      shouldSuppressPiModelMenuClose('pointer-leave', {
+        catalogOpen: false,
+        searchFocused: true,
+        searchComposing: true,
+      })
+    ).toBe(false);
   });
 
   it('filters the full Pi catalog by provider, model name, or model id', () => {
