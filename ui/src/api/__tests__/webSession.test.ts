@@ -71,6 +71,37 @@ describe('webSessionApi.runtimeConfig', () => {
   });
 });
 
+describe('webSessionApi.querySessions', () => {
+  it('requests one globally paginated list for the project scope', async () => {
+    postMethodMock.mockClear();
+    postSendMock.mockReset();
+    postSendMock.mockResolvedValueOnce({
+      item: {
+        items: [{ id: 'session-1', projectId: 'project-2' }],
+        total: 41,
+        hasMore: true,
+        nextOffset: 40,
+      },
+    });
+
+    const result = await webSessionApi.querySessions({
+      projectIds: ['project-1', 'project-2'],
+      archived: false,
+      offset: 0,
+      limit: 100,
+    });
+
+    expect(postMethodMock).toHaveBeenCalledTimes(1);
+    expect(postMethodMock).toHaveBeenCalledWith('/web-sessions/query', {
+      projectIds: ['project-1', 'project-2'],
+      archived: false,
+      offset: 0,
+      limit: 100,
+    });
+    expect(result).toMatchObject({ total: 41, hasMore: true, nextOffset: 40 });
+  });
+});
+
 describe('webSessionApi.search', () => {
   beforeEach(() => {
     postMethodMock.mockClear();

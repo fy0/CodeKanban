@@ -457,6 +457,38 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
 }
 
+.item-bubble.is-continuable-recovery {
+  cursor: pointer;
+}
+
+.item-bubble.is-continuable-recovery:hover {
+  border-color: color-mix(in srgb, var(--n-primary-color) 38%, var(--n-border-color));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--app-shadow, #0f172a) 12%, transparent);
+}
+
+.item-bubble.is-continuable-recovery:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--n-primary-color) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.item-bubble.is-continuing-recovery {
+  cursor: wait;
+}
+
+.restart-recovery-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--n-primary-color);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.restart-recovery-action .is-spinning {
+  animation: user-message-retry-spin 0.8s linear infinite;
+}
+
 .timeline-item.kind-user .item-bubble {
   background: color-mix(
     in srgb,
@@ -1728,11 +1760,16 @@
 }
 
 .goal-card {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  flex-shrink: 1;
   gap: 10px;
+  min-height: 0;
+  max-height: min(50dvh, 520px);
   margin: 0 12px 16px;
   padding: 12px;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
   border-radius: 14px;
   background:
@@ -1762,6 +1799,7 @@
 }
 
 .goal-card-header {
+  flex-shrink: 0;
   justify-content: space-between;
   flex-wrap: wrap;
 }
@@ -1793,17 +1831,42 @@
 .goal-card-body {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   gap: 8px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .goal-objective {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-right: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   line-height: 1.55;
   font-size: 13px;
   color: var(--app-text-color, var(--n-text-color-1, #111827));
 }
 
+.goal-objective::-webkit-scrollbar {
+  width: 6px;
+}
+
+.goal-objective::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.goal-objective::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--n-text-color-3) 58%, transparent);
+}
+
 .goal-meta-row {
+  flex-shrink: 0;
   flex-wrap: wrap;
   font-size: 12px;
   color: var(--n-text-color-3);

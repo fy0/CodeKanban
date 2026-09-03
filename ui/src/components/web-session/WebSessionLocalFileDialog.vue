@@ -32,6 +32,17 @@
           {{ t('webSession.localFileOpenLocation') }}
         </n-button>
         <n-button
+          secondary
+          :loading="action === 'open-file-view'"
+          :disabled="Boolean(action)"
+          @click="emit('open-file-view')"
+        >
+          <template #icon>
+            <n-icon><DocumentTextOutline /></n-icon>
+          </template>
+          {{ t('webSession.localFileOpenInFileView') }}
+        </n-button>
+        <n-button
           type="primary"
           :loading="action === 'download'"
           :disabled="Boolean(action)"
@@ -48,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { DownloadOutline, FolderOpenOutline } from '@vicons/ionicons5';
+import { DocumentTextOutline, DownloadOutline, FolderOpenOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 
 type WebSessionLocalFileDialogTarget = {
@@ -56,7 +67,7 @@ type WebSessionLocalFileDialogTarget = {
   path: string;
 };
 
-type WebSessionLocalFileAction = '' | 'download' | 'open-location';
+type WebSessionLocalFileAction = '' | 'download' | 'open-file-view' | 'open-location';
 
 defineProps<{
   show: boolean;
@@ -66,6 +77,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (event: 'update:show', show: boolean): void;
+  (event: 'open-file-view'): void;
   (event: 'open-location'): void;
   (event: 'download'): void;
 }>();
@@ -126,6 +138,10 @@ const { t } = useLocale();
   }
 
   .local-file-modal-footer :deep(.n-button:first-child) {
+    grid-column: 1 / -1;
+  }
+
+  .local-file-modal-footer :deep(.n-button:last-child) {
     grid-column: 1 / -1;
   }
 }

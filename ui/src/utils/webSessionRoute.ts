@@ -68,6 +68,94 @@ export function isWebSessionRouteQuerySynced(
   return getWebSessionRouteSessionId(query) === normalizeWebSessionRouteSessionId(sessionId);
 }
 
+export type WebSessionRouteSnapshotBudgetOptions = {
+  now?: () => number;
+  retryBaseDelayMs?: number;
+  maxAttemptsPerWindow?: number;
+  attemptWindowMs?: number;
+};
+
+type WebSessionRouteSnapshotAttempt = {
+  count: number;
+  retryAfter: number;
+  windowStartedAt: number;
+};
+
+const DEFAULT_ROUTE_SNAPSHOT_RETRY_BASE_DELAY_MS = 5_000;
+const DEFAULT_ROUTE_SNAPSHOT_MAX_ATTEMPTS_PER_WINDOW = 3;
+const DEFAULT_ROUTE_SNAPSHOT_ATTEMPT_WINDOW_MS = 30_000;
+
+function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : fallback;
+}
+
+export function createWebSessionRouteSnapshotBudget(
+  options: WebSessionRouteSnapshotBudgetOptions = {}
+) {
+  const attempts = new Map<string, WebSessionRouteSnapshotAttempt>();
+  const now = options.now ?? Date.now;
+  const retryBaseDelayMs = normalizeNonNegativeInteger(
+    options.retryBaseDelayMs,
+    DEFAULT_ROUTE_SNAPSHOT_RETRY_BASE_DELAY_MS
+  );
+  const maxAttemptsPerWindow = Math.max(
+    1,
+    normalizeNonNegativeInteger(
+      options.maxAttemptsPerWindow,
+      DEFAULT_ROUTE_SNAPSHOT_MAX_ATTEMPTS_PER_WINDOW
+    )
+  );
+  const attemptWindowMs = Math.max(
+    1,
+    normalizeNonNegativeInteger(options.attemptWindowMs, DEFAULT_ROUTE_SNAPSHOT_ATTEMPT_WINDOW_MS)
+  );
+
+  function key(projectId: string, sessionId: string): string {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = normalizeWebSessionRouteSessionId(sessionId);
+    return normalizedProjectId && normalizedSessionId
+      ? `${normalizedProjectId}\u0000${normalizedSessionId}`
+      : '';
+  }
+
+  return {
+    tryAcquire(projectId: string, sessionId: string): boolean {
+      const attemptKey = key(projectId, sessionId);
+      if (!attemptKey) {
+        return false;
+      }
+      const timestamp = now();
+      let previous = attempts.get(attemptKey);
+      if (previous && timestamp - previous.windowStartedAt >= attemptWindowMs) {
+        attempts.delete(attemptKey);
+        previous = undefined;
+      }
+      if (previous && (previous.count >= maxAttemptsPerWindow || timestamp < previous.retryAfter)) {
+        return false;
+      }
+
+      const count = (previous?.count ?? 0) + 1;
+      const delay = retryBaseDelayMs * 2 ** Math.min(Math.max(0, count - 1), 6);
+      attempts.set(attemptKey, {
+        count,
+        retryAfter: timestamp + delay,
+        windowStartedAt: previous?.windowStartedAt ?? timestamp,
+      });
+      return true;
+    },
+
+    markResolved(projectId: string, sessionId: string) {
+      attempts.delete(key(projectId, sessionId));
+    },
+
+    clear() {
+      attempts.clear();
+    },
+  };
+}
+
 function normalizeRouteText(value: unknown): string {
   if (Array.isArray(value)) {
     for (const item of value) {

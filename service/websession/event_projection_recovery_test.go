@@ -161,12 +161,12 @@ func TestNewManagerRecoversInterruptedSessionPastUnprojectedTail(t *testing.T) {
 	if record.Status != string(StatusIdle) || record.LastEventSeq != 2 {
 		t.Fatalf("recovered session status=%q seq=%d, want idle seq=2", record.Status, record.LastEventSeq)
 	}
-	events, err := manager.History(context.Background(), session.ID, 10, nil)
+	events, err := manager.store.readEvents(session.ID)
 	if err != nil {
-		t.Fatalf("History returned error: %v", err)
+		t.Fatalf("readEvents returned error: %v", err)
 	}
-	if len(events.Events) != 2 || events.Events[0].ID != "evt-unprojected" || events.Events[1].Type != "run_abort" {
-		t.Fatalf("durable history after interrupted recovery = %#v", events.Events)
+	if len(events) != 2 || events[0].ID != "evt-unprojected" || events[1].Type != "run_abort" {
+		t.Fatalf("durable history after interrupted recovery = %#v", events)
 	}
 	window, err := manager.loadHistoryWindow(context.Background(), session.ID, 10, nil)
 	if err != nil {

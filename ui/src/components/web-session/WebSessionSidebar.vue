@@ -126,6 +126,7 @@
         :item-size="WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE"
         item-resizable
         key-field="key"
+        @scroll="handleScroll"
       >
         <template #default="{ item }">
           <div
@@ -231,6 +232,7 @@ const emit = defineEmits<{
   (event: 'select-session', item: WebSessionSidebarVirtualItem<CrossProjectSessionItem>): void;
   (event: 'session-action', key: string | number, item: CrossProjectSessionItem): void;
   (event: 'load-more'): void;
+  (event: 'reach-end'): void;
 }>();
 
 const rootElement = ref<HTMLElement | null>(null);
@@ -240,6 +242,13 @@ function sessionGroupToggleLabel(label: string, collapsed: boolean) {
   return collapsed
     ? t('webSession.sessionGroupExpand', { label })
     : t('webSession.sessionGroupCollapse', { label });
+}
+
+function handleScroll(event: Event) {
+  const target = event.currentTarget as HTMLElement | null;
+  if (target && target.scrollTop + target.clientHeight >= target.scrollHeight - 160) {
+    emit('reach-end');
+  }
 }
 
 defineExpose({ rootElement });

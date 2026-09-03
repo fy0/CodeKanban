@@ -1081,6 +1081,9 @@ func (m *Manager) startOrResumeCodexThread(
 		"native_session_id": threadID,
 		"updated_at":        time.Now(),
 	}
+	if !resumedThread && normalizeSessionStartSource(SessionStartSource(session.SessionStartSource)) == SessionStartSourceClear {
+		updates["session_start_source"] = string(SessionStartSourceStartup)
+	}
 	if threadPath != "" {
 		updates["thread_path"] = threadPath
 	}
@@ -2962,6 +2965,9 @@ func codexThreadStartParams(session tables.WebSessionTable, supportsMultiAgentV2
 	if supportsMultiAgentV2 {
 		params["historyMode"] = "paginated"
 		params["experimentalRawEvents"] = true
+		if normalizeSessionStartSource(SessionStartSource(session.SessionStartSource)) == SessionStartSourceClear {
+			params["sessionStartSource"] = string(SessionStartSourceClear)
+		}
 	} else {
 		params["persistExtendedHistory"] = true
 	}

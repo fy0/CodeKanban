@@ -40,12 +40,14 @@ export type WebSessionAttachmentUploadProgress = {
   percent: number | null;
 };
 
-export type ArchivedQueryResult = {
+export type SessionPageResult = {
   items: WebSessionSummary[];
   total: number;
   hasMore: boolean;
   nextOffset: number;
 };
+
+export type ArchivedQueryResult = SessionPageResult;
 
 export type SessionSearchChunkResult = {
   items: WebSessionSummary[];
@@ -951,21 +953,41 @@ export const webSessionApi = {
 
   async queryArchived(data: {
     projectIds: string[];
-    query?: string;
     offset?: number;
     limit?: number;
   }): Promise<ArchivedQueryResult> {
     const body =
       (await http
-        .Post<ItemResponse<ArchivedQueryResult>>('/web-sessions/archived/query', {
+        .Post<ItemResponse<ArchivedQueryResult>>('/web-sessions/query', {
           projectIds: data.projectIds,
-          query: data.query?.trim() || undefined,
+          archived: true,
           offset: data.offset ?? 0,
-          limit: data.limit ?? 20,
+          limit: data.limit ?? 100,
         })
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to query archived AI sessions');
+    }
+    return body.item;
+  },
+
+  async querySessions(data: {
+    projectIds: string[];
+    archived: boolean;
+    offset?: number;
+    limit?: number;
+  }): Promise<SessionPageResult> {
+    const body =
+      (await http
+        .Post<ItemResponse<SessionPageResult>>('/web-sessions/query', {
+          projectIds: data.projectIds,
+          archived: data.archived,
+          offset: data.offset ?? 0,
+          limit: data.limit ?? 100,
+        })
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to query AI sessions');
     }
     return body.item;
   },

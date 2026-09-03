@@ -49,6 +49,13 @@ const (
 	WorkflowModePlan    WorkflowMode = "plan"
 )
 
+type SessionStartSource string
+
+const (
+	SessionStartSourceStartup SessionStartSource = "startup"
+	SessionStartSourceClear   SessionStartSource = "clear"
+)
+
 type PermissionLevel string
 
 const (
@@ -358,6 +365,13 @@ type SessionReconcileResult struct {
 	MissingIDs []string         `json:"missingIds"`
 }
 
+type SessionPageResult struct {
+	Items      []SessionSummary `json:"items"`
+	Total      int              `json:"total"`
+	HasMore    bool             `json:"hasMore"`
+	NextOffset int              `json:"nextOffset"`
+}
+
 type SessionGoal struct {
 	ThreadID        string     `json:"threadId"`
 	Objective       string     `json:"objective"`
@@ -367,13 +381,6 @@ type SessionGoal struct {
 	TimeUsedSeconds int64      `json:"timeUsedSeconds"`
 	CreatedAt       time.Time  `json:"createdAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
-}
-
-type ArchivedQueryResult struct {
-	Items      []SessionSummary `json:"items"`
-	Total      int              `json:"total"`
-	HasMore    bool             `json:"hasMore"`
-	NextOffset int              `json:"nextOffset"`
 }
 
 type SessionSearchChunkResult struct {
@@ -480,7 +487,6 @@ type HistoryItem struct {
 }
 
 type HistoryWindow struct {
-	Events       []Event       `json:"events,omitempty"`
 	Items        []HistoryItem `json:"items"`
 	HasMore      bool          `json:"hasMore"`
 	BeforeCursor string        `json:"beforeCursor,omitempty"`

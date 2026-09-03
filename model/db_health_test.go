@@ -89,7 +89,7 @@ func TestDatabasePathFromDSN(t *testing.T) {
 		empty bool
 	}{
 		{name: "memory", dsn: "file:test?mode=memory&cache=shared", empty: true},
-		{name: "file query", dsn: "./data/test.db?_busy_timeout=5000", want: "data\\test.db"},
+		{name: "file query", dsn: "./data/test.db?_busy_timeout=5000", want: filepath.Join("data", "test.db")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

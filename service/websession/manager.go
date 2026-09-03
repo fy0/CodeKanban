@@ -1174,16 +1174,16 @@ func (m *Manager) CountSessionsByProject(ctx context.Context) (map[string]int, e
 	return counts, nil
 }
 
-func (m *Manager) ListArchivedSessions(
+func (m *Manager) QuerySessions(
 	ctx context.Context,
 	projectIDs []string,
-	searchQuery string,
+	archived bool,
 	limit int,
 	offset int,
-) (ArchivedQueryResult, error) {
+) (SessionPageResult, error) {
 	db := model.GetReaderDB()
 	if db == nil {
-		return ArchivedQueryResult{}, model.ErrDBNotInitialized
+		return SessionPageResult{}, model.ErrDBNotInitialized
 	}
 
 	normalizedProjectIDs := make([]string, 0, len(projectIDs))
@@ -1200,35 +1200,26 @@ func (m *Manager) ListArchivedSessions(
 		normalizedProjectIDs = append(normalizedProjectIDs, trimmed)
 	}
 
-	if limit <= 0 {
-		limit = 20
+	query := db.WithContext(ctx).Model(&tables.WebSessionTable{})
+	if archived {
+		query = query.Where("archived_at IS NOT NULL")
+	} else {
+		query = query.Where("archived_at IS NULL")
 	}
-	if limit > 100 {
+	if len(normalizedProjectIDs) > 0 {
+		query = query.Where("project_id IN ?", normalizedProjectIDs)
+	}
+	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
 	}
 
-	query := db.WithContext(ctx).
-		Model(&tables.WebSessionTable{}).
-		Where("archived_at IS NOT NULL")
-	if len(normalizedProjectIDs) > 0 {
-		query = query.Where("project_id IN ?", normalizedProjectIDs)
-	}
-	if normalizedSearchQuery := strings.ToLower(strings.TrimSpace(searchQuery)); normalizedSearchQuery != "" {
-		query = query.Where(
-			"instr(lower(title), ?) > 0 OR instr(lower(coalesce(thread_preview, '')), ?) > 0",
-			normalizedSearchQuery,
-			normalizedSearchQuery,
-		)
-	}
-
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
-		return ArchivedQueryResult{}, err
+		return SessionPageResult{}, err
 	}
-
 	var records []tables.WebSessionTable
 	if err := query.
 		Order("activity_at DESC").
@@ -1236,7 +1227,7 @@ func (m *Manager) ListArchivedSessions(
 		Offset(offset).
 		Limit(limit).
 		Find(&records).Error; err != nil {
-		return ArchivedQueryResult{}, err
+		return SessionPageResult{}, err
 	}
 
 	contextConfig := m.cachedCodexSessionContextConfig()
@@ -1245,11 +1236,10 @@ func (m *Manager) ListArchivedSessions(
 		items = append(items, m.mapSessionSummaryWithContext(record, contextConfig))
 	}
 	if err := m.decorateScheduledPlanExecutionState(ctx, items); err != nil {
-		return ArchivedQueryResult{}, err
+		return SessionPageResult{}, err
 	}
-
 	nextOffset := offset + len(items)
-	return ArchivedQueryResult{
+	return SessionPageResult{
 		Items:      items,
 		Total:      int(total),
 		HasMore:    int64(nextOffset) < total,
@@ -1307,6 +1297,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		Model:                             modelName,
 		ReasoningEffort:                   string(reasoningEffort),
 		WorkflowMode:                      string(normalizeWorkflowMode(params.WorkflowMode)),
+		SessionStartSource:                string(SessionStartSourceStartup),
 		PermissionLevel:                   string(permissionLevel),
 		ActiveCallTimeoutEnabled:          params.ActiveCallTimeoutEnabled,
 		AutoRetryEnabled:                  params.AutoRetryEnabled,
@@ -2369,41 +2360,23 @@ func (m *Manager) pendingApprovalSnapshot(record tables.WebSessionTable) *Pendin
 }
 
 func (m *Manager) History(ctx context.Context, sessionID string, limit int, beforeSeq *int64) (HistoryWindow, error) {
-	record, err := m.GetSession(ctx, sessionID)
-	if err != nil {
+	if _, err := m.GetSession(ctx, sessionID); err != nil {
 		return HistoryWindow{}, err
 	}
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
-	window, err := m.loadHistoryWindow(ctx, sessionID, limit, beforeSeq)
-	if err != nil {
-		return HistoryWindow{}, err
-	}
-	projected, err := m.projectedHistoryWindow(record, limit, beforeSeq)
-	if err == nil {
-		window.Events = projected.Events
-	}
-	return window, nil
+	return m.loadHistoryWindow(ctx, sessionID, limit, beforeSeq)
 }
 
 func (m *Manager) HistoryAfter(ctx context.Context, sessionID string, limit int, afterSeq int64) (HistoryWindow, error) {
-	record, err := m.GetSession(ctx, sessionID)
-	if err != nil {
+	if _, err := m.GetSession(ctx, sessionID); err != nil {
 		return HistoryWindow{}, err
 	}
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
-	window, err := m.loadHistoryWindowAfter(ctx, sessionID, limit, afterSeq)
-	if err != nil {
-		return HistoryWindow{}, err
-	}
-	projected, err := m.projectedHistoryWindowAfter(record, limit, afterSeq)
-	if err == nil {
-		window.Events = projected.Events
-	}
-	return window, nil
+	return m.loadHistoryWindowAfter(ctx, sessionID, limit, afterSeq)
 }
 
 func (m *Manager) RenameSession(ctx context.Context, sessionID, title string) (SessionSummary, error) {
@@ -3244,6 +3217,41 @@ func (m *Manager) stopRunIfActive(sessionID string, timeout time.Duration) error
 	}
 }
 
+func (m *Manager) stopRunForFreshContext(sessionID string, timeout time.Duration) error {
+	m.mu.RLock()
+	run := m.runs[sessionID]
+	m.mu.RUnlock()
+	if run == nil {
+		return nil
+	}
+	if err := m.AbortSession(sessionID); err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-run.done:
+	case <-timer.C:
+		return fmt.Errorf("timed out waiting for session to stop")
+	}
+	for {
+		m.mu.RLock()
+		current := m.runs[sessionID]
+		m.mu.RUnlock()
+		if current != run {
+			return nil
+		}
+		select {
+		case <-timer.C:
+			return fmt.Errorf("timed out waiting for session to stop")
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
 func (m *Manager) AbortSession(sessionID string) error {
 	m.mu.RLock()
 	run, ok := m.runs[sessionID]
@@ -3298,6 +3306,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleConnectCommand(ctx, client, frame)
 	case "send":
 		return m.handleSendCommand(ctx, client, frame)
+	case "fresh_send":
+		return m.handleFreshContextSendCommand(ctx, client, frame)
 	case "compact":
 		return m.handleCompactCommand(ctx, client, frame)
 	case "tree_get":
@@ -4199,9 +4209,37 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
+func (m *Manager) handleFreshContextSendCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	var payload struct {
+		Text        string   `json:"txt"`
+		Attachments []string `json:"atts"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid fresh send payload", false))
+	}
+	if err := m.SendMessageWithFreshContext(ctx, frame.SessionID, payload.Text, payload.Attachments); err != nil {
+		if errors.Is(err, ErrCodexRunDrainTimeout) {
+			return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "codex_drain_timeout", err.Error(), true))
+		}
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
+	}
+	return m.sendMutationAck(ctx, client, frame, nil)
+}
+
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attachmentIDs []string) error {
 	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{
 		updateAutoTitle: true,
+	})
+}
+
+func (m *Manager) SendMessageWithFreshContext(
+	ctx context.Context,
+	sessionID,
+	text string,
+	attachmentIDs []string,
+) error {
+	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, sendMessageOptions{
+		freshCodexContext: true,
 	})
 }
 
@@ -4412,14 +4450,6 @@ func (m *Manager) sendMessageInternal(
 	if err := m.ensureSessionMessagingAuthorized(ctx, record); err != nil {
 		return err
 	}
-	m.cancelAutoRetryTimer(sessionID)
-	if err := m.waitForCodexRunDrain(ctx, sessionID); err != nil {
-		return err
-	}
-	if m.hasActiveRun(sessionID) {
-		return fmt.Errorf("session is already running")
-	}
-
 	attachments := make([]Attachment, 0, len(attachmentIDs))
 	for _, id := range attachmentIDs {
 		attachment, err := m.loadAttachment(strings.TrimSpace(id))
@@ -4432,6 +4462,33 @@ func (m *Manager) sendMessageInternal(
 	if text == "" && len(attachments) == 0 {
 		return fmt.Errorf("message is empty")
 	}
+	if options.freshCodexContext {
+		if normalizeAgent(Agent(record.Agent)) != AgentCodex ||
+			effectiveSessionBackend(record) != SessionBackendCodexAppServer {
+			return fmt.Errorf("fresh context is only supported for Codex app-server sessions")
+		}
+		if err := m.stopRunForFreshContext(sessionID, 5*time.Second); err != nil {
+			return err
+		}
+	}
+	m.cancelAutoRetryTimer(sessionID)
+	if err := m.waitForCodexRunDrain(ctx, sessionID); err != nil {
+		return err
+	}
+	if m.hasActiveRun(sessionID) {
+		return fmt.Errorf("session is already running")
+	}
+	if options.freshCodexContext {
+		if err := m.resetCodexContextForFreshSend(ctx, record); err != nil {
+			return err
+		}
+		refreshed, err := m.GetSession(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		record = refreshed
+	}
+
 	defaultAutoRetryUpdates := map[string]any(nil)
 	if !options.fromAutoRetry {
 		defaultAutoRetryUpdates = m.refreshDefaultAutoRetryPolicy(&record)
@@ -4553,6 +4610,43 @@ type sendMessageOptions struct {
 	continueWorkTiming bool
 	updateAutoTitle    bool
 	userMessageID      string
+	freshCodexContext  bool
+}
+
+func (m *Manager) resetCodexContextForFreshSend(ctx context.Context, record tables.WebSessionTable) error {
+	now := time.Now()
+	updates := contextEstimateBaselineResetUpdate(record, now)
+	for key, value := range map[string]any{
+		"workflow_mode":                      string(WorkflowModeDefault),
+		"session_start_source":               string(SessionStartSourceClear),
+		"native_session_id":                  nil,
+		"native_leaf_id":                     nil,
+		"source_revision":                    nil,
+		"cyber_policy_flagged":               false,
+		"sync_state":                         SyncStateMissing,
+		"last_sync_mode":                     "",
+		"source_created_at":                  nil,
+		"source_updated_at":                  nil,
+		"last_synced_at":                     nil,
+		"thread_path":                        nil,
+		"thread_preview":                     nil,
+		"sync_error":                         nil,
+		"last_completed_input_tokens":        record.TotalInputTokens,
+		"last_completed_cached_input_tokens": record.TotalCachedInputTokens,
+		"last_completed_output_tokens":       record.TotalOutputTokens,
+		"latest_turn_input_tokens":           0,
+		"latest_turn_cached_input_tokens":    0,
+		"latest_turn_output_tokens":          0,
+		"latest_turn_usage_updated_at":       nil,
+		"updated_at":                         now,
+	} {
+		updates[key] = value
+	}
+	if err := m.updateRuntimeState(ctx, record.ID, updates); err != nil {
+		return err
+	}
+	m.broadcastSessionSummary(ctx, record.ID)
+	return nil
 }
 
 func (m *Manager) ensureSessionMessagingAuthorized(
@@ -6031,7 +6125,7 @@ func (m *Manager) decorateCompactToolGroupEvent(sessionID string, event *Event) 
 
 	if run != nil {
 		run.mu.Lock()
-		groupKey := compactToolGroupKey(*event, toolSnapshot{})
+		groupKey := compactToolGroupKey(*event)
 		if run.commandGroupKey != "" && run.commandGroupKey != groupKey {
 			run.commandGroupID = ""
 			run.commandGroupKind = ""
@@ -7710,6 +7804,13 @@ func normalizeWorkflowMode(mode WorkflowMode) WorkflowMode {
 	default:
 		return WorkflowModeDefault
 	}
+}
+
+func normalizeSessionStartSource(source SessionStartSource) SessionStartSource {
+	if strings.EqualFold(strings.TrimSpace(string(source)), string(SessionStartSourceClear)) {
+		return SessionStartSourceClear
+	}
+	return SessionStartSourceStartup
 }
 
 func normalizePermissionLevel(level PermissionLevel) PermissionLevel {

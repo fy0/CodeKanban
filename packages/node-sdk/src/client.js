@@ -1436,15 +1436,16 @@ export class CodeKanbanClient {
     };
   }
 
-  async queryArchivedWebSessions({ projectIds, offset = 0, limit = 20 }) {
+  async queryArchivedWebSessions({ projectIds, offset = 0, limit = 100 }) {
     const response = await this.requestJson(
-      "/api/v1/web-sessions/archived/query",
+      "/api/v1/web-sessions/query",
       {
         method: "POST",
         body: {
           projectIds: Array.isArray(projectIds) ? projectIds : [],
+          archived: true,
           offset: Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0,
-          limit: Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 20,
+          limit: Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 100,
         },
       },
     );

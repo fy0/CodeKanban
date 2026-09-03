@@ -606,6 +606,10 @@ test('CLI web-session answer-pending can auto-answer with the second option', { 
     }),
   });
 
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(seen[0].answers, { choice: ['B'] });
+});
+
 test('CLI web-session wait forwards settleMs to the SDK wait helper', { concurrency: false }, async () => {
   const seen = [];
   const result = await runCliCaptured([
@@ -638,10 +642,6 @@ test('CLI web-session wait forwards settleMs to the SDK wait helper', { concurre
   assert.equal(seen[0].settleMs, 2000);
   assert.equal(seen[0].intervalMs, 500);
   assert.equal(seen[0].timeoutMs, 5000);
-});
-
-  assert.equal(result.exitCode, 0);
-  assert.deepEqual(seen[0].answers, { choice: ['B'] });
 });
 
 test('CLI web-session run reuses SDK orchestration and still reads optional files after completion', { concurrency: false }, async () => {

@@ -225,8 +225,8 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
     }],
     ['POST /api/v1/projects/p1/web-sessions/ws1/close', () => createJsonResponse({ body: { message: 'session aborted' } })],
     ['DELETE /api/v1/projects/p1/web-sessions/ws1', () => createJsonResponse({ body: { message: 'session deleted' } })],
-    ['POST /api/v1/web-sessions/archived/query', ({ body }) => {
-      assert.deepEqual(body, { projectIds: ['p1'], offset: 10, limit: 5 });
+    ['POST /api/v1/web-sessions/query', ({ body }) => {
+      assert.deepEqual(body, { projectIds: ['p1'], archived: true, offset: 10, limit: 5 });
       return createJsonResponse({
         item: {
           items: [{ id: 'arch-1' }],

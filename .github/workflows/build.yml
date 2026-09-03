@@ -16,15 +16,15 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9.15.9
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -51,7 +51,7 @@ jobs:
         run: pnpm build-only
 
       - name: Upload frontend dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-dist
           path: ui/dist
@@ -64,12 +64,15 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
+
+      - name: Install local Node SDK
+        run: npm install --prefix . --ignore-scripts --no-audit --no-fund --no-save --package-lock=false ./packages/node-sdk
 
       - name: Test Node SDK and CLI
         run: node --test packages/node-sdk/test/*.test.js packages/codekanban-cli/test/*.test.js
@@ -84,10 +87,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.25.x'
           cache: true
@@ -141,10 +144,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.25.x'
           cache: true
@@ -154,7 +157,7 @@ jobs:
         run: rm -rf static/*
 
       - name: Download frontend dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: static
@@ -190,7 +193,7 @@ jobs:
           go build -ldflags="-s -w -X 'main.VERSION_MAIN=${{ steps.version.outputs.VERSION_MAIN }}' -X 'main.VERSION_PRERELEASE=${{ steps.version.outputs.VERSION_PRERELEASE }}' -X 'main.VERSION_BUILD_METADATA=${{ steps.version.outputs.BUILD_METADATA }}' -X 'main.APP_CHANNEL=${{ steps.version.outputs.APP_CHANNEL }}'" -trimpath -o ${{ matrix.exe_name }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.exe_name }}
@@ -206,7 +209,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -239,7 +242,7 @@ jobs:
           } >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
