@@ -50,6 +50,29 @@ describe('web-session runtime config request loader', () => {
     await expect(Promise.all(expiredRequests)).resolves.toEqual(['refreshed', 'refreshed']);
   });
 
+  it('does not cache transient responses while preserving request coalescing', async () => {
+    let now = 200;
+    const loader = createRuntimeConfigRequestLoader<{ refreshing: boolean }>(
+      60_000,
+      () => now,
+      value => !value.refreshing
+    );
+    const fetchConfig = vi
+      .fn<() => Promise<{ refreshing: boolean }>>()
+      .mockResolvedValueOnce({ refreshing: true })
+      .mockResolvedValueOnce({ refreshing: false });
+
+    const [first, joined] = await Promise.all([loader.load(fetchConfig), loader.load(fetchConfig)]);
+    expect(first).toEqual({ refreshing: true });
+    expect(joined).toEqual({ refreshing: true });
+    expect(fetchConfig).toHaveBeenCalledTimes(1);
+
+    expect(await loader.load(fetchConfig)).toEqual({ refreshing: false });
+    now += 1_000;
+    expect(await loader.load(fetchConfig)).toEqual({ refreshing: false });
+    expect(fetchConfig).toHaveBeenCalledTimes(2);
+  });
+
   it('bypasses the client TTL for an explicit forced refresh and shares that request', async () => {
     const loader = createRuntimeConfigRequestLoader<string>(60_000);
     const initial = deferred<string>();

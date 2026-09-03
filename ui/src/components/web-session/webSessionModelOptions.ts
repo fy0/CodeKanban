@@ -33,13 +33,138 @@ export type WebSessionModelOptionGroup = {
 
 export const CUSTOM_MODEL_VALUE = '__custom_model__';
 export const MORE_MODELS_VALUE = '__more_models__';
+export const PI_FREQUENT_MODEL_LIMIT = 6;
+
+export type PiModelMenuCloseSource = 'show-change' | 'pointer-leave';
+
+export function shouldSuppressPiModelMenuClose(
+  source: PiModelMenuCloseSource,
+  state: {
+    catalogOpen: boolean;
+    searchFocused: boolean;
+    searchComposing: boolean;
+  }
+) {
+  if (!state.catalogOpen) {
+    return false;
+  }
+  if (source === 'pointer-leave') {
+    return state.searchFocused || state.searchComposing;
+  }
+  return state.searchComposing;
+}
+
+const PI_PRIMARY_MODEL_ID_ORDER = [
+  'gpt-5.4',
+  'gpt-5.5',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+  'deepseek-chat',
+  'deepseek-reasoner',
+  'deepseek-v3.2',
+  'deepseek-r1',
+];
+
+function piModelValue(model: WebSessionPiModelInfo) {
+  return `${model.provider.trim()}/${model.id.trim()}`;
+}
+
+function piModelOption(model: WebSessionPiModelInfo): WebSessionModelOption {
+  return {
+    label: model.name || model.id,
+    value: piModelValue(model),
+    menuLabel: model.name || model.id,
+  };
+}
+
+function piProviderPreference(model: WebSessionPiModelInfo, modelId: string) {
+  const provider = model.provider.trim().toLowerCase();
+  const preferredProvider = modelId.startsWith('gpt-') ? 'openai' : 'deepseek';
+  if (provider === preferredProvider) {
+    return 0;
+  }
+  if (provider.startsWith(`${preferredProvider}-`) || provider.includes(preferredProvider)) {
+    return 1;
+  }
+  return 2;
+}
 
 export function resolvePiModelOptions(models: WebSessionPiModelInfo[]): WebSessionModelOption[] {
-  return models.map(model => ({
-    label: model.name || model.id,
-    value: `${model.provider}/${model.id}`,
-    menuLabel: model.name || model.id,
-  }));
+  return models.filter(model => model.provider.trim() && model.id.trim()).map(piModelOption);
+}
+
+export function resolvePiPrimaryModelOptions(
+  models: WebSessionPiModelInfo[],
+  frequentModelValues: string[] = []
+): WebSessionModelOption[] {
+  const selectedValues: string[] = [];
+  const addValue = (value: string) => {
+    if (value && !selectedValues.includes(value)) {
+      selectedValues.push(value);
+    }
+  };
+
+  for (const modelId of PI_PRIMARY_MODEL_ID_ORDER) {
+    const candidate = models
+      .filter(model => model.id.trim().toLowerCase() === modelId)
+      .sort(
+        (left, right) => piProviderPreference(left, modelId) - piProviderPreference(right, modelId)
+      )[0];
+    if (candidate) {
+      addValue(piModelValue(candidate));
+    }
+  }
+
+  if (!selectedValues.some(value => value.toLowerCase().includes('deepseek'))) {
+    const deepSeekModels = models.filter(model =>
+      `${model.provider}/${model.id}/${model.name}`.toLowerCase().includes('deepseek')
+    );
+    const deepSeekCandidate =
+      deepSeekModels.find(model => !/(vision|\bexp\b)/i.test(`${model.id} ${model.name}`)) ??
+      deepSeekModels[0];
+    if (deepSeekCandidate) {
+      addValue(piModelValue(deepSeekCandidate));
+    }
+  }
+
+  const optionsByValue = new Map(
+    resolvePiModelOptions(models).map(option => [option.value, option] as const)
+  );
+  const boundedFrequentValues = Array.isArray(frequentModelValues)
+    ? frequentModelValues.slice(0, PI_FREQUENT_MODEL_LIMIT)
+    : [];
+  for (const value of boundedFrequentValues) {
+    const normalizedValue = String(value || '').trim();
+    if (optionsByValue.has(normalizedValue)) {
+      addValue(normalizedValue);
+    }
+  }
+  return selectedValues.flatMap(value => {
+    const option = optionsByValue.get(value);
+    return option ? [option] : [];
+  });
+}
+
+export function rememberPiFrequentModel(
+  values: string[],
+  modelValue: string,
+  limit = PI_FREQUENT_MODEL_LIMIT
+) {
+  const normalizedValue = modelValue.trim();
+  const normalizedLimit = Math.max(0, Math.floor(limit));
+  if (!normalizedValue || normalizedLimit === 0) {
+    return [];
+  }
+  const currentValues = Array.isArray(values) ? values : [];
+  return [
+    normalizedValue,
+    ...currentValues
+      .map(value => String(value || '').trim())
+      .filter(value => value && value !== normalizedValue),
+  ].slice(0, normalizedLimit);
 }
 
 export function resolvePiModelOptionGroups(
@@ -65,6 +190,26 @@ export function resolvePiModelOptionGroups(
     label: provider,
     children,
   }));
+}
+
+export function filterPiModelOptionGroups(
+  groups: WebSessionModelOptionGroup[],
+  query: string
+): WebSessionModelOptionGroup[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return groups;
+  }
+  return groups.flatMap(group => {
+    const children = group.children.filter(option =>
+      [group.label, option.label, option.menuLabel, option.value]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedQuery)
+    );
+    return children.length > 0 ? [{ ...group, children }] : [];
+  });
 }
 
 export function resolvePiReasoningEfforts(

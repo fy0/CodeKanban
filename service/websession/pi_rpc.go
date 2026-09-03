@@ -16,9 +16,12 @@ import (
 )
 
 const (
-	piRPCMaxFrameBytes  = 8 * 1024 * 1024
-	piRPCStderrLimit    = 64 * 1024
-	piRPCRequestTimeout = 30 * time.Second
+	piRPCMaxFrameBytes           = 64 * 1024 * 1024
+	piRPCMaxDiscardedFrameBytes  = 256 * 1024 * 1024
+	piRPCMaxQueuedEventBytes     = 8 * 1024 * 1024
+	piRPCMaxInlineToolEventBytes = 64 * 1024
+	piRPCStderrLimit             = 64 * 1024
+	piRPCRequestTimeout          = 30 * time.Second
 )
 
 var errPiRPCClosed = errors.New("Pi RPC process is closed")
@@ -52,6 +55,7 @@ type piRPCClient struct {
 	closing    chan struct{}
 	done       chan struct{}
 	readerDone chan struct{}
+	stderrDone chan struct{}
 	seq        atomic.Uint64
 
 	stderrBuffer *piRPCBoundedBuffer
@@ -88,6 +92,7 @@ func startPiRPCClient(cmd *exec.Cmd) (*piRPCClient, error) {
 		closing:      make(chan struct{}),
 		done:         make(chan struct{}),
 		readerDone:   make(chan struct{}),
+		stderrDone:   make(chan struct{}),
 		stderrBuffer: newPiRPCBoundedBuffer(piRPCStderrLimit),
 	}
 	if err := cmd.Start(); err != nil {
@@ -99,6 +104,7 @@ func startPiRPCClient(cmd *exec.Cmd) (*piRPCClient, error) {
 	go client.writeStdin()
 	go client.readStdout()
 	go func() {
+		defer close(client.stderrDone)
 		_, _ = io.Copy(client.stderrBuffer, stderr)
 	}()
 	go client.wait()
@@ -354,7 +360,11 @@ func (c *piRPCClient) readStdout() {
 	defer close(c.readerDone)
 	reader := bufio.NewReaderSize(c.stdout, 64*1024)
 	for {
-		line, err := readPiRPCJSONLFrame(reader, piRPCMaxFrameBytes)
+		line, discarded, err := readPiRPCJSONLFrameForClient(
+			reader,
+			piRPCMaxFrameBytes,
+			piRPCMaxDiscardedFrameBytes,
+		)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return
@@ -362,6 +372,9 @@ func (c *piRPCClient) readStdout() {
 			c.fail(fmt.Errorf("read Pi RPC stdout: %w", err))
 			killCmdTree(c.cmd)
 			return
+		}
+		if discarded {
+			continue
 		}
 		if err := c.handleLine(line); err != nil {
 			c.fail(err)
@@ -372,33 +385,118 @@ func (c *piRPCClient) readStdout() {
 }
 
 func readPiRPCJSONLFrame(reader *bufio.Reader, limit int) ([]byte, error) {
-	if limit <= 0 {
-		limit = piRPCMaxFrameBytes
+	frame, _, err := readPiRPCJSONLFrameFiltered(reader, limit, limit, nil)
+	return frame, err
+}
+
+func readPiRPCJSONLFrameForClient(reader *bufio.Reader, retainLimit, discardLimit int) ([]byte, bool, error) {
+	return readPiRPCJSONLFrameFiltered(reader, retainLimit, discardLimit, shouldDiscardPiRPCEvent)
+}
+
+func readPiRPCJSONLFrameFiltered(
+	reader *bufio.Reader,
+	retainLimit int,
+	discardLimit int,
+	discardType func(string) bool,
+) ([]byte, bool, error) {
+	if retainLimit <= 0 {
+		retainLimit = piRPCMaxFrameBytes
+	}
+	if discardLimit < retainLimit {
+		discardLimit = retainLimit
 	}
 	frame := make([]byte, 0, 1024)
+	totalBytes := 0
+	discarding := false
 	for {
 		part, err := reader.ReadSlice('\n')
-		if len(frame)+len(part) > limit {
-			return nil, fmt.Errorf("frame exceeds %d bytes", limit)
+		totalBytes += len(part)
+		if discarding {
+			if totalBytes > discardLimit {
+				return nil, false, fmt.Errorf("discarded frame exceeds %d bytes", discardLimit)
+			}
+		} else {
+			frame = append(frame, part...)
+			if eventType, ok := piRPCJSONLFrameType(frame); ok && discardType != nil && discardType(eventType) {
+				discarding = true
+				frame = nil
+				if totalBytes > discardLimit {
+					return nil, false, fmt.Errorf("discarded %s frame exceeds %d bytes", eventType, discardLimit)
+				}
+			} else if len(frame) > retainLimit {
+				return nil, false, fmt.Errorf("frame exceeds %d bytes", retainLimit)
+			}
 		}
-		frame = append(frame, part...)
 		switch {
 		case err == nil:
+			if discarding {
+				return nil, true, nil
+			}
 			frame = frame[:len(frame)-1]
 			if len(frame) > 0 && frame[len(frame)-1] == '\r' {
 				frame = frame[:len(frame)-1]
 			}
-			return frame, nil
+			return frame, false, nil
 		case errors.Is(err, bufio.ErrBufferFull):
 			continue
 		case errors.Is(err, io.EOF):
-			if len(frame) == 0 {
-				return nil, io.EOF
+			if totalBytes == 0 {
+				return nil, false, io.EOF
 			}
-			return nil, errors.New("EOF after partial JSONL frame")
+			return nil, false, errors.New("EOF after partial JSONL frame")
 		default:
-			return nil, err
+			return nil, false, err
 		}
+	}
+}
+
+// Pi serializes type as one of the first two top-level fields (events use it
+// first; responses put id first). Decode only that bounded prefix so redundant
+// events can be drained without retaining their potentially large payloads.
+func piRPCJSONLFrameType(frame []byte) (string, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(frame))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return "", false
+	}
+	for field := 0; field < 2 && decoder.More(); field++ {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return "", false
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return "", false
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return "", false
+		}
+		if key != "type" {
+			continue
+		}
+		var eventType string
+		if json.Unmarshal(value, &eventType) != nil || strings.TrimSpace(eventType) == "" {
+			return "", false
+		}
+		return eventType, true
+	}
+	return "", false
+}
+
+func shouldDiscardPiRPCEvent(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "response",
+		"agent_start", "agent_settled",
+		"message_start", "message_update", "message_end",
+		"tool_execution_start", "tool_execution_update", "tool_execution_end",
+		"compaction_start", "compaction_end", "queue_update",
+		"auto_retry_start", "auto_retry_end",
+		"summarization_retry_scheduled", "summarization_retry_attempt_start", "summarization_retry_finished",
+		"extension_ui_request", "extension_error":
+		return false
+	default:
+		return true
 	}
 }
 
@@ -416,12 +514,25 @@ func (c *piRPCClient) handleLine(line []byte) error {
 		return errors.New("Pi RPC frame has no type")
 	}
 	if envelope.Type != "response" {
-		event := piRPCEvent{Type: envelope.Type, Raw: append(json.RawMessage(nil), line...)}
+		if shouldDiscardPiRPCEvent(envelope.Type) {
+			return nil
+		}
+		normalized, discarded, err := normalizePiRPCEvent(envelope.Type, line, piRPCMaxInlineToolEventBytes)
+		if err != nil {
+			return err
+		}
+		if discarded {
+			return nil
+		}
+		if len(normalized) > piRPCMaxQueuedEventBytes {
+			return fmt.Errorf("Pi RPC %s event exceeds %d queued bytes", envelope.Type, piRPCMaxQueuedEventBytes)
+		}
+		event := piRPCEvent{Type: envelope.Type, Raw: append(json.RawMessage(nil), normalized...)}
 		select {
 		case c.events <- event:
 			return nil
-		default:
-			return errors.New("Pi RPC event buffer overflow")
+		case <-c.closing:
+			return c.processError()
 		}
 	}
 
@@ -451,10 +562,16 @@ func (c *piRPCClient) handleLine(line []byte) error {
 }
 
 func (c *piRPCClient) wait() {
-	err := c.cmd.Wait()
+	// StdoutPipe and StderrPipe must be fully drained before Wait closes them.
 	<-c.readerDone
+	<-c.stderrDone
+	err := c.cmd.Wait()
 	if err != nil {
-		c.fail(fmt.Errorf("Pi RPC process exited: %w", err))
+		processErr := fmt.Errorf("Pi RPC process exited: %w", err)
+		if stderr := strings.TrimSpace(c.Stderr()); stderr != "" {
+			processErr = fmt.Errorf("%w: %s", processErr, stderr)
+		}
+		c.fail(processErr)
 	} else {
 		c.fail(errPiRPCClosed)
 	}
@@ -483,6 +600,42 @@ func (c *piRPCClient) removePending(id string) {
 	c.mu.Lock()
 	delete(c.pending, id)
 	c.mu.Unlock()
+}
+
+func normalizePiRPCEvent(eventType string, line []byte, maxInlineToolBytes int) ([]byte, bool, error) {
+	if maxInlineToolBytes <= 0 {
+		maxInlineToolBytes = piRPCMaxInlineToolEventBytes
+	}
+	switch eventType {
+	case "message_start", "message_end":
+		var event piRPCMessageEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return nil, false, fmt.Errorf("decode Pi RPC %s event: %w", eventType, err)
+		}
+		if !strings.EqualFold(strings.TrimSpace(event.Message.Role), "assistant") {
+			return nil, true, nil
+		}
+	case "tool_execution_update", "tool_execution_end":
+		if len(line) <= maxInlineToolBytes {
+			return line, false, nil
+		}
+		var event piRPCToolExecutionEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return nil, false, fmt.Errorf("decode oversized Pi RPC %s event: %w", eventType, err)
+		}
+		if event.PartialResult != nil {
+			event.PartialResult = truncateToolOutput(event.ToolName, piToolResultText(event.PartialResult))
+		}
+		if event.Result != nil {
+			event.Result = truncateToolOutput(event.ToolName, piToolResultText(event.Result))
+		}
+		normalized, err := json.Marshal(event)
+		if err != nil {
+			return nil, false, fmt.Errorf("normalize oversized Pi RPC %s event: %w", eventType, err)
+		}
+		return normalized, false, nil
+	}
+	return line, false, nil
 }
 
 func (c *piRPCClient) processError() error {

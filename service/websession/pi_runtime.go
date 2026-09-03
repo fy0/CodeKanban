@@ -25,9 +25,10 @@ import (
 const piSessionHeaderLimit = 1024 * 1024
 
 type piRuntimeContentState struct {
-	kind   string
-	text   string
-	toolID string
+	kind     string
+	text     string
+	toolID   string
+	lastEmit time.Time
 }
 
 type piRuntimeToolState struct {
@@ -79,11 +80,12 @@ func (r *piRuntimeRun) settle(err error) {
 }
 
 type piSessionRuntime struct {
-	manager   *Manager
-	client    *piRPCClient
-	sessionID string
-	projectID string
-	cwd       string
+	manager     *Manager
+	client      *piRPCClient
+	sessionID   string
+	projectID   string
+	cwd         string
+	sessionRoot string
 
 	mu        sync.Mutex
 	active    *piRuntimeRun
@@ -170,7 +172,11 @@ func (m *Manager) startPiRuntime(
 	if err := client.Request(requestCtx, "get_state", nil, &state); err != nil {
 		return nil, err
 	}
-	if err := validatePiRuntimeStartupState(session, state, threadPath == ""); err != nil {
+	sessionRoot, err := resolvePiRuntimeSessionRoot(state.SessionFile)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePiRuntimeStartupStateWithinRoot(session, state, threadPath == "", sessionRoot); err != nil {
 		return nil, err
 	}
 	var commands struct {
@@ -214,11 +220,12 @@ func (m *Manager) startPiRuntime(
 
 	failed = false
 	return &piSessionRuntime{
-		manager:   m,
-		client:    client,
-		sessionID: session.ID,
-		projectID: session.ProjectID,
-		cwd:       session.Cwd,
+		manager:     m,
+		client:      client,
+		sessionID:   session.ID,
+		projectID:   session.ProjectID,
+		cwd:         session.Cwd,
+		sessionRoot: sessionRoot,
 	}, nil
 }
 
@@ -227,6 +234,14 @@ func validatePiRuntimeState(session tables.WebSessionTable, state piRPCState) er
 }
 
 func validatePiRuntimeStartupState(session tables.WebSessionTable, state piRPCState, allowMissingNewFile bool) error {
+	root, err := log_watcher.ResolvePiSessionDir()
+	if err != nil {
+		return fmt.Errorf("resolve Pi session root: %w", err)
+	}
+	return validatePiRuntimeStartupStateWithinRoot(session, state, allowMissingNewFile, root)
+}
+
+func validatePiRuntimeStartupStateWithinRoot(session tables.WebSessionTable, state piRPCState, allowMissingNewFile bool, sessionRoot string) error {
 	sessionID := strings.TrimSpace(state.SessionID)
 	sessionFile := strings.TrimSpace(state.SessionFile)
 	if sessionID == "" || sessionFile == "" || !filepath.IsAbs(sessionFile) {
@@ -238,7 +253,7 @@ func validatePiRuntimeStartupState(session tables.WebSessionTable, state piRPCSt
 	if expected := strings.TrimSpace(pointerString(session.ThreadPath)); expected != "" && !samePiRuntimePath(expected, sessionFile) {
 		return errors.New("Pi session file mismatch")
 	}
-	if err := validatePiSessionRoot(sessionFile); err != nil {
+	if err := validatePiSessionRootWithin(sessionFile, sessionRoot); err != nil {
 		return err
 	}
 	header, err := readPiRuntimeSessionHeader(sessionFile)
@@ -336,6 +351,10 @@ func validatePiSessionRoot(sessionFile string) error {
 	if err != nil {
 		return fmt.Errorf("resolve Pi session root: %w", err)
 	}
+	return validatePiSessionRootWithin(sessionFile, root)
+}
+
+func validatePiSessionRootWithin(sessionFile, root string) error {
 	canonicalRoot, err := canonicalPiRuntimePath(root)
 	if err != nil {
 		return fmt.Errorf("resolve Pi session root: %w", err)
@@ -349,6 +368,29 @@ func validatePiSessionRoot(sessionFile string) error {
 		return errors.New("Pi session file is outside the configured session root")
 	}
 	return nil
+}
+
+func resolvePiRuntimeSessionRoot(sessionFile string) (string, error) {
+	configuredRoot, err := log_watcher.ResolvePiSessionDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve Pi session root: %w", err)
+	}
+	if validatePiSessionRootWithin(sessionFile, configuredRoot) == nil {
+		return configuredRoot, nil
+	}
+
+	cleanFile := filepath.Clean(strings.TrimSpace(sessionFile))
+	projectDir := filepath.Dir(cleanFile)
+	inferredRoot := filepath.Dir(projectDir)
+	if !filepath.IsAbs(cleanFile) || !strings.EqualFold(filepath.Ext(cleanFile), ".jsonl") ||
+		projectDir == cleanFile || inferredRoot == projectDir ||
+		!strings.EqualFold(filepath.Base(inferredRoot), "sessions") {
+		return "", errors.New("Pi session file is outside the configured session root")
+	}
+	if err := validatePiSessionRootWithin(cleanFile, inferredRoot); err != nil {
+		return "", err
+	}
+	return inferredRoot, nil
 }
 
 func piSourceRevision(path, leafID string) string {
@@ -915,7 +957,7 @@ func (m *Manager) syncPiRuntimeSnapshot(ctx context.Context, runtime *piSessionR
 	if err := runtime.client.Request(ctx, "get_state", nil, &state); err != nil {
 		return err
 	}
-	if err := validatePiRuntimeState(session, state); err != nil {
+	if err := validatePiRuntimeStartupStateWithinRoot(session, state, false, runtime.sessionRoot); err != nil {
 		return err
 	}
 	var entries piHistoryEntriesResponse
@@ -926,25 +968,28 @@ func (m *Manager) syncPiRuntimeSnapshot(ctx context.Context, runtime *piSessionR
 	if err := runtime.client.Request(ctx, "get_session_stats", nil, &stats); err != nil {
 		return err
 	}
+	usage := normalizePiSessionUsage(stats)
+	now := time.Now()
 	updates := map[string]any{
 		"native_session_id":         state.SessionID,
 		"thread_path":               filepath.Clean(state.SessionFile),
 		"native_leaf_id":            nilIfEmpty(pointerString(entries.LeafID)),
 		"source_revision":           nilIfEmpty(piSourceRevision(state.SessionFile, pointerString(entries.LeafID))),
-		"total_input_tokens":        stats.Tokens.Input,
-		"total_cached_input_tokens": stats.Tokens.CacheRead,
-		"total_output_tokens":       stats.Tokens.Output,
-		"total_cost":                stats.Cost,
-		"last_synced_at":            time.Now(),
+		"total_input_tokens":        usage.InputTokens,
+		"total_cached_input_tokens": usage.CachedInputTokens,
+		"total_output_tokens":       usage.OutputTokens,
+		"total_cost":                usage.Cost,
+		"last_synced_at":            now,
 		"sync_state":                string(SyncStateFresh),
 		"sync_error":                nil,
-		"updated_at":                time.Now(),
+		"updated_at":                now,
 	}
-	if len(compactionAt) > 0 && compactionAt[0] != nil && !compactionAt[0].IsZero() {
+	compacted := len(compactionAt) > 0 && compactionAt[0] != nil && !compactionAt[0].IsZero()
+	if compacted {
 		updates["last_context_compaction_at"] = *compactionAt[0]
-		updates["context_baseline_input_tokens"] = stats.Tokens.Input
-		updates["context_baseline_cached_input_tokens"] = stats.Tokens.CacheRead
-		updates["context_baseline_output_tokens"] = stats.Tokens.Output
+		updates["context_baseline_input_tokens"] = usage.InputTokens
+		updates["context_baseline_cached_input_tokens"] = usage.CachedInputTokens
+		updates["context_baseline_output_tokens"] = usage.OutputTokens
 		updates["latest_token_count_input_tokens"] = 0
 		updates["latest_token_count_cached_input_tokens"] = 0
 		updates["latest_token_count_output_tokens"] = 0
@@ -955,14 +1000,7 @@ func (m *Manager) syncPiRuntimeSnapshot(ctx context.Context, runtime *piSessionR
 		updates["latest_turn_output_tokens"] = 0
 		updates["latest_turn_usage_updated_at"] = nil
 	}
-	if stats.ContextUsage != nil {
-		updates["session_context_window_tokens"] = stats.ContextUsage.ContextWindow
-		updates["session_context_window_observed_at"] = time.Now()
-		if len(compactionAt) == 0 || compactionAt[0] == nil || compactionAt[0].IsZero() {
-			updates["latest_token_count_total_tokens"] = stats.ContextUsage.Tokens
-			updates["latest_token_count_updated_at"] = time.Now()
-		}
-	}
+	applyPiContextUsageUpdates(updates, stats.ContextUsage, !compacted, now)
 	if model := canonicalPiModel(state.Model); model != "" {
 		updates["model"] = model
 	}
@@ -970,6 +1008,46 @@ func (m *Manager) syncPiRuntimeSnapshot(ctx context.Context, runtime *piSessionR
 		updates["reasoning_effort"] = string(effort)
 	}
 	return m.reconcileLivePiHistory(ctx, session, state.SessionID, entries, updates)
+}
+
+func normalizePiSessionUsage(stats piRPCSessionStats) Usage {
+	cachedInputTokens := stats.Tokens.CacheRead + stats.Tokens.CacheWrite
+	return Usage{
+		InputTokens:       stats.Tokens.Input + cachedInputTokens,
+		CachedInputTokens: cachedInputTokens,
+		OutputTokens:      stats.Tokens.Output,
+		Cost:              stats.Cost,
+	}
+}
+
+func applyPiContextUsageUpdates(
+	updates map[string]any,
+	contextUsage *piRPCContextUsage,
+	includeLatest bool,
+	observedAt time.Time,
+) {
+	if contextUsage == nil || contextUsage.Tokens == nil || contextUsage.ContextWindow <= 0 {
+		updates["session_context_window_tokens"] = 0
+		updates["session_context_window_observed_at"] = nil
+		if includeLatest {
+			updates["latest_token_count_input_tokens"] = 0
+			updates["latest_token_count_cached_input_tokens"] = 0
+			updates["latest_token_count_output_tokens"] = 0
+			updates["latest_token_count_total_tokens"] = 0
+			updates["latest_token_count_updated_at"] = nil
+		}
+		return
+	}
+
+	updates["session_context_window_tokens"] = contextUsage.ContextWindow
+	updates["session_context_window_observed_at"] = observedAt
+	if includeLatest {
+		updates["latest_token_count_input_tokens"] = 0
+		updates["latest_token_count_cached_input_tokens"] = 0
+		updates["latest_token_count_output_tokens"] = 0
+		updates["latest_token_count_total_tokens"] = *contextUsage.Tokens
+		updates["latest_token_count_updated_at"] = observedAt
+	}
 }
 
 func (m *Manager) finishPiAbortedRun(session tables.WebSessionTable, run *activeRun) {

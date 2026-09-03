@@ -16,7 +16,9 @@ import {
 
 const WEB_SESSION_RUNTIME_CONFIG_CLIENT_TTL_MS = 60_000;
 const runtimeConfigRequestLoader = createRuntimeConfigRequestLoader<WebSessionRuntimeConfig>(
-  WEB_SESSION_RUNTIME_CONFIG_CLIENT_TTL_MS
+  WEB_SESSION_RUNTIME_CONFIG_CLIENT_TTL_MS,
+  () => Date.now(),
+  config => config.capabilitiesRefreshing !== true
 );
 
 type ItemResponse<T> = {

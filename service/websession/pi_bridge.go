@@ -31,7 +31,10 @@ func (m *Manager) materializePiBridge() (string, error) {
 	}
 	digest := sha256.Sum256(piBridgeSource)
 	hash := hex.EncodeToString(digest[:])
-	root := filepath.Join(m.cfg.DataDir, "pi-bridge")
+	root, err := filepath.Abs(filepath.Join(m.cfg.DataDir, "pi-bridge"))
+	if err != nil {
+		return "", fmt.Errorf("resolve Pi bridge directory: %w", err)
+	}
 	dir := filepath.Join(root, hash)
 	path := filepath.Join(dir, "extension.ts")
 

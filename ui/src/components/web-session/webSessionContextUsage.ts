@@ -1,5 +1,13 @@
 export const CODEX_CONTEXT_BASELINE_TOKENS = 12000;
 
+export function supportsContextUsageIndicator(agent: string) {
+  return agent === 'codex' || agent === 'claude' || agent === 'pi';
+}
+
+export function contextUsageBaselineTokens(agent: string) {
+  return agent === 'codex' ? CODEX_CONTEXT_BASELINE_TOKENS : 0;
+}
+
 export function calculateBillableTokenUsage(
   inputTokens: number,
   cachedInputTokens: number,
@@ -13,7 +21,7 @@ export function calculateTotalTokenUsage(inputTokens: number, outputTokens: numb
   return Math.max(0, inputTokens) + Math.max(0, outputTokens);
 }
 
-export function calculateCodexRemainingContext({
+export function calculateRemainingContext({
   compactLimitTokens,
   usedTokens,
   baselineTokens = CODEX_CONTEXT_BASELINE_TOKENS,

@@ -44,6 +44,18 @@ func TestPiRPCFakeProcess(t *testing.T) {
 				})
 			}
 		}
+	case "burst":
+		if scanner.Scan() {
+			var command map[string]any
+			_ = json.Unmarshal(scanner.Bytes(), &command)
+			for index := 0; index < 512; index++ {
+				_ = encoder.Encode(map[string]any{"type": "agent_start", "index": index})
+			}
+			_ = encoder.Encode(map[string]any{
+				"type": "response", "id": command["id"], "command": command["type"],
+				"success": true, "data": map[string]any{"ok": true},
+			})
+		}
 	case "malformed":
 		if scanner.Scan() {
 			_, _ = fmt.Fprintln(os.Stdout, `{not-json`)
@@ -91,8 +103,11 @@ func TestPiRPCFakeProcess(t *testing.T) {
 				"success": true, "data": map[string]any{"ok": true},
 			})
 		}
-	case "exit":
+	case "exit", "exit_stderr":
 		if scanner.Scan() {
+			if mode == "exit_stderr" {
+				_, _ = fmt.Fprintln(os.Stderr, "portable launcher failed")
+			}
 			os.Exit(7)
 		}
 	case "hang":
@@ -140,6 +155,122 @@ func TestReadPiRPCJSONLFrameRejectsPartialAndOversized(t *testing.T) {
 	}
 	if _, err := readPiRPCJSONLFrame(bufio.NewReader(bytes.NewReader(append(bytes.Repeat([]byte("x"), 20), '\n'))), 10); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("expected oversized frame error, got %v", err)
+	}
+}
+
+func TestReadPiRPCJSONLFrameDiscardsRedundantOversizedEvents(t *testing.T) {
+	ignored := `{"type":"agent_end","messages":["` + strings.Repeat("x", 256) + `"]}` + "\n"
+	projected := `{"type":"message_end","message":{"role":"assistant"}}` + "\n"
+	reader := bufio.NewReaderSize(strings.NewReader(ignored+projected), 16)
+
+	frame, discarded, err := readPiRPCJSONLFrameForClient(reader, 64, 1024)
+	if err != nil || !discarded || frame != nil {
+		t.Fatalf("redundant frame = %q, discarded=%v, err=%v", frame, discarded, err)
+	}
+	frame, discarded, err = readPiRPCJSONLFrameForClient(reader, 64, 1024)
+	if err != nil || discarded || string(frame) != strings.TrimSuffix(projected, "\n") {
+		t.Fatalf("projected frame = %q, discarded=%v, err=%v", frame, discarded, err)
+	}
+}
+
+func TestReadPiRPCJSONLFrameStillBoundsProjectedEvents(t *testing.T) {
+	projected := `{"type":"message_end","message":{"content":"` + strings.Repeat("x", 256) + `"}}` + "\n"
+	_, _, err := readPiRPCJSONLFrameForClient(bufio.NewReaderSize(strings.NewReader(projected), 16), 64, 1024)
+	if err == nil || !strings.Contains(err.Error(), "exceeds 64 bytes") {
+		t.Fatalf("expected retained frame limit, got %v", err)
+	}
+}
+
+func TestNormalizePiRPCEventBoundsToolResultsAndDropsNonAssistantMessages(t *testing.T) {
+	toolLine, err := json.Marshal(map[string]any{
+		"type":       "tool_execution_end",
+		"toolCallId": "tool-1",
+		"toolName":   "custom_tool",
+		"result":     strings.Repeat("x", defaultToolOutputLimit+1000),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, discarded, err := normalizePiRPCEvent("tool_execution_end", toolLine, 64)
+	if err != nil || discarded {
+		t.Fatalf("normalize tool event: discarded=%v err=%v", discarded, err)
+	}
+	var toolEvent piRPCToolExecutionEvent
+	if err := json.Unmarshal(normalized, &toolEvent); err != nil {
+		t.Fatalf("decode normalized tool event: %v", err)
+	}
+	if got := stringValue(toolEvent.Result); len(got) != defaultToolOutputLimit+3 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("unexpected normalized tool result: length=%d value=%q", len(got), got)
+	}
+
+	messageLine := []byte(`{"type":"message_end","message":{"role":"toolResult","content":[]}}`)
+	_, discarded, err = normalizePiRPCEvent("message_end", messageLine, 64)
+	if err != nil || !discarded {
+		t.Fatalf("non-assistant message: discarded=%v err=%v", discarded, err)
+	}
+}
+
+func TestPiRPCClientBackpressuresEventBursts(t *testing.T) {
+	client, err := startPiRPCClient(fakePiRPCCommand(t, "burst"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	requestDone := make(chan error, 1)
+	go func() {
+		requestDone <- client.Request(context.Background(), "get_state", nil, nil)
+	}()
+	// Let stdout fill the bounded event channel before starting the consumer.
+	time.Sleep(50 * time.Millisecond)
+	for index := 0; index < 512; index++ {
+		select {
+		case event, ok := <-client.Events():
+			if !ok {
+				t.Fatalf("event stream closed after %d events: %v", index, client.processError())
+			}
+			if event.Type != "agent_start" {
+				t.Fatalf("unexpected event %d: %#v", index, event)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out after %d burst events", index)
+		}
+	}
+	select {
+	case err := <-requestDone:
+		if err != nil {
+			t.Fatalf("request failed after event burst: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("request remained blocked after draining event burst")
+	}
+}
+
+func TestPiRPCClientCloseUnblocksBackpressuredReader(t *testing.T) {
+	client, err := startPiRPCClient(fakePiRPCCommand(t, "burst"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestDone := make(chan error, 1)
+	go func() {
+		requestDone <- client.Request(context.Background(), "get_state", nil, nil)
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	started := time.Now()
+	if err := client.Close(); err != nil {
+		t.Fatalf("close backpressured client: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("closing backpressured client took %s", elapsed)
+	}
+	select {
+	case err := <-requestDone:
+		if err == nil {
+			t.Fatal("request unexpectedly succeeded after closing backpressured client")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request did not unblock after closing client")
 	}
 }
 
@@ -265,5 +396,14 @@ func TestPiRPCClientBoundsStderrAndRejectsEarlyExit(t *testing.T) {
 	defer exiting.Close()
 	if err := exiting.Request(context.Background(), "get_state", nil, nil); err == nil || !strings.Contains(err.Error(), "exited") {
 		t.Fatalf("expected process exit error, got %v", err)
+	}
+
+	exitingWithStderr, err := startPiRPCClient(fakePiRPCCommand(t, "exit_stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exitingWithStderr.Close()
+	if err := exitingWithStderr.Request(context.Background(), "get_state", nil, nil); err == nil || !strings.Contains(err.Error(), "portable launcher failed") {
+		t.Fatalf("expected stderr in process exit error, got %v", err)
 	}
 }

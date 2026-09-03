@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPiProbeHelperProcess(t *testing.T) {
@@ -24,6 +25,9 @@ func TestPiProbeHelperProcess(t *testing.T) {
 	}
 	for _, arg := range os.Args {
 		if arg == "--version" {
+			if delay, err := time.ParseDuration(os.Getenv("CODEKANBAN_PI_PROBE_VERSION_DELAY")); err == nil {
+				time.Sleep(delay)
+			}
 			fmt.Fprintln(os.Stdout, os.Getenv("CODEKANBAN_PI_PROBE_VERSION"))
 			os.Exit(0)
 		}
@@ -59,6 +63,20 @@ func TestPiProbeHelperProcess(t *testing.T) {
 
 func piProbeTestCommand() string {
 	return `"` + os.Args[0] + `" -test.run=TestPiProbeHelperProcess --`
+}
+
+func TestDetectPiVersionAllowsPortableLauncherStartup(t *testing.T) {
+	if piVersionProbeTimeout != 5*time.Second {
+		t.Fatalf("Pi version probe timeout = %v, want 5s", piVersionProbeTimeout)
+	}
+	t.Setenv("CODEKANBAN_PI_PROBE_HELPER", "1")
+	t.Setenv("CODEKANBAN_PI_PROBE_VERSION", "0.84.1")
+	t.Setenv("CODEKANBAN_PI_PROBE_VERSION_DELAY", "100ms")
+
+	version := detectPiVersion(piProbeTestCommand())
+	if version == nil || *version != "0.84.1" {
+		t.Fatalf("Pi version = %#v, want 0.84.1", version)
+	}
 }
 
 func TestGetWebSessionRuntimeConfigProbesPiRPCAndCachesSuccess(t *testing.T) {
