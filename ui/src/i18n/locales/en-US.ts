@@ -850,6 +850,16 @@ export default {
     readyTitle: 'Ready for the next turn',
     readyDescription:
       'Once you send a prompt, this area will stream tool activity, progress, and approvals.',
+    timelineHydrationLoading: 'Loading conversation',
+    timelineHydrationLoadingDetail: 'Synchronizing messages and run status...',
+    timelineHydrationFailed: 'Conversation failed to load',
+    timelineHydrationFailedDetail:
+      'The conversation is temporarily unavailable. Try loading it again.',
+    timelineRefreshFailed: 'Refresh failed; showing the last loaded conversation',
+    timelineHydrationRetry: 'Reload',
+    timelineConnectionRecovering: 'Restoring live connection',
+    timelineConnectionRecoveringDetail:
+      'Conversation sync will continue when the connection recovers...',
     cyberPolicyFlagged: 'This chat was flagged for possible cybersecurity risk',
     devCyberPolicyWarning: 'Cyber warning',
     liveIdle: 'Ready',
@@ -857,6 +867,10 @@ export default {
     liveRecovered: 'The previous run was interrupted by an app restart',
     liveStarting: 'Preparing the next turn',
     liveStartingDetail: 'Preparing tools and context',
+    runtimeSyncDelayed: 'Message sent; run status is taking longer to sync',
+    runtimeSyncDelayedDetail:
+      'The background run is being confirmed. Do not send the message again.',
+    runtimeSyncRetry: 'Sync again',
     liveThinking: 'Drafting the response',
     liveThinkingDetail: 'Organizing the current step',
     liveRetrying: 'Reconnecting',

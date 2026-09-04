@@ -260,6 +260,47 @@
   color: var(--n-text-color-3);
 }
 
+.timeline-hydration-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 640px;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 24%, var(--n-border-color));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--n-primary-color) 5%, var(--app-surface-color, #fff));
+}
+
+.timeline-hydration-state.state-error {
+  border-color: color-mix(in srgb, var(--n-error-color) 36%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-error-color) 5%, var(--app-surface-color, #fff));
+}
+
+.timeline-hydration-state.is-inline {
+  max-width: none;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+}
+
+.timeline-hydration-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+
+.timeline-hydration-copy strong {
+  font-size: 13px;
+  color: var(--n-text-color-1);
+}
+
+.timeline-hydration-copy span {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  color: var(--n-text-color-3);
+}
+
 .timeline-intro {
   max-width: 640px;
   padding: 16px 16px 18px;
@@ -1317,6 +1358,10 @@
   flex-direction: column;
   gap: 8px;
   overflow-anchor: none;
+}
+
+.runtime-sync-retry {
+  align-self: flex-end;
 }
 
 .live-card,

@@ -658,7 +658,42 @@
                     {{ t('webSession.conversationSearchOpen') }}
                   </n-tooltip>
                 </div>
-                <div v-if="historyMeta.loading" class="history-loading">
+                <div
+                  v-if="timelineHydrationBlocking"
+                  class="timeline-hydration-state"
+                  :class="{ 'state-error': timelineHydrationFailed }"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <n-spin v-if="!timelineHydrationFailed" :size="18" />
+                  <div class="timeline-hydration-copy">
+                    <strong>{{ timelineHydrationTitle }}</strong>
+                    <span>{{ timelineHydrationDetail }}</span>
+                  </div>
+                  <n-button
+                    v-if="timelineHydrationFailed"
+                    size="small"
+                    secondary
+                    type="primary"
+                    @click="void retryCurrentTimelineHydration()"
+                  >
+                    {{ t('webSession.timelineHydrationRetry') }}
+                  </n-button>
+                </div>
+                <div
+                  v-else-if="timelineHydrationRefreshFailed"
+                  class="timeline-hydration-state state-error is-inline"
+                  role="status"
+                >
+                  <div class="timeline-hydration-copy">
+                    <strong>{{ t('webSession.timelineRefreshFailed') }}</strong>
+                    <span>{{ timelineHydrationDetail }}</span>
+                  </div>
+                  <n-button size="tiny" secondary @click="void retryCurrentTimelineHydration()">
+                    {{ t('webSession.timelineHydrationRetry') }}
+                  </n-button>
+                </div>
+                <div v-else-if="historyMeta.loading" class="history-loading">
                   {{
                     currentRealSession?.syncState === 'syncing'
                       ? t('webSession.syncLoading')
@@ -671,6 +706,7 @@
                     visibleBlocks.length === 0 &&
                     filteredTimelineBlocks.length === 0 &&
                     !historyMeta.loading &&
+                    historyMeta.hydrationState === 'ready' &&
                     currentRealSession?.syncState !== 'syncing'
                   "
                   class="timeline-intro"
@@ -1403,7 +1439,7 @@
                   </div>
                 </div>
 
-                <div v-if="showRuntimeStrip" class="runtime-strip">
+                <div v-if="showRuntimeStrip && !timelineHydrationBlocking" class="runtime-strip">
                   <button
                     type="button"
                     class="live-card"
@@ -1447,6 +1483,16 @@
                       </n-tooltip>
                     </div>
                   </button>
+
+                  <n-button
+                    v-if="isAwaitingRuntimeDelayed"
+                    class="runtime-sync-retry"
+                    size="small"
+                    secondary
+                    @click="void retryAwaitingRuntimeSync()"
+                  >
+                    {{ t('webSession.runtimeSyncRetry') }}
+                  </n-button>
 
                   <div
                     v-if="pendingApproval"
@@ -3746,6 +3792,7 @@ function isAbortLikeError(error: unknown) {
 }
 
 const webSessionStore = useWebSessionStore();
+const { connectionState: webSessionConnectionState } = storeToRefs(webSessionStore);
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const route = useRoute();
@@ -4014,6 +4061,16 @@ const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 let activeUserInputDraftStorageKey = '';
 const submitStateBySessionId = ref<WebSessionSubmitState>({});
+const awaitingRuntimeBySessionId = ref<
+  Record<
+    string,
+    {
+      kind: 'execute_send' | 'execute_plan';
+      startedAt: number;
+      baselineEventSeq: number;
+    }
+  >
+>({});
 const userInputSubmitStateByOwnerId = ref<WebSessionSubmitState>({});
 const userInputSlowStateByOwnerId = ref<WebSessionSubmitState>({});
 const archiveStateBySessionId = ref<WebSessionSubmitState>({});
@@ -5811,8 +5868,14 @@ const isPlanWaitingApprovalState = computed(
     !pendingApproval.value &&
     isLatestPlanActionable.value
 );
-const currentSubmitEntry = computed(() =>
-  getWebSessionSubmitEntry(submitStateBySessionId.value, currentDraftSessionId.value)
+const currentAwaitingRuntime = computed(() => {
+  const sessionId = currentRealSession.value?.id ?? '';
+  return sessionId ? (awaitingRuntimeBySessionId.value[sessionId] ?? null) : null;
+});
+const currentSubmitEntry = computed(
+  () =>
+    getWebSessionSubmitEntry(submitStateBySessionId.value, currentDraftSessionId.value) ??
+    currentAwaitingRuntime.value
 );
 const currentSubmitShowsExecuteFeedback = computed(() =>
   shouldShowWebSessionExecuteFeedback(currentSubmitEntry.value)
@@ -5835,6 +5898,11 @@ const subAgentTriggerTitle = computed(() =>
   t('webSession.liveSubAgentCount', { count: activeSubAgentCount.value })
 );
 const isSubmittingPlanExecution = computed(() => currentSubmitEntry.value?.kind === 'execute_plan');
+const isAwaitingRuntimeDelayed = computed(
+  () =>
+    Boolean(currentAwaitingRuntime.value) &&
+    liveStateClockMs.value - (currentAwaitingRuntime.value?.startedAt ?? 0) >= 15_000
+);
 const showRuntimeStrip = computed(() => {
   if (pendingApproval.value || pendingUserInput.value) {
     return true;
@@ -5866,8 +5934,42 @@ const recoveredRuntimeHint = computed(
 const historyMeta = computed(() =>
   currentRealSession.value
     ? webSessionStore.getHistoryMeta(currentRealSession.value.id)
-    : { hasMore: false, beforeCursor: '', total: 0, loading: false }
+    : {
+        hasMore: false,
+        beforeCursor: '',
+        total: 0,
+        loading: false,
+        hydrationState: 'ready' as const,
+        hydrationError: '',
+      }
 );
+const timelineHydrationBlocking = computed(
+  () =>
+    Boolean(currentRealSession.value) &&
+    liveBlocks.value.length === 0 &&
+    historyMeta.value.hydrationState !== 'ready'
+);
+const timelineHydrationFailed = computed(
+  () => timelineHydrationBlocking.value && historyMeta.value.hydrationState === 'error'
+);
+const timelineHydrationRefreshFailed = computed(
+  () => liveBlocks.value.length > 0 && historyMeta.value.hydrationState === 'error'
+);
+const timelineHydrationTitle = computed(() =>
+  timelineHydrationFailed.value
+    ? t('webSession.timelineHydrationFailed')
+    : webSessionConnectionState.value === 'closed'
+      ? t('webSession.timelineConnectionRecovering')
+      : t('webSession.timelineHydrationLoading')
+);
+const timelineHydrationDetail = computed(() => {
+  if (timelineHydrationFailed.value) {
+    return historyMeta.value.hydrationError || t('webSession.timelineHydrationFailedDetail');
+  }
+  return webSessionConnectionState.value === 'closed'
+    ? t('webSession.timelineConnectionRecoveringDetail')
+    : t('webSession.timelineHydrationLoadingDetail');
+});
 
 function getCurrentTimelineEdgeWindow() {
   const edgeWindow = timelineEdgeWindow.value;
@@ -6719,7 +6821,7 @@ const isSubmittingRedirectedMessage = computed(
 const isSubmittingQueuedMessage = computed(
   () => currentSubmitEntry.value?.kind === 'queue_message'
 );
-const isRunActive = computed(() => liveState.value.running);
+const isRunActive = computed(() => displayLiveState.value.running);
 const canOpenPiTree = computed(() => {
   const session = currentRealSession.value;
   return canOpenWebSessionPiTree({
@@ -7472,6 +7574,37 @@ function transferSessionSubmit(fromOwnerId: string, toOwnerId: string) {
   );
 }
 
+function beginAwaitingRuntime(
+  sessionId: string,
+  kind: 'execute_send' | 'execute_plan',
+  startedAt: number
+) {
+  awaitingRuntimeBySessionId.value = {
+    ...awaitingRuntimeBySessionId.value,
+    [sessionId]: {
+      kind,
+      startedAt,
+      baselineEventSeq: webSessionStore.getLatestEventSeq(sessionId),
+    },
+  };
+}
+
+function clearAwaitingRuntime(sessionId: string) {
+  if (!sessionId || !awaitingRuntimeBySessionId.value[sessionId]) {
+    return;
+  }
+  const next = { ...awaitingRuntimeBySessionId.value };
+  delete next[sessionId];
+  awaitingRuntimeBySessionId.value = next;
+}
+
+async function retryAwaitingRuntimeSync() {
+  if (!currentAwaitingRuntime.value) {
+    return;
+  }
+  await refreshWebSessionCatchUp('awaiting-runtime-manual');
+}
+
 function clearUserInputSlowHintTimer(ownerId = '') {
   const normalizedOwnerId = buildWebSessionSubmitOwnerId(ownerId);
   if (
@@ -7831,6 +7964,9 @@ const liveStateLabel = computed(() => {
   if (hasRecoveredRuntimeRequest.value) {
     return t('webSession.liveRecovered');
   }
+  if (isAwaitingRuntimeDelayed.value) {
+    return t('webSession.runtimeSyncDelayed');
+  }
   switch (displayLiveState.value.phase) {
     case 'starting':
       return t('webSession.liveStarting');
@@ -7913,6 +8049,9 @@ const liveStateDetailTitle = computed(() => {
 const liveStateSecondaryText = computed(() => {
   if (liveStateDetail.value) {
     return liveStateDetail.value;
+  }
+  if (isAwaitingRuntimeDelayed.value) {
+    return t('webSession.runtimeSyncDelayedDetail');
   }
   switch (displayLiveState.value.phase) {
     case 'starting':
@@ -9640,8 +9779,13 @@ async function connectVisibleRealSession(projectId: string, sessionId: string) {
   webSessionStore.setActiveSession(projectId, sessionId);
   try {
     const session = webSessionStore.getSessions(projectId).find(item => item.id === sessionId);
+    const hydrationState = webSessionStore.getHistoryMeta(sessionId).hydrationState;
     if (
-      !shouldLoadWebSessionSnapshotOnActivation(session, webSessionStore.isSessionSnapshotCurrent)
+      !shouldLoadWebSessionSnapshotOnActivation(
+        session,
+        webSessionStore.isSessionSnapshotCurrent,
+        hydrationState
+      )
     ) {
       return realSessionSnapshotLoadController.isCurrent(snapshotLoad);
     }
@@ -9654,6 +9798,31 @@ async function connectVisibleRealSession(projectId: string, sessionId: string) {
       return false;
     }
     throw error;
+  } finally {
+    realSessionSnapshotLoadController.release(snapshotLoad);
+  }
+}
+
+async function retryCurrentTimelineHydration() {
+  const session = currentRealSession.value;
+  if (!session || historyMeta.value.hydrationState === 'loading') {
+    return;
+  }
+  void webSessionStore.openEventStream().catch(error => {
+    console.warn('[Web Session] Failed to reopen event stream', error);
+  });
+  const snapshotLoad = realSessionSnapshotLoadController.begin();
+  try {
+    await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
+      signal: snapshotLoad.signal,
+      ensureLatest: true,
+      minimumRevision: session.revision,
+      requireRevision: true,
+    });
+  } catch (error) {
+    if (!isAbortLikeError(error)) {
+      console.warn('[Web Session] Failed to retry timeline hydration', error);
+    }
   } finally {
     realSessionSnapshotLoadController.release(snapshotLoad);
   }
@@ -12000,6 +12169,13 @@ async function handleSessionSelect(sessionId: string) {
   if (sessionId === activeSessionId.value) {
     pendingRouteActivationSessionId.value = '';
     const session = currentSession.value;
+    if (session && !isDraftSession(session) && !isArchivedPreviewSession(session)) {
+      try {
+        await connectVisibleRealSession(session.projectId, session.id);
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : t('common.error'));
+      }
+    }
     setComposerTarget(props.projectId, sessionId, 'ready');
     void syncWebSessionRouteSessionId(
       session && !isDraftSession(session) && session.projectId === props.projectId ? session.id : ''
@@ -13270,6 +13446,7 @@ async function handleSubmit() {
   let messageRetainedForRetry = false;
   let outgoingMessageId = '';
   let outgoingMessageSessionId = '';
+  const submitStartedAt = Date.now();
   const stageComposerMessage = (session: WebSessionSummary | null) => {
     if (!shouldStageOutgoingMessage || !session || outgoingMessageId) {
       return;
@@ -13359,13 +13536,20 @@ async function handleSubmit() {
       message.success('Goal updated');
       return;
     }
-    await webSessionStore.sendMessage(
+    const sendResult = await webSessionStore.sendMessage(
       session.id,
       draftText,
       attachments.map(item => item.id),
       undefined,
       { outgoingMessageId, attachments }
     );
+    if (
+      sendResult.accepted &&
+      !sendResult.runtimeObserved &&
+      (submitKind === 'execute_send' || submitKind === 'execute_plan')
+    ) {
+      beginAwaitingRuntime(session.id, submitKind, submitStartedAt);
+    }
     submissionSucceeded = true;
     recordSubmittedPrompt(draftText, session.projectId || submitProjectId);
     const isCurrentSubmissionSession = isCurrentVisibleSession(session.id);
@@ -14431,6 +14615,7 @@ async function handlePlanCardImplement() {
     return;
   }
   let submitOwnerId = currentRealSession.value.id;
+  const submitStartedAt = Date.now();
   beginSessionSubmit(submitOwnerId, 'execute_plan');
   try {
     const sourceSession = currentRealSession.value;
@@ -14452,7 +14637,14 @@ async function handlePlanCardImplement() {
 
     const answered = await answerInlinePlanChoice('execute');
     if (!answered) {
-      await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
+      const sendResult = await webSessionStore.sendMessage(
+        targetSession.id,
+        'Implement the plan.',
+        []
+      );
+      if (sendResult.accepted && !sendResult.runtimeObserved) {
+        beginAwaitingRuntime(targetSession.id, 'execute_plan', submitStartedAt);
+      }
     }
 
     if (prepared.navigateProjectId && isCurrentVisibleSession(targetSession.id)) {
@@ -14484,10 +14676,14 @@ async function handlePlanCardImplementFreshContext() {
   }
 
   beginSessionSubmit(sourceSession.id, 'execute_plan');
+  const submitStartedAt = Date.now();
   try {
-    await webSessionStore.sendMessage(sourceSession.id, prompt, [], undefined, {
+    const sendResult = await webSessionStore.sendMessage(sourceSession.id, prompt, [], undefined, {
       freshContext: true,
     });
+    if (sendResult.accepted && !sendResult.runtimeObserved) {
+      beginAwaitingRuntime(sourceSession.id, 'execute_plan', submitStartedAt);
+    }
     if (isCurrentVisibleSession(sourceSession.id)) {
       autoFollowBottom.value = true;
       scrollToBottom(true);
@@ -15981,6 +16177,17 @@ watch(
       session.projectId === props.projectId
     ) {
       pendingRouteActivationSessionId.value = '';
+      if (
+        shouldLoadWebSessionSnapshotOnActivation(
+          session,
+          webSessionStore.isSessionSnapshotCurrent,
+          webSessionStore.getHistoryMeta(session.id).hydrationState
+        )
+      ) {
+        void connectVisibleRealSession(props.projectId, session.id).catch(error => {
+          console.error('[Web Session] Failed to hydrate current route session', error);
+        });
+      }
       return;
     }
     pendingRouteActivationSessionId.value = sessionId;
@@ -16007,6 +16214,41 @@ watch([canOpenSendQuickActions, isRunActive, () => currentRealSession.value?.id 
   }
   if (!values[0]) {
     closeSendQuickActions();
+  }
+});
+
+watch(
+  () => {
+    const session = currentRealSession.value;
+    if (!session) {
+      return null;
+    }
+    const awaiting = awaitingRuntimeBySessionId.value[session.id];
+    return awaiting
+      ? {
+          sessionId: session.id,
+          baselineEventSeq: awaiting.baselineEventSeq,
+          latestEventSeq: webSessionStore.getLatestEventSeq(session.id),
+          phase: liveState.value.phase,
+          running: liveState.value.running,
+        }
+      : null;
+  },
+  state => {
+    if (
+      state &&
+      (state.running ||
+        state.latestEventSeq > state.baselineEventSeq ||
+        !['idle', 'done'].includes(state.phase))
+    ) {
+      clearAwaitingRuntime(state.sessionId);
+    }
+  }
+);
+
+watch(isAwaitingRuntimeDelayed, delayed => {
+  if (delayed) {
+    void refreshWebSessionCatchUp('awaiting-runtime-delayed');
   }
 });
 

@@ -349,6 +349,58 @@ describe('webSession loading behavior', () => {
     await Promise.all([firstSnapshot, secondSnapshot]);
   });
 
+  it('distinguishes an uninitialized timeline from a successfully loaded empty timeline', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ id: 'session-empty-hydration', status: 'done', itemCount: 0 });
+    let resolveSnapshot!: (snapshot: WebSessionSnapshot) => void;
+    snapshotMock.mockReturnValue(
+      new Promise<WebSessionSnapshot>(resolve => {
+        resolveSnapshot = resolve;
+      })
+    );
+
+    expect(store.getHistoryMeta(session.id)).toMatchObject({
+      hydrationState: 'uninitialized',
+      loading: false,
+    });
+    const request = store.loadSessionSnapshot(session.projectId, session.id);
+    expect(store.getHistoryMeta(session.id)).toMatchObject({
+      hydrationState: 'loading',
+      loading: true,
+    });
+
+    resolveSnapshot({
+      revision: session.revision,
+      historyEpoch: '1',
+      eventCursor: '0:9223372036854775807',
+      session,
+      history: { items: [], hasMore: false, total: 0 },
+    });
+    await request;
+
+    expect(store.getHistoryMeta(session.id)).toMatchObject({
+      hydrationState: 'ready',
+      hydrationError: '',
+      loading: false,
+      total: 0,
+    });
+  });
+
+  it('exposes an initial timeline hydration failure for an explicit retry', async () => {
+    const store = useWebSessionStore();
+    const error = new Error('snapshot unavailable');
+    snapshotMock.mockRejectedValue(error);
+
+    await expect(
+      store.loadSessionSnapshot('project-hydration-error', 'session-hydration-error')
+    ).rejects.toThrow('snapshot unavailable');
+    expect(store.getHistoryMeta('session-hydration-error')).toMatchObject({
+      hydrationState: 'error',
+      hydrationError: 'snapshot unavailable',
+      loading: false,
+    });
+  });
+
   it('does not attach a full snapshot consumer to a conditional flight', async () => {
     const store = useWebSessionStore();
     const session = makeSession({ id: 'session-flight-profile', revision: '1' });
@@ -3598,7 +3650,7 @@ describe('webSession loading behavior', () => {
       },
     });
 
-    await sendPromise;
+    const sendResult = await sendPromise;
 
     expect(snapshotMock).not.toHaveBeenCalled();
     expect(store.getBlocks(session.id)).toHaveLength(1);
@@ -3608,6 +3660,43 @@ describe('webSession loading behavior', () => {
     expect(store.getLiveState(session.id)).toMatchObject({
       phase: 'starting',
       running: true,
+    });
+    expect(sendResult).toMatchObject({ accepted: true, runtimeObserved: true });
+  });
+
+  it('reports an accepted send when no authoritative runtime activity arrives in time', async () => {
+    vi.useFakeTimers();
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-delayed-runtime',
+      status: 'done',
+      assistantState: null,
+      itemCount: 0,
+      turnCount: 0,
+    });
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({ revision: '2', unchanged: true });
+    await store.loadSessions(session.projectId);
+
+    const sendPromise = store.sendMessage(session.id, 'start slowly', []);
+    await flushMicrotasks();
+    const commandSocket = findSocket('/api/v1/web-sessions/ws');
+    const command = commandSocket?.sent.at(-1) as { rid?: string } | undefined;
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: String(command?.rid ?? ''),
+      sid: session.id,
+      ts: Date.now(),
+      op: 'send',
+      ok: 1,
+    });
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(sendPromise).resolves.toMatchObject({
+      accepted: true,
+      runtimeObserved: false,
+      revision: '2',
     });
   });
 

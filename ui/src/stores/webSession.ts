@@ -408,6 +408,12 @@ export interface WebSessionSendMessageOptions {
   freshContext?: boolean;
 }
 
+export interface WebSessionSendMessageResult {
+  accepted: boolean;
+  runtimeObserved: boolean;
+  revision?: string;
+}
+
 export class WebSessionMessageDeliveryError extends Error {
   readonly outgoingMessageId: string;
   readonly originalError: unknown;
@@ -781,11 +787,15 @@ export interface WebSessionApprovalEvent extends WebSessionAIEvent {
   approval: WebSessionApprovalState;
 }
 
+export type WebSessionHistoryHydrationState = 'uninitialized' | 'loading' | 'ready' | 'error';
+
 type HistoryMeta = {
   hasMore: boolean;
   beforeCursor: string;
   total: number;
   loading: boolean;
+  hydrationState: WebSessionHistoryHydrationState;
+  hydrationError: string;
 };
 
 type ArchivedListMeta = {
@@ -2487,6 +2497,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
         beforeCursor: '',
         total: 0,
         loading: false,
+        hydrationState: 'uninitialized',
+        hydrationError: '',
       }
     );
   }
@@ -2544,6 +2556,28 @@ export const useWebSessionStore = defineStore('web-session', () => {
       [sessionId]: {
         ...getHistoryMeta(sessionId),
         loading,
+      },
+    };
+  }
+
+  function setHistoryHydrationState(
+    sessionId: string,
+    hydrationState: WebSessionHistoryHydrationState,
+    error: unknown = ''
+  ) {
+    const current = getHistoryMeta(sessionId);
+    historyBySession.value = {
+      ...historyBySession.value,
+      [sessionId]: {
+        ...current,
+        loading: hydrationState === 'loading' ? true : current.loading,
+        hydrationState,
+        hydrationError:
+          hydrationState === 'error'
+            ? error instanceof Error
+              ? error.message
+              : String(error || 'Failed to load conversation')
+            : '',
       },
     };
   }
@@ -2742,6 +2776,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
         beforeCursor: String(history.beforeCursor ?? ''),
         total: Number(history.total ?? 0),
         loading: false,
+        hydrationState: 'ready',
+        hydrationError: '',
       },
     };
     sessionSync.markHydrated(sessionId, summary.revision);
@@ -6399,6 +6435,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const requestGeneration = getSessionHydrationGeneration(sessionId);
     if (getBlocks(sessionId).length === 0) {
       setHistoryLoading(sessionId, true);
+      setHistoryHydrationState(sessionId, 'loading');
     }
     try {
       const limit = Math.max(1, Math.trunc(options?.limit ?? 80));
@@ -6551,6 +6588,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
         // preview loads remain compatible with older partial responses.
         accepted = false;
         setHistoryLoading(sessionId, false);
+        if (getBlocks(sessionId).length === 0) {
+          setHistoryHydrationState(
+            sessionId,
+            'error',
+            'The snapshot did not reach the latest session revision'
+          );
+        }
         result = {
           revision: responseRevision || observedBeforeResponse,
           unchanged: true,
@@ -6582,6 +6626,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
             );
           }
           setHistoryLoading(sessionId, false);
+          setHistoryHydrationState(sessionId, 'ready');
         } else if (snapshot.session && snapshot.history) {
           const summary = {
             ...snapshot.session,
@@ -6598,6 +6643,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
           if (!sessionSync.shouldApply(sessionId, responseRevision)) {
             accepted = false;
             setHistoryLoading(sessionId, false);
+            if (getBlocks(sessionId).length === 0) {
+              setHistoryHydrationState(
+                sessionId,
+                'error',
+                'The snapshot was superseded before it could be applied'
+              );
+            }
             result = {
               revision: sessionSync.getApplied(sessionId),
               unchanged: true,
@@ -6645,6 +6697,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           }
         } else {
           setHistoryLoading(sessionId, false);
+          setHistoryHydrationState(sessionId, 'error', 'Snapshot response was incomplete');
         }
       }
       if (accepted && options?.rememberActive !== false) {
@@ -6676,11 +6729,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ) {
         return null;
       }
+      if (!(error instanceof Error && error.name === 'AbortError')) {
+        setHistoryHydrationState(sessionId, 'error', error);
+      }
       throw error;
     }
   }
 
-  async function catchUpSession(
+  async function catchUpSessionInternal(
     projectId: string,
     sessionId: string,
     options?: {
@@ -6833,6 +6889,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
             ...currentMeta,
             total: Number(response.total ?? currentMeta.total),
             loading: false,
+            hydrationState: 'ready',
+            hydrationError: '',
           },
         };
         sessionSync.markApplied(sessionId, latestRevision);
@@ -6858,13 +6916,42 @@ export const useWebSessionStore = defineStore('web-session', () => {
           !options?.skipTrailing &&
           compareWebSessionRevisions(latestRevision, observedRevision) === -1
         ) {
-          return catchUpSession(projectId, sessionId, {
+          return catchUpSessionInternal(projectId, sessionId, {
             ...options,
             skipTrailing: true,
           });
         }
         return response;
       }
+    }
+  }
+
+  async function catchUpSession(
+    projectId: string,
+    sessionId: string,
+    options?: {
+      signal?: AbortSignal;
+      preserveArchivedPosition?: boolean;
+      skipTrailing?: boolean;
+    }
+  ) {
+    const showInitialLoading = getBlocks(sessionId).length === 0;
+    if (showInitialLoading) {
+      setHistoryHydrationState(sessionId, 'loading');
+    }
+    try {
+      const result = await catchUpSessionInternal(projectId, sessionId, options);
+      if (result && getHistoryMeta(sessionId).hydrationState !== 'error') {
+        setHistoryLoading(sessionId, false);
+        setHistoryHydrationState(sessionId, 'ready');
+      }
+      return result;
+    } catch (error) {
+      setHistoryLoading(sessionId, false);
+      if (!(error instanceof Error && error.name === 'AbortError')) {
+        setHistoryHydrationState(sessionId, 'error', error);
+      }
+      throw error;
     }
   }
 
@@ -7052,7 +7139,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     attachmentIds: string[],
     mode?: 'redirect' | 'queue',
     options?: WebSessionSendMessageOptions
-  ) {
+  ): Promise<WebSessionSendMessageResult> {
     const session = findSessionById(sessionId);
     if (session?.archivedAt) {
       throw new Error('session is archived');
@@ -7067,7 +7154,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         createdAt: 'createdAt' in attachment ? String(attachment.createdAt ?? '') : '',
       }));
       stageNewRedirectInput(sessionId, text, attachmentIds, attachmentMetadata);
-      return;
+      return { accepted: true, runtimeObserved: true };
     }
     if (mode === 'queue') {
       await sendCommand('send', sessionId, {
@@ -7076,7 +7163,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         mode,
         pid: createStagedPendingId(),
       });
-      return;
+      return { accepted: true, runtimeObserved: true };
     }
     const outgoingMessageId = stageOutgoingMessage(sessionId, text, attachmentIds, options);
     const beforeState = snapshotRuntimeMutationState(sessionId);
@@ -7111,6 +7198,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
         return liveState.updatedAt > beforeState.liveUpdatedAt && liveState.phase !== 'idle';
       },
     };
+    const hasObservedRuntimeActivity = () => {
+      const currentLiveState = getLiveState(sessionId);
+      if (currentLiveState.running || !['idle', 'done'].includes(currentLiveState.phase)) {
+        return true;
+      }
+      const currentBlocks = buildBlocks(sessionId);
+      return (
+        currentBlocks.length > beforeState.blockCount &&
+        currentBlocks.slice(beforeState.blockCount).some(block => block.kind !== 'user')
+      );
+    };
 
     let acknowledgement: WireFrame;
     try {
@@ -7119,7 +7217,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (setOutgoingMessageDeliveryState(sessionId, outgoingMessageId, 'failed')) {
         throw new WebSessionMessageDeliveryError(outgoingMessageId, error);
       }
-      return;
+      return { accepted: true, runtimeObserved: true };
     }
 
     setOutgoingMessageDeliveryState(sessionId, outgoingMessageId, 'accepted');
@@ -7128,16 +7226,23 @@ export const useWebSessionStore = defineStore('web-session', () => {
       console.warn('[Web Session] Accepted send returned no snapshot revision', {
         sessionId,
       });
-      return;
+      return { accepted: true, runtimeObserved: hasObservedRuntimeActivity() };
     }
+    let runtimeObserved = false;
     try {
       await hydrateRuntimeMutation(sessionId, hydration, revision);
+      runtimeObserved = hasObservedRuntimeActivity();
     } catch (error) {
       console.warn('[Web Session] Accepted send hydration failed', {
         sessionId,
         error,
       });
     }
+    return {
+      accepted: true,
+      runtimeObserved,
+      revision,
+    };
   }
 
   async function removePendingInput(sessionId: string, pendingId: string) {

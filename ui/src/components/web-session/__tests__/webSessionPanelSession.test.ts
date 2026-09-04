@@ -26,4 +26,23 @@ describe('webSessionPanelSession activation', () => {
     ).toBe(true);
     expect(shouldLoadWebSessionSnapshotOnActivation(null, isSnapshotCurrent)).toBe(true);
   });
+
+  it('loads an uninitialized timeline even when its revision clock is current', () => {
+    const isSnapshotCurrent = vi.fn().mockReturnValue(true);
+
+    expect(
+      shouldLoadWebSessionSnapshotOnActivation(
+        { id: 'session-1', revision: '9' },
+        isSnapshotCurrent,
+        'uninitialized'
+      )
+    ).toBe(true);
+    expect(
+      shouldLoadWebSessionSnapshotOnActivation(
+        { id: 'session-1', revision: '9' },
+        isSnapshotCurrent,
+        'ready'
+      )
+    ).toBe(false);
+  });
 });
