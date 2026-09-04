@@ -2531,7 +2531,7 @@ func (m *Manager) handleCodexSubAgentActivity(
 }
 
 func shouldContinueIncompleteCodexTurn(session tables.WebSessionTable, run *activeRun) bool {
-	if run == nil || !isGPT56CodexModel(session.Model) {
+	if run == nil || !usesCodexIncompleteTurnGuard(session.Model) {
 		return false
 	}
 	if run.completedReplySeen() || run.completedPlanToolSeen() || run.hasPendingServerRequest() {
@@ -2540,9 +2540,9 @@ func shouldContinueIncompleteCodexTurn(session tables.WebSessionTable, run *acti
 	return true
 }
 
-func isGPT56CodexModel(model string) bool {
+func usesCodexIncompleteTurnGuard(model string) bool {
 	switch strings.ToLower(strings.TrimSpace(model)) {
-	case "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra":
+	case "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra":
 		return true
 	default:
 		return false

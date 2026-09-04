@@ -24,21 +24,21 @@ import {
 describe('webSessionModelOptions', () => {
   it('shows only the popular codex models by default', () => {
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.value)).toEqual([
-      'gpt-5.4',
+      'gpt-6-astra',
       'gpt-5.5',
       'gpt-5.6-sol',
       'gpt-5.6-luna',
       'gpt-5.6-terra',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.label)).toEqual([
-      '5.4',
+      '6A',
       '5.5',
       '5.6S',
       '5.6L',
       '5.6T',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.menuLabel)).toEqual([
-      'GPT-5.4',
+      'GPT-6 Astra',
       'GPT-5.5',
       'GPT-5.6 Sol',
       'GPT-5.6 Luna',
@@ -70,6 +70,7 @@ describe('webSessionModelOptions', () => {
       expect.arrayContaining(['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'])
     );
     expect(allValues).not.toContain('gpt-5.6');
+    expect(allValues).not.toContain('gpt-5.4');
     expect(allValues).not.toContain('gpt-5.4-nano');
   });
 
@@ -316,7 +317,15 @@ describe('webSessionModelOptions', () => {
     ]);
   });
 
-  it('falls back per 5.6 model without exposing none or Luna ultra', () => {
+  it('falls back per current Codex model without exposing unsupported efforts', () => {
+    expect(resolveCodexReasoningEfforts('gpt-6-astra')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+    ]);
     expect(resolveCodexReasoningEfforts('gpt-5.6-terra')).toEqual([
       'low',
       'medium',

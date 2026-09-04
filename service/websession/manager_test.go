@@ -3691,6 +3691,7 @@ func TestNormalizeCodexReasoningEffortUsesModelCapabilities(t *testing.T) {
 		effort ReasoningEffort
 		want   ReasoningEffort
 	}{
+		{name: "Astra Ultra", model: "gpt-6-astra", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
 		{name: "Sol Ultra", model: "gpt-5.6-sol", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
 		{name: "Terra Max", model: "gpt-5.6-terra", effort: ReasoningEffortMax, want: ReasoningEffortMax},
 		{name: "Luna Ultra", model: "gpt-5.6-luna", effort: ReasoningEffortUltra, want: ReasoningEffortDefault},
@@ -4524,16 +4525,17 @@ func TestCodexAppServerDrainTerminatesStuckProcess(t *testing.T) {
 	}
 }
 
-func TestCodexAppServerAutoContinuesIncompleteGPT56Turn(t *testing.T) {
+func TestCodexAppServerAutoContinuesIncompleteModernModelTurn(t *testing.T) {
 	tests := []struct {
 		name         string
 		mode         string
+		model        string
 		workflowMode WorkflowMode
 	}{
-		{name: "plan commentary only", mode: "incomplete_commentary_then_success", workflowMode: WorkflowModePlan},
-		{name: "commentary phase inherited", mode: "incomplete_inherited_commentary_then_success", workflowMode: WorkflowModeDefault},
-		{name: "empty unknown phase", mode: "incomplete_empty_unknown_then_success", workflowMode: WorkflowModeDefault},
-		{name: "default tool only", mode: "incomplete_tool_then_success", workflowMode: WorkflowModeDefault},
+		{name: "Astra plan commentary only", mode: "incomplete_commentary_then_success", model: "gpt-6-astra", workflowMode: WorkflowModePlan},
+		{name: "5.6 commentary phase inherited", mode: "incomplete_inherited_commentary_then_success", model: "gpt-5.6-sol", workflowMode: WorkflowModeDefault},
+		{name: "5.6 empty unknown phase", mode: "incomplete_empty_unknown_then_success", model: "gpt-5.6-sol", workflowMode: WorkflowModeDefault},
+		{name: "5.6 default tool only", mode: "incomplete_tool_then_success", model: "gpt-5.6-sol", workflowMode: WorkflowModeDefault},
 	}
 
 	for _, test := range tests {
@@ -4553,7 +4555,7 @@ func TestCodexAppServerAutoContinuesIncompleteGPT56Turn(t *testing.T) {
 			created, err := manager.CreateSession(context.Background(), CreateParams{
 				ProjectID:    project.ID,
 				Agent:        AgentCodex,
-				Model:        "gpt-5.6-sol",
+				Model:        test.model,
 				WorkflowMode: test.workflowMode,
 			})
 			if err != nil {
