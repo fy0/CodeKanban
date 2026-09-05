@@ -5567,6 +5567,12 @@ function timelineSubAgent(item: WebSessionBlock) {
   );
 }
 
+const liveState = computed(() =>
+  currentRealSession.value
+    ? webSessionStore.getLiveState(currentRealSession.value.id)
+    : ({ phase: 'idle', running: false, updatedAt: Date.now() } as WebSessionLiveState)
+);
+
 function shouldRenderToolBlockInTimeline(block: WebSessionBlock) {
   if (block.kind !== 'tool' || !block.tool) {
     return true;
@@ -5684,11 +5690,6 @@ const hasUserMessageAfterLatestPlan = computed(() => {
   }
   return blocks.value.slice(planIndex + 1).some(block => block.kind === 'user');
 });
-const liveState = computed(() =>
-  currentRealSession.value
-    ? webSessionStore.getLiveState(currentRealSession.value.id)
-    : ({ phase: 'idle', running: false, updatedAt: Date.now() } as WebSessionLiveState)
-);
 const streamingMarkdownTargets = computed(() =>
   visibleBlocks.value.flatMap(block => {
     const targets: Array<{ key: string; text: string }> = [];
