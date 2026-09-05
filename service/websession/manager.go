@@ -48,10 +48,8 @@ const (
 
 var (
 	ErrCodexMultiAgentV2Unavailable = errors.New("Codex multi-agent V2 is unavailable")
-	// ErrCodexWebSessionUnavailable is kept as an API compatibility alias.
-	ErrCodexWebSessionUnavailable = ErrCodexMultiAgentV2Unavailable
-	webSessionHeartbeatInterval   = 15 * time.Second
-	webSessionHeartbeatTimeout    = 45 * time.Second
+	webSessionHeartbeatInterval     = 15 * time.Second
+	webSessionHeartbeatTimeout      = 45 * time.Second
 )
 
 type codexMultiAgentV2UnavailableError struct {
@@ -4691,7 +4689,7 @@ func (m *Manager) ensureCodexMultiAgentV2Supported() error {
 	return codexMultiAgentV2SupportError(m.GetCodexRuntimeConfig())
 }
 
-func codexMultiAgentV2SupportError(config CodexRuntimeConfig) error {
+func codexMultiAgentV2SupportError(config WebSessionRuntimeConfig) error {
 	if !config.HasCodex {
 		return codexMultiAgentV2UnavailableError{message: errCodexNotInstalled}
 	}

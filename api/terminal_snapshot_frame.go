@@ -66,15 +66,6 @@ func (s *terminalMirrorSenderState) SetIncrementalEnabled(enabled bool) bool {
 	return changed
 }
 
-func (s *terminalMirrorSenderState) Reset() {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.last = nil
-}
-
 func (s *terminalMirrorSenderState) EncodeFrame(
 	snapshot *terminal.TerminalMirrorSnapshot,
 	forceFull bool,

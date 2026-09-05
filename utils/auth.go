@@ -89,19 +89,6 @@ func EnsureAuthConfig(cfg *AppConfig) error {
 	})
 }
 
-func RotateAuthTokenSecret(cfg *AppConfig) error {
-	if cfg == nil {
-		return nil
-	}
-
-	value, err := NewAuthTokenSecret()
-	if err != nil {
-		return err
-	}
-	cfg.Auth.TokenSecret = value
-	return nil
-}
-
 func NewAuthFrontendSalt() (string, error) {
 	return randomURLToken(24)
 }

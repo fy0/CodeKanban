@@ -62,18 +62,6 @@ export function resolveActiveTabSessionId(options: {
   return resolveUnderlyingTabSessionId(options);
 }
 
-export function resolveTabAnchorInsertIndex<T extends OrderedTabSessionLike>(
-  orderedSessions: T[],
-  anchorId = ''
-) {
-  const normalizedAnchorId = String(anchorId || '').trim();
-  if (!normalizedAnchorId) {
-    return orderedSessions.length;
-  }
-  const anchorIndex = orderedSessions.findIndex(session => session.id === normalizedAnchorId);
-  return anchorIndex >= 0 ? anchorIndex + 1 : orderedSessions.length;
-}
-
 export function buildOrderedTabSessions<T extends OrderedTabSessionLike>(
   orderedIds: string[],
   baseSessions: T[],

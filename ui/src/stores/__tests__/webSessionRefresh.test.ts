@@ -3,11 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WebSessionSnapshot } from '@/api/webSession';
 import type { WebSessionSummary } from '@/types/models';
-import {
-  isWebSessionMessageDeliveryError,
-  useWebSessionStore,
-  webSessionRuntimePerformance,
-} from '@/stores/webSession';
+import { isWebSessionMessageDeliveryError, useWebSessionStore } from '@/stores/webSession';
 
 const {
   listMock,
@@ -301,7 +297,6 @@ describe('webSession loading behavior', () => {
     syncMock.mockReset();
     deleteMock.mockReset();
     commandGroupDetailMock.mockReset();
-    webSessionRuntimePerformance.reset();
   });
 
   afterEach(() => {
@@ -3947,9 +3942,6 @@ describe('webSession loading behavior', () => {
     await store.loadSessionSnapshot(inactive.projectId, inactive.id);
 
     expect(store.getBlocks(inactive.id)).toHaveLength(420);
-    store.getLiveState(inactive.id);
-    webSessionRuntimePerformance.reset();
-
     store.trimInactiveSessionEvents(active.id);
 
     const trimmed = store.getBlocks(inactive.id);
@@ -3959,12 +3951,6 @@ describe('webSession loading behavior', () => {
       hasMore: true,
       beforeCursor: '261',
     });
-    store.getPendingApproval(inactive.id);
-    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
-      fullDerivations: 1,
-      scannedBlocks: 160,
-    });
-
     await store.openEventStream();
     const eventSocket = findSocket('/api/v1/web-sessions/events');
     eventSocket?.dispatch({
@@ -3984,7 +3970,6 @@ describe('webSession loading behavior', () => {
     });
     expect(store.getBlocks(inactive.id)).toHaveLength(160);
     expect(store.getBlocks(inactive.id).at(-1)?.text).toBe('updated after trim');
-    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(0);
   });
 
   it('falls back to HTTP snapshots when a send only receives an ack', async () => {
@@ -5374,72 +5359,7 @@ describe('webSession loading behavior', () => {
     await updatePromise;
   });
 
-  it('shares one runtime projection across live, approval, and user-input reads', async () => {
-    const store = useWebSessionStore();
-    const session = makeSession({
-      id: 'session-runtime-cache',
-      status: 'running',
-      assistantState: 'working',
-    });
-    listMock.mockResolvedValue([session]);
-
-    await store.loadSessions(session.projectId);
-    await store.openEventStream();
-    const eventSocket = findSocket('/api/v1/web-sessions/events');
-    expect(eventSocket).not.toBeNull();
-
-    webSessionRuntimePerformance.reset();
-    store.getLiveState(session.id);
-    store.getPendingApproval(session.id);
-    store.getPendingUserInput(session.id);
-    store.getLiveState(session.id);
-    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
-      fullDerivations: 1,
-      scannedBlocks: 0,
-    });
-
-    eventSocket?.dispatch({
-      v: 1,
-      k: 'evt',
-      sid: session.id,
-      ts: Date.now(),
-      op: 'hist_page',
-      h: {
-        its: [makeWireHistoryItem(1)],
-        hm: false,
-        tot: 1,
-      },
-    });
-    store.getPendingApproval(session.id);
-    store.getLiveState(session.id);
-    store.getPendingUserInput(session.id);
-    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
-      fullDerivations: 2,
-      scannedBlocks: 1,
-    });
-
-    eventSocket?.dispatch({
-      v: 1,
-      k: 'evt',
-      sid: session.id,
-      ts: Date.now(),
-      op: 'session',
-      s: toWireSession({
-        ...session,
-        title: 'Replaced summary object',
-        updatedAt: '2026-04-09T10:01:00.000Z',
-      }),
-    });
-    store.getLiveState(session.id);
-    store.getPendingApproval(session.id);
-    store.getPendingUserInput(session.id);
-    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
-      fullDerivations: 3,
-      scannedBlocks: 2,
-    });
-  });
-
-  it('uses the event index for realtime updates and only sorts unordered inputs', async () => {
+  it('keeps realtime updates ordered and preserves unchanged blocks', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
       id: 'session-indexed-history',
@@ -5480,7 +5400,6 @@ describe('webSession loading behavior', () => {
     const previousBlocks = store.getBlocks(session.id);
     const unchangedUserBlock = previousBlocks[0];
 
-    webSessionRuntimePerformance.reset();
     eventSocket?.dispatch({
       v: 1,
       k: 'evt',
@@ -5502,13 +5421,6 @@ describe('webSession loading behavior', () => {
     expect(updatedBlocks[0]).toBe(unchangedUserBlock);
     expect(updatedBlocks.map(block => block.id)).toEqual(['user-1', 'assistant-1']);
     expect(updatedBlocks[1]?.text).toBe('draft completed');
-    expect(webSessionRuntimePerformance.snapshot()).toEqual({
-      fullDerivations: 0,
-      incrementalDerivations: 1,
-      scannedBlocks: 1,
-      eventSorts: 0,
-    });
-
     eventSocket?.dispatch({
       v: 1,
       k: 'evt',
@@ -5524,7 +5436,6 @@ describe('webSession loading behavior', () => {
       }),
     });
     expect(store.getBlocks(session.id).map(block => block.orderIndex)).toEqual([1, 2, 3]);
-    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(0);
 
     eventSocket?.dispatch({
       v: 1,
@@ -5538,7 +5449,6 @@ describe('webSession loading behavior', () => {
       }),
     });
     expect(store.getBlocks(session.id).map(block => block.orderIndex)).toEqual([1, 1.5, 2, 3]);
-    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(1);
 
     eventSocket?.dispatch({
       v: 1,
@@ -5556,7 +5466,6 @@ describe('webSession loading behavior', () => {
     });
     expect(store.getBlocks(session.id).filter(block => block.id === 'assistant-2')).toHaveLength(1);
     expect(store.getBlocks(session.id).at(-1)?.text).toBe('updated after index rebuild');
-    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(1);
 
     eventSocket?.dispatch({
       v: 1,
@@ -5571,10 +5480,9 @@ describe('webSession loading behavior', () => {
       },
     });
     expect(store.getBlocks(session.id).map(block => block.orderIndex)).toEqual([0, 1, 1.5, 2, 3]);
-    expect(webSessionRuntimePerformance.snapshot().eventSorts).toBe(2);
   });
 
-  it('invalidates runtime caches and event indexes across snapshots, archive moves, and delete', async () => {
+  it('replaces history across snapshots, archive moves, and delete', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
       id: 'session-runtime-reset',
@@ -5610,17 +5518,8 @@ describe('webSession loading behavior', () => {
 
     await store.loadSessions(session.projectId);
     await store.loadSessionSnapshot(session.projectId, session.id);
-    store.getLiveState(session.id);
-    webSessionRuntimePerformance.reset();
-
     await store.loadSessionSnapshot(session.projectId, session.id);
     expect(store.getBlocks(session.id).map(block => block.id)).toEqual(['new-item']);
-    store.getPendingApproval(session.id);
-    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
-      fullDerivations: 1,
-      scannedBlocks: 1,
-      eventSorts: 1,
-    });
 
     await store.openEventStream();
     const eventSocket = findSocket('/api/v1/web-sessions/events');
@@ -5636,13 +5535,8 @@ describe('webSession loading behavior', () => {
         updatedAt: '2026-04-09T10:03:00.000Z',
       }),
     });
-    expect(webSessionRuntimePerformance.snapshot().fullDerivations).toBe(2);
-
     await store.deleteSession(session.projectId, session.id);
     expect(store.getBlocks(session.id)).toEqual([]);
-    store.getLiveState(session.id);
-    store.getPendingApproval(session.id);
-    expect(webSessionRuntimePerformance.snapshot().fullDerivations).toBe(4);
 
     listMock.mockResolvedValue([{ ...session, updatedAt: '2026-04-09T10:04:00.000Z' }]);
     await store.loadSessions(session.projectId, true);
@@ -5866,7 +5760,7 @@ describe('webSession loading behavior', () => {
     expect(handleApproval).not.toHaveBeenCalled();
   });
 
-  it('derives one next projection per history frame without repeating approval notifications', async () => {
+  it('does not repeat approval notifications for duplicate history frames', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
       id: 'session-single-next-projection',
@@ -5879,9 +5773,7 @@ describe('webSession loading behavior', () => {
     await store.loadSessions(session.projectId);
     await store.openEventStream();
     const eventSocket = findSocket('/api/v1/web-sessions/events');
-    store.getLiveState(session.id);
     store.emitter.on('ai:approval-needed', handleApproval);
-    webSessionRuntimePerformance.reset();
 
     const approvalItem = makeWireHistoryItem(1, {
       id: 'approval-single-frame',
@@ -5896,12 +5788,6 @@ describe('webSession loading behavior', () => {
       op: 'hist_item',
       i: approvalItem,
     });
-    expect(webSessionRuntimePerformance.snapshot()).toEqual({
-      fullDerivations: 0,
-      incrementalDerivations: 1,
-      scannedBlocks: 1,
-      eventSorts: 0,
-    });
     expect(handleApproval).toHaveBeenCalledTimes(1);
 
     eventSocket?.dispatch({
@@ -5911,12 +5797,6 @@ describe('webSession loading behavior', () => {
       ts: Date.now(),
       op: 'hist_item',
       i: approvalItem,
-    });
-    expect(webSessionRuntimePerformance.snapshot()).toMatchObject({
-      fullDerivations: 0,
-      incrementalDerivations: 2,
-      scannedBlocks: 2,
-      eventSorts: 0,
     });
     expect(handleApproval).toHaveBeenCalledTimes(1);
   });
@@ -6056,77 +5936,5 @@ describe('webSession loading behavior', () => {
 
     await store.loadCommandGroupDetail(session.id, 'group-1');
     expect(commandGroupDetailMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('updates a 500-block assistant tail 1000 times without full rescans or event sorts', async () => {
-    const store = useWebSessionStore();
-    const session = makeSession({
-      id: 'session-runtime-performance',
-      status: 'running',
-      assistantState: 'working',
-      itemCount: 500,
-    });
-    const historyItems = Array.from({ length: 499 }, (_, index) => makeWireHistoryItem(index + 1));
-    historyItems.push(
-      makeWireHistoryItem(500, {
-        id: 'assistant-stream',
-        kd: 'assistant',
-        tp: 'agent_message',
-        txt: 'chunk 0',
-        dn: false,
-      })
-    );
-    listMock.mockResolvedValue([session]);
-    snapshotMock.mockResolvedValue({
-      session,
-      history: {
-        items: historyItems,
-        hasMore: false,
-        total: 500,
-      },
-    });
-
-    await store.loadSessions(session.projectId);
-    await store.loadSessionSnapshot(session.projectId, session.id);
-    await store.openEventStream();
-    const eventSocket = findSocket('/api/v1/web-sessions/events');
-    const handleWorking = vi.fn();
-    const handleApproval = vi.fn();
-    const handleCompleted = vi.fn();
-    store.emitter.on('ai:working', handleWorking);
-    store.emitter.on('ai:approval-needed', handleApproval);
-    store.emitter.on('ai:completed', handleCompleted);
-    store.getLiveState(session.id);
-    webSessionRuntimePerformance.reset();
-
-    for (let index = 0; index < 1000; index += 1) {
-      eventSocket?.dispatch({
-        v: 1,
-        k: 'evt',
-        sid: session.id,
-        ts: Date.now(),
-        op: 'hist_item',
-        i: makeWireHistoryItem(500, {
-          id: 'assistant-stream',
-          kd: 'assistant',
-          tp: 'agent_message',
-          txt: `chunk ${index + 1}`,
-          obs: Date.parse('2026-04-09T10:01:00.000Z') + index,
-          dn: false,
-        }),
-      });
-    }
-
-    expect(store.getBlocks(session.id)).toHaveLength(500);
-    expect(store.getBlocks(session.id).at(-1)?.text).toBe('chunk 1000');
-    expect(webSessionRuntimePerformance.snapshot()).toEqual({
-      fullDerivations: 0,
-      incrementalDerivations: 1000,
-      scannedBlocks: 1000,
-      eventSorts: 0,
-    });
-    expect(handleWorking).not.toHaveBeenCalled();
-    expect(handleApproval).not.toHaveBeenCalled();
-    expect(handleCompleted).not.toHaveBeenCalled();
   });
 });

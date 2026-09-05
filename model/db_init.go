@@ -139,18 +139,6 @@ func Transaction(ctx context.Context, fn func(q *Queries) error) error {
 	return tx.Commit()
 }
 
-func GetQ(q *Queries) *Queries {
-	if q != nil {
-		return q
-	}
-
-	if defaultQueries == nil {
-		panic("model: sql queries are not initialized")
-	}
-
-	return defaultQueries
-}
-
 func getDefaultQueries() (*Queries, error) {
 	if err := ensureQueriesReady(); err != nil {
 		return nil, err

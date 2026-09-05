@@ -1479,21 +1479,6 @@ func sortEntriesByPath(items []Entry) {
 	})
 }
 
-func (s *Service) loadGitStatuses(scopeRoot string) map[string]git.FileStatus {
-	if !git.IsRepositoryPath(scopeRoot) {
-		return nil
-	}
-	statuses, err := git.ListFileStatuses(scopeRoot)
-	if err != nil {
-		s.logger.Debug("failed to load git file statuses",
-			zap.String("scopeRoot", scopeRoot),
-			zap.Error(err),
-		)
-		return nil
-	}
-	return statuses
-}
-
 func buildEntryGitStatus(entry Entry, statuses map[string]git.FileStatus) *GitStatus {
 	if len(statuses) == 0 {
 		return nil
@@ -1516,7 +1501,7 @@ func buildEntryGitStatus(entry Entry, statuses map[string]git.FileStatus) *GitSt
 }
 
 func toFileManagerGitStatus(status git.FileStatus, forceDirty bool) *GitStatus {
-	kind := GitStatusKindModified
+	var kind GitStatusKind
 	switch {
 	case forceDirty:
 		kind = GitStatusKindDirty

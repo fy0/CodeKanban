@@ -545,10 +545,10 @@ watch(keyword, newKeyword => {
 });
 ```
 
-**提示：** 如需防抖，可配合 `es-toolkit` 的 `debounce` 使用：
+**提示：** 如需防抖，可使用项目内置的 `debounce`：
 
 ```typescript
-import { debounce } from 'es-toolkit/compat';
+import { debounce } from '@/utils/debounce';
 
 const debouncedFetch = debounce((keyword: string) => {
   fetchUserList({ params: { keyword } });

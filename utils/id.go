@@ -13,7 +13,3 @@ func NewID() string {
 	// 按照计算器，https://zelark.github.io/nano-id-cc/，每秒生成1000个，约981年不会碰撞
 	return lo.Must1(gonanoid.Generate(defaultAlphabet, 16))
 }
-
-func NewIDWithLength(len int) string {
-	return lo.Must1(gonanoid.Generate(defaultAlphabet, len))
-}

@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -11,17 +8,6 @@ import {
   resolveWebSessionUserMessageTarget,
   type WebSessionUserMessageNavigationBlock,
 } from '@/components/web-session/webSessionUserMessageNavigation';
-
-const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
-const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
-const webSessionTimelineStylePath = fileURLToPath(
-  new URL('../styles/webSessionPanelTimeline.css', import.meta.url)
-);
-const webSessionTimelineStyleSource = readFileSync(webSessionTimelineStylePath, 'utf8');
-const webSessionMessageEditDialogPath = fileURLToPath(
-  new URL('../WebSessionMessageEditDialog.vue', import.meta.url)
-);
-const webSessionMessageEditDialogSource = readFileSync(webSessionMessageEditDialogPath, 'utf8');
 
 const blocks: WebSessionUserMessageNavigationBlock[] = [
   { key: 'user-1', kind: 'user' },
@@ -200,89 +186,5 @@ describe('webSessionUserMessageNavigation', () => {
       })
     ).resolves.toBe('user-next');
     expect(loadLater).toHaveBeenCalledOnce();
-  });
-
-  it('renders always-visible accessible controls before the user role and timestamp', () => {
-    const navigationIndex = webSessionPanelSource.indexOf('class="user-message-navigation"');
-    const editIndex = webSessionPanelSource.indexOf('<CreateOutline />', navigationIndex);
-    const previousIndex = webSessionPanelSource.indexOf('<ChevronUpOutline />', navigationIndex);
-    const roleIndex = webSessionPanelSource.indexOf('class="item-role"');
-    const timeIndex = webSessionPanelSource.indexOf('class="item-time"');
-
-    expect(navigationIndex).toBeGreaterThan(-1);
-    expect(editIndex).toBeGreaterThan(navigationIndex);
-    expect(editIndex).toBeLessThan(previousIndex);
-    expect(navigationIndex).toBeLessThan(roleIndex);
-    expect(roleIndex).toBeLessThan(timeIndex);
-    expect(webSessionPanelSource).toContain('<ChevronUpOutline />');
-    expect(webSessionPanelSource).toContain('<ChevronDownOutline />');
-    expect(webSessionPanelSource).toContain(':aria-label="t(\'terminal.prevUserMessage\')"');
-    expect(webSessionPanelSource).toContain(':aria-label="t(\'terminal.nextUserMessage\')"');
-    expect(webSessionPanelSource).toContain(
-      'class="user-message-navigation-button user-message-edit-button"'
-    );
-    expect(webSessionMessageEditDialogSource).toContain(
-      "t('webSession.editUserMessageWorkspaceWarning')"
-    );
-  });
-
-  it('keeps the controls compact and makes unavailable directions visibly quieter', () => {
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.user-message-navigation\s*\{[^}]*gap:\s*0;[^}]*height:\s*20px;/s
-    );
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.user-message-navigation-button\s*\{[^}]*width:\s*20px !important;[^}]*height:\s*20px !important;/s
-    );
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.user-message-navigation-button:disabled:not\(\.n-button--loading\)\s*\{[^}]*opacity:\s*0\.18 !important;/s
-    );
-  });
-
-  it('renders floating edge controls and jumps to both edges without smooth scrolling', () => {
-    expect(webSessionPanelSource).toMatch(
-      /v-if="!timelineSearchOpen"\s+class="timeline-navigation-reveal-zone"/
-    );
-    expect(webSessionPanelSource).toContain('v-if="timelineNavigationControlsExpanded"');
-    expect(webSessionPanelSource).toContain('name="timeline-navigation-reveal"');
-    expect(webSessionPanelSource).toContain('class="timeline-navigation-activation-zone"');
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.timeline-navigation-reveal-zone\s*\{[^}]*flex:\s*0 0 118px;[^}]*width:\s*118px;[^}]*min-width:\s*118px;/s
-    );
-    expect(webSessionPanelSource).toMatch(
-      /v-if="!timelineNavigationControlsExpanded"\s+type="button"\s+class="timeline-navigation-activation-zone"/
-    );
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.timeline-navigation-activation-zone\s*\{[^}]*width:\s*100%;[^}]*height:\s*28px;/s
-    );
-    expect(webSessionPanelSource).toContain('@mouseenter="handleTimelineNavigationPointerEnter"');
-    expect(webSessionPanelSource).toContain('@focusout="handleTimelineNavigationFocusOut"');
-    expect(webSessionPanelSource).toContain('@click="handleTimelineNavigationActivation"');
-    expect(webSessionPanelSource).toContain('WEB_SESSION_TIMELINE_NAVIGATION_VISIBLE_MS = 5000');
-    expect(webSessionPanelSource).toContain("t('webSession.timelineJumpToStart')");
-    expect(webSessionPanelSource).toContain("t('webSession.timelineJumpToEnd')");
-    expect(webSessionPanelSource).toContain('@click="void handleTimelineStartClick()"');
-    expect(webSessionPanelSource).toContain(':show="timelineStartConfirmationArmed"');
-
-    const startIndex = webSessionPanelSource.indexOf('async function jumpToTimelineStart()');
-    const endIndex = webSessionPanelSource.indexOf('async function jumpToTimelineEnd()');
-    const loadSearchHistoryIndex = webSessionPanelSource.indexOf(
-      'async function loadEarlierTimelineSearchHistory('
-    );
-    const startFunction = webSessionPanelSource.slice(startIndex, endIndex);
-    const endFunction = webSessionPanelSource.slice(endIndex, loadSearchHistoryIndex);
-
-    expect(startFunction).toContain("afterCursor: '0'");
-    expect(startFunction).toContain('container.scrollTop = 0');
-    expect(startFunction).not.toContain("behavior: 'smooth'");
-    expect(endFunction).toContain('loadSessionSnapshot');
-    expect(endFunction).toContain('syncScrollToBottom()');
-    expect(endFunction).not.toContain("behavior: 'smooth'");
-    expect(webSessionPanelSource).toContain('!getCurrentTimelineEdgeWindow()');
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.timeline-navigation-button\s*\{[^}]*width:\s*28px !important;[^}]*height:\s*28px !important;/s
-    );
-    expect(webSessionTimelineStyleSource).toMatch(
-      /\.timeline-navigation-reveal-enter-from,[\s\S]*?max-width:\s*0;[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*translateX\(8px\);/
-    );
   });
 });

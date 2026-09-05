@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  resolveWebSessionMobileContextWorktree,
-  summarizeWebSessionMobileGitStatus,
-} from '@/components/web-session/webSessionMobileProjectContext';
+import { resolveWebSessionMobileContextWorktree } from '@/components/web-session/webSessionMobileProjectContext';
 import type { Worktree } from '@/types/models';
 
 function makeWorktree(overrides: Partial<Worktree> = {}): Worktree {
@@ -53,52 +50,5 @@ describe('webSessionMobileProjectContext', () => {
         projectId: 'project-1',
       })?.id
     ).toBe('main-worktree');
-  });
-
-  it('summarizes each visible Git status independently', () => {
-    const summary = summarizeWebSessionMobileGitStatus(
-      makeWorktree({
-        statusAhead: 2,
-        statusBehind: 1,
-        statusConflicts: 1,
-        statusModified: 3,
-        statusStaged: 4,
-        statusUntracked: 5,
-      }),
-      { gitAvailable: true }
-    );
-
-    expect(summary).toEqual({
-      state: 'dirty',
-      ahead: 2,
-      behind: 1,
-      conflicts: 1,
-      modified: 3,
-      staged: 4,
-      untracked: 5,
-    });
-  });
-
-  it('distinguishes clean, loading, and unavailable states', () => {
-    expect(summarizeWebSessionMobileGitStatus(makeWorktree(), { gitAvailable: true }).state).toBe(
-      'clean'
-    );
-    expect(
-      summarizeWebSessionMobileGitStatus(
-        makeWorktree({
-          statusAhead: null,
-          statusBehind: null,
-          statusConflicts: null,
-          statusModified: null,
-          statusStaged: null,
-          statusUntracked: null,
-          statusUpdatedAt: null,
-        }),
-        { gitAvailable: true }
-      ).state
-    ).toBe('loading');
-    expect(summarizeWebSessionMobileGitStatus(makeWorktree(), { gitAvailable: false }).state).toBe(
-      'unavailable'
-    );
   });
 });

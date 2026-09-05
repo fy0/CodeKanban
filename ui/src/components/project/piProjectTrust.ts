@@ -11,7 +11,3 @@ export function isPiProjectTrusted(
       projectId.trim()
   );
 }
-
-export function piProjectTrustNeedsRenewal(status: ProjectAgentTrustStatus | null | undefined) {
-  return Boolean(status && !status.trusted && status.trustedPath?.trim());
-}

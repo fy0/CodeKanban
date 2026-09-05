@@ -404,30 +404,6 @@ func parseClaudeCodeUserMessage(message json.RawMessage, timestamp, sessionID st
 	}, sessionID, nil
 }
 
-// ClaudeCodeLogWatcher is a specialized LogWatcher for Claude Code
-type ClaudeCodeLogWatcher struct {
-	*LogWatcher
-}
-
-// NewClaudeCodeLogWatcher creates a LogWatcher configured for Claude Code
-func NewClaudeCodeLogWatcher(config WatcherConfig, workingDir string) (*ClaudeCodeLogWatcher, error) {
-	searcher, err := NewClaudeCodeFileSearcher(workingDir)
-	if err != nil {
-		return nil, err
-	}
-
-	config.Searcher = searcher
-
-	watcher := NewLogWatcher(config)
-
-	// Override the line parser
-	watcher.parseLineFn = ParseClaudeCodeLineWrapper
-
-	return &ClaudeCodeLogWatcher{
-		LogWatcher: watcher,
-	}, nil
-}
-
 // ParseClaudeCodeLineWrapper wraps ParseClaudeCodeLine to match the LogWatcher interface
 func ParseClaudeCodeLineWrapper(w *LogWatcher, line string) (*UserMessage, error) {
 	msg, sessionID, err := ParseClaudeCodeLine(line)

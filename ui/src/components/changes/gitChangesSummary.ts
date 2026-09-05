@@ -136,13 +136,6 @@ export function shouldLoadGitChangesStats(
   return current.scopeId !== scopeId || current.changeToken !== changeToken;
 }
 
-export function formatGitChangesSummary(summary: GitChangesSummary) {
-  if (summary.count === 0) {
-    return '';
-  }
-  return `${summary.count},+${summary.additions},-${summary.deletions}`;
-}
-
 export function formatGitChangesBadgeDelta(prefix: '+' | '-', value: number | null) {
   if (value == null) {
     return `${prefix}?`;

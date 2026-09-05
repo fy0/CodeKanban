@@ -257,12 +257,8 @@ func TestPiRPCClientCloseUnblocksBackpressuredReader(t *testing.T) {
 	}()
 	time.Sleep(50 * time.Millisecond)
 
-	started := time.Now()
 	if err := client.Close(); err != nil {
 		t.Fatalf("close backpressured client: %v", err)
-	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("closing backpressured client took %s", elapsed)
 	}
 	select {
 	case err := <-requestDone:

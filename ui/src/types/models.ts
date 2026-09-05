@@ -451,9 +451,6 @@ export interface WebSessionRuntimeConfig {
   goalModeMinCodexVersion: string;
 }
 
-/** @deprecated Use WebSessionRuntimeConfig. */
-export type WebSessionCodexRuntimeConfig = WebSessionRuntimeConfig;
-
 export type CodexSkillSource = 'user' | 'system' | 'bundled';
 
 export interface CodexSkillSummary {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  matchesWebSessionSidebarSearch,
   mergeWebSessionSearchMatchSources,
   mergeWebSessionSidebarSearchPage,
   normalizeWebSessionSidebarSearchQuery,
@@ -13,19 +12,6 @@ describe('webSession sidebar search', () => {
   it('normalizes surrounding whitespace and letter case', () => {
     expect(normalizeWebSessionSidebarSearchQuery('  Release NOTES  ')).toBe('release notes');
     expect(normalizeWebSessionSidebarSearchQuery(null)).toBe('');
-  });
-
-  it('matches session titles and thread previews', () => {
-    const session = {
-      title: 'Release checklist',
-      threadPreview: 'Investigate the migration failure',
-    };
-
-    expect(matchesWebSessionSidebarSearch(session, 'release')).toBe(true);
-    expect(matchesWebSessionSidebarSearch(session, 'MIGRATION'.toLocaleLowerCase())).toBe(true);
-    expect(matchesWebSessionSidebarSearch(session, 'missing')).toBe(false);
-    expect(matchesWebSessionSidebarSearch(session, '')).toBe(true);
-    expect(matchesWebSessionSidebarSearch(session, 'migration', false)).toBe(false);
   });
 
   it('reports title and body match sources in display order', () => {

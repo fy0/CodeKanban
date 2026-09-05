@@ -5,7 +5,6 @@ import {
   clampTabAnchorIndex,
   resolveActiveTabSessionId,
   resolveUnderlyingTabSessionId,
-  resolveTabAnchorInsertIndex,
   sortMobileCurrentSessions,
 } from '@/components/web-session/webSessionTabOrder';
 
@@ -50,14 +49,6 @@ describe('webSessionTabOrder', () => {
       'real-1',
       'draft-1',
     ]);
-  });
-
-  it('resolves the archived anchor position after the current tab', () => {
-    const orderedSessions = makeSessions(['real-1', 'draft-1', 'real-2']);
-
-    expect(resolveTabAnchorInsertIndex(orderedSessions, 'draft-1')).toBe(2);
-    expect(resolveTabAnchorInsertIndex(orderedSessions, 'missing')).toBe(3);
-    expect(resolveTabAnchorInsertIndex(orderedSessions, '')).toBe(3);
   });
 
   it('clamps archived anchor indexes into the current base range', () => {

@@ -46,7 +46,7 @@ function parseJsonFlag(value, fieldName) {
   }
   try {
     return JSON.parse(value);
-  } catch (error) {
+  } catch {
     throw new Error(`${fieldName} must be valid JSON`);
   }
 }

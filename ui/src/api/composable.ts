@@ -5,7 +5,7 @@ import { useRequest } from 'alova/client';
 import type { AlovaMethodHandler, RequestHookConfig, UseHookExposure } from 'alova/client';
 import type { AlovaGenerics, Method } from 'alova';
 
-export const FORCE = Symbol('request force reload');
+const FORCE = Symbol('request force reload');
 
 type UseReqConfig<AG extends AlovaGenerics, Args extends unknown[], X> = RequestHookConfig<
   AG,

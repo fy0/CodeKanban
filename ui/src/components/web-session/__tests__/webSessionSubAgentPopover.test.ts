@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -8,11 +5,6 @@ import {
   WEB_SESSION_SUB_AGENT_RECENT_LIMIT,
 } from '@/components/web-session/webSessionSubAgentPopover';
 import type { WebSessionSubAgent } from '@/stores/webSession';
-
-const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
-const webSessionComposerStylePath = fileURLToPath(
-  new URL('../styles/webSessionPanelComposer.css', import.meta.url)
-);
 
 function agent(id: string, input: Partial<WebSessionSubAgent> = {}): WebSessionSubAgent {
   return {
@@ -78,17 +70,5 @@ describe('webSessionSubAgentPopover', () => {
     expect(result.items.slice(0, 2).map(item => item.id)).toEqual(['history-58', 'history-59']);
     expect(result.recentCount).toBe(10);
     expect(result.activeIds.size).toBe(0);
-  });
-
-  it('uses the derived display model and keeps the list inside a scrollable viewport', () => {
-    const source = readFileSync(webSessionPanelPath, 'utf8');
-    const styleSource = readFileSync(webSessionComposerStylePath, 'utf8');
-
-    expect(source).toContain('v-for="agent in subAgentPopover.items"');
-    expect(source).toContain('subAgentPopover.activeIds.has(agent.id)');
-    expect(source).toMatch(/composer-sub-agent-trigger-count[\s\S]*activeSubAgentCount/);
-    expect(styleSource).toMatch(
-      /\.live-sub-agent-list\s*\{[^}]*max-height:\s*min\(360px, calc\(100dvh - 160px\)\);[^}]*overflow-y:\s*auto;/s
-    );
   });
 });

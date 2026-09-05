@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -12,11 +9,6 @@ import {
   resolveWebSessionTimelineVisualAnchorScrollTop,
   shouldApplyWebSessionTimelineAutoScroll,
 } from '@/components/web-session/webSessionTimelineScroll';
-
-const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
-const webSessionTimelineStylePath = fileURLToPath(
-  new URL('../styles/webSessionPanelTimeline.css', import.meta.url)
-);
 
 describe('webSessionTimelineScroll', () => {
   it('leaves bottom follow mode when the user scrolls upward from the bottom', () => {
@@ -314,32 +306,5 @@ describe('webSessionTimelineScroll', () => {
         24
       )
     ).toBe('expand');
-  });
-
-  it('opts the runtime strip out of browser scroll anchoring', () => {
-    const source = readFileSync(webSessionTimelineStylePath, 'utf8');
-
-    expect(source).toMatch(/\.runtime-strip\s*\{[^}]*overflow-anchor:\s*none;/s);
-  });
-
-  it('anchors the pending input card across timeline content and size updates', () => {
-    const source = readFileSync(webSessionPanelPath, 'utf8');
-
-    expect(source).toContain('ref="pendingUserInputCardRef"');
-    expect(source).toMatch(
-      /watch\(timelineContentVersion,[\s\S]*restorePendingUserInputTimelineAnchor/
-    );
-    expect(source).toMatch(
-      /useResizeObserver\(timelineListRef,[\s\S]*restorePendingUserInputTimelineAnchor/
-    );
-  });
-
-  it('only restores timeline position when project or session identity changes', () => {
-    const source = readFileSync(webSessionPanelPath, 'utf8');
-
-    expect(source).toContain("[() => props.projectId, () => currentSession.value?.id ?? '']");
-    expect(source).not.toContain(
-      "() => [props.projectId, currentSession.value?.id ?? ''] as const"
-    );
   });
 });

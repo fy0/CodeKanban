@@ -700,7 +700,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				errors.Is(err, websession.ErrMessageEditForkUnavailable),
 				errors.Is(err, websession.ErrMessageEditSteeredMessage),
 				errors.Is(err, websession.ErrMessageEditEmpty),
-				errors.Is(err, websession.ErrCodexWebSessionUnavailable):
+				errors.Is(err, websession.ErrCodexMultiAgentV2Unavailable):
 				return nil, huma.Error400BadRequest(err.Error())
 			default:
 				return nil, huma.Error500InternalServerError("failed to edit user message", err)

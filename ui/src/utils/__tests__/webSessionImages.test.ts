@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildImagePlaceholderLine,
   buildImageViewPreviewUrl,
   parseImageViewToolOutput,
   resolveImageViewDisplayName,
@@ -10,7 +9,7 @@ import {
 
 describe('webSessionImages', () => {
   it('keeps text unchanged when there are no attachments', () => {
-    const text = `Please inspect ${buildImagePlaceholderLine(1)}`;
+    const text = 'Please inspect [Image #1]';
 
     expect(stripImagePlaceholdersFromText(text, 0)).toBe(text);
   });

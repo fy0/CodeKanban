@@ -303,34 +303,9 @@ func (d *AssistantDetector) DetectFromCommand(command string) *types.AssistantIn
 	return nil
 }
 
-// IsAIAssistant checks if the command is running an AI assistant
-func (d *AssistantDetector) IsAIAssistant(command string) bool {
-	return d.DetectFromCommand(command) != nil
-}
-
-// GetType returns the AI assistant type from command
-func (d *AssistantDetector) GetType(command string) types.AssistantType {
-	info := d.DetectFromCommand(command)
-	if info != nil {
-		return info.Type
-	}
-	return types.AssistantTypeUnknown
-}
-
-// Default detector instance
 var defaultDetector = NewAssistantDetector()
 
 // DetectFromCommand uses the default detector to analyze a command
 func DetectFromCommand(command string) *types.AssistantInfo {
 	return defaultDetector.DetectFromCommand(command)
-}
-
-// IsAIAssistant uses the default detector to check if command is an AI assistant
-func IsAIAssistant(command string) bool {
-	return defaultDetector.IsAIAssistant(command)
-}
-
-// GetType uses the default detector to get the assistant type
-func GetType(command string) types.AssistantType {
-	return defaultDetector.GetType(command)
 }

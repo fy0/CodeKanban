@@ -3,7 +3,7 @@ import fetchAdapter from 'alova/fetch';
 import VueHook from 'alova/vue';
 import { createApis, withConfigType, mountApis } from './createApis';
 
-export { useReq, useInit, FORCE } from './composable';
+export { useReq, useInit } from './composable';
 
 export class ApiError extends Error {
   public status: number;
@@ -90,7 +90,6 @@ const Apis = createApis(alovaInstance, $$userConfigMap);
 mountApis(Apis);
 
 export default Apis;
-export { Apis };
 
 // @ts-expect-error Generated declarations are re-exported as a module for API consumers.
 export * from './globals.d.ts';

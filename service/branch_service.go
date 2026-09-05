@@ -11,22 +11,22 @@ import (
 	"code-kanban/model"
 	"code-kanban/model/tables"
 	"code-kanban/utils"
-	"code-kanban/utils/cache"
 	"code-kanban/utils/git"
 
+	gocache "github.com/patrickmn/go-cache"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 // BranchService coordinates git branch operations with persistence.
 type BranchService struct {
-	cache *cache.Cache
+	cache *gocache.Cache
 }
 
 // NewBranchService constructs a BranchService with a default ttl cache.
 func NewBranchService() *BranchService {
 	return &BranchService{
-		cache: cache.NewCache(1 * time.Minute),
+		cache: gocache.New(time.Minute, time.Minute),
 	}
 }
 
@@ -427,15 +427,11 @@ func (s *BranchService) dbWithContext(ctx context.Context) (*gorm.DB, error) {
 	return db.WithContext(ensureContext(ctx)), nil
 }
 
-func (s *BranchService) cacheKey(projectID string) string {
-	return fmt.Sprintf("branch:%s", strings.TrimSpace(projectID))
-}
-
 func (s *BranchService) getCached(projectID string) *model.BranchListResult {
 	if projectID == "" || s.cache == nil {
 		return nil
 	}
-	if value, ok := s.cache.Get(s.cacheKey(projectID)); ok {
+	if value, ok := s.cache.Get(projectID); ok {
 		if result, ok := value.(*model.BranchListResult); ok {
 			return result
 		}
@@ -447,14 +443,14 @@ func (s *BranchService) setCache(projectID string, result *model.BranchListResul
 	if projectID == "" || result == nil || s.cache == nil {
 		return
 	}
-	s.cache.Set(s.cacheKey(projectID), result)
+	s.cache.Set(projectID, result, gocache.DefaultExpiration)
 }
 
 func (s *BranchService) invalidateCache(projectID string) {
 	if projectID == "" || s.cache == nil {
 		return
 	}
-	s.cache.Delete(s.cacheKey(projectID))
+	s.cache.Delete(projectID)
 }
 
 func (s *BranchService) logger(ctx context.Context) *zap.Logger {

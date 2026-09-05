@@ -90,9 +90,9 @@ func TestMessagingAuthorizationRequiresPiTrustWithoutCapabilityProbes(t *testing
 	}
 	var codexProbeCalls atomic.Int32
 	var piProbeCalls atomic.Int32
-	manager.runtimeCapabilityProbes.codexBinary = func() (CodexRuntimeConfig, error) {
+	manager.runtimeCapabilityProbes.codexBinary = func() (WebSessionRuntimeConfig, error) {
 		codexProbeCalls.Add(1)
-		return CodexRuntimeConfig{}, nil
+		return WebSessionRuntimeConfig{}, nil
 	}
 	manager.runtimeCapabilityProbes.pi = func() (piRuntimeProbeResult, error) {
 		piProbeCalls.Add(1)

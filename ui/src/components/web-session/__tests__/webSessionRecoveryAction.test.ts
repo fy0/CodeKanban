@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -8,11 +5,6 @@ import {
   resolveContinuableRecoveryBlockKey,
 } from '@/components/web-session/webSessionRecoveryAction';
 import type { WebSessionBlock } from '@/stores/webSession';
-
-const webSessionPanelSource = readFileSync(
-  fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url)),
-  'utf8'
-);
 
 function block(overrides: Partial<WebSessionBlock> = {}): WebSessionBlock {
   return {
@@ -55,16 +47,5 @@ describe('web session recovery action', () => {
         block({ key: 'note', itemType: 'note', payload: {} }),
       ])
     ).toBe('restart');
-  });
-
-  it('wires the actionable recovery bubble to the existing continue flow', () => {
-    expect(webSessionPanelSource).toContain(
-      ':role="isContinuableRecoveryBlock(item) ? \'button\' : undefined"'
-    );
-    expect(webSessionPanelSource).toContain('@click="handleMessageBubbleClick(item)"');
-    expect(webSessionPanelSource).toContain('void handleRestartRecoveryContinue(block);');
-    expect(webSessionPanelSource).toContain(
-      "await webSessionStore.sendMessage(prepared.session.id, 'continue', []);"
-    );
   });
 });

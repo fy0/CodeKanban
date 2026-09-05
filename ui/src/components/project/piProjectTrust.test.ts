@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPiProjectTrusted, piProjectTrustNeedsRenewal } from './piProjectTrust';
+import { isPiProjectTrusted } from './piProjectTrust';
 
 const trustedStatus = {
   projectId: 'project-1',
@@ -18,13 +18,5 @@ describe('Pi project trust helpers', () => {
       false
     );
     expect(isPiProjectTrusted(null, 'project-1')).toBe(false);
-  });
-
-  it('detects a stale or revoked path that needs renewed confirmation', () => {
-    expect(piProjectTrustNeedsRenewal({ ...trustedStatus, trusted: false })).toBe(true);
-    expect(piProjectTrustNeedsRenewal({ ...trustedStatus, trusted: false, trustedPath: '' })).toBe(
-      false
-    );
-    expect(piProjectTrustNeedsRenewal(trustedStatus)).toBe(false);
   });
 });

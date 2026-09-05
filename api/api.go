@@ -87,7 +87,6 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	registerAuthMiddleware(app, cfg)
 
 	humaAPI, v1 := h.NewAPI(app, cfg)
-	humaAPI.UseMiddleware(h.HumaTraceMiddleware)
 	h.HumaValidatePatch()
 	humaTypesRegister()
 

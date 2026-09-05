@@ -282,10 +282,6 @@ func GenerateDiffStatAgainstHEAD(path string, status FileStatus) (DiffStat, erro
 	return GenerateDiffStatAgainstHEADContext(context.Background(), path, status)
 }
 
-func GenerateDiffStatsAgainstHEAD(path string, statuses []FileStatus) (map[string]DiffStat, error) {
-	return GenerateDiffStatsAgainstHEADContext(context.Background(), path, statuses)
-}
-
 func GenerateDiffStatsAgainstHEADContext(ctx context.Context, path string, statuses []FileStatus) (map[string]DiffStat, error) {
 	result := make(map[string]DiffStat, len(statuses))
 	if len(statuses) == 0 {

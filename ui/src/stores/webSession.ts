@@ -593,25 +593,6 @@ type RuntimeProjectionCacheEntry = {
   beforeLastAccumulator: RuntimeAccumulator;
 };
 
-const webSessionRuntimePerformanceCounters = {
-  fullDerivations: 0,
-  incrementalDerivations: 0,
-  scannedBlocks: 0,
-  eventSorts: 0,
-};
-
-export const webSessionRuntimePerformance = {
-  reset() {
-    webSessionRuntimePerformanceCounters.fullDerivations = 0;
-    webSessionRuntimePerformanceCounters.incrementalDerivations = 0;
-    webSessionRuntimePerformanceCounters.scannedBlocks = 0;
-    webSessionRuntimePerformanceCounters.eventSorts = 0;
-  },
-  snapshot() {
-    return { ...webSessionRuntimePerformanceCounters };
-  },
-};
-
 export interface WebSessionPendingInput {
   id: string;
   mode: 'redirect' | 'queue';
@@ -681,8 +662,6 @@ export interface WebSessionPlanExecutionTarget {
 export type WebSessionSchedule =
   | { scheduleKind: 'at_time'; scheduledFor: number }
   | { scheduleKind: 'when_idle'; scheduledFor?: null };
-
-export type WebSessionPlanSchedule = WebSessionSchedule;
 
 type RuntimeMutationStateSnapshot = {
   blockCount: number;
@@ -4561,7 +4540,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function sortEventBlocks(items: WebSessionBlock[]) {
-    webSessionRuntimePerformanceCounters.eventSorts += 1;
     return [...items].sort((left, right) => left.orderIndex - right.orderIndex);
   }
 
@@ -5133,8 +5111,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
       beforeLastAccumulator?: RuntimeAccumulator;
     }
   ): RuntimeProjection {
-    webSessionRuntimePerformanceCounters.fullDerivations += 1;
-    webSessionRuntimePerformanceCounters.scannedBlocks += blocks.length;
     const accumulator = createRuntimeAccumulator(session);
     let beforeLastAccumulator = cloneRuntimeAccumulator(accumulator);
     blocks.forEach((block, index) => {
@@ -5158,8 +5134,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     seed: RuntimeAccumulator,
     startIndex: number
   ) {
-    webSessionRuntimePerformanceCounters.incrementalDerivations += 1;
-    webSessionRuntimePerformanceCounters.scannedBlocks += blocks.length - startIndex;
     const accumulator = cloneRuntimeAccumulator(seed);
     let beforeLastAccumulator = cloneRuntimeAccumulator(accumulator);
     for (let index = startIndex; index < blocks.length; index += 1) {

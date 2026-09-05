@@ -9,19 +9,6 @@ export function normalizeWebSessionSidebarSearchQuery(value: unknown) {
     .toLocaleLowerCase();
 }
 
-export function matchesWebSessionSidebarSearch(
-  session: SearchableWebSession,
-  normalizedQuery: string,
-  includeBody = true
-) {
-  if (!normalizedQuery) {
-    return true;
-  }
-  return (
-    resolveWebSessionSidebarSearchMatchSources(session, normalizedQuery, includeBody).length > 0
-  );
-}
-
 export function resolveWebSessionSidebarSearchMatchSources(
   session: SearchableWebSession,
   normalizedQuery: string,

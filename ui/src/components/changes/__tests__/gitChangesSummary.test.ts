@@ -6,7 +6,6 @@ import {
   buildGitChangesBadgeSummary,
   chooseGitChangesScope,
   formatGitChangesBadgeDelta,
-  formatGitChangesSummary,
   GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT,
   GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
   orderGitChangesEntries,
@@ -168,7 +167,6 @@ describe('gitChangesSummary', () => {
       additions: 3,
       deletions: 5,
     });
-    expect(formatGitChangesSummary(summary)).toBe('2,+3,-5');
   });
 
   it('builds badge summaries from complete changes results', () => {
@@ -228,16 +226,6 @@ describe('gitChangesSummary', () => {
       scopeId: 'project-1',
     });
     expect(buildGitChangesBadgeSummary(null)).toBeNull();
-  });
-
-  it('returns an empty badge text when there are no visible changes', () => {
-    expect(
-      formatGitChangesSummary({
-        count: 0,
-        additions: 0,
-        deletions: 0,
-      })
-    ).toBe('');
   });
 
   it('formats pending badge deltas and hides zero-valued loading badges', () => {

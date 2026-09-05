@@ -21,9 +21,9 @@ func TestRuntimeCapabilityProbesLogStructuredDurations(t *testing.T) {
 	core, observed := observer.New(zapcore.DebugLevel)
 	manager := &Manager{logger: zap.New(core)}
 	manager.runtimeCapabilityProbes = runtimeCapabilityProbeHooks{
-		codexBinary: func() (CodexRuntimeConfig, error) {
+		codexBinary: func() (WebSessionRuntimeConfig, error) {
 			version := "1.2.3"
-			return CodexRuntimeConfig{HasCodex: true, HasClaudeCode: true, CodexVersion: &version}, nil
+			return WebSessionRuntimeConfig{HasCodex: true, HasClaudeCode: true, CodexVersion: &version}, nil
 		},
 		codexModels: func() ([]CodexModelInfo, error) {
 			return []CodexModelInfo{{Model: "codex-test"}}, nil
@@ -103,9 +103,9 @@ func TestSessionMessagingAvailabilityDoesNotProbeUnrelatedAgents(t *testing.T) {
 	var codexCalls atomic.Int32
 	var piCalls atomic.Int32
 	manager.runtimeCapabilityProbes = runtimeCapabilityProbeHooks{
-		codexBinary: func() (CodexRuntimeConfig, error) {
+		codexBinary: func() (WebSessionRuntimeConfig, error) {
 			codexCalls.Add(1)
-			return CodexRuntimeConfig{HasCodex: true}, nil
+			return WebSessionRuntimeConfig{HasCodex: true}, nil
 		},
 		pi: func() (piRuntimeProbeResult, error) {
 			piCalls.Add(1)
@@ -133,11 +133,11 @@ func TestRuntimeCapabilityProvidersSingleflightColdRequests(t *testing.T) {
 		{
 			name: "Codex binary",
 			run: func(manager *Manager, calls *atomic.Int32, release chan struct{}, started chan struct{}) {
-				manager.runtimeCapabilityProbes.codexBinary = func() (CodexRuntimeConfig, error) {
+				manager.runtimeCapabilityProbes.codexBinary = func() (WebSessionRuntimeConfig, error) {
 					calls.Add(1)
 					started <- struct{}{}
 					<-release
-					return CodexRuntimeConfig{HasCodex: true, SupportsWebSession: true}, nil
+					return WebSessionRuntimeConfig{HasCodex: true, SupportsWebSession: true}, nil
 				}
 				runConcurrentCapabilityRequests(t, calls, started, release, func() {
 					config := manager.applyBinaryCapabilities(defaultCodexRuntimeConfig(), false)
@@ -252,7 +252,7 @@ func TestRuntimeCapabilityCacheReturnsStaleAndRefreshesOnce(t *testing.T) {
 	}
 	defer releaseRefreshProbe()
 	var refreshStartOnce sync.Once
-	manager.runtimeCapabilityProbes.codexBinary = func() (CodexRuntimeConfig, error) {
+	manager.runtimeCapabilityProbes.codexBinary = func() (WebSessionRuntimeConfig, error) {
 		call := calls.Add(1)
 		version := "0.146.0"
 		if call > 1 {
@@ -260,7 +260,7 @@ func TestRuntimeCapabilityCacheReturnsStaleAndRefreshesOnce(t *testing.T) {
 			<-releaseRefresh
 			version = "0.147.0"
 		}
-		return CodexRuntimeConfig{
+		return WebSessionRuntimeConfig{
 			HasCodex:           true,
 			CodexVersion:       &version,
 			SupportsWebSession: true,
@@ -312,10 +312,10 @@ func TestRuntimeConfigColdRequestWarmsCapabilitiesInBackground(t *testing.T) {
 	releasePi := make(chan struct{})
 	releaseModels := make(chan struct{})
 	manager.runtimeCapabilityProbes = runtimeCapabilityProbeHooks{
-		codexBinary: func() (CodexRuntimeConfig, error) {
+		codexBinary: func() (WebSessionRuntimeConfig, error) {
 			close(binaryStarted)
 			<-releaseBinary
-			return CodexRuntimeConfig{HasCodex: true, HasClaudeCode: true, SupportsWebSession: true}, nil
+			return WebSessionRuntimeConfig{HasCodex: true, HasClaudeCode: true, SupportsWebSession: true}, nil
 		},
 		codexModels: func() ([]CodexModelInfo, error) {
 			close(modelsStarted)
@@ -417,9 +417,9 @@ func TestListSessionsDoesNotRunCapabilityProbes(t *testing.T) {
 	}
 	var calls atomic.Int32
 	manager.runtimeCapabilityProbes = runtimeCapabilityProbeHooks{
-		codexBinary: func() (CodexRuntimeConfig, error) {
+		codexBinary: func() (WebSessionRuntimeConfig, error) {
 			calls.Add(1)
-			return CodexRuntimeConfig{}, errors.New("must not run")
+			return WebSessionRuntimeConfig{}, errors.New("must not run")
 		},
 		codexModels: func() ([]CodexModelInfo, error) {
 			calls.Add(1)

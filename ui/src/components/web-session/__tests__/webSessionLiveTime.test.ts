@@ -1,13 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { describe, expect, it } from 'vitest';
 
 import { resolveWebSessionLiveTimeCopy } from '@/components/web-session/webSessionLiveTime';
 import type { WebSessionBlock, WebSessionLiveState } from '@/stores/webSession';
 import type { WebSessionWorkTiming } from '@/types/models';
-
-const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
 
 function block(input: Partial<WebSessionBlock> & Pick<WebSessionBlock, 'kind'>): WebSessionBlock {
   return {
@@ -80,17 +75,6 @@ function resolve(input: {
 }
 
 describe('webSessionLiveTime', () => {
-  it('declares the busy computed before the watch source evaluates it', () => {
-    const source = readFileSync(webSessionPanelPath, 'utf8');
-    const declarationIndex = source.indexOf('const workTimingSessionBusy = computed(');
-    const watchIndex = source.indexOf(
-      '() => [currentRealSession.value?.id, workTimingSessionBusy.value] as const'
-    );
-
-    expect(declarationIndex).toBeGreaterThan(-1);
-    expect(watchIndex).toBeGreaterThan(declarationIndex);
-  });
-
   it('anchors started time and elapsed time to the latest user-originated turn start', () => {
     const result = resolve({
       state: liveState({

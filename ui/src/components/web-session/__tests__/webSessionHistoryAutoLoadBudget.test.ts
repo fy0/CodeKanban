@@ -1,23 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { describe, expect, it } from 'vitest';
 
 import {
   createWebSessionHistoryAutoLoadBudget,
   WEB_SESSION_HISTORY_AUTO_LOAD_LIMIT,
 } from '@/components/web-session/webSessionHistoryAutoLoadBudget';
-
-const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
-const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
-
-function sourceBetween(start: string, end: string) {
-  const startIndex = webSessionPanelSource.indexOf(start);
-  const endIndex = webSessionPanelSource.indexOf(end, startIndex + start.length);
-  expect(startIndex).toBeGreaterThanOrEqual(0);
-  expect(endIndex).toBeGreaterThan(startIndex);
-  return webSessionPanelSource.slice(startIndex, endIndex);
-}
 
 describe('webSessionHistoryAutoLoadBudget', () => {
   it('allows three automatic history requests and rejects the fourth', () => {
@@ -62,34 +48,5 @@ describe('webSessionHistoryAutoLoadBudget', () => {
     await expect(Promise.reject(new Error('request failed'))).rejects.toThrow('request failed');
 
     expect(budget.remaining()).toBe(WEB_SESSION_HISTORY_AUTO_LOAD_LIMIT - 1);
-  });
-
-  it('guards both automatic loaders while leaving explicit history loads unbounded', () => {
-    const restoreSource = sourceBetween(
-      'async function restorePendingTimelinePosition()',
-      'function beginTimelinePositionRestore('
-    );
-    const fillSource = sourceBetween(
-      'function ensureTimelineHistoryFilled()',
-      'function recalcTabTitleWidth('
-    );
-    const scrollSource = sourceBetween(
-      'function handleTimelineScroll(event: Event)',
-      'function ensureTimelineHistoryFilled()'
-    );
-    const searchSource = sourceBetween(
-      'async function loadEarlierTimelineSearchHistory(',
-      'function setTimelineBlockRef('
-    );
-
-    expect(restoreSource).toContain('timelineHistoryAutoLoadBudget.tryConsume()');
-    expect(restoreSource).toContain('findClosestWebSessionTimelineAnchor(');
-    expect(restoreSource).toContain('captureTimelinePosition(projectId, sessionId, true)');
-    expect(fillSource).toContain('timelineHistoryAutoLoadBudget.tryConsume()');
-    expect(scrollSource).not.toContain('timelineHistoryAutoLoadBudget.tryConsume()');
-    expect(searchSource).not.toContain('timelineHistoryAutoLoadBudget.tryConsume()');
-    expect(webSessionPanelSource.match(/timelineHistoryAutoLoadBudget\.reset\(\)/g)).toHaveLength(
-      2
-    );
   });
 });

@@ -38,11 +38,11 @@ var codexVersionPattern = regexp.MustCompile(`\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+
 type codexContextWindowCache struct {
 	path      string
 	expiresAt time.Time
-	config    CodexRuntimeConfig
+	config    WebSessionRuntimeConfig
 	loaded    bool
 }
 
-type codexBinaryCapabilityCache = runtimeCapabilityCache[CodexRuntimeConfig]
+type codexBinaryCapabilityCache = runtimeCapabilityCache[WebSessionRuntimeConfig]
 
 type codexModelCatalogCache = runtimeCapabilityCache[[]CodexModelInfo]
 
@@ -54,7 +54,7 @@ type codexContextWindowResolver struct {
 }
 
 type runtimeCapabilityProbeHooks struct {
-	codexBinary func() (CodexRuntimeConfig, error)
+	codexBinary func() (WebSessionRuntimeConfig, error)
 	codexModels func() ([]CodexModelInfo, error)
 	pi          func() (piRuntimeProbeResult, error)
 }
@@ -104,16 +104,15 @@ type WebSessionRuntimeConfig struct {
 	Source                 ContextWindowSource       `json:"source"`
 	Models                 []CodexModelInfo          `json:"models"`
 	PiModels               []PiModelInfo             `json:"piModels"`
-	// Legacy top-level fields are retained for one compatibility cycle.
-	HasCodex             bool    `json:"hasCodex"`
-	HasClaudeCode        bool    `json:"hasClaudeCode"`
-	CodexVersion         *string `json:"codexVersion,omitempty"`
-	HasPi                bool    `json:"hasPi"`
-	PiVersion            *string `json:"piVersion,omitempty"`
-	SupportsPiWebSession bool    `json:"supportsPiWebSession"`
-	PiRPCCompatible      bool    `json:"piRpcCompatible"`
-	PiMinVersion         string  `json:"piMinVersion"`
-	PiDiagnostics        string  `json:"piDiagnostics,omitempty"`
+	HasCodex               bool                      `json:"hasCodex"`
+	HasClaudeCode          bool                      `json:"hasClaudeCode"`
+	CodexVersion           *string                   `json:"codexVersion,omitempty"`
+	HasPi                  bool                      `json:"hasPi"`
+	PiVersion              *string                   `json:"piVersion,omitempty"`
+	SupportsPiWebSession   bool                      `json:"supportsPiWebSession"`
+	PiRPCCompatible        bool                      `json:"piRpcCompatible"`
+	PiMinVersion           string                    `json:"piMinVersion"`
+	PiDiagnostics          string                    `json:"piDiagnostics,omitempty"`
 	// SupportsWebSession reports whether ordinary Codex web sessions can run.
 	SupportsWebSession   bool   `json:"supportsWebSession"`
 	WebSessionMinVersion string `json:"webSessionMinCodexVersion"`
@@ -123,9 +122,6 @@ type WebSessionRuntimeConfig struct {
 	SupportsGoalMode       bool   `json:"supportsGoalMode"`
 	GoalModeMinVersion     string `json:"goalModeMinCodexVersion"`
 }
-
-// CodexRuntimeConfig remains an alias while callers migrate to the provider-neutral name.
-type CodexRuntimeConfig = WebSessionRuntimeConfig
 
 type CodexSkillSource string
 
@@ -213,8 +209,8 @@ func decorateSessionSummaryWithContext(summary *SessionSummary, config codexSess
 	summary.ContextWindowSource = ContextWindowSourceUnavailable
 }
 
-func defaultCodexRuntimeConfig() CodexRuntimeConfig {
-	config := CodexRuntimeConfig{
+func defaultCodexRuntimeConfig() WebSessionRuntimeConfig {
+	config := WebSessionRuntimeConfig{
 		Source:                 ContextWindowSourceUnavailable,
 		Models:                 []CodexModelInfo{},
 		PiModels:               []PiModelInfo{},
@@ -248,7 +244,7 @@ func (m *Manager) cachedCodexSessionContextConfig() codexSessionContextConfig {
 	}
 }
 
-func (m *Manager) loadCodexContextConfig(force bool) CodexRuntimeConfig {
+func (m *Manager) loadCodexContextConfig(force bool) WebSessionRuntimeConfig {
 	defaultConfig := defaultCodexRuntimeConfig()
 	if m == nil {
 		return defaultConfig
@@ -297,19 +293,19 @@ func (m *Manager) loadCodexContextConfig(force bool) CodexRuntimeConfig {
 	return config
 }
 
-func (m *Manager) GetCodexRuntimeConfig() CodexRuntimeConfig {
+func (m *Manager) GetCodexRuntimeConfig() WebSessionRuntimeConfig {
 	return m.getCodexRuntimeConfig(false)
 }
 
-func (m *Manager) getCodexRuntimeConfig(force bool) CodexRuntimeConfig {
+func (m *Manager) getCodexRuntimeConfig(force bool) WebSessionRuntimeConfig {
 	config := m.loadCodexContextConfig(force)
 	return m.applyCodexRuntimeCapabilitiesWithRefresh(config, force)
 }
 
 func (m *Manager) applyCodexRuntimeCapabilitiesWithRefresh(
-	config CodexRuntimeConfig,
+	config WebSessionRuntimeConfig,
 	force bool,
-) CodexRuntimeConfig {
+) WebSessionRuntimeConfig {
 	config = m.applyBinaryCapabilities(config, force)
 	if config.Models == nil {
 		config.Models = []CodexModelInfo{}
@@ -414,16 +410,7 @@ func (m *Manager) getWebSessionRuntimeConfigWithModelsBackground() WebSessionRun
 	return config
 }
 
-// GetCodexRuntimeConfigWithModels is kept for callers using the previous API name.
-func (m *Manager) GetCodexRuntimeConfigWithModels() CodexRuntimeConfig {
-	config := m.GetCodexRuntimeConfig()
-	if config.HasCodex {
-		config.Models = m.getCodexModelCatalog(false)
-	}
-	return config
-}
-
-func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig, force bool) CodexRuntimeConfig {
+func (m *Manager) applyBinaryCapabilities(config WebSessionRuntimeConfig, force bool) WebSessionRuntimeConfig {
 	config.WebSessionMinVersion = ""
 	config.MultiAgentV2MinVersion = multiAgentV2MinCodexVersion.String()
 	config.GoalModeMinVersion = goalModeMinCodexVersion.String()
@@ -439,7 +426,7 @@ func (m *Manager) applyBinaryCapabilities(config CodexRuntimeConfig, force bool)
 	return mergeCodexBinaryCapabilities(config, binaryConfig)
 }
 
-func (m *Manager) applyBinaryCapabilitiesBackground(config CodexRuntimeConfig) (CodexRuntimeConfig, bool) {
+func (m *Manager) applyBinaryCapabilitiesBackground(config WebSessionRuntimeConfig) (WebSessionRuntimeConfig, bool) {
 	config.WebSessionMinVersion = ""
 	config.MultiAgentV2MinVersion = multiAgentV2MinCodexVersion.String()
 	config.GoalModeMinVersion = goalModeMinCodexVersion.String()
@@ -454,7 +441,7 @@ func (m *Manager) applyBinaryCapabilitiesBackground(config CodexRuntimeConfig) (
 	return mergeCodexBinaryCapabilities(config, binaryConfig), refreshing
 }
 
-func mergeCodexBinaryCapabilities(config, binaryConfig CodexRuntimeConfig) CodexRuntimeConfig {
+func mergeCodexBinaryCapabilities(config, binaryConfig WebSessionRuntimeConfig) WebSessionRuntimeConfig {
 	config.HasCodex = binaryConfig.HasCodex
 	config.HasClaudeCode = binaryConfig.HasClaudeCode
 	config.CodexVersion = binaryConfig.CodexVersion
@@ -467,7 +454,7 @@ func mergeCodexBinaryCapabilities(config, binaryConfig CodexRuntimeConfig) Codex
 	return config
 }
 
-func (m *Manager) probeCodexBinaryCapabilities() (result CodexRuntimeConfig, probeErr error) {
+func (m *Manager) probeCodexBinaryCapabilities() (result WebSessionRuntimeConfig, probeErr error) {
 	startedAt := time.Now()
 	defer func() {
 		m.logRuntimeCapabilityProbe(
@@ -498,7 +485,7 @@ func (m *Manager) probeCodexBinaryCapabilities() (result CodexRuntimeConfig, pro
 		}
 	}
 
-	return CodexRuntimeConfig{
+	return WebSessionRuntimeConfig{
 		HasCodex:               hasCodex,
 		HasClaudeCode:          hasClaude,
 		CodexVersion:           codexVersion,
@@ -511,7 +498,7 @@ func (m *Manager) probeCodexBinaryCapabilities() (result CodexRuntimeConfig, pro
 	}, probeErr
 }
 
-func cloneCodexBinaryConfig(config CodexRuntimeConfig) CodexRuntimeConfig {
+func cloneCodexBinaryConfig(config WebSessionRuntimeConfig) WebSessionRuntimeConfig {
 	cloned := config
 	if config.CodexVersion != nil {
 		version := *config.CodexVersion

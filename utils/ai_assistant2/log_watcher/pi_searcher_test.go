@@ -161,10 +161,11 @@ func TestParsePiLineCapturesSessionModelAndUserMessage(t *testing.T) {
 func TestFactoryCreatesPiWatcher(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", root)
-	watcher, err := CreateWatcherForAssistantWithWorkingDir(
+	watcher, err := CreateWatcherForAssistantWithWorkingDirAndMode(
 		types.AssistantTypePi,
 		time.Now(),
 		t.TempDir(),
+		SearchModeBoth,
 		nil,
 		nil,
 	)

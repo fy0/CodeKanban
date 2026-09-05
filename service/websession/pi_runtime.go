@@ -346,14 +346,6 @@ func samePiRuntimePath(left, right string) bool {
 	return leftErr == nil && rightErr == nil && canonicalLeft == canonicalRight
 }
 
-func validatePiSessionRoot(sessionFile string) error {
-	root, err := log_watcher.ResolvePiSessionDir()
-	if err != nil {
-		return fmt.Errorf("resolve Pi session root: %w", err)
-	}
-	return validatePiSessionRootWithin(sessionFile, root)
-}
-
 func validatePiSessionRootWithin(sessionFile, root string) error {
 	canonicalRoot, err := canonicalPiRuntimePath(root)
 	if err != nil {

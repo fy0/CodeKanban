@@ -18,9 +18,3 @@ func GetFreshEnviron() []string {
 func GetFreshPath() string {
 	return os.Getenv("PATH")
 }
-
-// RefreshProcessEnviron is a no-op on Unix systems.
-// Shell profiles are sourced when shells start, not at process level.
-func RefreshProcessEnviron() error {
-	return nil
-}

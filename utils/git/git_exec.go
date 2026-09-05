@@ -63,11 +63,6 @@ var engineRuntime = struct {
 	},
 }
 
-var (
-	testEnvOverride   []string
-	testEnvOverrideMu sync.RWMutex
-)
-
 func NormalizeEnginePreference(value EnginePreference) EnginePreference {
 	switch EnginePreference(strings.ToLower(strings.TrimSpace(string(value)))) {
 	case EnginePreferenceBuiltin:
@@ -168,20 +163,7 @@ func buildGitCommandEnv() []string {
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
 	)
-	testEnvOverrideMu.RLock()
-	if len(testEnvOverride) > 0 {
-		env = append(env, testEnvOverride...)
-	}
-	testEnvOverrideMu.RUnlock()
 	return env
-}
-
-// SetTestEnvOverride allows tests to inject additional environment variables
-// into system Git commands. Call with nil to clear the override.
-func SetTestEnvOverride(env []string) {
-	testEnvOverrideMu.Lock()
-	defer testEnvOverrideMu.Unlock()
-	testEnvOverride = append([]string(nil), env...)
 }
 
 func newSystemGitCommandContext(ctx context.Context, dir string, args ...string) (*exec.Cmd, error) {

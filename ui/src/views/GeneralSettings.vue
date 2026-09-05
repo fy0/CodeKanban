@@ -1942,7 +1942,6 @@ import { useLocale } from '@/composables/useLocale';
 import { useResponsive } from '@/composables/useResponsive';
 import { useAuthStore, type AuthAccessConfig } from '@/stores/auth';
 import { useDeveloperConfigStore } from '@/stores/developerConfig';
-import { sanitizeSettingsSectionId, type SettingsSectionId } from '@/stores/settingsUi';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import {
   useSettingsStore,
@@ -2045,6 +2044,35 @@ import {
 } from '@/utils/settingsBackup';
 
 type ShortcutTarget = 'terminal' | 'notepad';
+
+const SETTINGS_SECTION_IDS = [
+  'project-workspace',
+  'terminal',
+  'session',
+  'security',
+  'developer',
+  'git',
+  'worktree',
+  'theme',
+  'maintenance',
+  'backup',
+] as const;
+type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
+
+function sanitizeSettingsSectionId(value: string | null | undefined): SettingsSectionId {
+  if (value === 'project-terminal') {
+    return 'project-workspace';
+  }
+  if (value === 'terminal-actions' || value === 'ai-status') {
+    return 'terminal';
+  }
+  if (value === 'preview') {
+    return 'theme';
+  }
+  return SETTINGS_SECTION_IDS.includes(value as SettingsSectionId)
+    ? (value as SettingsSectionId)
+    : 'project-workspace';
+}
 
 const SHELL_AUTO_VALUE = '__auto__';
 const SHELL_CUSTOM_VALUE = '__custom__';

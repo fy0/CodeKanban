@@ -370,15 +370,6 @@ function parseBaseUrlFromPassthrough(argv) {
   return '';
 }
 
-function parseFlagValue(argv, flagName) {
-  for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] === flagName) {
-      return readFlagValue(argv, index, flagName);
-    }
-  }
-  return '';
-}
-
 function hasPassthroughFlag(argv, flagName) {
   return argv.includes(flagName);
 }
@@ -570,15 +561,19 @@ function ensureProjectTarget({ argv, scope, action, baseUrl, cwd }) {
   return [...argv, '--path', resolvedCwd];
 }
 
-async function rewriteProjectNameToProjectId({ argv, projectName, projectIndex, baseUrl, headers, fetchImpl, stdout, scope, action }) {
+async function rewriteProjectNameToProjectId({
+  argv,
+  projectName,
+  projectIndex,
+  baseUrl,
+  headers,
+  fetchImpl,
+}) {
   if (!projectName) {
     return argv;
   }
   const projects = await listProjectsFromServer({ baseUrl, headers, fetchImpl });
   const project = resolveProjectByName(projects, projectName, projectIndex);
-  if (stdout) {
-    // Keep this silent during normal command execution.
-  }
   const withoutProjectFlags = withoutFlag(
     withoutFlag(argv, '--project-name', { takesValue: true }),
     '--project-index',

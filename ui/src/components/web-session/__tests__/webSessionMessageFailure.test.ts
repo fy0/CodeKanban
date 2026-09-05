@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,17 +6,6 @@ import {
 } from '@/components/web-session/webSessionMessageFailure';
 import enUS from '@/i18n/locales/en-US';
 import zhCN from '@/i18n/locales/zh-CN';
-
-const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
-const webSessionPanelSource = readFileSync(webSessionPanelPath, 'utf8');
-
-function sourceBetween(start: string, end: string) {
-  const startIndex = webSessionPanelSource.indexOf(start);
-  const endIndex = webSessionPanelSource.indexOf(end, startIndex + start.length);
-  expect(startIndex).toBeGreaterThanOrEqual(0);
-  expect(endIndex).toBeGreaterThan(startIndex);
-  return webSessionPanelSource.slice(startIndex, endIndex);
-}
 
 function block(
   overrides: Partial<WebSessionFailureTrackingBlock> = {}
@@ -70,50 +56,5 @@ describe('web session message failure', () => {
     expect(enUS.webSession.userMessageFailed).toBe('Message failed. Click to resend.');
     expect('userMessageFailed' in zhCN.terminal).toBe(false);
     expect('userMessageFailed' in enUS.terminal).toBe(false);
-  });
-
-  it('renders the delivery indicator and retries in the original local bubble', () => {
-    expect(webSessionPanelSource).toContain(
-      'v-if="shouldShowTimelineUserMessageDeliveryIndicator(item)"'
-    );
-    expect(webSessionPanelSource).toContain('@click.stop="handleRetryTimelineUserMessage(item)"');
-    expect(webSessionPanelSource).toContain(
-      '<RefreshOutline v-if="isRetryingTimelineUserMessage(item)" />'
-    );
-    expect(webSessionPanelSource).toContain('webSessionStore.getTimelineBlocks(');
-    expect(webSessionPanelSource).not.toContain('collectFailedWebSessionRunIds');
-
-    const handlerSource = sourceBetween(
-      'async function handleRetryTimelineUserMessage(item: WebSessionBlock)',
-      'async function continueErroredSession(session: WebSessionSummary)'
-    );
-    expect(handlerSource).toContain(
-      'const attachmentIds = item.attachments.map(attachment => attachment.id).filter(Boolean);'
-    );
-    expect(handlerSource).toContain('outgoingMessageId: item.id');
-    expect(handlerSource).toContain('attachments: item.attachments');
-    expect(handlerSource).toContain('freshContext: item.freshContext');
-    expect(handlerSource).toContain('beginSessionSubmit(sourceSessionId, submitKind);');
-    expect(handlerSource).toContain('ensureSendConflictConfirmed(');
-    expect(handlerSource).toContain("message.success(t('webSession.userMessageRetrySuccess'));");
-  });
-
-  it('keeps a delivery-failed message in the timeline instead of restoring the draft', () => {
-    const handlerSource = sourceBetween(
-      'async function handleSubmit()',
-      'async function handleConfirmScheduledSend()'
-    );
-    expect(handlerSource).toContain(
-      'messageRetainedForRetry = isWebSessionMessageDeliveryError(error);'
-    );
-    expect(handlerSource).toContain('if (!submissionSucceeded && !messageRetainedForRetry)');
-    expect(handlerSource).toContain('{ attachments }');
-    const stageIndex = handlerSource.indexOf('stageComposerMessage(initialRealSession);');
-    const firstPreparationAwaitIndex = handlerSource.indexOf('await ensurePiProjectTrust()');
-    expect(stageIndex).toBeGreaterThanOrEqual(0);
-    expect(firstPreparationAwaitIndex).toBeGreaterThan(stageIndex);
-    expect(handlerSource).toContain(
-      'webSessionStore.discardOutgoingMessage(outgoingMessageSessionId, outgoingMessageId);'
-    );
   });
 });

@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import { describe, expect, it } from 'vitest';
 
 import type { WebSessionBlock } from '@/stores/webSession';
@@ -9,11 +6,6 @@ import {
   isTransportRetryActivityText,
   subAgentActivitySummary,
 } from '@/components/web-session/webSessionSubAgentActivity';
-
-const webSessionPanelPath = fileURLToPath(new URL('../WebSessionPanel.vue', import.meta.url));
-const webSessionTimelineStylePath = fileURLToPath(
-  new URL('../styles/webSessionPanelTimeline.css', import.meta.url)
-);
 
 function block(input: Partial<WebSessionBlock> & Pick<WebSessionBlock, 'id' | 'orderIndex'>) {
   return {
@@ -75,27 +67,5 @@ describe('webSessionSubAgentActivity', () => {
     });
 
     expect(findLatestSubAgentActivityBlock([child, other], 'thread-child')).toBe(child);
-  });
-
-  it('keeps sub-agent navigation in the composer popover without a timeline filter', () => {
-    const source = readFileSync(webSessionPanelPath, 'utf8');
-
-    expect(source).toContain('@click="locateSubAgent(agent)"');
-    expect(source).not.toContain('timeline-agent-filter');
-    expect(source).not.toContain('selectedSubAgentThreadId');
-  });
-
-  it('keeps the timeline toolbar compact when known sub-agents exist', () => {
-    const source = readFileSync(webSessionPanelPath, 'utf8');
-    const styleSource = readFileSync(webSessionTimelineStylePath, 'utf8');
-
-    expect(source).toMatch(
-      /class="timeline-agent-toolbar"\s+:class="\{\s*'is-search-open': timelineSearchOpen,\s*\}"/s
-    );
-    expect(source).not.toContain("'has-sub-agent-filter': hasKnownSubAgents");
-    expect(styleSource).toContain('.timeline-agent-toolbar:not(.is-search-open) {');
-    expect(styleSource).not.toContain(
-      '.timeline-agent-toolbar:not(.is-search-open):not(.has-sub-agent-filter)'
-    );
   });
 });

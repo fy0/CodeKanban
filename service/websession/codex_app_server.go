@@ -885,7 +885,6 @@ drainLoop:
 				)
 			}
 		case <-drainHardTimer:
-			drainHardTimer = nil
 			drainHardExpired = true
 			client.closeTransport()
 			if m.logger != nil {

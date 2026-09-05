@@ -384,8 +384,6 @@ func (store *ConfigDatabase) Close() error {
 
 func CurrentConfigDatabase() *ConfigDatabase { return runtimeConfigDB }
 
-func (store *ConfigDatabase) IsReadOnly() bool { return store == nil || store.readOnly }
-
 func (store *ConfigDatabase) persistRuntimeSettings(config *AppConfig) error {
 	if store == nil {
 		return ErrConfigStoreNotInitialized

@@ -1541,9 +1541,9 @@ func TestHandleSendCommandAcknowledgesBeforeMissingCodexRunFails(t *testing.T) {
 	}
 	var codexProbeCalls atomic.Int32
 	var piProbeCalls atomic.Int32
-	manager.runtimeCapabilityProbes.codexBinary = func() (CodexRuntimeConfig, error) {
+	manager.runtimeCapabilityProbes.codexBinary = func() (WebSessionRuntimeConfig, error) {
 		codexProbeCalls.Add(1)
-		return CodexRuntimeConfig{}, nil
+		return WebSessionRuntimeConfig{}, nil
 	}
 	manager.runtimeCapabilityProbes.pi = func() (piRuntimeProbeResult, error) {
 		piProbeCalls.Add(1)
@@ -2823,12 +2823,12 @@ func TestCodexMultiAgentV2SupportErrorReportsVersionState(t *testing.T) {
 	oldVersion := "0.145.9"
 	tests := []struct {
 		name     string
-		config   CodexRuntimeConfig
+		config   WebSessionRuntimeConfig
 		expected string
 	}{
 		{
 			name: "detected old version",
-			config: CodexRuntimeConfig{
+			config: WebSessionRuntimeConfig{
 				HasCodex:               true,
 				CodexVersion:           &oldVersion,
 				MultiAgentV2MinVersion: "0.146.0",
@@ -2837,7 +2837,7 @@ func TestCodexMultiAgentV2SupportErrorReportsVersionState(t *testing.T) {
 		},
 		{
 			name: "unknown version",
-			config: CodexRuntimeConfig{
+			config: WebSessionRuntimeConfig{
 				HasCodex:               true,
 				MultiAgentV2MinVersion: "0.146.0",
 			},
@@ -2869,7 +2869,7 @@ func TestGetCodexRuntimeConfigIncludesModelReasoningCatalog(t *testing.T) {
 		t.Fatalf("NewManager returned error: %v", err)
 	}
 
-	config := manager.GetCodexRuntimeConfigWithModels()
+	config := manager.getWebSessionRuntimeConfigWithModels(false)
 	if len(config.Models) != 3 {
 		t.Fatalf("expected 3 catalog models, got %#v", config.Models)
 	}

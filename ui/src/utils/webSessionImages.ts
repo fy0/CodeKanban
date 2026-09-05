@@ -4,14 +4,6 @@ export function buildImagePlaceholder(index: number) {
   return `[Image #${index}]`;
 }
 
-export function buildImagePlaceholderLine(count: number) {
-  if (count <= 0) {
-    return '';
-  }
-
-  return Array.from({ length: count }, (_, index) => buildImagePlaceholder(index + 1)).join(' ');
-}
-
 const IMAGE_PLACEHOLDER_PATTERN = /\[Image #\d+\]/gi;
 
 const IMAGE_EXTENSION_BY_MIME: Record<string, string> = {

@@ -367,16 +367,3 @@ func ExtractSessionIDFromFilename(filename string) string {
 	uuidParts := parts[len(parts)-5:]
 	return strings.Join(uuidParts, "-")
 }
-
-// BuildRolloutFilePath constructs the rollout file path from a session ID
-// The session ID contains time information (UUID v7)
-func BuildRolloutFilePath(baseDir string, sessionID string, timestamp time.Time) string {
-	// Format: rollout-{timestamp}-{uuid}.jsonl
-	// The timestamp in the filename uses the format: YYYY-MM-DDTHH-MM-SS
-	dateDir := filepath.Join(baseDir, timestamp.Format("2006"), timestamp.Format("01"), timestamp.Format("02"))
-
-	// Build filename from timestamp
-	filename := CodexRolloutPrefix + timestamp.Format("2006-01-02T15-04-05") + "-" + sessionID + CodexRolloutSuffix
-
-	return filepath.Join(dateDir, filename)
-}

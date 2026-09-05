@@ -1,26 +1,5 @@
 import type { WebSessionPendingInputEditDraft } from '@/stores/webSession';
 
-export interface WebSessionPendingInputEditorMemoState {
-  pendingId: string;
-  editingId: string;
-  text: string;
-  actionId: string;
-}
-
-export function buildWebSessionPendingInputEditorMemoDeps({
-  pendingId,
-  editingId,
-  text,
-  actionId,
-}: WebSessionPendingInputEditorMemoState): Array<string | boolean> {
-  return [
-    String(pendingId ?? ''),
-    String(editingId ?? '') === String(pendingId ?? ''),
-    String(text ?? ''),
-    String(actionId ?? '') === String(pendingId ?? ''),
-  ];
-}
-
 export function pickLatestWebSessionPendingInputEditDraft(
   drafts: Record<string, WebSessionPendingInputEditDraft>,
   pendingIds: readonly string[]
