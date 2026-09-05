@@ -3713,7 +3713,10 @@ import {
   normalizeWebSessionSidebarSearchQuery,
   resolveWebSessionSidebarSearchMatchSources,
 } from '@/components/web-session/webSessionSidebarSearch';
-import type { CrossProjectSessionItem } from '@/components/web-session/webSessionSidebarView';
+import {
+  collectWebSessionSidebarSessions,
+  type CrossProjectSessionItem,
+} from '@/components/web-session/webSessionSidebarView';
 import {
   isArchivedPreviewSession,
   isDraftSession,
@@ -4221,8 +4224,8 @@ const sidebarSearchQuery = ref('');
 const sidebarSearchArchived = useStorage<boolean>(SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY, false);
 const sidebarSearchBody = useStorage<boolean>(SIDEBAR_SEARCH_BODY_STORAGE_KEY, true);
 const sidebarSearchState = ref<SidebarSearchState>(createSidebarSearchState());
-const activeSidebarSessions = ref<WebSessionSummary[]>([]);
 const activeSidebarTotal = ref(0);
+const activeSidebarKnownCount = ref(0);
 const activeSidebarOffset = ref(0);
 const activeSidebarHasMore = ref(false);
 const activeSidebarLoading = ref(false);
@@ -10354,16 +10357,15 @@ function mergeSidebarSearchResults(
 }
 
 const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
-  return activeSidebarSessions.value.map(session => {
-    const current = webSessionStore
-      .getSessions(session.projectId)
-      .find(item => item.id === session.id);
-    const resolved = current ?? session;
+  return collectWebSessionSidebarSessions(
+    sidebarVisibleProjectIds.value,
+    webSessionStore.getSessions
+  ).map(session => {
     return {
-      session: resolved,
-      projectId: resolved.projectId,
-      projectName: getProjectName(resolved.projectId),
-      isCurrent: resolved.projectId === props.projectId && resolved.id === activeSessionId.value,
+      session,
+      projectId: session.projectId,
+      projectName: getProjectName(session.projectId),
+      isCurrent: session.projectId === props.projectId && session.id === activeSessionId.value,
     };
   });
 });
@@ -10551,8 +10553,8 @@ async function ensureArchivedScopeLoaded(projectIds: string[], limit = 100) {
 async function loadActiveSidebar(projectIds: string[], reset = false) {
   if (!projectIds.length) {
     activeSidebarRequestVersion += 1;
-    activeSidebarSessions.value = [];
     activeSidebarTotal.value = 0;
+    activeSidebarKnownCount.value = 0;
     activeSidebarOffset.value = 0;
     activeSidebarHasMore.value = false;
     return;
@@ -10576,10 +10578,8 @@ async function loadActiveSidebar(projectIds: string[], reset = false) {
     return;
   }
   webSessionStore.cacheSessionSummaries(result.items);
-  activeSidebarSessions.value = reset
-    ? result.items
-    : [...activeSidebarSessions.value, ...result.items];
   activeSidebarTotal.value = result.total;
+  activeSidebarKnownCount.value = crossProjectSessions.value.length;
   activeSidebarOffset.value = result.nextOffset;
   activeSidebarHasMore.value = result.hasMore;
   activeSidebarLoading.value = false;
@@ -10665,7 +10665,12 @@ const sidebarHasNoSearchResults = computed(
 const sidebarVisibleSessionCount = computed(() =>
   normalizedSidebarSearchQuery.value.length > 0
     ? filteredCrossProjectSessions.value.length + archivedSidebarMeta.value.total
-    : activeSidebarTotal.value + archivedSidebarMeta.value.total
+    : Math.max(
+        activeSidebarTotal.value +
+          crossProjectSessions.value.length -
+          activeSidebarKnownCount.value,
+        crossProjectSessions.value.length
+      ) + archivedSidebarMeta.value.total
 );
 const sidebarSearchError = computed(
   () => normalizedSidebarSearchQuery.value.length > 0 && sidebarSearchState.value.error
