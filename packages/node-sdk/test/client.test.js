@@ -359,6 +359,11 @@ test('websocket helpers receive configured websocket headers', async () => {
   await channel.waitForOpen();
   assert.equal(FakeWebSocket.instances[0].options.headers.Authorization, 'Bearer token-123');
   channel.close();
+
+  const stream = client.openWebSessionEventStream();
+  await stream.waitForOpen();
+  assert.equal(FakeWebSocket.instances[1].options.headers.Authorization, 'Bearer token-123');
+  stream.close();
 });
 
 

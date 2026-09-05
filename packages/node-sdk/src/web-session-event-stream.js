@@ -31,7 +31,9 @@ export class WebSessionEventStream {
 
     this.url = resolvedUrl;
     this.sessionId = ensureOptionalString(sessionId) || null;
-    this.socket = new Socket(resolvedUrl);
+    this.socket = webSocketOptions
+      ? new Socket(resolvedUrl, webSocketOptions)
+      : new Socket(resolvedUrl);
     this._emitter = new EventEmitter();
     this._queue = [];
     this._nextResolvers = [];
