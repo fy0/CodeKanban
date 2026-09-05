@@ -1226,6 +1226,7 @@ export default {
     toolKindTool: 'Step',
     toolCommandExecution: 'Command',
     toolReasoning: 'Thinking',
+    reasoningSummary: 'Thinking summary',
     toolContextCompaction: 'Context Compaction',
     toolFileChange: 'File Change',
     toolMcpToolCall: 'MCP Call',
@@ -1453,7 +1454,7 @@ export default {
       'Enabled by default. Applies fast zlib compression to the ANSI snapshot payload after the frame header to reduce bandwidth.',
     showWebSessionReasoning: 'Show AI reasoning',
     showWebSessionReasoningTip:
-      'Only affects reasoning entries in the session view. Most of the time this is low-value noise, so only enable it when debugging agent behavior.',
+      'Only affects reasoning entries in the session view. When enabled, Codex thinking summaries start collapsed and can be expanded; raw reasoning content is not shown.',
     webSessionActivityDisplayMode: 'Session activity display mode',
     webSessionActivityDisplayModeText: 'Text',
     webSessionActivityDisplayModeCard: 'Card',

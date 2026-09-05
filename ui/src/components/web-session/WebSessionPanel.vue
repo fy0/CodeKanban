@@ -942,6 +942,22 @@
                     </div>
                   </div>
 
+                  <WebSessionReasoningSummary
+                    v-else-if="isCodexReasoningBlock(item) && item.tool"
+                    :text="item.tool.output || ''"
+                    :label="t('webSession.reasoningSummary')"
+                    :time="formatTime(item.timestamp)"
+                    :time-title="formatDateTime(item.timestamp)"
+                    :expanded="isToolExpanded(item.tool.id)"
+                    @toggle="toggleToolExpanded(item.tool)"
+                  >
+                    <div
+                      v-if="isToolExpanded(item.tool.id)"
+                      class="chat-markdown"
+                      v-html="renderMarkdown(item.tool.output || '')"
+                    ></div>
+                  </WebSessionReasoningSummary>
+
                   <div
                     v-else-if="shouldRenderActivityDisplayRow(item)"
                     class="timeline-activity-display-shell"
@@ -3471,6 +3487,7 @@ import WebSessionLocalFileDialog from '@/components/web-session/WebSessionLocalF
 import WebSessionMessageEditDialog from '@/components/web-session/WebSessionMessageEditDialog.vue';
 import WebSessionMobileSessionDrawer from '@/components/web-session/WebSessionMobileSessionDrawer.vue';
 import WebSessionScheduledSendDialog from '@/components/web-session/WebSessionScheduledSendDialog.vue';
+import WebSessionReasoningSummary from '@/components/web-session/WebSessionReasoningSummary.vue';
 import WebSessionSidebar from '@/components/web-session/WebSessionSidebar.vue';
 import { useWebSessionSidebarResize } from '@/components/web-session/useWebSessionSidebarResize';
 import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkillCatalogPanel.vue';
@@ -5287,6 +5304,10 @@ function hasReasoningContent(block: WebSessionBlock) {
   return Boolean(block.tool?.output?.trim());
 }
 
+function isCodexReasoningBlock(block: WebSessionBlock) {
+  return currentSession.value?.agent === 'codex' && isReasoningBlock(block);
+}
+
 function isActivityDisplayBlock(block: WebSessionBlock) {
   if (block.kind !== 'tool' || !block.tool) {
     return false;
@@ -5606,6 +5627,9 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock) {
     return false;
   }
   if (isReasoningBlock(block)) {
+    if (isCodexReasoningBlock(block)) {
+      return hasReasoningContent(block);
+    }
     return hasReasoningContent(block) || shouldShowToolPendingPlaceholder(block.tool);
   }
   const activeToolGroupId = liveState.value.tool?.groupId || '';
@@ -5624,11 +5648,7 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock) {
 
 const filteredTimelineBlocks = computed(() =>
   timelineBlocks.value.filter(block => {
-    if (
-      !showWebSessionReasoning.value &&
-      isReasoningBlock(block) &&
-      currentSession.value?.agent !== 'codex'
-    ) {
+    if (!showWebSessionReasoning.value && isReasoningBlock(block)) {
       return false;
     }
     if (isPlanChoiceRequestBlock(block)) {
@@ -11744,6 +11764,9 @@ function handleActivityDisplayClick(block: WebSessionBlock) {
 }
 
 function shouldHideTimelineMeta(item: WebSessionBlock) {
+  if (isCodexReasoningBlock(item)) {
+    return true;
+  }
   if (!Number.isFinite(item.timestamp) || item.timestamp <= 0) {
     return true;
   }

@@ -146,14 +146,12 @@ func (m *Manager) mapThreadReadItem(
 		}
 		return result, nil
 	case "reasoning":
-		summaryParts := stringArrayValues(item["summary"])
-		contentParts := stringArrayValues(item["content"])
 		result.Kind = "tool"
 		result.Tool = &HistoryTool{
 			ID:     firstNonEmpty(sourceItemID, fmt.Sprintf("reasoning_%d", orderIndex)),
 			Name:   "Reasoning",
 			Kind:   "reasoning",
-			Output: joinedNonEmpty(strings.Join(summaryParts, "\n"), strings.Join(contentParts, "\n")),
+			Output: extractReasoningText(item),
 			Status: "done",
 			Meta: map[string]any{
 				"title": "Reasoning",

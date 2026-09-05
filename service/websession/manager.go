@@ -8373,22 +8373,36 @@ func codexToolIsPlan(item map[string]any) bool {
 }
 
 func extractReasoningText(item map[string]any) string {
-	sections := make([]string, 0, 2)
-	if summary := strings.TrimSpace(strings.Join(collectReasoningFragments(item["summary"]), "")); summary != "" {
-		sections = append(sections, summary)
+	var parts []any
+	switch summary := item["summary"].(type) {
+	case []any:
+		parts = summary
+	case []string:
+		for _, part := range summary {
+			parts = append(parts, part)
+		}
+	default:
+		parts = []any{summary}
 	}
-	if content := strings.TrimSpace(strings.Join(collectReasoningFragments(item["content"]), "")); content != "" {
-		sections = append(sections, content)
+	sections := make([]string, 0, len(parts))
+	for _, part := range parts {
+		text := strings.TrimSpace(strings.Join(collectReasoningFragments(part), ""))
+		body := text
+		if afterOpen, ok := strings.CutPrefix(text, "**"); ok {
+			if closeIndex := strings.Index(afterOpen, "**"); closeIndex > 0 {
+				body = afterOpen[closeIndex+2:]
+			}
+		}
+		if text != "" && strings.TrimSpace(body) != "<!-- -->" {
+			sections = append(sections, text)
+		}
 	}
-	return strings.TrimSpace(strings.Join(sections, "\n\n"))
+	return strings.Join(sections, "\n\n")
 }
 
 func collectReasoningFragments(raw any) []string {
 	switch typed := raw.(type) {
 	case string:
-		if strings.TrimSpace(typed) == "" {
-			return nil
-		}
 		return []string{typed}
 	case []any:
 		fragments := make([]string, 0, len(typed))
@@ -8399,7 +8413,7 @@ func collectReasoningFragments(raw any) []string {
 	case map[string]any:
 		fragments := make([]string, 0, 2)
 		for _, key := range []string{"text", "delta"} {
-			if text := stringValue(typed[key]); strings.TrimSpace(text) != "" {
+			if text := stringValue(typed[key]); text != "" {
 				fragments = append(fragments, text)
 			}
 		}

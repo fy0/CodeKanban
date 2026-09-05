@@ -1173,6 +1173,7 @@ export default {
     toolKindTool: '步骤',
     toolCommandExecution: '命令执行',
     toolReasoning: '思考',
+    reasoningSummary: '思考摘要',
     toolContextCompaction: '上下文压缩',
     toolFileChange: '文件修改',
     toolMcpToolCall: 'MCP 调用',
@@ -1380,7 +1381,7 @@ export default {
       '默认开启。对快照帧头后的 ANSI payload 使用快速 zlib 压缩，减少带宽占用。',
     showWebSessionReasoning: '显示 AI 思考过程',
     showWebSessionReasoningTip:
-      '仅影响会话页中的思考条目显示。大部分时候这些内容都是无用信息，只有排查模型行为或调试时才建议开启。',
+      '仅影响会话页中的思考条目显示。开启后，Codex 的思考摘要默认收起，可点击展开；不会显示原始思考正文。',
     webSessionActivityDisplayMode: '会话活动显示模式',
     webSessionActivityDisplayModeText: '文本',
     webSessionActivityDisplayModeCard: '卡片',
