@@ -3,6 +3,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { shouldLoadWebSessionSnapshotOnActivation } from '@/components/web-session/webSessionPanelSession';
 
 describe('webSessionPanelSession activation', () => {
+  it('catches up a switched session even when its cached revision appears current', () => {
+    const isSnapshotCurrent = vi.fn().mockReturnValue(true);
+
+    expect(
+      shouldLoadWebSessionSnapshotOnActivation(
+        { id: 'session-background', revision: '8' },
+        isSnapshotCurrent,
+        'ready',
+        true
+      )
+    ).toBe(true);
+  });
+
   it('reuses a complete snapshot when its revision matches the session summary', () => {
     const isSnapshotCurrent = vi.fn().mockReturnValue(true);
 

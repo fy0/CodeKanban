@@ -438,7 +438,8 @@ describe('webSessionApi.catchUp', () => {
     });
 
     expect(getMethodMock).toHaveBeenCalledWith(
-      '/projects/project-1/web-sessions/session-1/catch-up?afterEventCursor=7%3A9223372036854775807&historyEpoch=2&limit=80&targetEventCursor=9%3A9223372036854775807'
+      '/projects/project-1/web-sessions/session-1/catch-up?afterEventCursor=7%3A9223372036854775807&historyEpoch=2&limit=80&targetEventCursor=9%3A9223372036854775807',
+      { shareRequest: false }
     );
     expect(sendMock).toHaveBeenCalledWith(true);
     expect(result).toMatchObject({ hasMore: true, nextEventCursor: '8:12' });

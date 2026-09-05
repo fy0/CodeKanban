@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebSessionSnapshot } from '@/api/webSession';
 import type { WebSessionSummary } from '@/types/models';
 import { isWebSessionMessageDeliveryError, useWebSessionStore } from '@/stores/webSession';
+import { shouldLoadWebSessionSnapshotOnActivation } from '@/components/web-session/webSessionPanelSession';
+import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
 
 const {
   listMock,
@@ -395,6 +397,28 @@ describe('webSession loading behavior', () => {
       loading: false,
     });
   });
+
+  it.each(['loadSessionSnapshot', 'catchUpSession'] as const)(
+    'exposes an unexpected transport abort from %s instead of leaving the timeline loading',
+    async method => {
+      const store = useWebSessionStore();
+      const controller = new AbortController();
+      snapshotMock.mockRejectedValue(new DOMException('Transport aborted', 'AbortError'));
+
+      await expect(
+        store[method]('project-transport-abort', 'session-transport-abort', {
+          signal: controller.signal,
+        })
+      ).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(controller.signal.aborted).toBe(false);
+      expect(store.getHistoryMeta('session-transport-abort')).toMatchObject({
+        hydrationState: 'error',
+        hydrationError: 'Transport aborted',
+        loading: false,
+      });
+    }
+  );
 
   it('does not attach a full snapshot consumer to a conditional flight', async () => {
     const store = useWebSessionStore();
@@ -816,6 +840,72 @@ describe('webSession loading behavior', () => {
     );
     expect(store.getBlocks(baseline.id).map(item => item.text)).toEqual(['complete', 'next']);
     expect(snapshotMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads missed background history on activation without a reload or a newer cached summary', async () => {
+    const store = useWebSessionStore();
+    const controller = createWebSessionSnapshotLoadController();
+    const background = makeSession({ id: 'session-background', revision: '5' });
+    const foreground = makeSession({ id: 'session-foreground' });
+    listMock.mockResolvedValue([background, foreground]);
+    snapshotMock.mockResolvedValue({
+      revision: '5',
+      historyEpoch: '1',
+      eventCursor: '5:9223372036854775807',
+      session: background,
+      history: {
+        items: [makeWireHistoryItem(1, { txt: 'old content', es: 5 })],
+        hasMore: false,
+        total: 1,
+      },
+    });
+    await store.loadSessions(background.projectId);
+    await store.loadSessionSnapshot(background.projectId, background.id);
+    store.setActiveSession(foreground.projectId, foreground.id);
+    expect(store.isSessionSnapshotCurrent(background.id, background.revision)).toBe(true);
+
+    catchUpMock.mockResolvedValue({
+      revision: '6',
+      historyEpoch: '1',
+      nextEventCursor: '6:9223372036854775807',
+      targetEventCursor: '6:9223372036854775807',
+      hasMore: false,
+      resetRequired: false,
+      session: { ...background, revision: '6' },
+      items: [makeWireHistoryItem(2, { txt: 'new background content', es: 6 })],
+      total: 2,
+      pendingInputs: [],
+      scheduledInputs: [],
+      subAgents: [],
+    });
+
+    const activate = () => {
+      const sessionChanged = store.getActiveSessionId(background.projectId) !== background.id;
+      store.setActiveSession(background.projectId, background.id);
+      return controller.run(background.id, async handle => {
+        if (
+          shouldLoadWebSessionSnapshotOnActivation(
+            background,
+            store.isSessionSnapshotCurrent,
+            store.getHistoryMeta(background.id).hydrationState,
+            sessionChanged
+          )
+        ) {
+          await store.catchUpSession(background.projectId, background.id, {
+            signal: handle.signal,
+          });
+        }
+      });
+    };
+    await Promise.all([activate(), activate()]);
+
+    expect(catchUpMock).toHaveBeenCalledOnce();
+    expect(snapshotMock).toHaveBeenCalledOnce();
+    expect(store.getBlocks(background.id).map(item => item.text)).toEqual([
+      'old content',
+      'new background content',
+    ]);
+    expect(store.getHistoryMeta(background.id).hydrationState).toBe('ready');
   });
 
   it('does not let a stale catch-up response overwrite a newer realtime item', async () => {

@@ -9641,6 +9641,7 @@ async function activateTabById(
   if (!session) {
     return false;
   }
+  const sessionChanged = currentSession.value?.id !== session.id;
   if (!options?.routeDriven) {
     pendingRouteActivationSessionId.value = '';
   }
@@ -9667,7 +9668,7 @@ async function activateTabById(
       realSessionSnapshotLoadController.cancel();
       webSessionStore.setActiveSession(props.projectId, session.id);
     } else {
-      activated = await connectVisibleRealSession(props.projectId, session.id);
+      activated = await connectVisibleRealSession(props.projectId, session.id, sessionChanged);
     }
     if (activated) {
       void acknowledgeVisibleSessionView(session.id);
@@ -9770,37 +9771,37 @@ async function openArchivedPreviewSession(
   setComposerTarget(props.projectId, session.id, 'ready');
 }
 
-async function connectVisibleRealSession(projectId: string, sessionId: string) {
+async function connectVisibleRealSession(
+  projectId: string,
+  sessionId: string,
+  forceCatchUp = false
+) {
   if (!projectId || !sessionId) {
     return false;
   }
-  const snapshotLoad = realSessionSnapshotLoadController.begin();
+  const sessionChanged =
+    forceCatchUp ||
+    currentSession.value?.projectId !== projectId ||
+    currentSession.value?.id !== sessionId;
   activeArchivedPreviewId.value = '';
   webSessionStore.setActiveSession(projectId, sessionId);
-  try {
+  return realSessionSnapshotLoadController.run(`${projectId}:${sessionId}`, async snapshotLoad => {
     const session = webSessionStore.getSessions(projectId).find(item => item.id === sessionId);
     const hydrationState = webSessionStore.getHistoryMeta(sessionId).hydrationState;
     if (
       !shouldLoadWebSessionSnapshotOnActivation(
         session,
         webSessionStore.isSessionSnapshotCurrent,
-        hydrationState
+        hydrationState,
+        sessionChanged
       )
     ) {
-      return realSessionSnapshotLoadController.isCurrent(snapshotLoad);
+      return;
     }
     await webSessionStore.catchUpSession(projectId, sessionId, {
       signal: snapshotLoad.signal,
     });
-    return realSessionSnapshotLoadController.isCurrent(snapshotLoad);
-  } catch (error) {
-    if (isAbortLikeError(error) || !realSessionSnapshotLoadController.isCurrent(snapshotLoad)) {
-      return false;
-    }
-    throw error;
-  } finally {
-    realSessionSnapshotLoadController.release(snapshotLoad);
-  }
+  });
 }
 
 async function retryCurrentTimelineHydration() {

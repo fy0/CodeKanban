@@ -6703,7 +6703,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ) {
         return null;
       }
-      if (!(error instanceof Error && error.name === 'AbortError')) {
+      if (!(error instanceof Error && error.name === 'AbortError') || !options?.signal?.aborted) {
         setHistoryHydrationState(sessionId, 'error', error);
       }
       throw error;
@@ -6922,7 +6922,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return result;
     } catch (error) {
       setHistoryLoading(sessionId, false);
-      if (!(error instanceof Error && error.name === 'AbortError')) {
+      if (!(error instanceof Error && error.name === 'AbortError') || !options?.signal?.aborted) {
         setHistoryHydrationState(sessionId, 'error', error);
       }
       throw error;

@@ -606,7 +606,8 @@ export const webSessionApi = {
       query.set('knownRevision', options.knownRevision);
     }
     const method = http.Get<ItemResponse<WebSessionSnapshot>>(
-      `/projects/${projectId}/web-sessions/${sessionId}/snapshot?${query.toString()}`
+      `/projects/${projectId}/web-sessions/${sessionId}/snapshot?${query.toString()}`,
+      { shareRequest: false }
     );
     const abortHandler = () => {
       method.abort();
@@ -649,7 +650,8 @@ export const webSessionApi = {
       query.set('targetEventCursor', options.targetEventCursor);
     }
     const method = http.Get<ItemResponse<WebSessionCatchUp>>(
-      `/projects/${projectId}/web-sessions/${sessionId}/catch-up?${query.toString()}`
+      `/projects/${projectId}/web-sessions/${sessionId}/catch-up?${query.toString()}`,
+      { shareRequest: false }
     );
     const abortHandler = () => method.abort();
     if (options.signal?.aborted) {

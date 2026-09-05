@@ -49,7 +49,13 @@ export function isArchivedPreviewSession(
 export function shouldLoadWebSessionSnapshotOnActivation(
   session: Pick<WebSessionSummary, 'id' | 'revision'> | null | undefined,
   isSnapshotCurrent: (sessionId: string, revision?: string | null) => boolean,
-  hydrationState: 'uninitialized' | 'loading' | 'ready' | 'error' = 'ready'
+  hydrationState: 'uninitialized' | 'loading' | 'ready' | 'error' = 'ready',
+  sessionChanged = false
 ) {
-  return hydrationState !== 'ready' || !session || !isSnapshotCurrent(session.id, session.revision);
+  return (
+    sessionChanged ||
+    hydrationState !== 'ready' ||
+    !session ||
+    !isSnapshotCurrent(session.id, session.revision)
+  );
 }
