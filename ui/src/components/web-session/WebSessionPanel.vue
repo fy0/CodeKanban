@@ -1833,7 +1833,28 @@
                 :class="{ 'is-mobile': isMobile }"
               >
                 <div class="composer-config-row">
+                  <n-popover
+                    v-if="agentSwitchDisabled"
+                    :trigger="isMobile ? 'click' : 'hover'"
+                    placement="top-start"
+                  >
+                    <template #trigger>
+                      <button
+                        type="button"
+                        class="composer-agent-trigger"
+                        :title="selectedAgentTitle"
+                        :aria-label="selectedAgentTitle"
+                      >
+                        <span class="composer-agent-trigger-icon" v-html="selectedAgentIcon"></span>
+                        <n-icon class="composer-agent-trigger-arrow">
+                          <ChevronDownOutline />
+                        </n-icon>
+                      </button>
+                    </template>
+                    {{ t('webSession.agentSwitchDisabledTip') }}
+                  </n-popover>
                   <n-dropdown
+                    v-else
                     :trigger="isMobile ? 'click' : 'hover'"
                     placement="top-start"
                     :options="agentDropdownOptions"
@@ -10741,7 +10762,6 @@ const agentDropdownOptions = computed<DropdownOption[]>(() =>
           : option.label,
     key: option.value,
     value: option.value,
-    disabled: agentSwitchDisabled.value,
   }))
 );
 

@@ -234,11 +234,11 @@ export const CLAUDE_RUNTIME_OPTIONS: WebSessionModelOption[] = [
 ];
 
 export const CODEX_PRIMARY_MODEL_OPTIONS: WebSessionModelOption[] = [
-  { label: '6A', value: 'gpt-6-astra', menuLabel: 'GPT-6 Astra' },
   { label: '5.5', value: 'gpt-5.5', menuLabel: 'GPT-5.5' },
   { label: '5.6S', value: 'gpt-5.6-sol', menuLabel: 'GPT-5.6 Sol' },
   { label: '5.6L', value: 'gpt-5.6-luna', menuLabel: 'GPT-5.6 Luna' },
   { label: '5.6T', value: 'gpt-5.6-terra', menuLabel: 'GPT-5.6 Terra' },
+  { label: '6A', value: 'gpt-6-astra', menuLabel: 'GPT-6 Astra' },
 ];
 
 export const CODEX_ADDITIONAL_MODEL_OPTIONS: WebSessionModelOption[] = [

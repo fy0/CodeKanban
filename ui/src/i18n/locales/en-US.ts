@@ -981,6 +981,7 @@ export default {
     runtimeSwitchNoticeApproval:
       'Changed; this approval continues the current turn. Applies to the next message.',
     agentSelectorTitle: 'Current assistant: {agent}',
+    agentSwitchDisabledTip: 'Cannot switch agent while running',
     customModel: 'Custom...',
     moreModels: 'More',
     allModels: 'All Models',

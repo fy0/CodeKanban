@@ -24,25 +24,25 @@ import {
 describe('webSessionModelOptions', () => {
   it('shows only the popular codex models by default', () => {
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.value)).toEqual([
-      'gpt-6-astra',
       'gpt-5.5',
       'gpt-5.6-sol',
       'gpt-5.6-luna',
       'gpt-5.6-terra',
+      'gpt-6-astra',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.label)).toEqual([
-      '6A',
       '5.5',
       '5.6S',
       '5.6L',
       '5.6T',
+      '6A',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.menuLabel)).toEqual([
-      'GPT-6 Astra',
       'GPT-5.5',
       'GPT-5.6 Sol',
       'GPT-5.6 Luna',
       'GPT-5.6 Terra',
+      'GPT-6 Astra',
     ]);
   });
 

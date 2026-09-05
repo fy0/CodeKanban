@@ -940,6 +940,7 @@ export default {
     runtimeSwitchNoticeNextMessage: '已切换；当前轮不变，下一条消息生效。',
     runtimeSwitchNoticeApproval: '已切换；本次审批继续当前轮，下一条消息生效。',
     agentSelectorTitle: '当前助手：{agent}',
+    agentSwitchDisabledTip: '运行中无法切换agent',
     customModel: '自定义...',
     moreModels: '更多',
     allModels: '全部模型',
