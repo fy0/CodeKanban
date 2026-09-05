@@ -93,6 +93,8 @@ type wireSess struct {
 	WorkflowMode                      string         `json:"wm"`
 	PermissionLevel                   string         `json:"pl"`
 	ActiveCallTimeoutEnabled          bool           `json:"acte"`
+	ContextWindowSetting              int64          `json:"cwset"`
+	AppliedContextWindowSetting       *int64         `json:"acwset"`
 	AutoRetryEnabled                  bool           `json:"ae"`
 	AutoRetryPolicyMode               string         `json:"arpm"`
 	AutoRetryScope                    string         `json:"ars"`
@@ -541,6 +543,8 @@ func mapWireSession(session SessionSummary) *wireSess {
 		WorkflowMode:                      string(session.WorkflowMode),
 		PermissionLevel:                   string(session.PermissionLevel),
 		ActiveCallTimeoutEnabled:          session.ActiveCallTimeoutEnabled,
+		ContextWindowSetting:              session.ContextWindowSetting,
+		AppliedContextWindowSetting:       session.AppliedContextWindowSetting,
 		AutoRetryEnabled:                  session.AutoRetryEnabled,
 		AutoRetryPolicyMode:               string(session.AutoRetryPolicyMode),
 		AutoRetryScope:                    string(session.AutoRetryScope),

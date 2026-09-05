@@ -9,6 +9,7 @@ describe('developer config defaults', () => {
     expect(config.webSessionCodexDefaultReasoningEffort).toBe('default');
     expect(config.webSessionCodexDefaultPermissionLevel).toBe('default');
     expect(config.webSessionCodexDefaultSyncMode).toBe('default');
+    expect(config.webSessionCodexContextWindow).toBe(0);
     expect(config.webSessionAutoRetryDefaults).toEqual({
       scope: 'network_only',
       preset: 'gentle_stop',
@@ -23,6 +24,7 @@ describe('developer config defaults', () => {
       webSessionCodexDefaultReasoningEffort: 'model_default',
       webSessionCodexDefaultPermissionLevel: 'standard',
       webSessionCodexDefaultSyncMode: 'deep',
+      webSessionCodexContextWindow: 768000,
       webSessionAutoRetryDefaults: {
         scope: 'all_failures',
         preset: 'sustain_60s',
@@ -35,6 +37,7 @@ describe('developer config defaults', () => {
     expect(config.webSessionCodexDefaultReasoningEffort).toBe('model_default');
     expect(config.webSessionCodexDefaultPermissionLevel).toBe('standard');
     expect(config.webSessionCodexDefaultSyncMode).toBe('deep');
+    expect(config.webSessionCodexContextWindow).toBe(768000);
     expect(config.webSessionAutoRetryDefaults).toEqual({
       scope: 'all_failures',
       preset: 'sustain_60s',
@@ -48,12 +51,14 @@ describe('developer config defaults', () => {
       webSessionCodexDefaultReasoningEffort: 'invalid' as never,
       webSessionCodexDefaultPermissionLevel: 'invalid' as never,
       webSessionCodexDefaultSyncMode: 'invalid' as never,
+      webSessionCodexContextWindow: 123,
     });
     const clone = cloneDeveloperConfig(source);
 
     expect(source.webSessionCodexDefaultReasoningEffort).toBe('default');
     expect(source.webSessionCodexDefaultPermissionLevel).toBe('default');
     expect(source.webSessionCodexDefaultSyncMode).toBe('default');
+    expect(source.webSessionCodexContextWindow).toBe(0);
     clone.webSessionActiveCallTimeout.callKinds.mcp = false;
     clone.webSessionAutoRetryDefaults.scope = 'all_failures';
     expect(source.webSessionActiveCallTimeout.callKinds.mcp).toBe(true);

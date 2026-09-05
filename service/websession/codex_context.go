@@ -201,6 +201,11 @@ func decorateSessionSummaryWithContext(summary *SessionSummary, config codexSess
 		return
 	}
 	if config.contextWindowTokens > 0 && sameCodexModel(summary.Model, config.model) {
+		if summary.ContextWindowSetting > 0 || (summary.AppliedContextWindowSetting != nil && *summary.AppliedContextWindowSetting > 0) {
+			summary.ContextWindowTokens = nil
+			summary.ContextWindowSource = ContextWindowSourceUnavailable
+			return
+		}
 		summary.ContextWindowTokens = ptr(config.contextWindowTokens)
 		summary.ContextWindowSource = config.source
 		return

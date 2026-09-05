@@ -71,6 +71,7 @@ type DeveloperConfig struct {
 	EnableTerminalScrollback              bool                              `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
 	EnableTerminalStateSnapshot           bool                              `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
 	WebSessionCodexDefaultModel           string                            `json:"webSessionCodexDefaultModel" yaml:"webSessionCodexDefaultModel"`
+	WebSessionCodexContextWindow          int64                             `json:"webSessionCodexContextWindow" yaml:"webSessionCodexContextWindow"`
 	WebSessionCodexDefaultReasoningEffort string                            `json:"webSessionCodexDefaultReasoningEffort" yaml:"webSessionCodexDefaultReasoningEffort"`
 	WebSessionCodexDefaultPermissionLevel string                            `json:"webSessionCodexDefaultPermissionLevel" yaml:"webSessionCodexDefaultPermissionLevel"`
 	WebSessionCodexDefaultSyncMode        string                            `json:"webSessionCodexDefaultSyncMode" yaml:"webSessionCodexDefaultSyncMode"`
@@ -555,6 +556,9 @@ func NormalizeWebSessionQuickInputConfig(config WebSessionQuickInputConfig) WebS
 }
 
 func NormalizeDeveloperConfig(config DeveloperConfig) DeveloperConfig {
+	if !ValidCodexContextWindow(config.WebSessionCodexContextWindow) {
+		config.WebSessionCodexContextWindow = 0
+	}
 	config.WebSessionCodexDefaultModel = strings.TrimSpace(config.WebSessionCodexDefaultModel)
 	if config.WebSessionCodexDefaultModel == "" ||
 		strings.EqualFold(config.WebSessionCodexDefaultModel, WebSessionCodexDefaultSetting) {
@@ -579,6 +583,10 @@ func NormalizeDeveloperConfig(config DeveloperConfig) DeveloperConfig {
 	config.WebSessionAutoRetryDefaults = NormalizeWebSessionAutoRetryDefaultsConfig(config.WebSessionAutoRetryDefaults)
 	config.WebSessionActiveCallTimeout = NormalizeWebSessionActiveCallTimeoutConfig(config.WebSessionActiveCallTimeout)
 	return config
+}
+
+func ValidCodexContextWindow(value int64) bool {
+	return value == 0 || value == 512000 || value == 768000 || value == 1000000
 }
 
 func NormalizeWebSessionAutoRetryDefaultsConfig(config WebSessionAutoRetryDefaultsConfig) WebSessionAutoRetryDefaultsConfig {

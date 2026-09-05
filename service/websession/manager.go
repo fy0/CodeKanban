@@ -115,6 +115,7 @@ type Config struct {
 	PiPath                      string
 	PiRuntimeIdleTTL            time.Duration
 	DefaultCodexModel           func() string
+	DefaultCodexContextWindow   func() int64
 	DefaultCodexReasoningEffort func() ReasoningEffort
 	DefaultCodexPermissionLevel func() string
 	DefaultCodexSyncMode        func() SyncMode
@@ -1250,6 +1251,10 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 	if err != nil {
 		return SessionSummary{}, err
 	}
+	contextWindow, err := m.resolveContextWindowSetting(agent, params.ContextWindowSetting)
+	if err != nil {
+		return SessionSummary{}, err
+	}
 	permissionLevel := m.resolveSessionPermissionLevel(agent, params.PermissionLevel)
 	if err := validateWebSessionPermissionLevel(agent, permissionLevel); err != nil {
 		return SessionSummary{}, err
@@ -1298,6 +1303,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		SessionStartSource:                string(SessionStartSourceStartup),
 		PermissionLevel:                   string(permissionLevel),
 		ActiveCallTimeoutEnabled:          params.ActiveCallTimeoutEnabled,
+		ContextWindowSetting:              contextWindow,
 		AutoRetryEnabled:                  params.AutoRetryEnabled,
 		AutoRetryPolicyMode:               string(autoRetry.policyMode),
 		AutoRetryScope:                    string(autoRetry.scope),
@@ -2414,6 +2420,7 @@ func (m *Manager) UpdateModel(ctx context.Context, sessionID, modelName string) 
 		"updated_at": time.Now(),
 	}
 	if !sameCodexModel(record.Model, normalized) {
+		updates["applied_context_window_setting"] = nil
 		updates["session_context_window_tokens"] = 0
 		updates["session_context_window_observed_at"] = nil
 	}
@@ -2787,6 +2794,8 @@ func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent
 	modelName := m.resolveSessionModel(normalized, "")
 	return m.updateFields(ctx, sessionID, map[string]any{
 		"agent":                              string(normalized),
+		"context_window_setting":             0,
+		"applied_context_window_setting":     nil,
 		"claude_runtime":                     string(defaultClaudeRuntime(normalized)),
 		"backend":                            string(defaultSessionBackend(normalized)),
 		"model":                              modelName,
@@ -3348,6 +3357,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleSetPermissionLevelCommand(ctx, client, frame)
 	case "set_act":
 		return m.handleSetActiveCallTimeoutCommand(ctx, client, frame)
+	case "set_cws":
+		return m.handleSetContextWindowCommand(ctx, client, frame)
 	case "set_ar":
 		return m.handleSetAutoRetryCommand(ctx, client, frame)
 	case "set_ardpf":
@@ -3504,6 +3515,7 @@ func (m *Manager) GetAttachment(id string) (Attachment, error) {
 
 func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
+		ContextWindowSetting              *int64  `json:"cwset"`
 		ProjectID                         string  `json:"pid"`
 		WorktreeID                        string  `json:"wid"`
 		Agent                             string  `json:"ag"`
@@ -3538,6 +3550,7 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 	}
 
 	summary, err := m.CreateSession(ctx, CreateParams{
+		ContextWindowSetting:              payload.ContextWindowSetting,
 		ProjectID:                         payload.ProjectID,
 		WorktreeID:                        payload.WorktreeID,
 		Agent:                             Agent(payload.Agent),
@@ -7253,6 +7266,8 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		WorkflowMode:                      effectiveWorkflowMode(record),
 		PermissionLevel:                   effectivePermissionLevel(record),
 		ActiveCallTimeoutEnabled:          activeCallTimeoutOverrideOrDefault(record.ActiveCallTimeoutEnabled),
+		ContextWindowSetting:              record.ContextWindowSetting,
+		AppliedContextWindowSetting:       record.AppliedContextWindowSetting,
 		AutoRetryEnabled:                  record.AutoRetryEnabled,
 		AutoRetryPolicyMode:               normalizeAutoRetryPolicyMode(AutoRetryPolicyMode(record.AutoRetryPolicyMode)),
 		AutoRetryScope:                    normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),

@@ -307,6 +307,8 @@ type SessionSummary struct {
 	WorkflowMode                      WorkflowMode               `json:"workflowMode"`
 	PermissionLevel                   PermissionLevel            `json:"permissionLevel"`
 	ActiveCallTimeoutEnabled          bool                       `json:"activeCallTimeoutEnabled"`
+	ContextWindowSetting              int64                      `json:"contextWindowSetting"`
+	AppliedContextWindowSetting       *int64                     `json:"appliedContextWindowSetting"`
 	AutoRetryEnabled                  bool                       `json:"autoRetryEnabled"`
 	AutoRetryPolicyMode               AutoRetryPolicyMode        `json:"autoRetryPolicyMode"`
 	AutoRetryScope                    AutoRetryScope             `json:"autoRetryScope"`
@@ -747,6 +749,7 @@ type CreateParams struct {
 	WorkflowMode                      WorkflowMode
 	PermissionLevel                   PermissionLevel
 	ActiveCallTimeoutEnabled          *bool
+	ContextWindowSetting              *int64
 	AutoRetryEnabled                  bool
 	AutoRetryPolicyMode               *AutoRetryPolicyMode
 	AutoRetryScope                    *AutoRetryScope

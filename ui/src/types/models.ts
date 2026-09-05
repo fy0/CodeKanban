@@ -269,6 +269,7 @@ export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
   enableTerminalStateSnapshot: boolean;
   webSessionCodexDefaultModel: string;
+  webSessionCodexContextWindow?: number;
   webSessionCodexDefaultReasoningEffort: WebSessionCodexDefaultReasoningEffort;
   webSessionCodexDefaultPermissionLevel: WebSessionCodexDefaultPermissionLevel;
   webSessionCodexDefaultSyncMode: 'default' | 'fast' | 'deep';
@@ -479,6 +480,8 @@ export interface WebSessionSummary {
   workflowMode: 'default' | 'plan';
   permissionLevel: 'default' | 'elevated' | 'yolo';
   activeCallTimeoutEnabled?: boolean;
+  contextWindowSetting?: number;
+  appliedContextWindowSetting?: number | null;
   autoRetryEnabled: boolean;
   autoRetryPolicyMode: 'default' | 'custom';
   autoRetryScope: 'network_only' | 'network_and_rate_limit' | 'all_failures';

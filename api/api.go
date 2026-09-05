@@ -107,6 +107,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		DefaultCodexModel: func() string {
 			return cfg.Developer.WebSessionCodexDefaultModel
 		},
+		DefaultCodexContextWindow: func() int64 { return cfg.Developer.WebSessionCodexContextWindow },
 		DefaultCodexReasoningEffort: func() websession.ReasoningEffort {
 			return websession.ReasoningEffort(cfg.Developer.WebSessionCodexDefaultReasoningEffort)
 		},

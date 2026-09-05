@@ -68,6 +68,8 @@ type WireSession = {
   wm: 'default' | 'plan';
   pl: 'default' | 'elevated' | 'yolo';
   acte?: boolean;
+  cwset?: number;
+  acwset?: number | null;
   ae?: boolean;
   arpm?: 'default' | 'custom';
   ars?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
@@ -3201,6 +3203,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
       workflowMode: session.wm ?? 'default',
       permissionLevel: session.pl ?? 'elevated',
       activeCallTimeoutEnabled: session.acte === true,
+      contextWindowSetting: session.cwset ?? 0,
+      appliedContextWindowSetting: session.acwset ?? null,
       autoRetryEnabled: session.ae === true,
       autoRetryPolicyMode: session.arpm === 'custom' ? 'custom' : 'default',
       autoRetryScope:
@@ -8025,6 +8029,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
+  async function updateContextWindowSetting(sessionId: string, value: number) {
+    await sendCommand('set_cws', sessionId, { cwset: value });
+  }
+
   async function updateAutoRetry(
     sessionId: string,
     config: {
@@ -8307,6 +8315,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
       activeCallTimeoutEnabled?: boolean;
+      contextWindowSetting?: number;
       autoRetryEnabled?: boolean;
       autoRetryPolicyMode?: 'default' | 'custom';
       autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
@@ -8417,6 +8426,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updatePermissionLevel,
     updateAgent,
     updateActiveCallTimeout,
+    updateContextWindowSetting,
     updateAutoRetry,
     updateAutoRetryDispatchPendingOnFailure,
     moveSession,

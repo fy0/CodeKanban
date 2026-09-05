@@ -636,6 +636,15 @@ func (m *Manager) runCodexAppServerSession(
 		return
 	}
 	supportsMultiAgentV2 = activeMultiAgentV2
+	if err := m.updateRuntimeState(ctx, session.ID, map[string]any{
+		"applied_context_window_setting":     session.ContextWindowSetting,
+		"session_context_window_tokens":      0,
+		"session_context_window_observed_at": nil,
+	}); err != nil {
+		run.resolveBootstrap(err)
+		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
+		return
+	}
 	session.NativeSessionID = ptr(threadID)
 	if strings.TrimSpace(threadPath) != "" {
 		session.ThreadPath = ptr(strings.TrimSpace(threadPath))
@@ -2959,7 +2968,7 @@ func codexThreadStartParams(session tables.WebSessionTable, supportsMultiAgentV2
 		"model":          strings.TrimSpace(session.Model),
 		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
 		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
-		"config":         codexThreadConfig(supportsMultiAgentV2),
+		"config":         codexSessionThreadConfig(session, supportsMultiAgentV2),
 	}
 	if supportsMultiAgentV2 {
 		params["historyMode"] = "paginated"
@@ -2984,7 +2993,7 @@ func codexThreadResumeParams(
 		"model":          strings.TrimSpace(session.Model),
 		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
 		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
-		"config":         codexThreadConfig(supportsMultiAgentV2),
+		"config":         codexSessionThreadConfig(session, supportsMultiAgentV2),
 	}
 	if !supportsMultiAgentV2 {
 		params["persistExtendedHistory"] = true

@@ -477,6 +477,7 @@ export const webSessionApi = {
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
       activeCallTimeoutEnabled?: boolean;
+      contextWindowSetting?: number;
       autoRetryEnabled?: boolean;
       autoRetryPolicyMode?: 'default' | 'custom';
       autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
@@ -498,6 +499,7 @@ export const webSessionApi = {
           workflowMode: data.workflowMode ?? 'default',
           ...(data.permissionLevel !== undefined ? { permissionLevel: data.permissionLevel } : {}),
           activeCallTimeoutEnabled: data.activeCallTimeoutEnabled,
+          contextWindowSetting: data.contextWindowSetting,
           autoRetryEnabled: data.autoRetryEnabled === true,
           ...(data.autoRetryPolicyMode !== undefined
             ? { autoRetryPolicyMode: data.autoRetryPolicyMode }

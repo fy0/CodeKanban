@@ -605,6 +605,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				WorkflowMode                      string  `json:"workflowMode"`
 				PermissionLevel                   string  `json:"permissionLevel"`
 				ActiveCallTimeoutEnabled          *bool   `json:"activeCallTimeoutEnabled,omitempty"`
+				ContextWindowSetting              *int64  `json:"contextWindowSetting,omitempty"`
 				AutoRetryEnabled                  bool    `json:"autoRetryEnabled"`
 				AutoRetryPolicyMode               *string `json:"autoRetryPolicyMode,omitempty"`
 				AutoRetryScope                    *string `json:"autoRetryScope,omitempty"`
@@ -653,6 +654,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			WorkflowMode:                      workflowMode,
 			PermissionLevel:                   permissionLevel,
 			ActiveCallTimeoutEnabled:          input.Body.ActiveCallTimeoutEnabled,
+			ContextWindowSetting:              input.Body.ContextWindowSetting,
 			AutoRetryEnabled:                  input.Body.AutoRetryEnabled,
 			AutoRetryPolicyMode:               mapOptionalString[websession.AutoRetryPolicyMode](input.Body.AutoRetryPolicyMode),
 			AutoRetryScope:                    mapOptionalString[websession.AutoRetryScope](input.Body.AutoRetryScope),

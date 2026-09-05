@@ -2108,6 +2108,13 @@
                         <div class="composer-settings-popover-title">
                           {{ t('webSession.composerSettings') }}
                         </div>
+                        <WebSessionContextWindowSelect
+                          v-if="currentSession?.agent === 'codex'"
+                          :value="currentSession.contextWindowSetting ?? 0"
+                          :disabled="contextWindowSaving"
+                          :pending="contextWindowHasPendingSetting"
+                          @update:value="updateContextWindowSetting"
+                        />
                         <n-checkbox
                           v-model:checked="webSessionAutoContinueEnabledValue"
                           size="small"
@@ -2910,7 +2917,7 @@
                               }}
                             </button>
                           </div>
-                          <div class="context-usage-stat">
+                          <div class="context-usage-stat context-usage-stat--window">
                             <span class="context-usage-stat__label">{{
                               t('webSession.contextUsageWindowLabel')
                             }}</span>
@@ -2927,6 +2934,36 @@
                                 )
                               }}
                             </button>
+                            <n-popover
+                              v-if="currentSession?.agent === 'codex'"
+                              trigger="click"
+                              placement="bottom-end"
+                              :to="false"
+                            >
+                              <template #trigger>
+                                <button
+                                  type="button"
+                                  class="context-window-edit"
+                                  :aria-label="t('webSession.contextWindowSetting')"
+                                  :title="t('webSession.contextWindowSetting')"
+                                >
+                                  <n-icon size="13"><SettingsOutline /></n-icon>
+                                </button>
+                              </template>
+                              <WebSessionContextWindowSelect
+                                :value="currentSession.contextWindowSetting ?? 0"
+                                :disabled="contextWindowSaving"
+                                details
+                                :pending="contextWindowHasPendingSetting"
+                                :actual-tokens="
+                                  currentSession.contextWindowSource === 'session_usage'
+                                    ? currentSession.contextWindowTokens
+                                    : null
+                                "
+                                :running="currentSession.status === 'running'"
+                                @update:value="updateContextWindowSetting"
+                              />
+                            </n-popover>
                           </div>
                           <div
                             v-if="contextUsageIndicator.showCompactMarker"
@@ -3272,6 +3309,8 @@
 </template>
 
 <script setup lang="ts">
+import WebSessionContextWindowSelect from './WebSessionContextWindowSelect.vue';
+import { contextWindowPending } from './webSessionContextWindow';
 import {
   type Component,
   type CSSProperties,
@@ -4600,7 +4639,11 @@ const activeCallTimeoutPopoverTip = computed(() =>
     : t('webSession.autoInterruptLongCallUnavailableTip')
 );
 const composerSettingsHasActiveItems = computed(
-  () => currentSessionAutoRetryEnabled.value || currentSessionActiveCallTimeoutEnabled.value
+  () =>
+    currentSessionAutoRetryEnabled.value ||
+    currentSessionActiveCallTimeoutEnabled.value ||
+    (currentSession.value?.agent === 'codex' &&
+      (currentSession.value.contextWindowSetting ?? 0) > 0)
 );
 const autoRetryRateLimitNotice = computed(() =>
   shouldShowAutoRetryRateLimitNotice(
@@ -4713,6 +4756,35 @@ const webSessionActiveCallTimeoutEnabledValue = computed({
     }
   },
 });
+
+const contextWindowSaving = ref(false);
+const contextWindowHasPendingSetting = computed(() =>
+  contextWindowPending(
+    currentSession.value?.contextWindowSetting ?? 0,
+    currentSession.value?.appliedContextWindowSetting
+  )
+);
+
+async function updateContextWindowSetting(value: number) {
+  const session = currentSession.value;
+  if (!session || session.agent !== 'codex' || contextWindowSaving.value) return;
+  if (isDraftSession(session)) {
+    updateActiveDraftSession(current => ({
+      ...current,
+      contextWindowSetting: value,
+      updatedAt: new Date().toISOString(),
+    }));
+    return;
+  }
+  contextWindowSaving.value = true;
+  try {
+    await webSessionStore.updateContextWindowSetting(session.id, value);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    contextWindowSaving.value = false;
+  }
+}
 
 function handleComposerSettingsPopoverShow(show: boolean) {
   if (show) {
@@ -7198,6 +7270,8 @@ const contextUsageIndicator = computed<ContextUsageIndicator | null>(() => {
       : null;
   const runtimeConfigMatchesModel =
     session.agent === 'codex' &&
+    (session.contextWindowSetting ?? 0) === 0 &&
+    (session.appliedContextWindowSetting ?? 0) === 0 &&
     typeof runtimeConfig?.model === 'string' &&
     runtimeConfig.model.trim() !== '' &&
     runtimeConfig.model.trim().toLowerCase() === session.model.trim().toLowerCase();
@@ -9024,6 +9098,7 @@ function normalizeDraftSession(
         ? session.permissionLevel
         : defaultPermissionLevelForAgent(agent),
     activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(session, agent),
+    contextWindowSetting: agent === 'codex' ? (session.contextWindowSetting ?? 0) : 0,
     autoRetryEnabled: session.autoRetryEnabled === true,
     autoRetryPolicyMode: session.autoRetryPolicyMode === 'custom' ? 'custom' : 'default',
     autoRetryScope:
@@ -9485,6 +9560,8 @@ function createDraftSession(forceAgent?: WebSessionAgent, options?: { title?: st
     workflowMode: source?.workflowMode || draftWorkflowMode.value,
     permissionLevel: defaultPermissionLevelForAgent(nextAgent),
     activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, nextAgent),
+    contextWindowSetting:
+      nextAgent === 'codex' ? (developerConfigStore.config.webSessionCodexContextWindow ?? 0) : 0,
     autoRetryEnabled: source?.autoRetryEnabled === true,
     autoRetryPolicyMode:
       source?.autoRetryEnabled === true && source.autoRetryPolicyMode === 'custom'
@@ -12511,6 +12588,7 @@ async function handleCreateSession(
             ? 'elevated'
             : source?.permissionLevel) || draftPermissionLevel.value,
         activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, agent),
+        contextWindowSetting: agent === 'codex' ? source?.contextWindowSetting : undefined,
         autoRetryEnabled: source?.autoRetryEnabled === true,
         autoRetryPolicyMode: source?.autoRetryPolicyMode === 'custom' ? 'custom' : 'default',
         autoRetryScope:

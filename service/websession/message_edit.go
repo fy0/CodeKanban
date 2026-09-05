@@ -496,6 +496,7 @@ func (m *Manager) createEditedWebSession(
 		WorkflowMode:                      effectiveWorkflowMode(source),
 		PermissionLevel:                   effectivePermissionLevel(source),
 		ActiveCallTimeoutEnabled:          source.ActiveCallTimeoutEnabled,
+		ContextWindowSetting:              ptr(source.ContextWindowSetting),
 		AutoRetryEnabled:                  source.AutoRetryEnabled,
 		AutoRetryPolicyMode:               ptr(normalizeAutoRetryPolicyMode(AutoRetryPolicyMode(source.AutoRetryPolicyMode))),
 		AutoRetryScope:                    ptr(normalizeAutoRetryScope(AutoRetryScope(source.AutoRetryScope))),

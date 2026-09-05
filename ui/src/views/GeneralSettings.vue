@@ -673,6 +673,20 @@
                     </n-space>
                   </n-form-item>
                   <n-form-item
+                    :label="t('webSession.contextWindowSetting')"
+                    data-search-key="webSessionCodexContextWindow"
+                  >
+                    <n-space vertical size="small">
+                      <n-select
+                        v-model:value="developerForm.webSessionCodexContextWindow"
+                        :options="contextWindowOptions(t('webSession.contextWindowDefault'))"
+                        :disabled="developerLoading"
+                        style="max-width: 320px"
+                      />
+                      <span class="form-tip">{{ t('webSession.contextWindowGlobalTip') }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
                     :label="t('settings.webSessionCodexDefaultReasoningEffort')"
                     data-search-key="webSessionCodexDefaultReasoningEffort"
                   >
@@ -1918,6 +1932,7 @@
 </template>
 
 <script setup lang="ts">
+import { contextWindowOptions } from '@/components/web-session/webSessionContextWindow';
 import { computed, nextTick, onMounted, reactive, ref, watch, type Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
@@ -2763,6 +2778,8 @@ const developerSessionDirty = computed(() => {
   return (
     developerForm.webSessionCodexDefaultModel !==
       developerOriginal.value.webSessionCodexDefaultModel ||
+    developerForm.webSessionCodexContextWindow !==
+      developerOriginal.value.webSessionCodexContextWindow ||
     developerForm.webSessionCodexDefaultReasoningEffort !==
       developerOriginal.value.webSessionCodexDefaultReasoningEffort ||
     developerForm.webSessionCodexDefaultPermissionLevel !==
@@ -4219,6 +4236,7 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
         t('settings.webSessionAutoRetryDispatchPendingOnFailure'),
         t('settings.webSessionQuickInputPinned'),
         t('settings.webSessionCodexDefaultModel'),
+        t('webSession.contextWindowSetting'),
         t('settings.webSessionCodexDefaultReasoningEffort'),
         t('settings.webSessionCodexDefaultPermissionLevel'),
         t('settings.webSessionCodexDefaultSyncMode'),

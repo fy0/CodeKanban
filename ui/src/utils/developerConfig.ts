@@ -75,6 +75,11 @@ export function sanitizeDeveloperConfig(value?: Partial<DeveloperConfig> | null)
   return {
     enableTerminalScrollback: value?.enableTerminalScrollback ?? false,
     enableTerminalStateSnapshot: value?.enableTerminalStateSnapshot ?? false,
+    webSessionCodexContextWindow: [0, 512000, 768000, 1000000].includes(
+      value?.webSessionCodexContextWindow ?? 0
+    )
+      ? (value?.webSessionCodexContextWindow ?? 0)
+      : 0,
     webSessionCodexDefaultModel:
       configuredModel?.toLowerCase() === DEFAULT_WEB_SESSION_CODEX_MODEL
         ? DEFAULT_WEB_SESSION_CODEX_MODEL

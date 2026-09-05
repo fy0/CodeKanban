@@ -114,6 +114,8 @@ function toWireSession(session: WebSessionSummary) {
     wm: session.workflowMode,
     pl: session.permissionLevel,
     acte: session.activeCallTimeoutEnabled === true,
+    cwset: session.contextWindowSetting ?? 0,
+    acwset: session.appliedContextWindowSetting ?? null,
     ae: session.autoRetryEnabled,
     arpm: session.autoRetryPolicyMode,
     ars: session.autoRetryScope,
@@ -564,5 +566,48 @@ describe('webSession auto retry optimistic updates', () => {
 
     const confirmedSession = store.getSessions(session.projectId)[0];
     expect(confirmedSession?.activeCallTimeoutEnabled).toBe(true);
+  });
+
+  it('keeps configured and applied context windows separate across an update', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      contextWindowSetting: 512000,
+      appliedContextWindowSetting: 512000,
+    });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId, true);
+    await store.openEventStream();
+    const update = store.updateContextWindowSetting(session.id, 768000);
+    await flushMicrotasks();
+    const commands = findSocket('/api/v1/web-sessions/ws');
+    const events = findSocket('/api/v1/web-sessions/events');
+    if (!commands || !events) throw new Error('missing sockets');
+    expect(commands.sent[0]?.op).toBe('set_cws');
+    expect(store.getSessions(session.projectId)[0]?.contextWindowSetting).toBe(512000);
+    commands.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: commands.sent[0]?.rid,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'set_cws',
+    });
+    await update;
+    events.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'status',
+      s: toWireSession(
+        makeSession({
+          contextWindowSetting: 768000,
+          appliedContextWindowSetting: 512000,
+          updatedAt: '2026-04-10T10:00:02.000Z',
+        })
+      ),
+    });
+    expect(store.getSessions(session.projectId)[0]?.contextWindowSetting).toBe(768000);
+    expect(store.getSessions(session.projectId)[0]?.appliedContextWindowSetting).toBe(512000);
   });
 });

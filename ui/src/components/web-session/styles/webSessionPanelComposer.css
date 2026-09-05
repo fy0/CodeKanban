@@ -1582,6 +1582,31 @@
     flex-direction: column;
   }
 
+  .context-usage-stat--window {
+    grid-template-columns: max-content auto;
+    justify-content: start;
+    align-items: center;
+  }
+
+  .context-usage-stat--window .context-usage-stat__label {
+    grid-column: 1 / -1;
+  }
+
+  .context-window-edit {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px;
+    border: 0;
+    background: transparent;
+    color: var(--n-text-color-3);
+    cursor: pointer;
+  }
+
+  .context-window-edit:hover,
+  .context-window-edit:focus-visible {
+    color: var(--n-primary-color);
+  }
+
   .quick-input-scope {
     width: 100%;
   }

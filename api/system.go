@@ -241,6 +241,9 @@ func registerSystemRoutes(
 	huma.Post(group, "/system/developer-config/update", func(ctx context.Context, input *struct {
 		Body utils.DeveloperConfig `json:"body"`
 	}) (*h.MessageResponse, error) {
+		if !utils.ValidCodexContextWindow(input.Body.WebSessionCodexContextWindow) {
+			return nil, huma.Error400BadRequest("invalid Codex context window preset")
+		}
 		normalized := utils.MergeDeveloperConfig(cfg.Developer, input.Body)
 
 		// 原子更新：在锁内完成修改+写盘
