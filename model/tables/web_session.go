@@ -28,6 +28,7 @@ type WebSessionTable struct {
 	ActiveCallTimeoutEnabled          *bool  `gorm:"type:boolean" json:"activeCallTimeoutEnabled,omitempty"`
 	ContextWindowSetting              int64  `gorm:"not null;default:0" json:"contextWindowSetting"`
 	AppliedContextWindowSetting       *int64 `json:"appliedContextWindowSetting"`
+	CodexModelMetadataFallback        bool   `gorm:"not null;default:false" json:"codexModelMetadataFallback"`
 	AutoRetryEnabled                  bool   `gorm:"type:boolean;not null;default:false" json:"autoRetryEnabled"`
 	AutoRetryPolicyMode               string `gorm:"type:text;not null;default:default" json:"autoRetryPolicyMode"`
 	AutoRetryScope                    string `gorm:"type:text;not null;default:network_only" json:"autoRetryScope"`

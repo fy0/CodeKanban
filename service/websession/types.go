@@ -309,6 +309,7 @@ type SessionSummary struct {
 	ActiveCallTimeoutEnabled          bool                       `json:"activeCallTimeoutEnabled"`
 	ContextWindowSetting              int64                      `json:"contextWindowSetting"`
 	AppliedContextWindowSetting       *int64                     `json:"appliedContextWindowSetting"`
+	CodexModelMetadataFallback        bool                       `json:"codexModelMetadataFallback"`
 	AutoRetryEnabled                  bool                       `json:"autoRetryEnabled"`
 	AutoRetryPolicyMode               AutoRetryPolicyMode        `json:"autoRetryPolicyMode"`
 	AutoRetryScope                    AutoRetryScope             `json:"autoRetryScope"`

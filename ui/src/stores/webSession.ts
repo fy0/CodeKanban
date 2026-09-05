@@ -70,6 +70,7 @@ type WireSession = {
   acte?: boolean;
   cwset?: number;
   acwset?: number | null;
+  cmmf?: boolean;
   ae?: boolean;
   arpm?: 'default' | 'custom';
   ars?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
@@ -3205,6 +3206,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       activeCallTimeoutEnabled: session.acte === true,
       contextWindowSetting: session.cwset ?? 0,
       appliedContextWindowSetting: session.acwset ?? null,
+      codexModelMetadataFallback: session.cmmf === true,
       autoRetryEnabled: session.ae === true,
       autoRetryPolicyMode: session.arpm === 'custom' ? 'custom' : 'default',
       autoRetryScope:

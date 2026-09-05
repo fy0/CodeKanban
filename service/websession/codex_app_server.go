@@ -638,6 +638,7 @@ func (m *Manager) runCodexAppServerSession(
 	supportsMultiAgentV2 = activeMultiAgentV2
 	if err := m.updateRuntimeState(ctx, session.ID, map[string]any{
 		"applied_context_window_setting":     session.ContextWindowSetting,
+		"codex_model_metadata_fallback":      false,
 		"session_context_window_tokens":      0,
 		"session_context_window_observed_at": nil,
 	}); err != nil {
@@ -1279,6 +1280,11 @@ func (m *Manager) handleCodexAppServerMessage(
 	case "thread/tokenUsage/updated":
 		if isRootEvent {
 			m.handleCodexAppServerUsage(session, run, message.Params)
+		}
+		return codexTurnOutcomeNone, nil
+	case "warning":
+		if isRootEvent {
+			m.handleCodexModelMetadataWarning(session, run, message.Params)
 		}
 		return codexTurnOutcomeNone, nil
 	case "thread/goal/updated":

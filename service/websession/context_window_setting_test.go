@@ -23,6 +23,47 @@ func TestContextWindowWireFieldsRemainDistinct(t *testing.T) {
 	}
 }
 
+func TestCodexModelMetadataFallbackWarningIsScopedAndPersisted(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Context window warning", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &activeRun{runID: "run-1", agent: AgentCodex, assistantMessageID: "message-1"}
+	scope := codexTurnScope{threadID: "thread-1", turnID: "turn-1"}
+	warning := "Model metadata for `gpt-6-astra` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."
+	for _, child := range []bool{true, false} {
+		threadID := "thread-1"
+		if child {
+			threadID = "child-1"
+		}
+		handleCodexTestNotification(t, manager, *session, run, scope, "warning", map[string]any{"threadId": threadID, "message": warning})
+		record, err := manager.GetSession(context.Background(), session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.CodexModelMetadataFallback == child {
+			t.Fatal("warning was not scoped to the root thread")
+		}
+		if !child {
+			wire := mapWireSession(mapSessionRecord(record))
+			if !wire.CodexModelMetadataFallback {
+				t.Fatal("warning missing from session response")
+			}
+		}
+	}
+	if _, err := manager.UpdateModel(context.Background(), session.ID, "other-model"); err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil || record.CodexModelMetadataFallback {
+		t.Fatal("model change must clear stale warning")
+	}
+}
+
 func TestContextWindowRunSnapshotChangesOnNextRun(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

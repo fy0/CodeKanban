@@ -2421,6 +2421,7 @@ func (m *Manager) UpdateModel(ctx context.Context, sessionID, modelName string) 
 	}
 	if !sameCodexModel(record.Model, normalized) {
 		updates["applied_context_window_setting"] = nil
+		updates["codex_model_metadata_fallback"] = false
 		updates["session_context_window_tokens"] = 0
 		updates["session_context_window_observed_at"] = nil
 	}
@@ -2796,6 +2797,7 @@ func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent
 		"agent":                              string(normalized),
 		"context_window_setting":             0,
 		"applied_context_window_setting":     nil,
+		"codex_model_metadata_fallback":      false,
 		"claude_runtime":                     string(defaultClaudeRuntime(normalized)),
 		"backend":                            string(defaultSessionBackend(normalized)),
 		"model":                              modelName,
@@ -7268,6 +7270,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		ActiveCallTimeoutEnabled:          activeCallTimeoutOverrideOrDefault(record.ActiveCallTimeoutEnabled),
 		ContextWindowSetting:              record.ContextWindowSetting,
 		AppliedContextWindowSetting:       record.AppliedContextWindowSetting,
+		CodexModelMetadataFallback:        record.CodexModelMetadataFallback,
 		AutoRetryEnabled:                  record.AutoRetryEnabled,
 		AutoRetryPolicyMode:               normalizeAutoRetryPolicyMode(AutoRetryPolicyMode(record.AutoRetryPolicyMode)),
 		AutoRetryScope:                    normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),

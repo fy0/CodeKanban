@@ -1008,7 +1008,31 @@
 .context-usage-stat {
   min-width: 0;
   display: grid;
+  grid-template-rows: auto 1fr;
+  align-items: start;
   gap: 3px;
+}
+
+.context-usage-window-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.context-window-edit {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--n-text-color-3);
+  cursor: pointer;
+}
+
+.context-window-edit:hover,
+.context-window-edit:focus-visible {
+  color: var(--n-primary-color);
 }
 
 .context-usage-stat__label {
@@ -1580,31 +1604,6 @@
   .quick-input-search-row {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .context-usage-stat--window {
-    grid-template-columns: max-content auto;
-    justify-content: start;
-    align-items: center;
-  }
-
-  .context-usage-stat--window .context-usage-stat__label {
-    grid-column: 1 / -1;
-  }
-
-  .context-window-edit {
-    display: inline-flex;
-    align-items: center;
-    padding: 3px;
-    border: 0;
-    background: transparent;
-    color: var(--n-text-color-3);
-    cursor: pointer;
-  }
-
-  .context-window-edit:hover,
-  .context-window-edit:focus-visible {
-    color: var(--n-primary-color);
   }
 
   .quick-input-scope {

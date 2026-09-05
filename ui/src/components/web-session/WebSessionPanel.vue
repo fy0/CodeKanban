@@ -2917,53 +2917,57 @@
                               }}
                             </button>
                           </div>
-                          <div class="context-usage-stat context-usage-stat--window">
+                          <div class="context-usage-stat">
                             <span class="context-usage-stat__label">{{
                               t('webSession.contextUsageWindowLabel')
                             }}</span>
-                            <button
-                              type="button"
-                              class="context-usage-number"
-                              :title="contextNumberTitle('window')"
-                              @click="toggleContextNumber('window')"
-                            >
-                              {{
-                                formatContextTokenCount(
-                                  contextUsageIndicator.contextWindowTokens,
-                                  'window'
-                                )
-                              }}
-                            </button>
-                            <n-popover
-                              v-if="currentSession?.agent === 'codex'"
-                              trigger="click"
-                              placement="bottom-end"
-                              :to="false"
-                            >
-                              <template #trigger>
-                                <button
-                                  type="button"
-                                  class="context-window-edit"
-                                  :aria-label="t('webSession.contextWindowSetting')"
-                                  :title="t('webSession.contextWindowSetting')"
-                                >
-                                  <n-icon size="13"><SettingsOutline /></n-icon>
-                                </button>
-                              </template>
-                              <WebSessionContextWindowSelect
-                                :value="currentSession.contextWindowSetting ?? 0"
-                                :disabled="contextWindowSaving"
-                                details
-                                :pending="contextWindowHasPendingSetting"
-                                :actual-tokens="
-                                  currentSession.contextWindowSource === 'session_usage'
-                                    ? currentSession.contextWindowTokens
-                                    : null
-                                "
-                                :running="currentSession.status === 'running'"
-                                @update:value="updateContextWindowSetting"
-                              />
-                            </n-popover>
+                            <div class="context-usage-window-value">
+                              <button
+                                type="button"
+                                class="context-usage-number"
+                                :title="contextNumberTitle('window')"
+                                @click="toggleContextNumber('window')"
+                              >
+                                {{
+                                  formatContextTokenCount(
+                                    contextUsageIndicator.contextWindowTokens,
+                                    'window'
+                                  )
+                                }}
+                              </button>
+                              <n-popover
+                                v-if="currentSession?.agent === 'codex'"
+                                trigger="click"
+                                placement="bottom-end"
+                                :to="false"
+                              >
+                                <template #trigger>
+                                  <button
+                                    type="button"
+                                    class="context-window-edit"
+                                    :aria-label="t('webSession.contextWindowSetting')"
+                                    :title="t('webSession.contextWindowSetting')"
+                                  >
+                                    <n-icon size="13"><SettingsOutline /></n-icon>
+                                  </button>
+                                </template>
+                                <WebSessionContextWindowSelect
+                                  :value="currentSession.contextWindowSetting ?? 0"
+                                  :disabled="contextWindowSaving"
+                                  details
+                                  :pending="contextWindowHasPendingSetting"
+                                  :requested-value="currentSession.appliedContextWindowSetting"
+                                  :metadata-fallback="currentSession.codexModelMetadataFallback"
+                                  :actual-tokens="
+                                    currentSession.contextWindowSource === 'session_usage'
+                                      ? currentSession.contextWindowTokens
+                                      : null
+                                  "
+                                  :running="currentSession.status === 'running'"
+                                  @update:value="updateContextWindowSetting"
+                                />
+                              </n-popover>
+                            </div>
                           </div>
                           <div
                             v-if="contextUsageIndicator.showCompactMarker"

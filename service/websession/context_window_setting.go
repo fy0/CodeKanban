@@ -4,11 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"code-kanban/model/tables"
 	"code-kanban/utils"
 )
+
+func (m *Manager) handleCodexModelMetadataWarning(session tables.WebSessionTable, run *activeRun, params any) {
+	message := strings.TrimSpace(stringValue(decodeRawObject(params)["message"]))
+	if !strings.Contains(message, "Model metadata for") || !strings.Contains(message, "fallback metadata") {
+		return
+	}
+	if err := m.updateRuntimeState(context.Background(), session.ID, map[string]any{"codex_model_metadata_fallback": true}); err != nil {
+		return
+	}
+	m.appendRunNote(session.ID, session, run, "warn", message, map[string]any{"code": "codex_model_metadata_fallback"})
+	m.broadcastSessionSummary(context.Background(), session.ID)
+}
 
 func validContextWindowSetting(value int64) bool {
 	return utils.ValidCodexContextWindow(value)

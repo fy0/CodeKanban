@@ -482,6 +482,7 @@ export interface WebSessionSummary {
   activeCallTimeoutEnabled?: boolean;
   contextWindowSetting?: number;
   appliedContextWindowSetting?: number | null;
+  codexModelMetadataFallback?: boolean;
   autoRetryEnabled: boolean;
   autoRetryPolicyMode: 'default' | 'custom';
   autoRetryScope: 'network_only' | 'network_and_rate_limit' | 'all_failures';

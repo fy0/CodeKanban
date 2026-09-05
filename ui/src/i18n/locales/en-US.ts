@@ -826,10 +826,17 @@ export default {
     contextWindowSetting: 'Context window',
     contextWindowDefault: 'Default',
     contextWindowCurrentSetting: 'Configured',
-    contextWindowActual: 'Actual window',
-    contextWindowLastActual: 'Last run window',
+    contextWindowActual: 'CLI-reported window',
+    contextWindowLastActual: 'Last CLI-reported window',
+    contextWindowRequested: 'Run request',
+    contextWindowMetadataFallback:
+      'Codex could not resolve model metadata and uses fallback limits; the requested window may be capped.',
+    contextWindowReportedHint:
+      'Reports the usable window (usually with 5% reserved), not the compaction threshold; settings are capped by CLI model limits.',
     contextWindowPending: 'Applies on next run',
-    contextWindowUnconfirmed: 'Actual window: awaiting runtime confirmation',
+    contextWindowUpgradeHint:
+      'If the setting does not take effect, update Codex and restart the session process; model limits still apply.',
+    contextWindowUnconfirmed: 'CLI window: not yet reported',
     contextWindowGlobalTip: 'New Codex sessions only; Default follows Codex configuration.',
     composerSettingsExpand: 'Expand advanced settings',
     composerSettingsCollapse: 'Collapse advanced settings',

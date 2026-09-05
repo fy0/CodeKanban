@@ -95,6 +95,7 @@ type wireSess struct {
 	ActiveCallTimeoutEnabled          bool           `json:"acte"`
 	ContextWindowSetting              int64          `json:"cwset"`
 	AppliedContextWindowSetting       *int64         `json:"acwset"`
+	CodexModelMetadataFallback        bool           `json:"cmmf"`
 	AutoRetryEnabled                  bool           `json:"ae"`
 	AutoRetryPolicyMode               string         `json:"arpm"`
 	AutoRetryScope                    string         `json:"ars"`
@@ -545,6 +546,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		ActiveCallTimeoutEnabled:          session.ActiveCallTimeoutEnabled,
 		ContextWindowSetting:              session.ContextWindowSetting,
 		AppliedContextWindowSetting:       session.AppliedContextWindowSetting,
+		CodexModelMetadataFallback:        session.CodexModelMetadataFallback,
 		AutoRetryEnabled:                  session.AutoRetryEnabled,
 		AutoRetryPolicyMode:               string(session.AutoRetryPolicyMode),
 		AutoRetryScope:                    string(session.AutoRetryScope),
