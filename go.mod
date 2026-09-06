@@ -9,7 +9,7 @@ require (
 	github.com/danielgtaylor/huma/v2 v2.34.1
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-git/go-billy/v6 v6.0.0-alpha.2
-	github.com/go-git/go-git/v6 v6.0.0-alpha.5
+	github.com/go-git/go-git/v6 v6.0.0-alpha.5.0.20260811102426-7cf4f60d92ac
 	github.com/gofiber/fiber/v2 v2.52.9
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/gorilla/websocket v1.5.3
