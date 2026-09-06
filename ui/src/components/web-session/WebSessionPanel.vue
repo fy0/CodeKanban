@@ -1,6 +1,190 @@
 <template>
   <div class="web-session-panel" :style="webSessionStyleVars">
     <WebSessionCompletionNotifier />
+    <DefineContextUsageContent>
+      <div v-if="contextUsageIndicator" class="context-usage-popover">
+        <div class="context-usage-popover__header">
+          <span class="context-usage-popover__title">{{ contextUsageIndicator.title }}</span>
+          <span
+            class="context-usage-popover__percent"
+            :class="`state-${contextUsageIndicator.state}`"
+          >
+            {{ contextUsageIndicator.label }}
+          </span>
+        </div>
+        <template v-if="contextUsageIndicator.available">
+          <div
+            class="context-usage-stats"
+            :class="{
+              'has-compact-marker': contextUsageIndicator.showCompactMarker,
+            }"
+          >
+            <div class="context-usage-stat">
+              <span class="context-usage-stat__label">{{
+                t('webSession.contextUsageCurrent')
+              }}</span>
+              <button
+                type="button"
+                class="context-usage-number"
+                :title="contextNumberTitle('used')"
+                @click="toggleContextNumber('used')"
+              >
+                {{ formatContextTokenCount(contextUsageIndicator.usedTokens, 'used') }}
+              </button>
+            </div>
+            <div class="context-usage-stat">
+              <span class="context-usage-stat__label">{{
+                t('webSession.contextUsageWindowLabel')
+              }}</span>
+              <div class="context-usage-window-value">
+                <button
+                  type="button"
+                  class="context-usage-number"
+                  :title="contextNumberTitle('window')"
+                  @click="toggleContextNumber('window')"
+                >
+                  {{ formatContextTokenCount(contextUsageIndicator.contextWindowTokens, 'window') }}
+                </button>
+                <n-popover
+                  v-if="currentSession?.agent === 'codex'"
+                  trigger="click"
+                  placement="bottom-end"
+                  :to="isMobile ? undefined : false"
+                  :style="{ maxWidth: 'calc(100vw - 24px)', boxSizing: 'border-box' }"
+                >
+                  <template #trigger>
+                    <button
+                      type="button"
+                      class="context-window-edit"
+                      :aria-label="t('webSession.contextWindowSetting')"
+                      :title="t('webSession.contextWindowSetting')"
+                    >
+                      <n-icon size="13"><SettingsOutline /></n-icon>
+                    </button>
+                  </template>
+                  <WebSessionContextWindowSelect
+                    :value="currentSession.contextWindowSetting ?? 0"
+                    :disabled="contextWindowSaving"
+                    details
+                    :pending="contextWindowHasPendingSetting"
+                    :requested-value="currentSession.appliedContextWindowSetting"
+                    :metadata-fallback="currentSession.codexModelMetadataFallback"
+                    :actual-tokens="
+                      currentSession.contextWindowSource === 'session_usage'
+                        ? currentSession.contextWindowTokens
+                        : null
+                    "
+                    :running="currentSession.status === 'running'"
+                    @update:value="updateContextWindowSetting"
+                  />
+                </n-popover>
+              </div>
+            </div>
+            <div v-if="contextUsageIndicator.showCompactMarker" class="context-usage-stat">
+              <span class="context-usage-stat__label">{{
+                t('webSession.contextUsageCompactLabel')
+              }}</span>
+              <button
+                type="button"
+                class="context-usage-number"
+                :title="contextNumberTitle('compact')"
+                @click="toggleContextNumber('compact')"
+              >
+                {{ formatContextTokenCount(contextUsageIndicator.compactLimitTokens, 'compact') }}
+              </button>
+            </div>
+          </div>
+          <div class="context-usage-axis" aria-hidden="true">
+            <span
+              class="context-usage-axis__fill"
+              :style="{
+                width: `${contextUsageIndicator.usedPercent}%`,
+              }"
+            ></span>
+            <span
+              class="context-usage-axis__marker context-usage-axis__marker--current"
+              :style="{
+                left: `${contextUsageIndicator.usedPercent}%`,
+              }"
+            ></span>
+            <span
+              v-if="contextUsageIndicator.showCompactMarker"
+              class="context-usage-axis__marker context-usage-axis__marker--compact"
+              :style="{
+                left: `${contextUsageIndicator.compactPercent}%`,
+              }"
+            ></span>
+          </div>
+          <div class="context-usage-axis-labels">
+            <span>{{ t('webSession.contextUsageCurrentMarker') }}</span>
+            <span>{{ t('webSession.contextUsageWindowMarker') }}</span>
+          </div>
+        </template>
+        <div v-else class="context-usage-unavailable">
+          {{ t('webSession.contextUsageUnavailableDescription') }}
+        </div>
+
+        <div
+          v-if="contextUsageIndicator.available || contextUsageIndicator.hasUsage"
+          class="context-usage-total-stats"
+        >
+          <div class="context-usage-stat">
+            <span class="context-usage-stat__label">
+              {{ t('webSession.contextUsageCumulativeNonCached') }}
+            </span>
+            <span class="context-usage-total-value">
+              {{ formatWebSessionTokenCount(contextUsageIndicator.cumulativeNonCachedTokens) }}
+              tokens
+            </span>
+          </div>
+          <div class="context-usage-stat">
+            <span class="context-usage-stat__label">
+              {{ t('webSession.contextUsageTotalUsage') }}
+            </span>
+            <span class="context-usage-total-value">
+              {{ formatWebSessionTokenCount(contextUsageIndicator.totalTokens) }}
+              tokens
+            </span>
+          </div>
+        </div>
+
+        <div class="context-usage-divider"></div>
+        <div class="work-timing-popover">
+          <div class="work-timing-popover__header">
+            <span class="work-timing-popover__title">
+              <n-icon size="15"><TimeOutline /></n-icon>
+              {{ t('webSession.workTimingTitle') }}
+            </span>
+            <span class="work-timing-popover__value">{{
+              formatWorkDuration(currentWorkTimingDurationMs)
+            }}</span>
+          </div>
+          <div class="work-timing-popover__status">
+            <n-spin v-if="workTimingCalculationLoading" :size="13" />
+            <span v-else>{{ workTimingStatusLabel }}</span>
+          </div>
+          <div v-if="currentWorkRunDurationMs != null" class="work-timing-popover__current">
+            {{
+              t('webSession.workTimingCurrentRun', {
+                duration: formatWorkDuration(currentWorkRunDurationMs),
+              })
+            }}
+          </div>
+        </div>
+      </div>
+    </DefineContextUsageContent>
+    <n-modal
+      :show="isMobile && showContextUsagePopover && !!contextUsageIndicator"
+      preset="card"
+      class="context-usage-modal"
+      :title="contextUsageIndicator?.title"
+      :bordered="false"
+      :style="{ width: 'min(392px, calc(100vw - 24px))', boxSizing: 'border-box' }"
+      :content-style="{ minWidth: '0' }"
+      @update:show="handleContextUsagePopoverVisibilityChange"
+    >
+      <ContextUsageContent />
+    </n-modal>
     <WebSessionApprovalNotifier />
     <aside
       v-if="webSessionDevMode"
@@ -1774,7 +1958,6 @@
               }"
             >
               <div
-                v-if="!isMobileComposerCollapsed"
                 class="composer-mobile-summary"
                 :class="{ 'is-expanded': isMobileComposerSettingsExpanded }"
               >
@@ -1823,6 +2006,19 @@
                   {{ item.label }}
                 </span>
               </div>
+
+              <button
+                v-if="isMobileComposerCollapsed && contextUsageIndicator"
+                type="button"
+                class="composer-context-pill composer-context-pill-mobile"
+                :class="`state-${contextUsageIndicator.state}`"
+                :aria-label="contextUsageIndicator.title"
+                aria-haspopup="dialog"
+                :aria-expanded="showContextUsagePopover"
+                @click="handleContextUsagePopoverVisibilityChange(true)"
+              >
+                {{ contextUsageIndicator.label }}
+              </button>
 
               <button
                 type="button"
@@ -2902,7 +3098,7 @@
                     @clickoutside="closeSendQuickActions"
                   />
                   <n-popover
-                    v-if="contextUsageIndicator"
+                    v-if="contextUsageIndicator && !isMobile"
                     v-model:show="showContextUsagePopover"
                     trigger="hover"
                     placement="top-end"
@@ -2920,200 +3116,20 @@
                         {{ contextUsageIndicator.label }}
                       </button>
                     </template>
-                    <div class="context-usage-popover">
-                      <div class="context-usage-popover__header">
-                        <span class="context-usage-popover__title">{{
-                          contextUsageIndicator.title
-                        }}</span>
-                        <span
-                          class="context-usage-popover__percent"
-                          :class="`state-${contextUsageIndicator.state}`"
-                        >
-                          {{ contextUsageIndicator.label }}
-                        </span>
-                      </div>
-                      <template v-if="contextUsageIndicator.available">
-                        <div
-                          class="context-usage-stats"
-                          :class="{
-                            'has-compact-marker': contextUsageIndicator.showCompactMarker,
-                          }"
-                        >
-                          <div class="context-usage-stat">
-                            <span class="context-usage-stat__label">{{
-                              t('webSession.contextUsageCurrent')
-                            }}</span>
-                            <button
-                              type="button"
-                              class="context-usage-number"
-                              :title="contextNumberTitle('used')"
-                              @click="toggleContextNumber('used')"
-                            >
-                              {{
-                                formatContextTokenCount(contextUsageIndicator.usedTokens, 'used')
-                              }}
-                            </button>
-                          </div>
-                          <div class="context-usage-stat">
-                            <span class="context-usage-stat__label">{{
-                              t('webSession.contextUsageWindowLabel')
-                            }}</span>
-                            <div class="context-usage-window-value">
-                              <button
-                                type="button"
-                                class="context-usage-number"
-                                :title="contextNumberTitle('window')"
-                                @click="toggleContextNumber('window')"
-                              >
-                                {{
-                                  formatContextTokenCount(
-                                    contextUsageIndicator.contextWindowTokens,
-                                    'window'
-                                  )
-                                }}
-                              </button>
-                              <n-popover
-                                v-if="currentSession?.agent === 'codex'"
-                                trigger="click"
-                                placement="bottom-end"
-                                :to="false"
-                              >
-                                <template #trigger>
-                                  <button
-                                    type="button"
-                                    class="context-window-edit"
-                                    :aria-label="t('webSession.contextWindowSetting')"
-                                    :title="t('webSession.contextWindowSetting')"
-                                  >
-                                    <n-icon size="13"><SettingsOutline /></n-icon>
-                                  </button>
-                                </template>
-                                <WebSessionContextWindowSelect
-                                  :value="currentSession.contextWindowSetting ?? 0"
-                                  :disabled="contextWindowSaving"
-                                  details
-                                  :pending="contextWindowHasPendingSetting"
-                                  :requested-value="currentSession.appliedContextWindowSetting"
-                                  :metadata-fallback="currentSession.codexModelMetadataFallback"
-                                  :actual-tokens="
-                                    currentSession.contextWindowSource === 'session_usage'
-                                      ? currentSession.contextWindowTokens
-                                      : null
-                                  "
-                                  :running="currentSession.status === 'running'"
-                                  @update:value="updateContextWindowSetting"
-                                />
-                              </n-popover>
-                            </div>
-                          </div>
-                          <div
-                            v-if="contextUsageIndicator.showCompactMarker"
-                            class="context-usage-stat"
-                          >
-                            <span class="context-usage-stat__label">{{
-                              t('webSession.contextUsageCompactLabel')
-                            }}</span>
-                            <button
-                              type="button"
-                              class="context-usage-number"
-                              :title="contextNumberTitle('compact')"
-                              @click="toggleContextNumber('compact')"
-                            >
-                              {{
-                                formatContextTokenCount(
-                                  contextUsageIndicator.compactLimitTokens,
-                                  'compact'
-                                )
-                              }}
-                            </button>
-                          </div>
-                        </div>
-                        <div class="context-usage-axis" aria-hidden="true">
-                          <span
-                            class="context-usage-axis__fill"
-                            :style="{
-                              width: `${contextUsageIndicator.usedPercent}%`,
-                            }"
-                          ></span>
-                          <span
-                            class="context-usage-axis__marker context-usage-axis__marker--current"
-                            :style="{
-                              left: `${contextUsageIndicator.usedPercent}%`,
-                            }"
-                          ></span>
-                          <span
-                            v-if="contextUsageIndicator.showCompactMarker"
-                            class="context-usage-axis__marker context-usage-axis__marker--compact"
-                            :style="{
-                              left: `${contextUsageIndicator.compactPercent}%`,
-                            }"
-                          ></span>
-                        </div>
-                        <div class="context-usage-axis-labels">
-                          <span>{{ t('webSession.contextUsageCurrentMarker') }}</span>
-                          <span>{{ t('webSession.contextUsageWindowMarker') }}</span>
-                        </div>
-                      </template>
-                      <div v-else class="context-usage-unavailable">
-                        {{ t('webSession.contextUsageUnavailableDescription') }}
-                      </div>
-
-                      <div
-                        v-if="contextUsageIndicator.available || contextUsageIndicator.hasUsage"
-                        class="context-usage-total-stats"
-                      >
-                        <div class="context-usage-stat">
-                          <span class="context-usage-stat__label">
-                            {{ t('webSession.contextUsageCumulativeNonCached') }}
-                          </span>
-                          <span class="context-usage-total-value">
-                            {{
-                              formatWebSessionTokenCount(
-                                contextUsageIndicator.cumulativeNonCachedTokens
-                              )
-                            }}
-                            tokens
-                          </span>
-                        </div>
-                        <div class="context-usage-stat">
-                          <span class="context-usage-stat__label">
-                            {{ t('webSession.contextUsageTotalUsage') }}
-                          </span>
-                          <span class="context-usage-total-value">
-                            {{ formatWebSessionTokenCount(contextUsageIndicator.totalTokens) }}
-                            tokens
-                          </span>
-                        </div>
-                      </div>
-
-                      <div class="context-usage-divider"></div>
-                      <div class="work-timing-popover">
-                        <div class="work-timing-popover__header">
-                          <span class="work-timing-popover__title">
-                            <n-icon size="15"><TimeOutline /></n-icon>
-                            {{ t('webSession.workTimingTitle') }}
-                          </span>
-                          <span class="work-timing-popover__value">{{
-                            formatWorkDuration(currentWorkTimingDurationMs)
-                          }}</span>
-                        </div>
-                        <div class="work-timing-popover__status">
-                          <n-spin v-if="workTimingCalculationLoading" :size="13" />
-                          <span v-else>{{ workTimingStatusLabel }}</span>
-                        </div>
-                        <div
-                          v-if="currentWorkRunDurationMs != null"
-                          class="work-timing-popover__current"
-                        >
-                          {{
-                            t('webSession.workTimingCurrentRun', {
-                              duration: formatWorkDuration(currentWorkRunDurationMs),
-                            })
-                          }}
-                        </div>
-                      </div>
-                    </div>
+                    <ContextUsageContent />
                   </n-popover>
+                  <button
+                    v-if="contextUsageIndicator && isMobile"
+                    type="button"
+                    class="composer-context-pill composer-context-pill-mobile"
+                    :class="`state-${contextUsageIndicator.state}`"
+                    :aria-label="contextUsageIndicator.title"
+                    aria-haspopup="dialog"
+                    :aria-expanded="showContextUsagePopover"
+                    @click="handleContextUsagePopoverVisibilityChange(true)"
+                  >
+                    {{ contextUsageIndicator.label }}
+                  </button>
                   <n-button
                     v-if="isRunActive"
                     secondary
@@ -3367,7 +3383,13 @@ import {
   type HTMLAttributes,
 } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
+import {
+  createReusableTemplate,
+  useDebounceFn,
+  useEventListener,
+  useResizeObserver,
+  useStorage,
+} from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import {
   NCheckbox,
@@ -4057,6 +4079,7 @@ const showMobileTabSelector = ref(false);
 const mobileTabSelectorSource = ref<MobileTabSelectorSource>('header');
 const showQuickInputPopover = ref(false);
 const showContextUsagePopover = ref(false);
+const [DefineContextUsageContent, ContextUsageContent] = createReusableTemplate();
 const workTimingCalculationLoading = ref(false);
 const workTimingCalculationError = ref('');
 const workTimingBusyRetryPending = ref(false);
@@ -7574,12 +7597,17 @@ function toggleMobileComposerCollapsed() {
   resetMobileComposerScrollState();
 }
 
-function toggleMobileComposerSettingsExpanded() {
+async function toggleMobileComposerSettingsExpanded() {
   if (!isMobile.value) {
     return;
   }
+  const wasCollapsed = isMobileComposerCollapsed.value;
   ensureMobileComposerVisible();
   isMobileComposerSettingsExpanded.value = !isMobileComposerSettingsExpanded.value;
+  if (wasCollapsed) {
+    await nextTick();
+    handleModelSelectorShowChange(true);
+  }
 }
 
 function prepareQuickInputPopover() {
