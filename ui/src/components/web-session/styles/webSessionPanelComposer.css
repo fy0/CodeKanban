@@ -55,6 +55,10 @@
 }
 
 .composer-mobile-toolbar.is-collapsed .composer-mobile-toggle {
+  box-sizing: border-box;
+  align-self: flex-start;
+  width: auto;
+  max-width: 100%;
   border-color: transparent;
   background: transparent;
 }

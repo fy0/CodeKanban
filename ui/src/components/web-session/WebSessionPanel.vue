@@ -1985,6 +1985,7 @@
                     </span>
                   </span>
                   <n-icon
+                    v-if="!isMobileComposerCollapsed"
                     class="composer-mobile-toggle-arrow"
                     :class="{ 'is-open': isMobileComposerSettingsExpanded }"
                   >
