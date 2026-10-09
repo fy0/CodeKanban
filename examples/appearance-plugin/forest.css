@@ -1,0 +1,4 @@
+/* Bundled CSS is trusted application code. JSON imports cannot supply this file. */
+.forest-team-badge { padding: 4px 8px; border: 1px solid var(--app-border); border-radius: 5px; font-size: 11px; color: var(--app-text-secondary); }
+html[data-interface='forest-team'] .ck-shell-header { border-bottom: 2px solid var(--app-accent); }
+html[data-interface='forest-team'] .project-card { border-left: 3px solid var(--app-accent); }

@@ -1,0 +1,28 @@
+{
+  "revision": 3,
+  "date": "2026-10-04",
+  "platform": "win32",
+  "node": "v24.4.0",
+  "runtime": {
+    "status": "passed",
+    "typeCheckExitCode": 0,
+    "buildExitCode": 0,
+    "vitestExitCode": 0,
+    "testFiles": 136,
+    "testsPassed": 1080,
+    "testsFailed": 0,
+    "scopedEslintExitCode": 0
+  },
+  "browser": {
+    "productionWithDisposableBackend": { "passed": 26, "failed": 0, "sessions": 1000, "uncaughtExceptions": 0 },
+    "static": { "renders": 240, "dialogs": 112, "compactGeometrySubset": 64, "errors": 0 }
+  },
+  "sessionRows": { "heightPx": 34, "virtualSlotPx": 38, "title": "single-line" },
+  "boundaries": [
+    "No model requests were dispatched.",
+    "Backend/browser/database/authentication fixtures were isolated from existing user data.",
+    "Vite large-chunk warnings remain; production build succeeded.",
+    "No automatic git commit, push or deployment."
+  ],
+  "evidence": ["validation-runtime-results.json", "validation-test.log", "validation-v3/runtime.json", "validation-v3/static.json"]
+}

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "midnight-forge",
+  "name": "午夜工坊",
+  "nameEn": "Midnight Forge",
+  "extends": "forge",
+  "defaultMode": "dark",
+  "colors": {
+    "light": {
+      "accent": "#405AA5"
+    },
+    "dark": {
+      "accent": "#AFC1FF",
+      "canvas": "#141824",
+      "surface": "#1D2332",
+      "raised": "#252D40",
+      "sunken": "#0E121B",
+      "text": "#EDF1FA",
+      "muted": "#B5C1D8",
+      "subtle": "#97A6C0",
+      "border": "#34405B",
+      "terminalBg": "#0E121B",
+      "terminalFg": "#EDF1FA"
+    }
+  },
+  "layout": {
+    "radius": 3,
+    "font": "mono",
+    "density": "compact"
+  }
+}

@@ -1,0 +1,8 @@
+
+ RUN  v4.1.4 D:/codes/2025/codekanban/ui
+
+
+ Test Files  136 passed (136)
+      Tests  1080 passed (1080)
+   Start at  12:51:18
+   Duration  19.72s (transform 24.24s, setup 0ms, import 89.36s, tests 6.30s, environment 8.59s)

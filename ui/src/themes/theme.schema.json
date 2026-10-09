@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodeKanban theme manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,47}$" },
+    "extends": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,47}$" },
+    "design": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,47}$" },
+    "defaultMode": { "enum": ["light", "dark", "system"] },
+    "colors": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "light": { "$ref": "#/$defs/palette" },
+        "dark": { "$ref": "#/$defs/palette" }
+      }
+    },
+    "layout": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "navigation": { "enum": ["original", "sidebar", "rail", "top"] },
+        "font": { "enum": ["system", "humanist", "mono"] },
+        "density": { "enum": ["comfortable", "compact"] },
+        "panelStyle": { "enum": ["flat", "outlined", "elevated"] },
+        "motion": { "enum": ["full", "reduced"] },
+        "radius": { "type": "number", "minimum": 0, "maximum": 24 },
+        "spacing": { "type": "number", "minimum": 8, "maximum": 32 },
+        "fontSize": { "type": "number", "minimum": 12, "maximum": 20 },
+        "lineHeight": { "type": "number", "minimum": 1.3, "maximum": 2 },
+        "sidebarWidth": { "type": "number", "minimum": 180, "maximum": 300 },
+        "contentWidth": { "type": "number", "minimum": 640, "maximum": 1600 },
+        "material": { "type": "string", "enum": ["solid", "glass", "paper"] },
+        "texture": { "type": "string", "enum": ["none", "grid", "ruled"] },
+        "headingFont": { "type": "string", "enum": ["sans", "serif", "mono"] },
+        "borderWidth": { "type": "number", "minimum": 1, "maximum": 2 }
+      }
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^(?=.*\\S)[^\\u0000-\\u001f]+$" },
+    "nameEn": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^(?=.*\\S)[^\\u0000-\\u001f]+$" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 300, "pattern": "^(?=.*\\S)[^\\u0000-\\u001f]+$" },
+    "descriptionEn": { "type": "string", "minLength": 1, "maxLength": 300, "pattern": "^(?=.*\\S)[^\\u0000-\\u001f]+$" }
+  },
+  "$defs": {
+    "palette": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "canvas": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "surface": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "raised": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "sunken": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "text": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "muted": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "subtle": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "border": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "success": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "warning": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "error": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "info": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "plan": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "working": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "addition": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "deletion": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "terminalBg": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "terminalFg": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+      }
+    }
+  }
+}

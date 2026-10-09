@@ -1,0 +1,9 @@
+{
+  "scope": "Offline static UI in Chromium, not backend E2E",
+  "renders": 240,
+  "dialogs": 112,
+  "compactChecks": 64,
+  "errors": [],
+  "startedAt": "2026-10-04T04:47:15.635Z",
+  "finishedAt": "2026-10-04T04:48:24.861Z"
+}

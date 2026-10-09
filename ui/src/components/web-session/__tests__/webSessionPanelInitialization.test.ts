@@ -8,6 +8,8 @@ const setupSource = panelSource.split('<script setup lang="ts">')[1]!.split('</s
 const parsedSource = ts.createSourceFile('panel.ts', setupSource, ts.ScriptTarget.Latest, true);
 const selectedNames = new Set([
   'liveState',
+  'pendingApproval',
+  'isPendingApprovalRequestBlock',
   'shouldRenderToolBlockInTimeline',
   'filteredTimelineBlocks',
   'visibleBlocks',
@@ -50,13 +52,13 @@ describe('WebSessionPanel initialization with cached tools', () => {
         currentSession: ref({ agent: 'codex' }),
         webSessionStore: {
           getLiveState: () => ({ running, tool: { id: 'tool-1' } }),
+          getPendingApproval: () => null,
         },
         timelineBlocks: ref([cachedBlock]),
         showWebSessionReasoning: ref(true),
         isInteractiveDynamicTool: () => false,
         isReasoningBlock: () => false,
         isPlanChoiceRequestBlock: () => false,
-        isPendingApprovalRequestBlock: () => false,
         shouldShowToolPendingPlaceholder: () => false,
         projectWebSessionVisibleTimelineBlocks: (blocks: unknown) => blocks,
         captureVisibleBlocks: (blocks: unknown) => {
@@ -67,6 +69,57 @@ describe('WebSessionPanel initialization with cached tools', () => {
       const initialize = new Function(...Object.keys(dependencies), compiledSource);
       expect(() => initialize(...Object.values(dependencies))).not.toThrow();
       expect(visibleBlocks).toEqual(running ? [] : [cachedBlock]);
+    }
+  );
+
+  it.each([null, 'approval-1', 'approval-other'])(
+    'initializes cached approval history before search (pending: %s)',
+    pendingItemId => {
+      const message = { key: 'message-1', kind: 'message' };
+      const approval = {
+        id: 'approval-1',
+        key: 'approval-1',
+        kind: 'system',
+        sourceItemId: 'approval-1',
+        detail: { type: 'approval_request' },
+      };
+      const pending = ref(pendingItemId ? { itemId: pendingItemId } : null);
+      const currentRealSession = ref<{ id: string } | null>({ id: 'session-1' });
+      let initialBlocks: unknown;
+      const dependencies = {
+        computed,
+        currentRealSession,
+        currentSession: ref({ agent: 'codex' }),
+        webSessionStore: {
+          getLiveState: () => ({ running: false }),
+          getPendingApproval: () => pending.value,
+        },
+        timelineBlocks: ref([message, approval]),
+        showWebSessionReasoning: ref(true),
+        isInteractiveDynamicTool: () => false,
+        isReasoningBlock: () => false,
+        isPlanChoiceRequestBlock: () => false,
+        shouldShowToolPendingPlaceholder: () => false,
+        projectWebSessionVisibleTimelineBlocks: (blocks: unknown) => blocks,
+        captureVisibleBlocks: (blocks: unknown) => {
+          initialBlocks = blocks;
+        },
+      };
+      const initialize = new Function(
+        ...Object.keys(dependencies),
+        compiledSource + '\nreturn visibleBlocks;'
+      );
+      const visible = initialize(...Object.values(dependencies));
+      expect(initialBlocks).toEqual(
+        pendingItemId === 'approval-1' ? [message] : [message, approval]
+      );
+      pending.value = { itemId: 'approval-1' };
+      expect(visible.value).toEqual([message]);
+      pending.value = null;
+      expect(visible.value).toEqual([message, approval]);
+      pending.value = { itemId: 'approval-1' };
+      currentRealSession.value = null;
+      expect(visible.value).toEqual([message, approval]);
     }
   );
 });

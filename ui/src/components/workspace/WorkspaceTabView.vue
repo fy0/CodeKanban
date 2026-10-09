@@ -75,7 +75,21 @@
           <span class="tab-label">{{ t('nav.files') }}</span>
         </button>
       </div>
-      <div v-if="activeTab === 'terminal' || activeTab === 'web'" class="tab-actions">
+      <div class="tab-actions">
+        <ThemeSwitcher />
+        <n-tooltip placement="bottom" :delay="250">
+          <template #trigger>
+            <button
+              type="button"
+              class="header-action-btn"
+              :aria-label="t('common.edit')"
+              @click="emit('editCurrent')"
+            >
+              <n-icon size="18"><CreateOutline /></n-icon>
+            </button>
+          </template>
+          {{ t('common.edit') }}
+        </n-tooltip>
         <div
           v-if="activeTab === 'terminal' || activeTab === 'web'"
           class="terminal-project-switcher"
@@ -97,7 +111,7 @@
                   <span
                     v-if="currentProjectBadge"
                     class="terminal-project-badge"
-                    :style="{ background: currentProjectBadge.color }"
+                    :style="{ '--project-badge-color': currentProjectBadge.color }"
                   >
                     {{ currentProjectBadge.label }}
                   </span>
@@ -228,6 +242,7 @@ import { NIcon, NInput, type DropdownOption } from 'naive-ui';
 import {
   ChatbubblesOutline,
   ChevronDownOutline,
+  CreateOutline,
   FolderOpenOutline,
   GitBranchOutline,
   GridOutline,
@@ -236,6 +251,7 @@ import {
   TerminalOutline,
   WarningOutline,
 } from '@vicons/ionicons5';
+import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import {
@@ -283,6 +299,8 @@ import { fileManagerApi } from '@/api/fileManager';
 const props = defineProps<{
   projectId: string;
 }>();
+
+const emit = defineEmits<{ editCurrent: [] }>();
 
 type WorkspaceTab = DesktopWorkspaceRouteTab;
 
@@ -946,10 +964,14 @@ if (typeof window !== 'undefined') {
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
-  height: 40px;
+  height: 44px;
+  min-height: 44px;
+  max-height: 44px;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--app-border);
   background-color: var(--app-surface);
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .tab-list {
@@ -960,6 +982,7 @@ if (typeof window !== 'undefined') {
 .tab-actions {
   display: flex;
   align-items: center;
+  gap: 4px;
 }
 
 .tab-item {
@@ -1143,16 +1166,23 @@ if (typeof window !== 'undefined') {
 }
 
 .terminal-project-badge {
+  --project-badge-color: #3b82f6;
   width: 20px;
   height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
+  background: var(--project-badge-color);
+  background-image: none;
   color: #fff;
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
+  border: 1px solid color-mix(in srgb, white 68%, var(--project-badge-color));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--project-badge-color) 38%, transparent),
+    0 0 7px color-mix(in srgb, var(--project-badge-color) 32%, transparent);
 }
 
 .sidebar-toggle-icon {

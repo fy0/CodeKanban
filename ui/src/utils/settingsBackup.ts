@@ -1,4 +1,6 @@
 import { extractItem } from '@/api/response';
+import { validateState } from '@/themes/core';
+import { getRegisteredThemes } from '@/themes/registry';
 import { http } from '@/api/http';
 import type { DeveloperConfig, WorktreeConfig } from '@/types/models';
 import type {
@@ -83,6 +85,7 @@ export interface SettingsBackupClientSettings {
 }
 
 export interface SettingsBackupClientPayload {
+  appearance?: import('@/themes/core').AppearanceState;
   locale?: string;
   settings?: SettingsBackupClientSettings;
 }
@@ -237,7 +240,12 @@ export function parseSettingsBackupJSON(text: string): SettingsBackupFile {
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('invalid backup JSON');
   }
-  return promoteLegacyClientQuickInput(parsed);
+  const backup = promoteLegacyClientQuickInput(parsed);
+  // Validate appearance before the server preview/import can mutate any settings.
+  if (backup.payload?.client?.appearance !== undefined) {
+    backup.payload.client.appearance = validateState(backup.payload.client.appearance, getRegisteredThemes());
+  }
+  return backup;
 }
 
 function promoteLegacyClientQuickInput(backup: SettingsBackupFile): SettingsBackupFile {
@@ -346,6 +354,7 @@ export function buildImportableSettingsBackup(
     }
     if (!selectedKeys.has('client.settings')) {
       delete client.settings;
+      delete client.appearance;
     } else if (client.settings?.webSessionQuickInput) {
       if (!selectedKeys.has('server.webSessionQuickInput.pinned')) {
         delete client.settings.webSessionQuickInput.pinned;
@@ -440,7 +449,7 @@ function hasClientPayloadContent(payload: SettingsBackupClientPayload | undefine
   if (!payload) {
     return false;
   }
-  return Boolean(payload.locale || payload.settings);
+  return Boolean(payload.locale || payload.settings || payload.appearance);
 }
 
 function hasQuickInputSectionContent(

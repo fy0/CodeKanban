@@ -6079,6 +6079,11 @@ const liveState = computed(() =>
     ? webSessionStore.getLiveState(currentRealSession.value.id)
     : ({ phase: 'idle', running: false, updatedAt: Date.now() } as WebSessionLiveState)
 );
+// Conversation search reads the filtered timeline during setup, including cached
+// approval requests. Initialize its dependencies before registering that search.
+const pendingApproval = computed(() =>
+  currentRealSession.value ? webSessionStore.getPendingApproval(currentRealSession.value.id) : null
+);
 
 function shouldRenderToolBlockInTimeline(block: WebSessionBlock) {
   if (block.kind !== 'tool' || !block.tool) {
@@ -6259,9 +6264,6 @@ const streamingMarkdownTargets = computed(() =>
     }
     return targets;
   })
-);
-const pendingApproval = computed(() =>
-  currentRealSession.value ? webSessionStore.getPendingApproval(currentRealSession.value.id) : null
 );
 const approvalSubmitting = ref(false);
 const canApproveWithYolo = computed(

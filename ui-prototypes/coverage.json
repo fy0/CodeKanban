@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "themes": [
+    "classic",
+    "studio",
+    "forge",
+    "tide"
+  ],
+  "routes": [
+    {
+      "route": "/login",
+      "view": "LoginView.vue",
+      "page": "login.html"
+    },
+    {
+      "route": "/",
+      "view": "ProjectList.vue / ProjectBrowser.vue",
+      "page": "projects.html"
+    },
+    {
+      "route": "/project/:id",
+      "view": "ProjectWorkspace.vue",
+      "page": "workspace.html",
+      "panels": [
+        "terminal.html",
+        "files.html",
+        "changes.html"
+      ]
+    },
+    {
+      "route": "/project/:id/branches",
+      "view": "BranchManagement.vue",
+      "page": "branches.html"
+    },
+    {
+      "route": "/guide",
+      "view": "UserGuide.vue",
+      "page": "guide.html"
+    },
+    {
+      "route": "/settings",
+      "view": "GeneralSettings.vue",
+      "page": "settings.html"
+    }
+  ],
+  "additional": "components.html contains 28 modal, drawer and empty/loading/error-state fixtures",
+  "pages": [
+    "projects",
+    "workspace",
+    "terminal",
+    "files",
+    "changes",
+    "branches",
+    "settings",
+    "guide",
+    "components",
+    "login"
+  ]
+}

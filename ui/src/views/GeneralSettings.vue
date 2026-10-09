@@ -1559,244 +1559,230 @@
             :class="settingsCardShellClass('theme')"
           >
             <n-card :title="t('settings.themeSettings')" size="huge">
-              <n-form
-                :label-placement="standardFormLabelPlacement"
-                :label-width="themeFormLabelWidth"
-              >
-                <n-form-item :label="t('theme.presetTheme')" data-search-key="presetTheme">
-                  <n-select
-                    :value="currentPresetValue"
-                    :options="presetOptions"
-                    :disabled="followSystemValue"
-                    style="max-width: 240px"
-                    @update:value="handlePresetThemeChange"
-                  />
-                </n-form-item>
-                <n-form-item :label="t('theme.followSystem')" data-search-key="followSystem">
-                  <n-space vertical size="small">
-                    <n-radio-group
-                      :value="followSystemModeValue"
-                      @update:value="handleFollowSystemModeChange"
+              <ThemeStudio>
+                <template #legacy-colors>
+                  <n-alert v-if="hasCustomTheme" type="info" :bordered="false">
+                    {{ t('theme.customThemeHint') }}
+                  </n-alert>
+                  <div class="theme-color-sections">
+                    <section
+                      v-for="group in themeColorGroups"
+                      :key="group.id"
+                      class="theme-color-section"
                     >
-                      <n-space>
-                        <n-radio :value="-1">{{ t('common.default') }}</n-radio>
-                        <n-radio :value="0">{{ t('common.no') }}</n-radio>
-                        <n-radio :value="1">{{ t('common.yes') }}</n-radio>
-                      </n-space>
-                    </n-radio-group>
-                    <span class="form-tip">{{ t('theme.followSystemHint') }}</span>
-                  </n-space>
-                </n-form-item>
-                <n-form-item :label="t('settings.terminalTheme')" data-search-key="terminalTheme">
-                  <n-space vertical size="small">
-                    <n-select
-                      v-model:value="terminalThemeValue"
-                      :options="terminalThemeOptions"
-                      style="max-width: 240px"
-                    />
-                    <span class="form-tip">{{ t('settings.terminalThemeTip') }}</span>
-                  </n-space>
-                </n-form-item>
-
-                <n-divider style="margin: 16px 0">{{
-                  t('settings.terminalFontSettings')
-                }}</n-divider>
-
-                <n-form-item
-                  :label="t('settings.terminalFontFamily')"
-                  data-search-key="terminalFontFamily"
+                      <h3>{{ group.title }}</h3>
+                      <div class="theme-color-grid">
+                        <label
+                          v-for="field in group.fields"
+                          :key="field.key"
+                          class="theme-color-field"
+                          :data-search-key="field.key"
+                        >
+                          <span>{{ field.label }}</span>
+                          <n-color-picker
+                            :value="themeColorValue(field)"
+                            :modes="['hex']"
+                            :actions="['confirm']"
+                            @update:value="updateThemeColor(field, $event)"
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  </div>
+                </template>
+              </ThemeStudio>
+              <n-collapse class="settings-terminal-appearance">
+                <n-collapse-item
+                  name="terminal-appearance"
+                  :title="locale === 'zh-CN' ? '终端外观' : 'Terminal appearance'"
                 >
-                  <n-space vertical size="small">
-                    <n-space>
-                      <n-select
-                        v-model:value="terminalFontFamilyValue"
-                        :options="fontFamilyOptions"
-                        style="width: 200px"
-                        filterable
-                        tag
-                        :placeholder="t('settings.terminalFontFamilyPlaceholder')"
-                      />
-                      <n-button
-                        size="small"
-                        text
-                        :disabled="!terminalFontFamilyValue"
-                        @click="handleResetFontFamily"
-                      >
-                        {{ t('settings.restoreDefault') }}
-                      </n-button>
-                    </n-space>
-                    <span class="form-tip">{{ t('settings.terminalFontFamilyTip') }}</span>
-                  </n-space>
-                </n-form-item>
-
-                <n-form-item
-                  :label="t('settings.terminalFontSize')"
-                  data-search-key="terminalFontSize"
-                >
-                  <n-space vertical size="small">
-                    <n-space align="center">
-                      <n-slider
-                        v-model:value="terminalFontSizeValue"
-                        :min="8"
-                        :max="32"
-                        :step="1"
-                        style="width: 180px"
-                      />
-                      <n-input-number
-                        v-model:value="terminalFontSizeValue"
-                        :min="8"
-                        :max="32"
-                        :step="1"
-                        size="small"
-                        style="width: 80px"
-                      />
-                      <span class="unit-label">px</span>
-                    </n-space>
-                    <span class="form-tip">{{ t('settings.terminalFontSizeTip') }}</span>
-                  </n-space>
-                </n-form-item>
-
-                <n-form-item
-                  :label="t('settings.terminalFontWeight')"
-                  data-search-key="terminalFontWeight"
-                >
-                  <n-space vertical size="small">
-                    <n-space>
-                      <n-select
-                        v-model:value="terminalFontWeightValue"
-                        :options="fontWeightOptions"
-                        style="width: 160px"
-                      />
-                      <n-select
-                        v-model:value="terminalFontWeightBoldValue"
-                        :options="fontWeightOptions"
-                        style="width: 160px"
-                      />
-                    </n-space>
-                    <span class="form-tip">{{ t('settings.terminalFontWeightTip') }}</span>
-                  </n-space>
-                </n-form-item>
-
-                <n-form-item
-                  :label="t('settings.terminalLineHeight')"
-                  data-search-key="terminalLineHeight"
-                >
-                  <n-space vertical size="small">
-                    <n-space align="center">
-                      <n-slider
-                        v-model:value="terminalLineHeightValue"
-                        :min="1.0"
-                        :max="2.0"
-                        :step="0.1"
-                        style="width: 180px"
-                      />
-                      <n-input-number
-                        v-model:value="terminalLineHeightValue"
-                        :min="1.0"
-                        :max="2.0"
-                        :step="0.1"
-                        size="small"
-                        style="width: 80px"
-                      />
-                    </n-space>
-                    <span class="form-tip">{{ t('settings.terminalLineHeightTip') }}</span>
-                  </n-space>
-                </n-form-item>
-
-                <n-form-item
-                  :label="t('settings.terminalLetterSpacing')"
-                  data-search-key="terminalLetterSpacing"
-                >
-                  <n-space vertical size="small">
-                    <n-space align="center">
-                      <n-slider
-                        v-model:value="terminalLetterSpacingValue"
-                        :min="-2"
-                        :max="5"
-                        :step="0.5"
-                        style="width: 180px"
-                      />
-                      <n-input-number
-                        v-model:value="terminalLetterSpacingValue"
-                        :min="-2"
-                        :max="5"
-                        :step="0.5"
-                        size="small"
-                        style="width: 80px"
-                      />
-                      <span class="unit-label">px</span>
-                    </n-space>
-                    <span class="form-tip">{{ t('settings.terminalLetterSpacingTip') }}</span>
-                  </n-space>
-                </n-form-item>
-
-                <n-form-item
-                  :label="t('settings.terminalWebGLRenderer')"
-                  data-search-key="terminalWebGLRenderer"
-                >
-                  <n-space vertical size="small">
-                    <n-radio-group v-model:value="terminalWebGLRendererValue">
-                      <n-space>
-                        <n-radio value="auto">{{ t('settings.webglAuto') }}</n-radio>
-                        <n-radio value="force">{{ t('settings.webglForce') }}</n-radio>
-                        <n-radio value="disable">{{ t('settings.webglDisable') }}</n-radio>
-                      </n-space>
-                    </n-radio-group>
-                    <span class="form-tip">{{ webglRendererTip }}</span>
-                  </n-space>
-                </n-form-item>
-
-                <n-divider style="margin: 16px 0">{{ t('theme.customTheme') }}</n-divider>
-
-                <n-alert v-if="hasCustomTheme" type="info" :bordered="false">
-                  {{ t('theme.customThemeHint') }}
-                </n-alert>
-
-                <div class="theme-color-sections">
-                  <section
-                    v-for="group in themeColorGroups"
-                    :key="group.id"
-                    class="theme-color-section"
+                  <n-form
+                    :label-placement="standardFormLabelPlacement"
+                    :label-width="themeFormLabelWidth"
                   >
-                    <h3>{{ group.title }}</h3>
-                    <div class="theme-color-grid">
+                    <n-form-item
+                      :label="t('settings.terminalTheme')"
+                      data-search-key="terminalTheme"
+                    >
+                      <n-space vertical size="small">
+                        <n-select
+                          v-model:value="terminalThemeValue"
+                          :options="terminalThemeOptions"
+                          style="max-width: 240px"
+                        />
+                        <span class="form-tip">{{ t('settings.terminalThemeTip') }}</span>
+                      </n-space>
+                    </n-form-item>
+
+                    <n-divider style="margin: 16px 0">{{
+                      t('settings.terminalFontSettings')
+                    }}</n-divider>
+
+                    <n-form-item
+                      :label="t('settings.terminalFontFamily')"
+                      data-search-key="terminalFontFamily"
+                    >
+                      <n-space vertical size="small">
+                        <n-space>
+                          <n-select
+                            v-model:value="terminalFontFamilyValue"
+                            :options="fontFamilyOptions"
+                            style="width: 200px"
+                            filterable
+                            tag
+                            :placeholder="t('settings.terminalFontFamilyPlaceholder')"
+                          />
+                          <n-button
+                            size="small"
+                            text
+                            :disabled="!terminalFontFamilyValue"
+                            @click="handleResetFontFamily"
+                          >
+                            {{ t('settings.restoreDefault') }}
+                          </n-button>
+                        </n-space>
+                        <span class="form-tip">{{ t('settings.terminalFontFamilyTip') }}</span>
+                      </n-space>
+                    </n-form-item>
+
+                    <n-form-item
+                      :label="t('settings.terminalFontSize')"
+                      data-search-key="terminalFontSize"
+                    >
+                      <n-space vertical size="small">
+                        <n-space align="center">
+                          <n-slider
+                            v-model:value="terminalFontSizeValue"
+                            :min="8"
+                            :max="32"
+                            :step="1"
+                            style="width: 180px"
+                          />
+                          <n-input-number
+                            v-model:value="terminalFontSizeValue"
+                            :min="8"
+                            :max="32"
+                            :step="1"
+                            size="small"
+                            style="width: 80px"
+                          />
+                          <span class="unit-label">px</span>
+                        </n-space>
+                        <span class="form-tip">{{ t('settings.terminalFontSizeTip') }}</span>
+                      </n-space>
+                    </n-form-item>
+
+                    <n-form-item
+                      :label="t('settings.terminalFontWeight')"
+                      data-search-key="terminalFontWeight"
+                    >
+                      <n-space vertical size="small">
+                        <n-space>
+                          <n-select
+                            v-model:value="terminalFontWeightValue"
+                            :options="fontWeightOptions"
+                            style="width: 160px"
+                          />
+                          <n-select
+                            v-model:value="terminalFontWeightBoldValue"
+                            :options="fontWeightOptions"
+                            style="width: 160px"
+                          />
+                        </n-space>
+                        <span class="form-tip">{{ t('settings.terminalFontWeightTip') }}</span>
+                      </n-space>
+                    </n-form-item>
+
+                    <n-form-item
+                      :label="t('settings.terminalLineHeight')"
+                      data-search-key="terminalLineHeight"
+                    >
+                      <n-space vertical size="small">
+                        <n-space align="center">
+                          <n-slider
+                            v-model:value="terminalLineHeightValue"
+                            :min="1.0"
+                            :max="2.0"
+                            :step="0.1"
+                            style="width: 180px"
+                          />
+                          <n-input-number
+                            v-model:value="terminalLineHeightValue"
+                            :min="1.0"
+                            :max="2.0"
+                            :step="0.1"
+                            size="small"
+                            style="width: 80px"
+                          />
+                        </n-space>
+                        <span class="form-tip">{{ t('settings.terminalLineHeightTip') }}</span>
+                      </n-space>
+                    </n-form-item>
+
+                    <n-form-item
+                      :label="t('settings.terminalLetterSpacing')"
+                      data-search-key="terminalLetterSpacing"
+                    >
+                      <n-space vertical size="small">
+                        <n-space align="center">
+                          <n-slider
+                            v-model:value="terminalLetterSpacingValue"
+                            :min="-2"
+                            :max="5"
+                            :step="0.5"
+                            style="width: 180px"
+                          />
+                          <n-input-number
+                            v-model:value="terminalLetterSpacingValue"
+                            :min="-2"
+                            :max="5"
+                            :step="0.5"
+                            size="small"
+                            style="width: 80px"
+                          />
+                          <span class="unit-label">px</span>
+                        </n-space>
+                        <span class="form-tip">{{ t('settings.terminalLetterSpacingTip') }}</span>
+                      </n-space>
+                    </n-form-item>
+
+                    <n-form-item
+                      :label="t('settings.terminalWebGLRenderer')"
+                      data-search-key="terminalWebGLRenderer"
+                    >
+                      <n-space vertical size="small">
+                        <n-radio-group v-model:value="terminalWebGLRendererValue">
+                          <n-space>
+                            <n-radio value="auto">{{ t('settings.webglAuto') }}</n-radio>
+                            <n-radio value="force">{{ t('settings.webglForce') }}</n-radio>
+                            <n-radio value="disable">{{ t('settings.webglDisable') }}</n-radio>
+                          </n-space>
+                        </n-radio-group>
+                        <span class="form-tip">{{ webglRendererTip }}</span>
+                      </n-space>
+                    </n-form-item>
+
+                    <n-divider style="margin: 20px 0 16px">{{ t('theme.xtermColors') }}</n-divider>
+                    <p class="form-tip theme-color-tip">{{ t('theme.xtermColorsHint') }}</p>
+                    <div class="theme-color-grid theme-color-grid--xterm">
                       <label
-                        v-for="field in group.fields"
-                        :key="field.key"
+                        v-for="key in TERMINAL_THEME_COLOR_KEYS"
+                        :key="key"
                         class="theme-color-field"
-                        :data-search-key="field.key"
+                        :data-search-key="key"
                       >
-                        <span>{{ field.label }}</span>
+                        <span>{{ terminalThemeColorLabels[key] }}</span>
                         <n-color-picker
-                          :value="themeColorValue(field)"
-                          :modes="['hex']"
+                          :value="activeTerminalTheme[key]"
+                          :modes="['hex', 'rgb']"
                           :actions="['confirm']"
-                          @update:value="updateThemeColor(field, $event)"
+                          @update:value="updateTerminalThemeColor(key, $event)"
                         />
                       </label>
                     </div>
-                  </section>
-                </div>
-
-                <n-divider style="margin: 20px 0 16px">{{ t('theme.xtermColors') }}</n-divider>
-                <p class="form-tip theme-color-tip">{{ t('theme.xtermColorsHint') }}</p>
-                <div class="theme-color-grid theme-color-grid--xterm">
-                  <label
-                    v-for="key in TERMINAL_THEME_COLOR_KEYS"
-                    :key="key"
-                    class="theme-color-field"
-                    :data-search-key="key"
-                  >
-                    <span>{{ terminalThemeColorLabels[key] }}</span>
-                    <n-color-picker
-                      :value="activeTerminalTheme[key]"
-                      :modes="['hex', 'rgb']"
-                      :actions="['confirm']"
-                      @update:value="updateTerminalThemeColor(key, $event)"
-                    />
-                  </label>
-                </div>
-              </n-form>
+                  </n-form>
+                </n-collapse-item>
+              </n-collapse>
             </n-card>
 
             <n-card :title="t('settings.realtimePreview')" size="huge">
@@ -2176,6 +2162,7 @@ import {
 import { useLocale } from '@/composables/useLocale';
 import { useResponsive } from '@/composables/useResponsive';
 import { useAuthStore, type AuthAccessConfig } from '@/stores/auth';
+import { useUnifiedThemeChoices } from '@/composables/useUnifiedThemeChoices';
 import { useDeveloperConfigStore } from '@/stores/developerConfig';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import {
@@ -2195,12 +2182,10 @@ import {
   type WebSessionAutoContinueScope,
   type WebSessionStreamingMarkdownThrottleMode,
   DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
-  type FollowSystemThemeSetting,
   type ThemeSettings,
 } from '@/stores/settings';
 import type { WebSessionActivityDisplayMode } from '@/constants/webSessionActivityDisplayMode';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
-import { isSupportedThemePreset } from '@/constants/themes';
 import { TERMINAL_THEME_COLOR_KEYS, type TerminalThemeColorKey } from '@/constants/terminalThemes';
 import {
   DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
@@ -2212,7 +2197,7 @@ import {
   DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS,
   type TerminalConnectionPolicy,
 } from '@/constants/terminalConnectionPolicy';
-import { useThemeOptions, useTerminalThemeOptions } from '@/composables/useThemeOptions';
+import { useTerminalThemeOptions } from '@/composables/useThemeOptions';
 import {
   lightenColor,
   darkenColor,
@@ -2221,10 +2206,6 @@ import {
   getReadableTextColor,
 } from '@/utils/color';
 import { createThemeSemanticPalette } from '@/utils/themeSemanticPalette';
-import {
-  createThemeMaintenanceWarningController,
-  createThemeSelectionController,
-} from '@/utils/themeMaintenanceWarning';
 import { http } from '@/api/http';
 import { webSessionApi } from '@/api/webSession';
 import { useReq, useInit } from '@/api/composable';
@@ -2232,6 +2213,7 @@ import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
 import WebSessionHistoryCleanup from '@/components/settings/WebSessionHistoryCleanup.vue';
 import WebSessionWorkTimingBackfill from '@/components/settings/WebSessionWorkTimingBackfill.vue';
 import GitSettingsSection from '@/components/settings/GitSettingsSection.vue';
+import ThemeStudio from '@/components/appearance/ThemeStudio.vue';
 import type {
   DeveloperConfig,
   AvailableShellsResponse,
@@ -2364,6 +2346,7 @@ const message = useMessage();
 const dialog = useDialog();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
+const { choices: availableThemes } = useUnifiedThemeChoices();
 const developerConfigStore = useDeveloperConfigStore();
 const { loading: developerLoading, saving: developerSaving } = storeToRefs(developerConfigStore);
 const {
@@ -2371,9 +2354,6 @@ const {
   pageTitleSettingsLoaded,
   pageTitleSettingsSaving,
   activeTheme: theme,
-  currentPresetId,
-  followSystemThemeSetting,
-  followSystemTheme,
   customTheme,
   recentProjectsLimit,
   maxTerminalsPerProject,
@@ -2412,20 +2392,6 @@ const settingsSectionRefs = new Map<SettingsSectionId, HTMLElement>();
 let highlightResetTimer: ReturnType<typeof setTimeout> | null = null;
 
 const capturingTarget = ref<ShortcutTarget | null>(null);
-const themeWarningController = createThemeMaintenanceWarningController({
-  t,
-  warning: options => dialog.warning(options),
-});
-const themeSelectionController = createThemeSelectionController({
-  getCurrentPresetId: () => currentPresetId.value,
-  isFollowSystemTheme: () => followSystemTheme.value,
-  selectPreset: presetId => settingsStore.selectPreset(presetId),
-  toggleFollowSystemTheme: enabled => settingsStore.toggleFollowSystemTheme(enabled),
-  confirmPresetThemeChange: themeWarningController.confirmPresetThemeChange,
-  confirmFollowSystemEnable: themeWarningController.confirmFollowSystemEnable,
-  shouldConfirmPresetThemeChange: presetId => !isSupportedThemePreset(presetId),
-  shouldConfirmFollowSystemEnable: () => false,
-});
 const settingsBackupExporting = ref(false);
 const settingsBackupImporting = ref(false);
 const settingsBackupFileInputRef = ref<HTMLInputElement | null>(null);
@@ -2556,7 +2522,6 @@ watch(showSettingsBackupPreviewDialog, show => {
 });
 
 // 使用 composable 获取主题和终端配色选项
-const presetOptions = useThemeOptions();
 const terminalThemeOptions = useTerminalThemeOptions();
 const dailyTips = computed(() => getDailyTips(locale.value));
 const dailyTipCount = computed(() => dailyTips.value.length);
@@ -2566,13 +2531,6 @@ const activeDailyTip = computed<DailyTipDefinition | null>(() => {
   }
   return dailyTips.value[activeDailyTipIndex.value] ?? dailyTips.value[0] ?? null;
 });
-
-// 当前预设 ID
-const currentPresetValue = computed(() => currentPresetId.value);
-
-// 跟随系统主题
-const followSystemValue = computed(() => followSystemTheme.value);
-const followSystemModeValue = computed(() => followSystemThemeSetting.value);
 
 // 是否有自定义主题
 const hasCustomTheme = computed(() => customTheme.value !== null);
@@ -2933,18 +2891,6 @@ function clearSettingsSectionHighlight() {
     highlightResetTimer = null;
   }
   highlightedSettingsSection.value = null;
-}
-
-async function handlePresetThemeChange(value: string) {
-  await themeSelectionController.selectPresetWithConfirmation(value);
-}
-
-async function handleFollowSystemModeChange(value: FollowSystemThemeSetting) {
-  if (value === 1) {
-    await themeSelectionController.toggleFollowSystemThemeWithConfirmation(true);
-    return;
-  }
-  settingsStore.setFollowSystemThemeSetting(value);
 }
 
 const developerForm = reactive<DeveloperConfig>(sanitizeDeveloperConfig());
@@ -4831,9 +4777,16 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
     {
       id: 'theme',
       title: t('settings.themeSettings'),
-      description: t('settings.terminalFontSettings'),
+      description:
+        locale.value === 'zh-CN' ? '主题、颜色、布局和终端' : 'Themes, colors, layout and terminal',
       searchTerms: [
-        t('theme.presetTheme'),
+        ...availableThemes.value.map(theme => theme.label),
+        '主题',
+        'Themes',
+        '布局与阅读',
+        'Layout & reading',
+        '语义颜色',
+        'Semantic colors',
         t('theme.followSystem'),
         t('settings.terminalTheme'),
         t('settings.terminalFontFamily'),

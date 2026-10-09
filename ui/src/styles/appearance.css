@@ -1,0 +1,1074 @@
+/* Semantic appearance layer. Classic is unchanged until the user opts into layout overrides.
+   The root selectors intentionally include teleported Naive UI popovers and dialogs. */
+:root {
+  --ck-shell-header: 0px;
+}
+html[data-customized='true'] body {
+  font-family: var(--ck-font);
+  font-size: var(--ck-font-size);
+  line-height: var(--ck-line-height);
+}
+html[data-customized='true'] .n-config-provider {
+  font-family: var(--ck-font);
+}
+.ck-shell {
+  min-width: 0;
+}
+.ck-shell-content {
+  min-width: 0;
+  outline: none;
+}
+.ck-shell.has-chrome {
+  --ck-shell-header: 64px;
+  display: grid;
+  grid-template-columns: var(--ck-sidebar-width) minmax(0, 1fr);
+  grid-template-rows: var(--ck-shell-header) 1fr;
+  grid-template-areas: 'nav header' 'nav content';
+  min-height: 100dvh;
+}
+.ck-shell-nav {
+  grid-area: nav;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  min-width: 0;
+  padding: 24px 14px 16px;
+  border-right: 1px solid var(--app-border);
+  background: var(--app-surface);
+  z-index: 35;
+}
+.ck-shell-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 5px 24px;
+  font-size: 17px;
+  font-weight: 750;
+  letter-spacing: -0.6px;
+  color: var(--app-text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.ck-shell-brand b,
+.ck-workspace-home {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 31px;
+  height: 31px;
+  border-radius: min(var(--ck-radius), 9px);
+  background: var(--app-text-primary);
+  color: var(--app-surface);
+  font: 700 12px/1 var(--ck-font);
+  letter-spacing: -0.5px;
+  text-decoration: none;
+}
+.ck-brand-dot {
+  color: var(--app-accent);
+}
+.ck-nav-context {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 24px;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--ck-radius);
+  font-size: 12px;
+}
+.ck-nav-context small {
+  color: var(--app-text-muted);
+}
+.ck-shell-nav nav {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ck-shell-nav nav a,
+.ck-shell-nav-footer > button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 39px;
+  padding: 8px 12px;
+  border-radius: min(var(--ck-radius), 10px);
+  text-decoration: none;
+  color: var(--app-text-secondary);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.ck-shell-nav nav a .n-icon,
+.ck-shell-nav-footer .n-icon {
+  flex-shrink: 0;
+}
+.ck-shell-nav nav a:hover,
+.ck-shell-nav-footer > button:hover {
+  background: var(--app-surface-hover);
+  color: var(--app-text-primary);
+}
+.ck-shell-nav nav a.is-active {
+  color: var(--app-accent);
+  background: var(--app-accent-soft);
+  font-weight: 600;
+}
+.ck-shell-nav-footer {
+  margin-top: auto;
+  padding-top: 20px;
+  display: grid;
+  gap: 10px;
+}
+.ck-shell-header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 26px;
+  min-width: 0;
+  height: var(--ck-shell-header);
+  background: var(--app-surface);
+  border-bottom: 1px solid var(--app-border);
+  position: sticky;
+  top: 0;
+  z-index: 34;
+}
+.ck-shell-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  overflow: hidden;
+}
+.ck-shell-breadcrumb strong {
+  color: var(--app-text-primary);
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ck-shell-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.ck-command-trigger,
+.ck-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-sunken);
+  color: var(--app-text-secondary);
+  border-radius: min(var(--ck-radius), 8px);
+  min-height: 32px;
+  padding: 5px 9px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.ck-command-trigger kbd {
+  font:
+    10px/1.4 ui-monospace,
+    monospace;
+  color: var(--app-text-muted);
+}
+.ck-icon-button {
+  width: 32px;
+  padding: 5px;
+  border-color: transparent;
+  background: transparent;
+}
+.ck-command-trigger:hover,
+.ck-icon-button:hover {
+  border-color: var(--app-accent);
+  color: var(--app-accent);
+}
+.ck-shell.has-chrome > .ck-shell-content {
+  grid-area: content;
+}
+.ck-shell[data-workspace='true'].has-chrome {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: 'header' 'content';
+}
+.ck-shell[data-workspace='true'] > .ck-shell-nav {
+  display: none;
+}
+.ck-shell[data-workspace='true'] .ck-shell-breadcrumb {
+  margin-right: auto;
+}
+.ck-shell.has-chrome .project-workspace {
+  height: calc(100vh - var(--ck-shell-header));
+  height: calc(100dvh - var(--ck-shell-header));
+}
+.ck-skip-link {
+  position: fixed;
+  left: 12px;
+  top: -100px;
+  z-index: 10000;
+  padding: 10px 16px;
+  background: var(--app-surface);
+  color: var(--app-accent);
+  border: 2px solid var(--app-accent);
+  border-radius: 6px;
+}
+.ck-skip-link:focus {
+  top: 12px;
+}
+.ck-shell [role='button']:focus-visible,
+.ck-shell button:focus-visible,
+.ck-shell a:focus-visible,
+.ck-studio button:focus-visible,
+.ck-studio input:focus-visible,
+.ck-studio select:focus-visible,
+.ck-studio textarea:focus-visible,
+.ck-command-modal button:focus-visible {
+  outline: 2px solid var(--app-focus-ring);
+  outline-offset: 3px;
+}
+/* Navigation is a user-overridable token, independent of palette/design. */
+.ck-shell.has-chrome[data-nav='rail'] {
+  grid-template-columns: 64px minmax(0, 1fr);
+  --ck-shell-header: 48px;
+}
+.ck-shell[data-nav='rail'] .ck-shell-nav {
+  padding: 14px 8px;
+  align-items: center;
+}
+.ck-shell[data-nav='rail'] .ck-shell-brand {
+  padding: 0 0 30px;
+}
+.ck-shell[data-nav='rail'] .ck-shell-brand > span,
+.ck-shell[data-nav='rail'] .ck-nav-context,
+.ck-shell[data-nav='rail'] .ck-shell-nav nav a > span,
+.ck-shell[data-nav='rail'] .ck-shell-nav-footer > button > span {
+  display: none;
+}
+.ck-shell[data-nav='rail'] .ck-shell-nav nav a,
+.ck-shell[data-nav='rail'] .ck-shell-nav-footer > button {
+  padding: 10px;
+  min-width: 40px;
+}
+.ck-shell.has-chrome[data-nav='top'] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 72px var(--ck-shell-header) 1fr;
+  grid-template-areas: 'nav' 'header' 'content';
+  --ck-shell-header: 52px;
+}
+.ck-shell[data-nav='top'] .ck-shell-nav {
+  height: 72px;
+  position: static;
+  flex-direction: row;
+  align-items: center;
+  padding: 0 32px;
+  gap: 36px;
+  border-right: 0;
+  border-bottom: 1px solid var(--app-border);
+}
+.ck-shell[data-nav='top'] .ck-shell-brand {
+  padding: 0;
+}
+.ck-shell[data-nav='top'] .ck-shell-nav nav {
+  flex-direction: row;
+  gap: 6px;
+}
+.ck-shell[data-nav='top'] .ck-nav-context {
+  display: none;
+}
+.ck-shell[data-nav='top'] .ck-shell-nav-footer {
+  margin: 0 0 0 auto;
+  padding: 0;
+}
+.ck-shell[data-workspace='true'].has-chrome {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--ck-shell-header) 1fr;
+  grid-template-areas: 'header' 'content';
+}
+/* Common presentation hooks across the six route views and their business panels. */
+html[data-customized='true'] :is(.general-settings-page, .branch-page, .user-guide-page),
+html[data-customized='true']:not([data-interface='studio']) .project-browser--page {
+  max-width: var(--ck-content-width);
+  padding: calc(var(--ck-spacing) * 1.5);
+  margin-inline: auto;
+}
+/* Studio keeps ProjectBrowser's original page width, grid and card presentation. */
+html[data-customized='true']:not([data-interface='studio']) .project-grid {
+  gap: var(--ck-spacing);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr));
+  margin-top: calc(var(--ck-spacing) * 1.5);
+}
+html[data-customized='true']:not([data-interface='studio']) .project-card {
+  border-radius: var(--ck-radius);
+  box-shadow: var(--ck-panel-shadow);
+  overflow: hidden;
+  border-color: var(--app-border);
+  background: var(--app-surface);
+}
+html[data-customized='true']:not([data-interface='studio']) .project-card:hover {
+  border-color: var(--app-accent);
+  transform: translateY(-2px);
+}
+html[data-customized='true']:not([data-interface='studio']) .project-card.is-current {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 1px var(--app-accent);
+}
+html[data-customized='true']:not([data-interface='studio']) .project-card > .n-card-header,
+html[data-customized='true']:not([data-interface='studio']) .project-card > .n-card__content {
+  padding-inline: var(--ck-spacing);
+}
+html[data-customized='true'] .settings-layout {
+  grid-template-columns: minmax(150px, 180px) minmax(0, 1fr);
+  gap: calc(var(--ck-spacing) * 1.5);
+}
+html[data-customized='true'] .settings-card-shell > .n-card,
+html[data-customized='true'] .branch-list > .n-card,
+html[data-customized='true'] .user-guide-page .n-card {
+  border-radius: var(--ck-radius);
+  box-shadow: var(--ck-panel-shadow);
+}
+html[data-customized='true'] .settings-card-shell {
+  display: grid;
+  gap: var(--ck-spacing);
+}
+html[data-customized='true']
+  :is(.settings-nav-item, .settings-subnav-item, .file-tree-row, .git-change-row) {
+  border-radius: min(var(--ck-radius), 7px);
+}
+html[data-customized='true'] .workspace-worktree-sider {
+  background: var(--app-surface-sunken);
+}
+html[data-customized='true'] .web-session-panel {
+  --web-session-approval-bg: var(--app-approval-soft);
+  --web-session-approval-border: var(--app-approval);
+  --web-session-plan-approval-bg: var(--app-plan-approval-soft);
+  --web-session-plan-approval-border: var(--app-plan-approval);
+}
+html[data-customized='true'] .web-session-panel .timeline-list {
+  max-width: var(--ck-content-width);
+  width: 100%;
+  margin-inline: auto;
+}
+html[data-customized='true'] .web-session-panel .timeline-item {
+  line-height: var(--ck-line-height);
+}
+html[data-customized='true'] .web-session-panel .timeline-intro-title {
+  letter-spacing: -0.6px;
+}
+html[data-customized='true'] .web-session-panel .composer-input-shell {
+  border-radius: var(--ck-radius);
+  border-color: var(--app-border);
+  box-shadow: var(--ck-panel-shadow);
+}
+html[data-customized='true'] .web-session-panel .composer-input-shell:focus-within {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px var(--app-accent-soft);
+}
+html[data-customized='true'] :is(.file-manager-toolbar, .git-changes-toolbar) {
+  background: var(--app-surface);
+  border-color: var(--app-border);
+}
+html[data-customized='true'] :is(.file-browser, .git-changes-sidebar) {
+  background: var(--app-surface-sunken);
+}
+html[data-customized='true'] .n-modal,
+html[data-customized='true'] .n-dialog {
+  border-radius: var(--ck-radius);
+}
+html[data-customized='true'][data-panel-style='flat']:not([data-interface='studio']) .project-card {
+  box-shadow: none;
+}
+html[data-customized='true'][data-panel-style='outlined']:not([data-interface='studio'])
+  .project-card {
+  border-width: 1px;
+  box-shadow: none;
+}
+html[data-customized='true'][data-density='compact']:not([data-interface='studio'])
+  .project-card
+  > .n-card__content {
+  padding-bottom: 12px;
+}
+html[data-customized='true'][data-density='compact'] :is(.file-tree-row, .git-change-row) {
+  min-height: 26px;
+}
+html[data-customized='true'][data-density='compact'] .web-session-panel .timeline-item {
+  margin-bottom: 10px;
+}
+/* Studio: clear, modular, workbench-oriented. */
+html[data-interface='studio'] .workspace-main-shell {
+  background: var(--app-canvas);
+}
+html[data-interface='studio'] .web-session-panel .timeline-item.kind-user .item-content {
+  border-radius: var(--ck-radius);
+}
+/* Forge: dense engineering console. Never restyles the terminal's ANSI output. */
+html[data-interface='forge'] .ck-shell-header {
+  border-bottom-color: var(--app-accent);
+}
+html[data-interface='forge'] .ck-shell-brand b {
+  background: var(--app-accent);
+  color: var(--app-accent-contrast);
+}
+html[data-interface='forge'] .project-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+}
+html[data-interface='forge']
+  :is(.n-page-header__title, .project-card-header, .timeline-intro-title, .login-card__eyebrow) {
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, 'Microsoft YaHei', monospace;
+}
+html[data-interface='forge'] .project-card:hover {
+  transform: none;
+  box-shadow: inset 3px 0 0 var(--app-accent);
+}
+html[data-interface='forge'] :is(.project-sidebar-shell, .workspace-worktree-sider) {
+  background: var(--app-surface-sunken);
+}
+/* Login: only presentation is changed, the existing authentication form is untouched. */
+html[data-customized='true'] .login-page {
+  background: var(--app-canvas);
+}
+html:not([data-interface='classic']) .login-page {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 48px;
+  padding: 64px max(40px, calc((100vw - 1120px) / 2));
+}
+html:not([data-interface='classic']) .login-page__glow {
+  display: none;
+}
+html:not([data-interface='classic']) .login-card {
+  width: 100%;
+  max-width: 460px;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: var(--ck-radius);
+  box-shadow: var(--ck-panel-shadow);
+}
+.ck-login-story {
+  width: 100%;
+  max-width: 520px;
+  align-self: center;
+}
+.ck-login-brand {
+  font-size: 17px;
+  font-weight: 750;
+  margin-bottom: 100px;
+  color: var(--app-accent);
+}
+.ck-login-brand > span {
+  margin-left: 10px;
+  color: var(--app-text-primary);
+}
+.ck-login-story h2 {
+  font-size: clamp(34px, 4vw, 56px);
+  line-height: 1.18;
+  letter-spacing: -2px;
+  margin: 16px 0 24px;
+}
+.ck-login-story > p:not(.ck-eyebrow) {
+  color: var(--app-text-secondary);
+  line-height: 1.9;
+  max-width: 360px;
+}
+.ck-login-theme {
+  margin-top: 48px;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  color: var(--app-accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+html[data-interface='forge'] .ck-login-story h2 {
+  font-family: ui-monospace, Consolas, 'Microsoft YaHei', monospace;
+  font-size: clamp(30px, 3vw, 44px);
+  letter-spacing: -1px;
+}
+/* Theme customization belongs to the normal appearance settings card. */
+.ck-studio {
+  container-type: inline-size;
+  min-width: 0;
+  color: var(--app-text-primary);
+}
+.ck-studio-heading {
+  margin-bottom: 16px;
+}
+.ck-eyebrow {
+  color: var(--app-text-muted);
+  font:
+    10px/1.6 ui-monospace,
+    monospace;
+  letter-spacing: 1.5px;
+  margin: 0;
+}
+.ck-studio-heading h3 {
+  font-size: 16px;
+  line-height: 1.4;
+  margin: 0 0 6px;
+  font-weight: 650;
+}
+.ck-studio-heading p:not(.ck-eyebrow) {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--app-text-secondary);
+  margin: 0;
+}
+.ck-version {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-sunken);
+  color: var(--app-text-muted);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font:
+    10px/1.5 ui-monospace,
+    monospace;
+}
+.ck-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 176px), 1fr));
+  gap: 12px;
+}
+.ck-theme-card {
+  min-width: 0;
+  text-align: left;
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-surface);
+  color: var(--app-text-primary);
+  overflow: hidden;
+  cursor: pointer;
+  font: inherit;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.ck-theme-card:hover {
+  border-color: var(--app-accent);
+}
+.ck-theme-card.is-selected {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px var(--app-accent-soft);
+}
+.ck-theme-preview {
+  display: flex;
+  height: 78px;
+  padding: 8px;
+  gap: 8px;
+  background: var(--preview-bg);
+  border-bottom: 1px solid var(--preview-border);
+}
+.ck-preview-nav {
+  width: 26px;
+  background: var(--preview-surface);
+  padding: 10px 5px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ck-preview-nav i {
+  height: 3px;
+  width: 100%;
+  background: var(--preview-border);
+}
+.ck-preview-nav i:first-child {
+  background: var(--preview-accent);
+}
+.ck-preview-main {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  padding: 6px 2px;
+}
+.ck-preview-main > b {
+  display: block;
+  width: 55%;
+  height: 5px;
+  background: var(--preview-ink);
+  border-radius: 2px;
+  opacity: 0.7;
+}
+.ck-preview-main > span {
+  display: flex;
+  gap: 5px;
+  margin: 12px 0 8px;
+}
+.ck-preview-main > span i {
+  flex: 1;
+  height: 23px;
+  border: 1px solid var(--preview-border);
+  background: var(--preview-surface);
+  border-radius: 3px;
+}
+.ck-preview-main em {
+  display: block;
+  height: 3px;
+  width: 90%;
+  margin-top: 5px;
+  background: var(--preview-border);
+}
+.ck-theme-preview[data-design='forge'] .ck-preview-nav {
+  width: 15px;
+  border-radius: 0;
+}
+.ck-theme-preview[data-design='forge'] .ck-preview-main > span i {
+  border-radius: 0;
+}
+.ck-theme-preview[data-design='classic'] .ck-preview-nav {
+  display: none;
+}
+.ck-theme-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  font-size: 12px;
+}
+.ck-theme-caption strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ck-theme-caption > span {
+  flex-shrink: 0;
+  color: var(--app-accent);
+}
+.ck-studio-toolbar,
+.ck-studio-toolbar > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ck-studio-toolbar {
+  justify-content: space-between;
+  margin: 16px 0 6px;
+}
+.ck-studio-subtle {
+  color: var(--app-text-muted);
+  font-size: 11px;
+}
+.ck-studio-subtle strong {
+  color: var(--app-text-secondary);
+  font-weight: 550;
+}
+.ck-setting-group {
+  padding: 8px 0 12px;
+}
+.ck-studio-details,
+.settings-terminal-appearance {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--app-border);
+}
+.ck-setting-label h3 {
+  font-size: 14px;
+  font-weight: 650;
+  margin: 0 0 5px;
+}
+.ck-setting-label p {
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.8;
+  margin: 0 0 16px;
+}
+.ck-segmented {
+  display: flex;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-sunken);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+  max-width: 360px;
+}
+.ck-segmented button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--app-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  border-radius: 5px;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+.ck-segmented button[aria-pressed='true'] {
+  background: var(--app-surface);
+  color: var(--app-accent);
+  box-shadow: 0 1px 4px var(--app-shadow-subtle);
+}
+.ck-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 20px;
+}
+.ck-form-grid > label {
+  font-size: 12px;
+  display: block;
+  color: var(--app-text-secondary);
+  min-width: 0;
+}
+.ck-form-grid output {
+  float: right;
+  color: var(--app-text-muted);
+  font:
+    11px/1.7 ui-monospace,
+    monospace;
+}
+.ck-form-grid select {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--app-control-border);
+  border-radius: 6px;
+  background: var(--app-surface-sunken);
+  color: var(--app-text-primary);
+  font: inherit;
+}
+.ck-form-grid input[type='range'] {
+  display: block;
+  width: 100%;
+  margin-top: 13px;
+  cursor: pointer;
+  accent-color: var(--app-accent);
+}
+.ck-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  line-height: 1.7;
+}
+.ck-toggle-row input {
+  accent-color: var(--app-accent);
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+}
+.ck-color-group {
+  margin-bottom: 20px;
+}
+.ck-color-group h4 {
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--app-text-muted);
+  margin: 0 0 10px;
+}
+.ck-color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 10px;
+}
+.ck-color-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  cursor: pointer;
+  min-width: 0;
+  font-size: 11px;
+}
+.ck-color-field input {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.ck-color-field input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.ck-color-field input::-webkit-color-swatch {
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+}
+.ck-color-field code {
+  display: block;
+  color: var(--app-text-muted);
+  font:
+    9px/1.8 ui-monospace,
+    monospace;
+}
+.ck-studio-footer {
+  padding-top: 22px;
+}
+.ck-studio-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ck-studio-footer > p,
+.ck-import-body > p {
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--app-text-muted);
+}
+.ck-feedback {
+  margin-block: 14px;
+}
+.ck-json-label {
+  display: block;
+  font-size: 12px;
+  color: var(--app-text-secondary);
+  margin-top: 18px;
+}
+.ck-json-label textarea {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--app-surface-sunken);
+  color: var(--app-text-primary);
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  font:
+    12px/1.7 ui-monospace,
+    monospace;
+  resize: vertical;
+}
+.ck-import-body .n-alert {
+  margin-top: 16px;
+}
+.ck-command-search {
+  width: 100%;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  padding: 12px;
+  font: inherit;
+  background: var(--app-surface-sunken);
+  color: var(--app-text-primary);
+}
+.ck-command-results {
+  margin: 12px 0;
+  display: grid;
+  gap: 4px;
+}
+.ck-command-results > button,
+.ck-command-theme {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ck-command-results > button:hover,
+.ck-command-theme:hover {
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+.ck-command-results > button span {
+  flex: 1;
+}
+.ck-command-theme {
+  border-top: 1px solid var(--app-border);
+  width: 100%;
+  color: var(--app-accent);
+  font-size: 12px;
+}
+.ck-plugin-error {
+  font-size: 11px;
+  color: var(--app-error);
+}
+@container (max-width: 460px) {
+  .ck-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ck-studio-toolbar {
+    align-items: flex-start;
+  }
+}
+@media (max-width: 1100px) {
+  .ck-shell[data-nav='top'] .ck-shell-nav {
+    gap: 14px;
+    padding-inline: 20px;
+  }
+  .ck-shell[data-nav='top'] .ck-shell-nav nav a {
+    padding: 8px;
+    font-size: 12px;
+  }
+  .ck-shell[data-nav='top'] .ck-shell-nav nav a .n-icon {
+    display: none;
+  }
+  html[data-customized='true'] .settings-layout {
+    grid-template-columns: minmax(130px, 155px) minmax(0, 1fr);
+    gap: 20px;
+  }
+}
+@media (max-width: 900px) {
+  .ck-shell.has-chrome[data-nav='sidebar']:not([data-workspace='true']) {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .ck-shell[data-nav='sidebar'] .ck-shell-nav {
+    padding: 16px 8px;
+  }
+  .ck-shell[data-nav='sidebar'] .ck-shell-brand > span,
+  .ck-shell[data-nav='sidebar'] .ck-nav-context,
+  .ck-shell[data-nav='sidebar'] .ck-shell-nav nav a > span,
+  .ck-shell[data-nav='sidebar'] .ck-shell-nav-footer > button > span {
+    display: none;
+  }
+  .ck-shell[data-nav='sidebar'] .ck-shell-brand {
+    padding-left: 7px;
+  }
+  .ck-shell[data-nav='sidebar'] .ck-shell-nav nav a {
+    padding: 10px 14px;
+  }
+  html:not([data-interface='classic']) .login-page {
+    gap: 28px;
+    padding: 40px 28px;
+  }
+}
+@media (max-width: 768px) {
+  .ck-shell.has-chrome {
+    display: block;
+    --ck-shell-header: 0px;
+  }
+  .ck-shell.has-chrome > .ck-shell-nav,
+  .ck-shell.has-chrome > .ck-shell-header {
+    display: none;
+  }
+  .ck-shell.has-chrome .project-workspace {
+    height: 100dvh;
+  }
+  html[data-customized='true'] :is(.general-settings-page, .branch-page, .user-guide-page),
+  html[data-customized='true']:not([data-interface='studio']) .project-browser--page {
+    padding: 18px 14px;
+  }
+  html[data-customized='true'] .settings-layout {
+    display: block;
+  }
+  html[data-customized='true']:not([data-interface='studio']) .project-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  html:not([data-interface='classic']) .login-page {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 30px;
+    padding: 32px 20px;
+  }
+  .ck-login-story {
+    max-width: 460px;
+  }
+  .ck-login-brand {
+    margin-bottom: 25px;
+  }
+  .ck-login-story h2 {
+    font-size: 32px;
+  }
+  .ck-login-story > p:not(.ck-eyebrow) {
+    display: none;
+  }
+  .ck-login-theme {
+    margin-top: 10px;
+  }
+  .ck-studio {
+    padding: 16px;
+  }
+  .ck-color-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ck-theme-grid {
+    gap: 10px;
+  }
+  .ck-theme-description {
+    font-size: 10px;
+  }
+  .ck-form-grid {
+    gap: 18px 14px;
+  }
+}
+@media (max-width: 400px) {
+  .ck-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ck-color-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ck-theme-caption {
+    font-size: 11px;
+  }
+}
+html[data-motion='reduced'] *,
+html[data-motion='reduced'] *::before,
+html[data-motion='reduced'] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ck-shell *,
+  .ck-studio *,
+  html[data-customized='true'] * {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+@media (forced-colors: active) {
+  .ck-theme-card.is-selected,
+  .ck-shell-nav nav a.is-active {
+    outline: 2px solid Highlight;
+  }
+  .ck-theme-preview {
+    forced-color-adjust: none;
+  }
+}
+
+.ck-import-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+.ck-import-previews > section {
+  padding: 14px;
+  border: 1px solid;
+  min-width: 0;
+}
+.ck-import-previews small {
+  display: block;
+  overflow-wrap: anywhere;
+  font:
+    10px/1.7 ui-monospace,
+    monospace;
+}
+.ck-import-previews section > div {
+  padding: 12px;
+  border: 1px solid;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.ck-import-previews p {
+  font-size: 11px;
+  line-height: 1.7;
+}
+@media (max-width: 430px) {
+  .ck-import-previews {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

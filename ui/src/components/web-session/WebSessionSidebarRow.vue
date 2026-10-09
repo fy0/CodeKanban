@@ -19,7 +19,13 @@
     @pointerup="cancelLongPress"
     @pointercancel="cancelLongPress"
   >
-    <button type="button" class="session-sidebar-main">
+    <button
+      type="button"
+      class="session-sidebar-main"
+      :aria-label="row.title"
+      :aria-current="row.active ? 'true' : undefined"
+      :title="row.tooltip"
+    >
       <span class="session-sidebar-agent-wrap" aria-hidden="true">
         <span class="session-sidebar-agent-icon" v-html="row.iconHtml"></span>
         <n-icon
@@ -407,10 +413,11 @@ onBeforeUnmount(clearLongPressTimer);
   background: var(--badge-color, #3b82f6);
   background-image: none;
   border-radius: 4px;
-  border: 1px solid
-    color-mix(in srgb, var(--badge-color, #3b82f6) 78%, var(--app-surface-color, #fff) 22%);
+  border: 1px solid color-mix(in srgb, white 68%, var(--badge-color, #3b82f6));
   margin-left: 0;
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--badge-color, #3b82f6) 22%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--badge-color, #3b82f6) 38%, transparent),
+    0 0 7px color-mix(in srgb, var(--badge-color, #3b82f6) 32%, transparent);
 }
 
 .project-index-badge.session-project-badge.is-single-project {

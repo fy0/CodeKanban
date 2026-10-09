@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia';
+import { useAppearanceStore } from '@/stores/appearance';
+import { toLegacyTheme, toTerminalTheme } from '@/themes/adapter';
 import { computed, ref, watch } from 'vue';
 import {
   THEME_PRESETS,
@@ -412,6 +414,7 @@ const defaultSettings: GeneralSettings = {
 };
 
 export const useSettingsStore = defineStore('settings', () => {
+  const appearance = useAppearanceStore();
   const loadedSettings = loadSettings();
   const settings = ref<GeneralSettings>(loadedSettings.settings);
   const pageTitle = ref(APP_NAME);
@@ -501,6 +504,9 @@ export const useSettingsStore = defineStore('settings', () => {
   });
 
   const activeTerminalTheme = computed<TerminalThemeSettings>(() => {
+    if (settings.value.terminalThemeId === TERMINAL_THEME_FOLLOW && !appearance.isClassic) {
+      return toTerminalTheme(appearance.resolved.palette);
+    }
     if (
       settings.value.terminalThemeId === TERMINAL_THEME_CUSTOM &&
       settings.value.customTerminalTheme
@@ -520,6 +526,7 @@ export const useSettingsStore = defineStore('settings', () => {
    * App.vue 中会监听系统主题变化事件并更新 store，从而触发此 computed 重新计算
    */
   const activeTheme = computed<ThemeSettings>(() => {
+    if (!appearance.isClassic) return toLegacyTheme(appearance.resolved.palette);
     // 优先级 1: 跟随系统主题
     if (isFollowSystemThemeEnabled(settings.value.followSystemThemeSetting)) {
       // SSR 安全检查
@@ -551,6 +558,8 @@ export const useSettingsStore = defineStore('settings', () => {
   );
 
   function resetTheme() {
+    appearance.selectTheme('classic');
+    appearance.resetOverrides();
     // 重置为默认预设主题，并清理自定义/系统跟随状态，保持与 activeTheme 计算逻辑一致
     const preset = getPresetById(DEFAULT_PRESET_ID) ?? getDefaultPreset();
     settings.value.currentPresetId = preset.id;
@@ -951,6 +960,7 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function setFollowSystemThemeSetting(value: FollowSystemThemeSetting) {
+    appearance.selectTheme('classic');
     const next = sanitizeFollowSystemThemeSetting(value);
     settings.value.followSystemThemeSetting = next;
     if (next === FOLLOW_SYSTEM_THEME_ENABLED) {
@@ -972,6 +982,7 @@ export const useSettingsStore = defineStore('settings', () => {
   function selectPreset(presetId: string) {
     const preset = getPresetById(presetId);
     if (preset) {
+      appearance.selectTheme('classic');
       settings.value.currentPresetId = presetId;
       settings.value.customTheme = null;
       settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
@@ -998,8 +1009,10 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function applyCustomTheme(themeColors: Partial<ThemeSettings>) {
+    const previousTheme = activeTheme.value;
+    appearance.selectTheme('classic');
     settings.value.customTheme = sanitizeThemeSettings({
-      ...activeTheme.value,
+      ...previousTheme,
       ...themeColors,
     });
     settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
@@ -1024,10 +1037,13 @@ export const useSettingsStore = defineStore('settings', () => {
     return {
       locale: typeof locale === 'string' && locale.trim() ? locale.trim() : 'zh-CN',
       settings: serialized,
+      appearance: appearance.snapshot(),
     };
   }
 
   function importClientBackup(payload: SettingsBackupClientPayload) {
+    // Validate before any legacy settings are mutated. Old backups leave appearance unchanged.
+    if (payload?.appearance !== undefined) appearance.commit(payload.appearance);
     if (payload?.settings) {
       const importedSettings = cloneSettingsBackupClientSettings(payload.settings);
       if (importedSettings) {

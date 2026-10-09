@@ -1848,7 +1848,7 @@ export default {
     dark: 'Dark',
     dim: 'Dim',
     warm: 'Warm',
-    presetTheme: 'Preset Theme',
+    presetTheme: 'Theme',
     followSystem: 'Follow System Theme',
     followSystemHint:
       'Default behaves the same as No and only indicates no explicit choice yet; choosing Yes will switch themes based on system dark/light mode',
@@ -1858,7 +1858,7 @@ export default {
     maintenanceWarningFollowSystem:
       'Follow System Theme automatically switches between the supported Light and Dark themes. Continue?',
     customTheme: 'Custom Theme',
-    customThemeHint: 'Customizing colors will override preset theme settings',
+    customThemeHint: 'Custom colors override the current theme colors',
     terminalColors: 'Terminal Colors',
     statusColors: 'Terminal Tab Status Alerts',
     baseColors: 'Base Interface',

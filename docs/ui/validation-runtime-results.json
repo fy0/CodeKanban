@@ -1,0 +1,62 @@
+{
+  "startedAt": "2026-10-04T04:50:39.128Z",
+  "platform": "win32",
+  "node": "v24.4.0",
+  "files": {
+    "ui/src/App.vue": "a9f2ce64e84556c49d165cf653569d1143e31f30f921176e26506d9edcde4f25",
+    "ui/src/main.ts": "f9641e01a9536310e0df29b3f21e0ca23ed4e2323a3035a43e96aecee7081c3c",
+    "ui/src/themes/core.ts": "4f5ff3ce44f2258f4cb2c65e196d49c50c153c0510905fc95ce47303536faf53",
+    "ui/src/themes/builtin.json": "e02c0e3aa454924e44e873bf1ee1ea4de2734be992d25be73d2c13aa843cf05d",
+    "ui/src/themes/adapter.ts": "c0b40a68e15117444dee77b034ba8e8976a8e2cc3e36bce24fadebda9b9638b9",
+    "ui/src/stores/appearance.ts": "3ffe2d20ff987db7444f96f55e31f9ae92a1e3cbde5cd955dd64a18ebefcbe1e",
+    "ui/src/stores/settings.ts": "3b70990aa53ec7382442b0d700dcefce5e5a5d5fcac7d566eb517f7443f10ccc",
+    "ui/src/styles/appearance-designs.css": "ba9d261b753d2a6650840ce7ab1259c3bce245f95f1e94a5fee35cbd8857a6cc",
+    "ui/src/components/appearance/ThemeStudio.vue": "3745e97b1c7a262bc3b1d52ffba25b5cad63e94fb9d92c3c6cdcc17e397d089c",
+    "ui/src/components/appearance/AppearanceShell.vue": "37f7e27ff7b784c8e247848de265a2d968def9a1fd911c8545929cfe77e5eda2",
+    "ui/src/components/web-session/WebSessionSidebarRow.vue": "956e4914a4907df9326171371d26179738245887518dd6a47dee05e89f83b79b",
+    "ui/src/components/web-session/styles/webSessionSidebar.css": "9079f06cced599564a5bae4a0c51ca1fb3913012c3cc3c4202a1ad0e63e4d616",
+    "ui/src/components/web-session/__tests__/sessionSidebarAppearance.test.ts": "7a59984d18da52f78fdbbe595fe680e89bd17a081d7a87a420d8f7463ddf3aed"
+  },
+  "checks": [
+    {
+      "name": "type-check",
+      "command": [
+        "node",
+        "node_modules/vue-tsc/bin/vue-tsc.js",
+        "--build"
+      ],
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 34334,
+      "log": "validation-type-check.log"
+    },
+    {
+      "name": "build-only",
+      "command": [
+        "node",
+        "node_modules/vite/bin/vite.js",
+        "build"
+      ],
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 4525,
+      "log": "validation-build-only.log"
+    },
+    {
+      "name": "test",
+      "command": [
+        "node",
+        "node_modules/vitest/vitest.mjs",
+        "run"
+      ],
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 20469,
+      "log": "validation-test.log"
+    }
+  ],
+  "finishedAt": "2026-10-04T04:51:38.460Z"
+}

@@ -64,7 +64,10 @@
           </div>
 
           <n-layout-content content-style="height: 100%;">
-            <WorkspaceTabView :project-id="currentProjectId" />
+            <WorkspaceTabView
+              :project-id="currentProjectId"
+              @edit-current="openProjectEditDialog"
+            />
           </n-layout-content>
         </n-layout>
       </div>

@@ -1,6 +1,6 @@
 <template>
-  <n-dropdown :options="themeOptions" :trigger="resolvedTrigger" @select="handleSelect">
-    <n-button quaternary circle size="small" @click="handleButtonClick">
+  <n-dropdown scrollable :options="themeOptions" :trigger="resolvedTrigger" @select="handleSelect">
+    <n-button quaternary circle size="small" aria-label="Theme / 外观" @click="handleButtonClick">
       <template #icon>
         <n-icon size="18">
           <component :is="isDarkTheme ? MoonOutline : SunnyOutline" />
@@ -12,13 +12,15 @@
 
 <script setup lang="ts">
 import { computed, h } from 'vue';
+import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { NIcon, useDialog } from 'naive-ui';
 import { MoonOutline, SunnyOutline, CheckmarkOutline } from '@vicons/ionicons5';
 import { useSettingsStore } from '@/stores/settings';
-import { THEME_PRESETS, isSupportedThemePreset } from '@/constants/themes';
+import { useAppearanceStore } from '@/stores/appearance';
+import { isSupportedThemePreset } from '@/constants/themes';
 import { useLocale } from '@/composables/useLocale';
-import { useThemeOptions } from '@/composables/useThemeOptions';
+import { useUnifiedThemeChoices } from '@/composables/useUnifiedThemeChoices';
 import { isDarkHex } from '@/utils/color';
 import {
   createThemeMaintenanceWarningController,
@@ -37,7 +39,9 @@ const props = withDefaults(
   }
 );
 
-const { t } = useLocale();
+const { t, locale } = useLocale();
+const appearance = useAppearanceStore();
+const router = useRouter();
 const dialog = useDialog();
 const settingsStore = useSettingsStore();
 const { activeTheme, currentPresetId, followSystemTheme } = storeToRefs(settingsStore);
@@ -46,7 +50,8 @@ const themeWarningController = createThemeMaintenanceWarningController({
   warning: options => dialog.warning(options),
 });
 const themeSelectionController = createThemeSelectionController({
-  getCurrentPresetId: () => currentPresetId.value,
+  getCurrentPresetId: () =>
+    appearance.isClassic && !settingsStore.customTheme ? currentPresetId.value : '',
   isFollowSystemTheme: () => followSystemTheme.value,
   selectPreset: presetId => settingsStore.selectPreset(presetId),
   toggleFollowSystemTheme: enabled => settingsStore.toggleFollowSystemTheme(enabled),
@@ -56,7 +61,9 @@ const themeSelectionController = createThemeSelectionController({
   shouldConfirmFollowSystemEnable: () => false,
 });
 
-const isDarkTheme = computed(() => isDarkHex(activeTheme.value.bodyColor));
+const isDarkTheme = computed(() =>
+  appearance.isClassic ? isDarkHex(activeTheme.value.bodyColor) : appearance.scheme === 'dark'
+);
 
 // 渲染颜色圆点
 const renderColorDot = (color: string) =>
@@ -73,29 +80,26 @@ const renderColorDot = (color: string) =>
 // 渲染选中图标
 const renderCheckIcon = () => h(NIcon, null, { default: () => h(CheckmarkOutline) });
 
-// 获取主题选项（使用 composable）
-const baseThemeOptions = useThemeOptions();
+const { choices, selectedKey, select } = useUnifiedThemeChoices();
 const resolvedTrigger = computed(
   () => props.trigger ?? (props.quickToggleOnClick ? 'hover' : 'click')
 );
 
-// 下拉菜单选项
+// Every choice lives in the same theme list, regardless of its renderer or palette source.
 const themeOptions = computed<DropdownOption[]>(() => {
-  const presetOptions: DropdownOption[] = THEME_PRESETS.map((preset, index) => ({
-    label: baseThemeOptions.value[index].label,
-    key: preset.id,
-    icon:
-      currentPresetId.value === preset.id && !followSystemTheme.value
-        ? renderCheckIcon
-        : () => renderColorDot(preset.colors.primaryColor),
-  }));
-
   return [
     {
       type: 'group',
-      label: t('theme.presetTheme'),
-      key: 'presets',
-      children: presetOptions,
+      key: 'themes',
+      label: locale.value === 'zh-CN' ? '主题' : 'Themes',
+      children: choices.value.map(choice => ({
+        label: choice.label,
+        key: choice.key,
+        icon:
+          selectedKey.value === choice.key
+            ? renderCheckIcon
+            : () => renderColorDot(choice.preview.accent),
+      })),
     },
     {
       type: 'divider',
@@ -104,12 +108,36 @@ const themeOptions = computed<DropdownOption[]>(() => {
     {
       label: t('theme.followSystem'),
       key: 'follow-system',
-      icon: followSystemTheme.value ? renderCheckIcon : undefined,
+      icon: (appearance.isClassic ? followSystemTheme.value : appearance.mode === 'system')
+        ? renderCheckIcon
+        : undefined,
+    },
+    {
+      key: 'appearance-settings',
+      label: locale.value === 'zh-CN' ? '界面设置…' : 'Appearance settings…',
     },
   ];
 });
 
 const handleSelect = async (key: string) => {
+  if (key.startsWith('theme:')) {
+    select(key);
+    return;
+  }
+  if (key.startsWith('preset:')) {
+    if (selectedKey.value !== key) {
+      await themeSelectionController.selectPresetWithConfirmation(key.slice('preset:'.length));
+    }
+    return;
+  }
+  if (key === 'appearance-settings') {
+    await router.push({ name: 'settings', query: { section: 'theme' } });
+    return;
+  }
+  if (key === 'follow-system' && !appearance.isClassic) {
+    appearance.setMode(appearance.mode === 'system' ? appearance.scheme : 'system');
+    return;
+  }
   if (key === 'follow-system') {
     await themeSelectionController.toggleFollowSystemThemeWithConfirmation(
       !followSystemTheme.value
@@ -121,6 +149,10 @@ const handleSelect = async (key: string) => {
 
 // 快速切换 dark/light 主题
 const handleQuickToggle = async () => {
+  if (!appearance.isClassic) {
+    appearance.setMode(appearance.scheme === 'dark' ? 'light' : 'dark');
+    return;
+  }
   await themeSelectionController.quickToggleLightDark();
 };
 

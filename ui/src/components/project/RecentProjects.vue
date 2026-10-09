@@ -17,25 +17,6 @@
             {{ t('common.backToList') }}
           </n-button>
           <n-space align="center" :wrap="false" size="small">
-            <ThemeSwitcher />
-            <n-popover trigger="hover" placement="bottom">
-              <template #trigger>
-                <n-button
-                  quaternary
-                  circle
-                  size="small"
-                  :disabled="!currentProject"
-                  @click="emit('editCurrent')"
-                >
-                  <template #icon>
-                    <n-icon size="18">
-                      <CreateOutline />
-                    </n-icon>
-                  </template>
-                </n-button>
-              </template>
-              {{ t('common.edit') }}
-            </n-popover>
             <n-popover trigger="hover" placement="bottom">
               <template #trigger>
                 <n-button quaternary circle size="small" @click="handleGoToSettings">
@@ -70,6 +51,18 @@
             </template>
             {{ t('common.backToList') }}
           </n-popover>
+          <n-popover trigger="hover" placement="right">
+            <template #trigger>
+              <n-button quaternary circle class="compact-header-button" @click="handleGoToSettings">
+                <template #icon>
+                  <n-icon size="18">
+                    <SettingsOutline />
+                  </n-icon>
+                </template>
+              </n-button>
+            </template>
+            {{ t('nav.settings') }}
+          </n-popover>
         </div>
       </template>
     </div>
@@ -100,27 +93,34 @@
                     @click="handleSelectProject(project.id)"
                     @contextmenu="handleContextMenu($event, project.id)"
                   >
-                    <n-icon
-                      v-if="projectStore.getProjectPriority(project.id)"
-                      size="12"
-                      :color="getPriorityColor(projectStore.getProjectPriority(project.id)!)"
-                      class="pin-icon-corner"
-                      :class="{ 'is-compact': isCompact }"
-                      :title="t('project.unpinProject')"
-                      @click.stop="handleUnpinProject(project.id)"
+                    <div
+                      class="project-marker"
+                      :class="{
+                        'project-compact-avatar': isCompact,
+                        'project-index-badge': isCompact,
+                      }"
+                      :style="isCompact ? getProjectAvatarStyle(project.id) : undefined"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <path
-                          fill="currentColor"
-                          d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
-                        />
-                      </svg>
-                    </n-icon>
+                      <span v-if="isCompact">{{ projectBadges.get(project.id)?.label }}</span>
+                      <n-icon
+                        v-if="projectStore.getProjectPriority(project.id)"
+                        size="12"
+                        :color="getPriorityColor(projectStore.getProjectPriority(project.id)!)"
+                        class="pin-icon-corner"
+                        :class="{ 'is-compact': isCompact }"
+                        :title="t('project.unpinProject')"
+                        @click.stop="handleUnpinProject(project.id)"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                          <path
+                            fill="currentColor"
+                            d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
+                          />
+                        </svg>
+                      </n-icon>
+                    </div>
 
                     <template v-if="isCompact">
-                      <div class="project-compact-avatar">
-                        {{ getProjectMonogram(project.name) }}
-                      </div>
                       <div
                         v-if="getProjectSessionBadge(project.id)"
                         class="project-compact-counts"
@@ -355,14 +355,12 @@ import { useTerminalStore } from '@/stores/terminal';
 import { useWebSessionStore } from '@/stores/webSession';
 import { useAppStore } from '@/stores/app';
 import {
-  CreateOutline,
   SettingsOutline,
   TerminalOutline,
   ChatbubblesOutline,
   ArrowUpCircleOutline,
 } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
-import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import ProjectAiStatusSummaryCard from '@/components/project/ProjectAiStatusSummaryCard.vue';
 import {
   resolvePreferredProjectSessionKind,
@@ -371,6 +369,7 @@ import {
 } from '@/utils/projectSessionBadge';
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import { formatVersionForDisplay } from '@/utils/versionDisplay';
+import { buildProjectBadgeMap } from '@/utils/projectBadge';
 import { DEFAULT_DESKTOP_WORKSPACE_ROUTE_TAB } from '@/utils/workspaceRoute';
 import type { ProjectPriority } from '@/stores/project';
 import type { DropdownOption } from 'naive-ui';
@@ -433,8 +432,12 @@ const { send: updatePriority } = useReq((projectId: string, priority: number | n
 );
 
 const loading = computed(() => projectStore.loading);
-const currentProject = computed(() => projectStore.currentProject);
 const recentProjects = computed(() => projectStore.recentProjects);
+// Use the project order, so recent-access and pin changes do not reassign badge colors.
+const projectBadges = computed(() => {
+  const names = new Map(projectStore.projects.map(project => [project.id, project.name]));
+  return buildProjectBadgeMap([...names.keys()], projectId => names.get(projectId) ?? '');
+});
 const topProjectId = computed(() => recentProjects.value[0]?.id ?? '');
 const isCompact = computed(() => props.compact === true);
 const displayAppVersion = computed(() => formatVersionForDisplay(appStore.appInfo.version));
@@ -753,18 +756,10 @@ const handleGoToSettings = () => {
   void router.push('/settings');
 };
 
-const getProjectMonogram = (name: string) => {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    return '?';
-  }
-
-  const segments = trimmed.split(/\s+/).filter(Boolean);
-  if (segments.length >= 2) {
-    return `${segments[0][0]}${segments[1][0]}`.toUpperCase();
-  }
-
-  return trimmed.slice(0, 1).toUpperCase();
+const getProjectAvatarStyle = (projectId: string) => {
+  const badge = projectBadges.value.get(projectId);
+  if (!badge) return undefined;
+  return { '--project-badge-color': badge.color };
 };
 
 const getPriorityColor = (priority: ProjectPriority): string => {
@@ -804,33 +799,50 @@ onMounted(() => {
 }
 
 .recent-projects-header {
-  --recent-projects-header-height: 64px;
-  padding: 16px;
+  --recent-projects-header-height: 44px;
+  display: flex;
+  align-items: center;
+  height: var(--recent-projects-header-height);
   min-height: var(--recent-projects-header-height);
+  max-height: var(--recent-projects-header-height);
+  padding-inline: clamp(4px, 6%, 16px);
   box-sizing: border-box;
   border-bottom: 1px solid var(--app-border, var(--n-border-color, #e0e0e0));
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.recent-projects-header > :deep(.n-space) {
+  min-width: 0;
+  flex-wrap: nowrap !important;
+  align-items: center;
 }
 
 .recent-projects-header.is-compact {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: calc(var(--recent-projects-header-height) - 4px);
-  padding: 0 10px;
+  height: var(--recent-projects-header-height);
+  min-height: var(--recent-projects-header-height);
+  max-height: var(--recent-projects-header-height);
+  padding-inline: 4px;
 }
 
 .recent-projects-compact-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  flex-wrap: nowrap;
 }
 
 .compact-header-button {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  border-radius: 12px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  border-radius: 9px;
 }
 
 .empty-state {
@@ -939,7 +951,12 @@ onMounted(() => {
   background: transparent;
 }
 
+.project-marker {
+  display: contents;
+}
+
 .project-compact-avatar {
+  position: relative;
   width: 30px;
   height: 30px;
   flex: 0 0 auto;
@@ -947,20 +964,22 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  border: 1px solid
-    color-mix(in srgb, var(--app-border, #e0e0e0) 64%, var(--app-border-strong, #b8bcc8) 36%);
-  background: var(--app-surface-raised, #ffffff);
-  color: var(--app-text-secondary, #334155);
+  border: 1px solid color-mix(in srgb, white 68%, var(--project-badge-color, #3b82f6));
+  background: var(--project-badge-color, #3b82f6);
+  background-image: none;
+  color: rgba(255, 255, 255, 0.96);
   font-size: 17px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: uppercase;
-  box-shadow: none;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--project-badge-color, #3b82f6) 40%, transparent),
+    0 0 7px color-mix(in srgb, var(--project-badge-color, #3b82f6) 36%, transparent);
 }
 
 .project-item.is-compact.active .project-compact-avatar {
-  border-color: var(--app-border-strong, #374151);
-  color: var(--app-text-primary, #111827);
+  outline: 2px solid var(--app-accent, var(--n-primary-color));
+  outline-offset: 2px;
 }
 
 .project-compact-counts {
@@ -1142,9 +1161,21 @@ onMounted(() => {
 }
 
 .pin-icon-corner.is-compact {
-  top: 6px;
-  left: auto;
-  right: 6px;
+  top: -5px;
+  left: -5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--app-surface-raised, #ffffff);
+  opacity: 1;
+}
+
+.pin-icon-corner.is-compact svg {
+  width: 12px;
+  height: 12px;
 }
 
 .pin-icon-corner:hover {

@@ -2,6 +2,25 @@
   <div class="login-page">
     <div class="login-page__glow login-page__glow--a"></div>
     <div class="login-page__glow login-page__glow--b"></div>
+    <aside v-if="appearance.resolved.design !== 'classic'" class="ck-login-story">
+      <div class="ck-login-brand">CK <span>CodeKanban</span></div>
+      <p class="ck-eyebrow">YOUR WORK. YOUR WORKSPACE.</p>
+      <h2>
+        {{ locale === 'zh-CN' ? '把想法，' : 'Space to think.' }}<br />{{
+          locale === 'zh-CN' ? '变成下一步。' : 'Room to build.'
+        }}
+      </h2>
+      <p>
+        {{
+          locale === 'zh-CN'
+            ? '项目、会话、工作树和终端，回到同一个专注的工作区。'
+            : 'Projects, conversations, worktrees and terminals. One focused workspace.'
+        }}
+      </p>
+      <router-link class="ck-login-theme" :to="{ name: 'settings', query: { section: 'theme' } }"
+        >{{ locale === 'zh-CN' ? '界面设置' : 'Appearance settings' }} ↗</router-link
+      >
+    </aside>
     <n-card class="login-card" :bordered="false">
       <template #header>
         <div class="login-card__header">
@@ -47,12 +66,14 @@ import { useRoute, useRouter } from 'vue-router';
 import { useMessage } from 'naive-ui';
 import { useLocale } from '@/composables/useLocale';
 import { useAuthStore } from '@/stores/auth';
+import { useAppearanceStore } from '@/stores/appearance';
 
 const router = useRouter();
 const route = useRoute();
 const message = useMessage();
 const authStore = useAuthStore();
-const { t } = useLocale();
+const { t, locale } = useLocale();
+const appearance = useAppearanceStore();
 
 const password = ref('');
 const submitting = ref(false);

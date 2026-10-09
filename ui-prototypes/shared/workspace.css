@@ -1,0 +1,92 @@
+/* A light UI can still have a dark terminal. Derive ANSI foregrounds independently. */
+.terminal .prompt { color:var(--terminal-accent); }
+.terminal .success-text { color:var(--terminal-success); }
+.terminal :is(.subtle,.muted) { color:var(--terminal-muted); }
+
+/* Workspace anatomy is fixed for every design: projects | main | sessions. */
+html[data-skin] .app-shell[data-workspace='true'] { display:grid; grid-template-columns:224px minmax(0,1fr); grid-template-rows:48px minmax(0,1fr) 28px; height:100dvh; min-height:0; overflow:hidden; }
+html[data-skin] .app-shell[data-workspace='true']>.workspace-projects { display:flex; position:relative; grid-column:1; grid-row:1/4; flex-direction:column; align-items:stretch; height:100%; min-width:0; gap:0; padding:22px 14px 14px; border-right:1px solid var(--border); border-bottom:0; background:var(--canvas); }
+html[data-skin] .workspace-projects .brand { justify-content:flex-start; gap:10px; padding:0 4px 28px; }
+html[data-skin] .workspace-projects .brand-name { display:block; font-size:16px; }
+html[data-skin] .workspace-projects .brand-mark { letter-spacing:-1px; padding:0; width:32px; height:32px; font-size:12px; }
+.workspace-rail-heading { display:flex; align-items:center; justify-content:space-between; padding:0 5px; }
+.workspace-projects .search { flex:0 0 auto; width:100%; margin:7px 0 18px; padding:7px; }
+.workspace-projects .search input { font-size:11px; }
+.workspace-project-list { display:flex; flex-direction:column; gap:7px; min-height:0; overflow:auto; }
+.workspace-project-link { display:flex; align-items:center; gap:9px; min-height:58px; padding:9px 8px; border:1px solid transparent; border-radius:var(--radius); }
+.workspace-project-link:hover { background:var(--sunken); }
+.workspace-project-link.active { border-color:var(--border); background:var(--surface); }
+.workspace-project-initial { display:grid; place-items:center; flex-shrink:0; width:28px; height:28px; border:1px solid var(--border); border-radius:calc(var(--radius)*.6); background:var(--surface); color:var(--accent); font:600 9px/1 ui-monospace,monospace; }
+.workspace-project-link .grow { min-width:0; }
+.workspace-project-link strong { display:block; font-size:11px; font-weight:600; overflow:hidden; text-overflow:ellipsis; }
+.workspace-project-link small { display:block; font-size:9px; color:var(--subtle); margin-top:4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.workspace-project-link>.dot { flex-shrink:0; }
+.workspace-branch { margin-top:25px; padding:18px 6px 10px; border-top:1px solid var(--border); }
+.workspace-branch>a { display:flex; align-items:center; gap:8px; margin:14px 0 5px; font-size:11px; }
+.workspace-branch .pill { margin-left:auto; font-size:9px; }
+.workspace-rail-bottom { margin-top:auto; padding-top:22px; display:flex; flex-direction:column; gap:4px; }
+.workspace-rail-bottom>a { display:flex; align-items:center; gap:10px; padding:9px; color:var(--muted); font-size:11px; border-radius:calc(var(--radius)*.6); }
+.workspace-rail-bottom>a:hover { background:var(--sunken); color:var(--accent); }
+.workspace-rail-bottom small { margin:15px 8px 0; color:var(--subtle); font:9px/1.5 ui-monospace,monospace; }
+html[data-skin] .app-shell[data-workspace='true']>.topbar { grid-column:2; grid-row:1; min-height:0; height:48px; padding:0 22px; border-bottom:1px solid var(--border); background:transparent; }
+html[data-skin] .app-shell[data-workspace='true']>.work-main { grid-column:2; grid-row:2; display:flex; min-height:0; height:100%; margin:0; padding:0; border:0; border-radius:0; overflow:hidden; box-shadow:none; background:transparent; }
+html[data-skin] .app-shell[data-workspace='true']>.statusbar { grid-column:2; grid-row:3; min-height:0; height:28px; }
+html[data-skin] .work-main>.work-center { flex:1 1 0; min-width:0; height:100%; overflow:hidden; }
+html[data-skin] .work-main>.session-sidebar { display:flex; flex:0 0 268px; width:268px; min-width:0; height:100%; border-right:0; border-left:1px solid var(--border); }
+html[data-skin] .work-main>.session-sidebar .sidebar-head { min-height:49px; padding:12px 14px; }
+/* Match the real compact list: 34px row inside a 38px rhythm, title first. */
+html[data-skin] .work-main>.session-sidebar .session-row { display:flex; align-items:center; gap:7px; height:34px; min-height:34px; margin:0 0 4px; padding:0 7px; border:1px solid transparent; border-radius:3px; box-shadow:none; }
+html[data-skin] .work-main>.session-sidebar .session-row[hidden] { display:none; }
+html[data-skin] .work-main>.session-sidebar .session-title { flex:1; min-width:0; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 12px/1.4 system-ui,'Microsoft YaHei',sans-serif; }
+html[data-skin] .work-main>.session-sidebar .session-trailing { flex:0 0 27px; text-align:right; font:10px/1 ui-monospace,monospace; color:var(--subtle); }
+html[data-skin] .work-main>.session-sidebar .session-row>.dot { flex:0 0 5px; width:5px; height:5px; }
+html[data-skin] .work-main>.session-sidebar .session-row.active { background:var(--app-accent-soft); box-shadow:inset 2px 0 var(--accent); }
+html[data-skin] .work-main>.session-sidebar .session-row.active .session-title { font-weight:600; }
+html[data-skin] .work-main>.session-sidebar .session-row:focus-visible { outline:1px solid var(--accent); outline-offset:-1px; }
+.context-ribbon { display:flex; align-items:center; gap:7px; padding:10px 12px 0; }
+.context-ribbon>.eyebrow { font-size:8px; margin-right:4px; }
+.context-ribbon button { padding:3px 7px; font-size:10px; border:1px solid var(--border); background:var(--sunken); border-radius:calc(var(--radius)*.5); }
+.mobile-projects { display:none; }
+html[data-interface='studio'] .app-shell[data-workspace='true'] { padding:0; gap:0; }
+html[data-interface='studio'] .app-shell[data-workspace='true']>.workspace-projects { background:var(--canvas); border:0; border-right:1px solid var(--border); border-radius:0; box-shadow:none; }
+html[data-interface='studio'] .work-main>.session-sidebar { margin:0; border:0; border-left:1px solid var(--border); border-radius:0; box-shadow:none; background:var(--canvas); }
+html[data-interface='studio'] .work-main>.work-center { border:0; border-radius:0; box-shadow:none; }
+html[data-interface='studio'] .app-shell[data-workspace='true']>.topbar { padding:0 22px; border-bottom:1px solid var(--border); }
+html[data-interface='studio'] .app-shell[data-workspace='true']>.statusbar { background:var(--canvas); border-top:1px solid var(--border); padding:0 16px; }
+html[data-interface='forge'] .workspace-projects { font-family:Consolas,'Liberation Mono','Noto Sans Mono CJK SC','Microsoft YaHei',monospace; }
+html[data-interface='forge'] .workspace-project-link { min-height:52px; }
+html[data-interface='forge'] .workspace-projects .brand { padding-bottom:20px; border-bottom:3px solid var(--accent); margin-bottom:16px; }
+html[data-interface='forge'] .workspace-branch { border-top:3px double var(--border); }
+html[data-interface='forge'] .work-main>.session-sidebar { background:var(--sunken); }
+html[data-interface='forge'] .workspace-project-link.active .workspace-project-initial { background:var(--accent); color:var(--on-accent); }
+html[data-skin] .app-shell[data-workspace='true'] .brand-inline { display:none!important; }
+@media(max-width:1100px) and (min-width:681px) {
+  html[data-skin] .app-shell[data-workspace='true'] { grid-template-columns:185px minmax(0,1fr); }
+  html[data-skin] .work-main>.session-sidebar { width:210px; flex-basis:210px; }
+  .conversation-title { padding:14px 18px; }
+  .conversation-body { padding:18px; }
+  .composer-area { padding:10px; }
+  .composer-bottom select { max-width:130px; font-size:10px; }
+  .work-tabs a { padding:8px; }
+  .workspace-project-link { gap:5px; padding-inline:4px; }
+}
+@media(max-width:680px) {
+  html[data-skin] .app-shell[data-workspace='true'] { display:flex; flex-direction:column; padding:0; height:100dvh; gap:0; }
+  html[data-skin] .app-shell[data-workspace='true']>.workspace-projects { display:none; }
+  html[data-skin] .app-shell[data-workspace='true']>.work-main { flex:1 1 0; min-height:0; height:auto; overflow:hidden; }
+  html[data-skin] .work-main>.session-sidebar { display:none; }
+  html[data-skin] .work-main>.work-center { border:0; border-radius:0; height:100%; box-shadow:none; }
+  html[data-skin] .app-shell[data-workspace='true']>.topbar { height:45px; flex:0 0 45px; padding:5px 12px; }
+  html[data-skin] .app-shell[data-workspace='true']>.statusbar { height:25px; flex:0 0 25px; font-size:8px; padding-inline:12px; }
+  .mobile-projects { display:inline-flex; }
+  .context-ribbon { gap:4px; padding-top:6px; }
+  .context-ribbon>.eyebrow { display:none; }
+  .context-ribbon button { padding:3px 7px; }
+  .work-tabs .mobile-sessions,.work-tabs .mobile-projects { width:27px; }
+}
+
+/* Readable UI labels; never bundled remote fonts. */
+html[data-customized='true'] .app-shell { font-family: var(--font); }
+.app-shell[data-workspace='true'] :is(.session-title,.session-entry-title,.project-entry-title,.work-tabs a,.work-tabs button,.session-group-label,.conversation-title .pill) { font-size: 12px; }
+.app-shell[data-workspace='true'] :is(.message-body,.message-content,.message p,.agent-message p) { font-size: 14px; line-height: 1.85; }
+.app-shell[data-workspace='true'] .composer textarea { font-family: var(--font); font-size: 14px; }

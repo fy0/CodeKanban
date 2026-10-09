@@ -1473,7 +1473,7 @@ export default {
     terminalQuickActionIconCursor: 'Cursor',
     terminalQuickActionIconCopilot: 'Copilot',
     terminalTheme: '终端配色',
-    terminalThemeTip: '仅控制 xterm 正文；选择“跟随主题”时才随界面主题切换，并即时生效',
+    terminalThemeTip: '仅控制 xterm 正文；选择“跟随主题”时会随当前主题切换，并即时生效',
     terminalFontSettings: '终端字体设置',
     terminalFontDefault: '推荐默认',
     terminalFontFamily: '字体',
@@ -1754,7 +1754,7 @@ export default {
     dark: '暗色',
     dim: '柔和暗色',
     warm: '暖色',
-    presetTheme: '预设主题',
+    presetTheme: '主题',
     followSystem: '跟随系统主题',
     followSystemHint:
       '默认等同关闭，仅表示未显式设置；选择“是”后将根据系统深色/浅色模式自动切换主题',
@@ -1764,7 +1764,7 @@ export default {
     maintenanceWarningFollowSystem:
       '开启跟随系统主题后，应用将在受支持的亮色与暗色主题之间自动切换。是否继续开启？',
     customTheme: '自定义主题',
-    customThemeHint: '自定义颜色后将覆盖预设主题配置',
+    customThemeHint: '自定义颜色会覆盖当前主题的颜色设置',
     terminalColors: '终端颜色',
     statusColors: '终端页签状态提醒',
     baseColors: '基础界面',

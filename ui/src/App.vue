@@ -5,6 +5,10 @@ import { storeToRefs } from 'pinia';
 import { zhCN, dateZhCN, enUS, dateEnUS, darkTheme, type GlobalThemeOverrides } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
 import AppInitializer from '@/components/common/AppInitializer.vue';
+import AppearanceShell from '@/components/appearance/AppearanceShell.vue';
+import { useAppearanceStore } from '@/stores/appearance';
+import { useAppearanceRuntime } from '@/composables/useAppearanceRuntime';
+import { FONT_STACKS } from '@/themes/core';
 import NotePad from '@/components/notepad/NotePad.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
@@ -19,6 +23,8 @@ import { createThemeSemanticPalette } from '@/utils/themeSemanticPalette';
 import { APP_NAME } from '@/constants/app';
 
 const settingsStore = useSettingsStore();
+const appearance = useAppearanceStore();
+useAppearanceRuntime();
 const authStore = useAuthStore();
 const projectStore = useProjectStore();
 const {
@@ -90,12 +96,26 @@ const naiveTheme = computed(() => (isDarkTheme.value ? darkTheme : null));
 
 // 使用提取的主题配置函数，简化 App.vue 代码
 const themeOverrides = computed<GlobalThemeOverrides>(() => {
-  return createThemeOverrides(
+  const base = createThemeOverrides(
     theme.value,
     resolvedTextColor.value,
     inputBorderColor.value,
     inputBorderHoverColor.value
   );
+  if (!appearance.customized) return base;
+  const layout = appearance.resolved.layout;
+  return {
+    ...base,
+    common: {
+      ...base.common,
+      fontFamily: FONT_STACKS[layout.font],
+      fontSize: `${layout.fontSize}px`,
+      borderRadius: `${layout.radius}px`,
+      heightSmall: layout.density === 'compact' ? '26px' : '28px',
+      heightMedium: layout.density === 'compact' ? '30px' : '34px',
+      heightLarge: layout.density === 'compact' ? '36px' : '40px',
+    },
+  };
 });
 
 // 使用 watch 直接设置全局 CSS 变量到 :root，确保所有组件都能访问
@@ -270,7 +290,9 @@ onMounted(() => {
   }
 
   mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  appearance.setSystemDark(mediaQuery.matches);
   handleChange = () => {
+    appearance.setSystemDark(mediaQuery!.matches);
     if (followSystemTheme.value) {
       // 系统主题变化时，重新应用主题（使用专用方法，不关闭 followSystemTheme）
       const prefersDark = mediaQuery!.matches;
@@ -329,7 +351,7 @@ watch(
           <n-message-provider>
             <n-modal-provider>
               <AppInitializer />
-              <RouterView />
+              <AppearanceShell><RouterView /></AppearanceShell>
               <NotePad v-if="shouldRenderWorkspaceOverlays && shouldShowGlobalNotepad" />
             </n-modal-provider>
           </n-message-provider>

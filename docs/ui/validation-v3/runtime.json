@@ -1,0 +1,788 @@
+{
+  "scope": "Production Vue UI + real disposable Go backend/SQLite/Git; no model execution",
+  "sessionCount": 1000,
+  "checks": [
+    {
+      "name": "real backend lists all fixture sessions",
+      "passed": true,
+      "durationMs": 3,
+      "evidence": {
+        "loaded": 1000
+      }
+    },
+    {
+      "name": "classic/light: compact rows, fixed regions and draft continuity",
+      "passed": true,
+      "durationMs": 271,
+      "evidence": {
+        "projects": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 900,
+          "right": 240
+        },
+        "main": {
+          "x": 240,
+          "y": 44,
+          "width": 1000,
+          "height": 856,
+          "right": 1240
+        },
+        "sessions": {
+          "x": 1240,
+          "y": 44,
+          "width": 200,
+          "height": 856,
+          "right": 1440
+        },
+        "rowCount": 21,
+        "rowHeights": [
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34
+        ],
+        "slotHeights": [
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38
+        ],
+        "visibleRows": 19,
+        "titleWhiteSpace": "nowrap",
+        "overflow": false
+      }
+    },
+    {
+      "name": "classic/dark: compact rows, fixed regions and draft continuity",
+      "passed": true,
+      "durationMs": 10616,
+      "evidence": {
+        "projects": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 900,
+          "right": 240
+        },
+        "main": {
+          "x": 240,
+          "y": 44,
+          "width": 1000,
+          "height": 856,
+          "right": 1240
+        },
+        "sessions": {
+          "x": 1240,
+          "y": 44,
+          "width": 200,
+          "height": 856,
+          "right": 1440
+        },
+        "rowCount": 21,
+        "rowHeights": [
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34
+        ],
+        "slotHeights": [
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38
+        ],
+        "visibleRows": 19,
+        "titleWhiteSpace": "nowrap",
+        "overflow": false
+      }
+    },
+    {
+      "name": "studio/light: compact rows, fixed regions and draft continuity",
+      "passed": true,
+      "durationMs": 7725,
+      "evidence": {
+        "projects": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 900,
+          "right": 240
+        },
+        "main": {
+          "x": 240,
+          "y": 44,
+          "width": 1000,
+          "height": 856,
+          "right": 1240
+        },
+        "sessions": {
+          "x": 1240,
+          "y": 44,
+          "width": 200,
+          "height": 856,
+          "right": 1440
+        },
+        "rowCount": 21,
+        "rowHeights": [
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34
+        ],
+        "slotHeights": [
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38
+        ],
+        "visibleRows": 19,
+        "titleWhiteSpace": "nowrap",
+        "overflow": false
+      }
+    },
+    {
+      "name": "studio/dark: compact rows, fixed regions and draft continuity",
+      "passed": true,
+      "durationMs": 11561,
+      "evidence": {
+        "projects": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 900,
+          "right": 240
+        },
+        "main": {
+          "x": 240,
+          "y": 44,
+          "width": 1000,
+          "height": 856,
+          "right": 1240
+        },
+        "sessions": {
+          "x": 1240,
+          "y": 44,
+          "width": 200,
+          "height": 856,
+          "right": 1440
+        },
+        "rowCount": 21,
+        "rowHeights": [
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34
+        ],
+        "slotHeights": [
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38
+        ],
+        "visibleRows": 19,
+        "titleWhiteSpace": "nowrap",
+        "overflow": false
+      }
+    },
+    {
+      "name": "forge/light: compact rows, fixed regions and draft continuity",
+      "passed": true,
+      "durationMs": 8195,
+      "evidence": {
+        "projects": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 900,
+          "right": 240
+        },
+        "main": {
+          "x": 240,
+          "y": 44,
+          "width": 1000,
+          "height": 856,
+          "right": 1240
+        },
+        "sessions": {
+          "x": 1240,
+          "y": 44,
+          "width": 200,
+          "height": 856,
+          "right": 1440
+        },
+        "rowCount": 21,
+        "rowHeights": [
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34
+        ],
+        "slotHeights": [
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38
+        ],
+        "visibleRows": 19,
+        "titleWhiteSpace": "nowrap",
+        "overflow": false
+      }
+    },
+    {
+      "name": "forge/dark: compact rows, fixed regions and draft continuity",
+      "passed": true,
+      "durationMs": 10220,
+      "evidence": {
+        "projects": {
+          "x": 0,
+          "y": 0,
+          "width": 240,
+          "height": 900,
+          "right": 240
+        },
+        "main": {
+          "x": 240,
+          "y": 44,
+          "width": 1000,
+          "height": 856,
+          "right": 1240
+        },
+        "sessions": {
+          "x": 1240,
+          "y": 44,
+          "width": 200,
+          "height": 856,
+          "right": 1440
+        },
+        "rowCount": 21,
+        "rowHeights": [
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34
+        ],
+        "slotHeights": [
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38
+        ],
+        "visibleRows": 19,
+        "titleWhiteSpace": "nowrap",
+        "overflow": false
+      }
+    },
+    {
+      "name": "paper/light: compact rows, fixed regions and draft continuity",
+      "passed": true,
+      "durationMs": 7314,
+      "evidence": {
+        "projects": {
+          "x": 10,
+          "y": 10,
+          "width": 240,
+          "height": 880,
+          "right": 250
+        },
+        "main": {
+          "x": 251,
+          "y": 55,
+          "width": 978,
+          "height": 834,
+          "right": 1229
+        },
+        "sessions": {
+          "x": 1229,
+          "y": 55,
+          "width": 200,
+          "height": 834,
+          "right": 1429
+        },
+        "rowCount": 21,
+        "rowHeights": [
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34
+        ],
+        "slotHeights": [
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38
+        ],
+        "visibleRows": 18,
+        "titleWhiteSpace": "nowrap",
+        "overflow": false
+      }
+    },
+    {
+      "name": "paper/dark: compact rows, fixed regions and draft continuity",
+      "passed": true,
+      "durationMs": 11252,
+      "evidence": {
+        "projects": {
+          "x": 10,
+          "y": 10,
+          "width": 240,
+          "height": 880,
+          "right": 250
+        },
+        "main": {
+          "x": 251,
+          "y": 55,
+          "width": 978,
+          "height": 834,
+          "right": 1229
+        },
+        "sessions": {
+          "x": 1229,
+          "y": 55,
+          "width": 200,
+          "height": 834,
+          "right": 1429
+        },
+        "rowCount": 21,
+        "rowHeights": [
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34,
+          34
+        ],
+        "slotHeights": [
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38,
+          38
+        ],
+        "visibleRows": 18,
+        "titleWhiteSpace": "nowrap",
+        "overflow": false
+      }
+    },
+    {
+      "name": "large typography and comfortable density never enlarge session rows",
+      "passed": true,
+      "durationMs": 17232,
+      "evidence": {
+        "rowHeight": 34,
+        "slotHeight": 38
+      }
+    },
+    {
+      "name": "1000-session virtual scroll reaches the tail without mounting the full collection",
+      "passed": true,
+      "durationMs": 5760,
+      "evidence": {
+        "rendered": 19,
+        "scrollTop": 37357,
+        "tail": true
+      }
+    },
+    {
+      "name": "search by title and switch with the keyboard",
+      "passed": true,
+      "durationMs": 16435,
+      "evidence": {
+        "selected": "0500 · 检查文件预览与 Git 差异"
+      }
+    },
+    {
+      "name": "Theme Studio renders, switches by card click and rejects malformed imports",
+      "passed": true,
+      "durationMs": 1354,
+      "evidence": {
+        "invalidImportApplied": false
+      }
+    },
+    {
+      "name": "valid theme import previews both schemes before applying and persists after reload",
+      "passed": true,
+      "durationMs": 4819,
+      "evidence": {
+        "previewSchemes": 2,
+        "appliedId": "test-studio",
+        "reloadRetained": true
+      }
+    },
+    {
+      "name": "system mode follows live operating-system appearance changes",
+      "passed": true,
+      "durationMs": 37043,
+      "evidence": {
+        "light": true,
+        "dark": true
+      }
+    },
+    {
+      "name": "theme changes synchronize to another real browser tab",
+      "passed": true,
+      "durationMs": 15749,
+      "evidence": {
+        "bidirectionalStorageEvents": true
+      }
+    },
+    {
+      "name": "terminal instance survives theme changes with its connection retained",
+      "passed": true,
+      "durationMs": 27288,
+      "evidence": {
+        "sameTerminalDOM": true,
+        "sameSessionId": true,
+        "clientStatus": "ready",
+        "realShellResponse": true
+      }
+    },
+    {
+      "name": "real files panel loads",
+      "passed": true,
+      "durationMs": 217,
+      "evidence": {
+        "mounted": true
+      }
+    },
+    {
+      "name": "real changes panel loads",
+      "passed": true,
+      "durationMs": 302,
+      "evidence": {
+        "mounted": true
+      }
+    },
+    {
+      "name": "production route /",
+      "passed": true,
+      "durationMs": 358,
+      "evidence": {
+        "mounted": true
+      }
+    },
+    {
+      "name": "production route /settings",
+      "passed": true,
+      "durationMs": 516,
+      "evidence": {
+        "mounted": true
+      }
+    },
+    {
+      "name": "production route /guide",
+      "passed": true,
+      "durationMs": 295,
+      "evidence": {
+        "mounted": true
+      }
+    },
+    {
+      "name": "production route branches",
+      "passed": true,
+      "durationMs": 173,
+      "evidence": {
+        "mounted": true
+      }
+    },
+    {
+      "name": "mobile workspace mounts and retains navigation at 390px",
+      "passed": true,
+      "durationMs": 6465,
+      "evidence": {
+        "width": 390
+      }
+    },
+    {
+      "name": "real password-gated login renders in all themes and returns to the protected workspace",
+      "passed": true,
+      "durationMs": 27303,
+      "evidence": {
+        "loginVariants": 8,
+        "realCookieAuthentication": true,
+        "protectedRedirect": true
+      }
+    },
+    {
+      "name": "no uncaught page exceptions",
+      "passed": true,
+      "durationMs": 1,
+      "evidence": {
+        "count": 0
+      }
+    }
+  ],
+  "exceptions": [],
+  "startedAt": "2026-10-04T04:59:58.743Z",
+  "finishedAt": "2026-10-04T05:04:09.878Z"
+}

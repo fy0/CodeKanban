@@ -4,6 +4,8 @@ import './styles/chat-markdown.css';
 import './styles/project-badges.css';
 import './styles/variables.css';
 import './styles/fixes.css';
+import './styles/appearance.css';
+import './styles/appearance-designs.css';
 
 import { createApp } from 'vue';
 

@@ -22,7 +22,9 @@
     "lint:fix": "run-s lint:fix:oxlint lint:fix:eslint",
     "format": "prettier --write . --ignore-unknown",
     "format:check": "prettier --check . --ignore-unknown",
-    "check": "run-p type-check lint test"
+    "check": "run-p type-check lint test",
+    "prototypes:build": "node ../tools/build-ui-prototypes.mjs",
+    "test:appearance": "vitest run src/themes/__tests__/core.test.ts src/stores/__tests__/appearance.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.0.1",

@@ -1,0 +1,160 @@
+/* Appearance v2: one workspace anatomy, three genuinely different visual systems.
+ * Shared with the offline previews by build-ui-prototypes.mjs.
+ * Do not reorder regions, set sidebar widths, or change virtual row heights here.
+ */
+html[data-customized='true'] {
+  --ck-panel-fill: var(--app-surface);
+  --ck-panel-edge: var(--app-border);
+  --ck-depth: none;
+  --ck-canvas-art: none;
+}
+html[data-customized='true'][data-material='glass'] {
+  --ck-panel-fill: color-mix(in srgb, var(--app-surface) 86%, transparent);
+  --ck-panel-edge: color-mix(in srgb, var(--app-surface-raised) 50%, var(--app-border));
+  --ck-depth: 0 12px 36px color-mix(in srgb, var(--app-accent) 9%, transparent), inset 0 1px 0 color-mix(in srgb, var(--app-surface-raised) 65%, transparent);
+  --ck-canvas-art: radial-gradient(ellipse at 12% 0%, color-mix(in srgb, var(--app-accent) 18%, transparent), transparent 52%), radial-gradient(ellipse at 95% 100%, color-mix(in srgb, var(--app-working) 12%, transparent), transparent 50%);
+}
+html[data-customized='true'][data-texture='grid'] {
+  --ck-canvas-art: linear-gradient(color-mix(in srgb, var(--app-border) 14%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--app-border) 14%, transparent) 1px, transparent 1px);
+}
+html[data-customized='true'][data-texture='ruled'] {
+  --ck-canvas-art: repeating-linear-gradient(0deg, transparent, transparent 3px, color-mix(in srgb, var(--app-text-primary) 2%, transparent) 3px, color-mix(in srgb, var(--app-text-primary) 2%, transparent) 4px);
+}
+html[data-customized='true'] :is(.project-workspace, .app-shell, .ck-shell, .login-page) {
+  background-color: var(--app-canvas);
+  background-image: var(--ck-canvas-art);
+  background-attachment: fixed;
+}
+html[data-customized='true'][data-texture='grid'] :is(.project-workspace,.app-shell,.ck-shell,.login-page) { background-size: 24px 24px; }
+html[data-customized='true'] :is(.n-page-header__title,.page-intro h1,.timeline-intro-title,.conversation-title h2,.login-card__title,.ck-login-story h2,.login-story h1,.guide-content h1,.settings-content h2) { font-family: var(--ck-heading-font); }
+html[data-customized='true']:not([data-interface='studio']) .project-card,
+html[data-customized='true'] :is(.settings-card-shell>.n-card,.branch-list>.n-card,.user-guide-page .n-card,.settings-card,.data-table,.activity-card,.login-card,.tool-card,.tool-call,.composer-input-shell) {
+  border-width: var(--ck-border-width,1px);
+  border-color: var(--ck-panel-edge);
+  border-radius: var(--ck-radius);
+}
+html[data-customized='true']:not([data-interface='studio']) .project-card,
+html[data-customized='true'] :is(.settings-card-shell>.n-card,.user-guide-page .n-card,.settings-card,.activity-card,.login-card) {
+  background: var(--ck-panel-fill);
+  box-shadow: var(--ck-depth);
+}
+html[data-customized='true'][data-material='glass'] :is(.project-card,.settings-card-shell>.n-card,.login-card,.project-sidebar-shell,.session-sidebar,.ck-shell-nav,.ck-shell-header) { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+html[data-customized='true'] :is(.workspace-main-shell,.workspace-tab-view,.web-session-panel,.recent-projects) { background: transparent; }
+html[data-customized='true'] :is(.project-sidebar-shell,.session-sidebar,.workspace-worktree-sider) { background: var(--ck-panel-fill); }
+html[data-customized='true'] :is(.web-session-panel .panel-main,.work-center) { background: var(--ck-panel-fill); }
+html[data-customized='true'] :is(.workspace-tab-view>.tab-header,.work-tabs,.web-session-panel .panel-header) { background: var(--ck-panel-fill); border-color: var(--ck-panel-edge); }
+html[data-customized='true'] :is(.session-sidebar-header,.recent-projects-header,.sidebar-head) { font-family: var(--ck-heading-font); border-bottom: var(--ck-border-width) solid var(--app-border); }
+html[data-customized='true'] :is(.session-sidebar-item,.session-row) { border-radius: min(var(--ck-radius),12px); }
+/* Studio / Precision: a continuous workbench, not floating glass cards.
+ * Do not set session row heights or sidebar widths: those belong to the virtual list. */
+html[data-interface='studio'] .workspace-desktop-shell { padding: 0; gap: 0; }
+html[data-interface='studio'] .project-sidebar-shell { border: 0; border-right: 1px solid var(--app-border); border-radius: 0; box-shadow: none; background: var(--app-canvas); }
+html[data-interface='studio'] :is(.workspace-main-shell,.workspace-tab-view) { border-radius: 0; box-shadow: none; }
+html[data-interface='studio'] .workspace-tab-view { border: 0; }
+html[data-interface='studio'] :is(.timeline-item.kind-user .item-bubble,.message-user) { border: 1px solid var(--app-border); border-radius: var(--ck-radius); background: var(--app-surface-sunken); box-shadow: none; }
+html[data-interface='studio'] :is(.tool-card,.tool-call) { background: var(--app-surface); border: 1px solid var(--app-border); border-radius: var(--ck-radius); box-shadow: none; }
+html[data-interface='studio'] .web-session-panel .composer-input-shell,
+html[data-interface='studio'] .web-session-panel .composer-input-shell:focus-within { background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+html[data-interface='studio'] :is(.session-sidebar-item.is-active,.session-row.active,.workspace-project-link.active) { background: var(--app-accent-soft); border-color: transparent; }
+html[data-interface='studio'] :is(.project-icon,.assistant-symbol,.ck-shell-brand b,.brand-mark) { border-radius: 5px; background: var(--app-text-primary); color: var(--app-surface); box-shadow: none; }
+html[data-interface='studio'] :is(.page-intro h1,.conversation-title h2) { font-weight: 600; letter-spacing: -.3px; }
+html[data-interface='studio'] .ck-shell-nav { background: var(--app-canvas); }
+html[data-interface='studio'] .web-session-panel .timeline-scroll { background: var(--app-surface); }
+
+/* Large session collections are title-first in every design. Preserve the original
+ * 34px row / 38px virtual slot, single line, action targets and keyboard behavior. */
+html[data-customized='true'] .session-sidebar .session-sidebar-item { border-radius: 3px; border-color: transparent; box-shadow: none; background: transparent; }
+html[data-customized='true'] .session-sidebar .session-sidebar-item:hover { background: var(--app-surface-hover); }
+html[data-customized='true'] .session-sidebar .session-sidebar-item.is-active { background: var(--app-accent-soft); box-shadow: inset 2px 0 var(--app-accent); }
+html[data-customized='true'] .session-sidebar .session-sidebar-item:focus-within { outline: 1px solid var(--app-focus-ring); outline-offset: -1px; }
+html[data-customized='true'] .session-sidebar .session-sidebar-item-title { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif; font-weight: 500; }
+html[data-customized='true'] .session-sidebar .session-sidebar-item.is-active .session-sidebar-item-title { color: var(--app-text-primary); font-weight: 600; }
+/* Forge / Industrial: utilitarian hard edges, mechanical rules and signal amber. */
+html[data-interface='forge'] :is(.workspace-desktop-shell,.work-main) { gap: 0; }
+html[data-interface='forge'] :is(.project-sidebar-shell,.workspace-projects) { border-right: var(--ck-border-width) solid var(--app-border-strong); }
+html[data-interface='forge'] :is(.tab-header,.work-tabs,.panel-header,.session-sidebar-header,.sidebar-head,.recent-projects-header,.topbar) { border-bottom: var(--ck-border-width) solid var(--app-border-strong); background: var(--app-surface-sunken); }
+html[data-interface='forge'] :is(.workspace-tab-view>.tab-header,.work-tabs) { box-shadow: inset 0 2px var(--app-accent); }
+html[data-interface='forge'] :is(.workspace-tab-view>.tab-header .tab-item.active,.work-tabs a.active) { color: var(--app-accent-contrast); background: var(--app-accent); border-radius: var(--ck-radius); border-bottom-color: var(--app-accent); }
+html[data-interface='forge'] :is(.session-sidebar-header,.recent-projects-header,.sidebar-head,.session-label,.nav-label,.eyebrow) { letter-spacing: .08em; text-transform: uppercase; }
+html[data-interface='forge'] :is(.session-row,.session-sidebar-item,.project-item,.workspace-project-link) { border-radius: var(--ck-radius); }
+html[data-interface='forge'] :is(.session-row.active,.session-sidebar-item.is-active,.workspace-project-link.active) { background: var(--app-accent-soft); box-shadow: inset 3px 0 0 var(--app-accent); }
+html[data-interface='forge'] :is(.timeline-item.kind-user .item-bubble,.message-user) { background: var(--app-surface-sunken); border: var(--ck-border-width) solid var(--app-border); border-left: 3px solid var(--app-accent); border-radius: var(--ck-radius); }
+html[data-interface='forge'] :is(.tool-card,.tool-call,.inline-change,.approval-card) { border-radius: var(--ck-radius); background: var(--app-surface-sunken); box-shadow: none; border: var(--ck-border-width) solid var(--app-border); }
+html[data-interface='forge'] :is(.tool-header,.tool-call>summary) { background: color-mix(in srgb,var(--app-border) 14%,var(--app-surface)); font-family: var(--ck-heading-font); }
+html[data-interface='forge'] :is(.composer-input-shell,.composer-area .composer) { border-radius: var(--ck-radius); border: var(--ck-border-width) solid var(--app-border-strong); background: var(--app-surface-sunken); box-shadow: inset 0 3px var(--app-accent); }
+html[data-interface='forge'] :is(.project-card,.settings-card-shell>.n-card,.settings-card,.login-card,.component-card,.activity-card,.data-table) { border-radius: var(--ck-radius); box-shadow: 3px 3px 0 var(--app-border); background: var(--app-surface); }
+html[data-interface='forge'] .project-card { border-top: 3px solid var(--app-accent); }
+html[data-interface='forge'] .project-card:hover { transform: none; box-shadow: 3px 3px 0 var(--app-accent); }
+html[data-interface='forge'] :is(.pill,.avatar,.agent-dot,.assistant-symbol,.project-icon,.brand-mark) { border-radius: var(--ck-radius); }
+html[data-interface='forge'] :is(.brand-mark,.ck-shell-brand b,.assistant-symbol) { color: var(--app-accent-contrast); background: var(--app-accent); }
+html[data-interface='forge'] :is(.page-intro h1,.n-page-header__title,.conversation-title h2) { font-size: 23px; font-weight: 750; letter-spacing: -.5px; }
+html[data-interface='forge'] :is(.statusbar,.terminal-footer) { background: var(--app-accent); color: var(--app-accent-contrast); border-top-color: var(--app-accent); }
+html[data-interface='forge'] :is(.statusbar .subtle,.statusbar .muted) { color: inherit; }
+html[data-interface='forge'] :is(.live-card,.runtime-strip) { border-left: 3px solid var(--app-accent); border-radius: var(--ck-radius); }
+/* Tide: sea-glass color, soft light and rounded content surfaces.
+ * Keep the original navigation, panel widths and virtual-list geometry. */
+html[data-interface='tide'][data-texture='none'] {
+  --ck-canvas-art: radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--app-accent) 12%, transparent), transparent 55%), radial-gradient(ellipse at 100% 100%, color-mix(in srgb, var(--app-info) 10%, transparent), transparent 55%);
+}
+html[data-interface='tide'] {
+  --ck-tide-shadow: 0 4px 18px color-mix(in srgb, var(--app-accent) 7%, transparent);
+}
+html[data-interface='tide'] .ck-shell { min-height: 100dvh; }
+html[data-interface='tide'] :is(.project-sidebar-shell,.session-sidebar,.workspace-worktree-sider) {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--app-accent) 7%, var(--app-canvas)), var(--app-canvas) 75%);
+}
+html[data-interface='tide'] :is(.workspace-tab-view,.workspace-main-shell) { border-radius: 0; box-shadow: none; }
+html[data-interface='tide'] .workspace-tab-view>.tab-header { background: transparent; }
+html[data-interface='tide'] .web-session-panel .timeline-scroll { background: var(--app-surface); }
+html[data-interface='tide'] :is(.project-card,.settings-card-shell>.n-card,.user-guide-page .n-card,.login-card) {
+  background: linear-gradient(145deg, var(--app-surface-raised), var(--app-surface));
+  border: 1px solid var(--app-border);
+  box-shadow: var(--ck-tide-shadow);
+}
+html[data-interface='tide'] .project-card:hover {
+  border-color: var(--app-accent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--app-accent) 14%, transparent);
+  transform: translateY(-2px);
+}
+html[data-interface='tide'] :is(.n-page-header__title,.timeline-intro-title,.login-card__title) { font-weight: 650; letter-spacing: -.4px; }
+html[data-interface='tide'] .project-item.active { background: var(--app-accent-soft); border-radius: 0; }
+html[data-interface='tide'] .session-sidebar .session-sidebar-item.is-active {
+  background: linear-gradient(90deg, var(--app-accent-soft), color-mix(in srgb, var(--app-accent-soft) 45%, transparent));
+}
+html[data-interface='tide'] .web-session-panel .timeline-item.kind-user .item-bubble {
+  background: color-mix(in srgb, var(--app-accent) 9%, var(--app-surface));
+  border: 1px solid color-mix(in srgb, var(--app-accent) 20%, var(--app-border));
+  border-radius: var(--ck-radius) var(--ck-radius) 4px var(--ck-radius);
+  box-shadow: none;
+}
+html[data-interface='tide'] :is(.tool-card,.tool-call) { background: var(--app-surface-sunken); border-radius: var(--ck-radius); box-shadow: none; }
+html[data-interface='tide'] .web-session-panel .composer { background: linear-gradient(180deg, var(--app-surface), color-mix(in srgb, var(--app-accent) 4%, var(--app-surface))); }
+html[data-interface='tide'] .web-session-panel .composer-input-shell,
+html[data-interface='tide'] .web-session-panel .composer-input-shell:focus-within { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+html[data-interface='tide'] .ck-login-story h2 { color: var(--app-accent); }
+/* Material overrides also work on derived themes without copying these brand rules. */
+html[data-customized='true'][data-material='paper'] :is(.project-card,.settings-card,.login-card) { background-image: repeating-linear-gradient(0deg,transparent,transparent 3px,color-mix(in srgb,var(--app-text-primary) 2%,transparent) 3px,color-mix(in srgb,var(--app-text-primary) 2%,transparent) 4px); }
+html[data-customized='true'][data-heading-font] :is(.n-page-header__title,.timeline-intro-title,.page-intro h1,.conversation-title h2,.login-card__title) { font-family: var(--ck-heading-font); }
+/* Preview cards depict the SAME left / center / right hierarchy for every theme. */
+.ck-theme-preview { display: grid; grid-template-columns: 24% minmax(0,1fr) 24%; height: 110px; padding: 9px; gap: 5px; }
+.ck-preview-nav,.ck-preview-sessions { display: flex; flex-direction: column; gap: 8px; width: auto; height: auto; padding: 8px 4px; background: var(--preview-surface); }
+.ck-preview-sessions i { display: block; height: 4px; background: var(--preview-border); }
+.ck-preview-sessions i:first-child { background: var(--preview-accent); }
+.ck-theme-preview[data-design='tide'] { background: radial-gradient(ellipse at 0 0, color-mix(in srgb, var(--preview-accent) 20%, transparent), transparent 70%), var(--preview-bg); }
+.ck-theme-preview[data-design='tide'] :is(.ck-preview-nav,.ck-preview-sessions) { border-radius: 9px; background: color-mix(in srgb, var(--preview-accent) 7%, var(--preview-surface)); }
+.ck-theme-preview[data-design='tide'] .ck-preview-main>span i { border-radius: 6px; box-shadow: 0 3px 6px color-mix(in srgb, var(--preview-accent) 12%, transparent); }
+.ck-theme-preview[data-design='forge'] .ck-preview-nav { width: auto; border-top: 2px solid var(--preview-accent); }
+.ck-theme-preview[data-design='classic'] .ck-preview-nav { display: flex; }
+.ck-theme-preview[data-design='studio'] :is(.ck-preview-nav,.ck-preview-sessions) { border-radius: 7px; }
+.ck-theme-preview[data-design='forge'] :is(.ck-preview-nav,.ck-preview-sessions) { border-radius: 0; }
+@media (max-width: 768px) {
+  html[data-interface='studio'] .workspace-desktop-shell { padding: 0; }
+  html[data-customized='true'] .project-workspace.is-mobile { background-image: none; }
+  html[data-customized='true'][data-material='glass'] :is(.project-sidebar-shell,.session-sidebar) { backdrop-filter: none; }
+}
+@media (prefers-reduced-transparency: reduce) { html[data-customized='true'][data-material='glass'] { --ck-panel-fill: var(--app-surface); } }
+@media (prefers-reduced-motion: reduce) { html[data-customized='true'] .project-card { transition: none; } }
+@media (forced-colors: active) {
+  html[data-customized='true'] :is(.project-workspace,.app-shell,.ck-shell,.login-page) { background-image: none; }
+  html[data-customized='true'] :is(.project-card,.workspace-tab-view,.session-row.active) { box-shadow: none; border: 1px solid CanvasText; }
+}

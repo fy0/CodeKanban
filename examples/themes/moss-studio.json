@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "moss-studio",
+  "name": "苔绿工作台",
+  "nameEn": "Moss Studio",
+  "description": "继承 Studio 的可移植示例；亮暗配色独立。",
+  "descriptionEn": "A portable Studio derivative with independent light/dark accents.",
+  "extends": "studio",
+  "defaultMode": "system",
+  "colors": {
+    "light": {
+      "accent": "#28684B",
+      "info": "#28684B"
+    },
+    "dark": {
+      "accent": "#A3D8B8",
+      "info": "#A3D8B8"
+    }
+  },
+  "layout": {
+    "radius": 10,
+    "density": "compact",
+    "navigation": "sidebar"
+  }
+}
