@@ -3025,7 +3025,7 @@ func TestGetCodexRuntimeConfigIncludesModelReasoningCatalog(t *testing.T) {
 
 	manager, err := NewManager(Config{
 		DataDir:   t.TempDir(),
-		CodexPath: writeFakeCodexModelCatalogCLI(t),
+		CodexPath: writeFakeCodexModelCatalogCLI(t, false),
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
@@ -3033,7 +3033,7 @@ func TestGetCodexRuntimeConfigIncludesModelReasoningCatalog(t *testing.T) {
 
 	config := manager.getWebSessionRuntimeConfigWithModels(false)
 	if len(config.Models) != 3 {
-		t.Fatalf("expected 3 catalog models, got %#v", config.Models)
+		t.Fatalf("expected 3 visible catalog models with hidden entries excluded, got %#v", config.Models)
 	}
 	if got := config.Models[0].SupportedReasoningEfforts; !reflect.DeepEqual(got, []ReasoningEffort{
 		ReasoningEffortLow,
@@ -3053,6 +3053,23 @@ func TestGetCodexRuntimeConfigIncludesModelReasoningCatalog(t *testing.T) {
 		ReasoningEffortMax,
 	}) {
 		t.Fatalf("unexpected Luna reasoning efforts: %#v", got)
+	}
+}
+
+func TestLoadCodexModelCatalogKeepsVisibleDaybreakModels(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	models, err := loadCodexModelCatalog(ctx, writeFakeCodexModelCatalogCLI(t, true), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, model := range models {
+		ids = append(ids, model.Model)
+	}
+	want := []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-daybreak-blue-latest", "gpt-daybreak-red-latest"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("visible model IDs = %v, want %v", ids, want)
 	}
 }
 
@@ -3856,6 +3873,8 @@ func TestNormalizeCodexReasoningEffortUsesModelCapabilities(t *testing.T) {
 		{name: "Astra Ultra", model: "gpt-6-astra", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
 		{name: "GPT-6 Sol Ultra", model: "gpt-6-sol", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
 		{name: "GPT-6 Sol None", model: "gpt-6-sol", effort: ReasoningEffortNone, want: ReasoningEffortDefault},
+		{name: "GPT-6.1 Sol Ultra", model: "gpt-6.1-sol", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
+		{name: "GPT-6.1 Sol None", model: "gpt-6.1-sol", effort: ReasoningEffortNone, want: ReasoningEffortDefault},
 		{name: "GPT-6 Luna Max", model: "gpt-6-luna", effort: ReasoningEffortMax, want: ReasoningEffortMax},
 		{name: "GPT-6 Luna Ultra", model: "gpt-6-luna", effort: ReasoningEffortUltra, want: ReasoningEffortDefault},
 		{name: "Sol Ultra", model: "gpt-5.6-sol", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
@@ -3873,6 +3892,69 @@ func TestNormalizeCodexReasoningEffortUsesModelCapabilities(t *testing.T) {
 	}
 }
 
+func TestCodexReasoningEffortUsesRuntimeCatalog(t *testing.T) {
+	catalog := []CodexModelInfo{{
+		Model:                     "gpt-6.1-sol",
+		SupportedReasoningEfforts: []ReasoningEffort{ReasoningEffortNone, ReasoningEffortHigh},
+	}}
+	tests := []struct {
+		name    string
+		catalog []CodexModelInfo
+		effort  ReasoningEffort
+		want    ReasoningEffort
+	}{
+		{name: "catalog enables effort missing from local template", catalog: catalog, effort: ReasoningEffortNone, want: ReasoningEffortNone},
+		{name: "catalog removes unsupported local effort", catalog: catalog, effort: ReasoningEffortUltra, want: ReasoningEffortDefault},
+		{name: "catalog preserves supported effort", catalog: catalog, effort: ReasoningEffortHigh, want: ReasoningEffortHigh},
+		{name: "missing catalog uses local fallback", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
+		{name: "empty supported list uses model default", catalog: []CodexModelInfo{{Model: "gpt-6.1-sol"}}, effort: ReasoningEffortHigh, want: ReasoningEffortDefault},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := &Manager{cfg: Config{
+				CodexPath:                   "codex",
+				DefaultAgentReasoningEffort: func(Agent) ReasoningEffort { return tt.effort },
+			}}
+			manager.codexContextWindow.models.value = tt.catalog
+			session := tables.WebSessionTable{
+				Agent:           string(AgentCodex),
+				Model:           "gpt-6.1-sol",
+				ReasoningEffort: string(tt.effort),
+				Cwd:             t.TempDir(),
+			}
+			if got := manager.resolveSessionReasoningEffort(AgentCodex, session.Model, ""); got != tt.want {
+				t.Fatalf("configured effort = %q, want %q", got, tt.want)
+			}
+			params := manager.codexTurnStartParams(session, "thread-id", "hello", nil)
+			settings := params["collaborationMode"].(map[string]any)["settings"].(map[string]any)
+			var wantWire any
+			if tt.want != ReasoningEffortDefault {
+				wantWire = string(tt.want)
+			}
+			if got := settings["reasoning_effort"]; got != wantWire {
+				t.Fatalf("turn reasoning_effort = %#v, want %#v", got, wantWire)
+			}
+			cmd, _, _, err := manager.buildExecCommand(context.Background(), session, "hello", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotOverride := ""
+			for _, arg := range cmd.Args {
+				if strings.HasPrefix(arg, "model_reasoning_effort=") {
+					gotOverride = arg
+				}
+			}
+			wantOverride := ""
+			if tt.want != ReasoningEffortDefault {
+				wantOverride = fmt.Sprintf("model_reasoning_effort=%q", string(tt.want))
+			}
+			if gotOverride != wantOverride {
+				t.Fatalf("CLI effort override = %q, want %q", gotOverride, wantOverride)
+			}
+		})
+	}
+}
+
 func TestUsesCodexIncompleteTurnGuard(t *testing.T) {
 	tests := []struct {
 		model string
@@ -3880,6 +3962,7 @@ func TestUsesCodexIncompleteTurnGuard(t *testing.T) {
 	}{
 		{model: "gpt-6-astra", want: true},
 		{model: "gpt-6-sol", want: true},
+		{model: "gpt-6.1-sol", want: true},
 		{model: "gpt-6-luna", want: true},
 		{model: "gpt-5.5", want: false},
 	}
@@ -9900,7 +9983,7 @@ exit 1
 	return path
 }
 
-func writeFakeCodexModelCatalogCLI(t *testing.T) string {
+func writeFakeCodexModelCatalogCLI(t *testing.T, daybreakVisible bool) string {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -9920,9 +10003,14 @@ input.on('line', line => {
     return;
   }
   if (message.method === 'model/list') {
-    const model = (name, efforts, defaultReasoningEffort) => ({
+    if (message.params.includeHidden !== false) {
+      process.stdout.write(JSON.stringify({ id: message.id, error: { code: -32602, message: 'model picker must request includeHidden false' } }) + '\n');
+      return;
+    }
+    const model = (name, efforts, defaultReasoningEffort, hidden = false) => ({
       model: name,
       displayName: name,
+      hidden,
       defaultReasoningEffort,
       supportedReasoningEfforts: efforts.map(option),
     });
@@ -9933,6 +10021,10 @@ input.on('line', line => {
           model('gpt-5.6-sol', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'low'),
           model('gpt-5.6-terra', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium'),
           model('gpt-5.6-luna', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
+          // Return hidden entries anyway to exercise defensive client filtering.
+          model('gpt-daybreak-blue-latest', ['low', 'medium', 'high'], 'low', __DAYBREAK_HIDDEN__),
+          model('gpt-daybreak-red-latest', ['low', 'medium', 'high'], 'medium', __DAYBREAK_HIDDEN__),
+          model('codex-auto-review', ['low', 'medium', 'high'], 'medium', false),
         ],
         nextCursor: null,
       },
@@ -9940,6 +10032,7 @@ input.on('line', line => {
   }
 });
 `
+	script = strings.ReplaceAll(script, "__DAYBREAK_HIDDEN__", fmt.Sprintf("%t", !daybreakVisible))
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake Codex model catalog CLI failed: %v", err)
 	}

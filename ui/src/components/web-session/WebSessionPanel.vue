@@ -2227,6 +2227,7 @@
                     :virtual-scroll="selectedAgent === 'pi'"
                     size="small"
                     :options="modelOptions"
+                    :fallback-option="modelFallbackOption"
                   >
                     <template v-if="selectedAgent === 'pi' || selectedAgent === 'devin'" #header>
                       <div class="pi-model-search-header">
@@ -3803,9 +3804,6 @@ import {
   CLAUDE_RUNTIME_OPTIONS,
   CLAUDE_MODEL_OPTIONS,
   resolveCCRModelOptions,
-  CODEX_ADDITIONAL_MODEL_OPTIONS,
-  CODEX_MODEL_OPTIONS,
-  CODEX_PRIMARY_MODEL_OPTIONS,
   DEVIN_MODEL_OPTIONS,
   CUSTOM_MODEL_VALUE,
   MORE_MODELS_VALUE,
@@ -3817,6 +3815,8 @@ import {
   rememberCustomModel,
   rememberPiFrequentModel,
   removeCustomModel,
+  resolveCodexModelMenuOptions,
+  resolveCodexModelOption,
   resolveCodexReasoningEfforts,
   resolveDevinModelOptions,
   resolveDevinModelForReasoning,
@@ -4428,6 +4428,9 @@ const activeAttachmentPreview = ref<{
 } | null>(null);
 const runtimeConfig = ref<WebSessionRuntimeConfig | null>(null);
 const codexRuntimeConfig = runtimeConfig;
+const codexModelMenuOptions = computed(() =>
+  resolveCodexModelMenuOptions(runtimeConfig.value?.models ?? [])
+);
 const codexRuntimeConfigReady = ref(false);
 let runtimeConfigRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let runtimeConfigRetryDelayMs = 500;
@@ -11570,11 +11573,17 @@ function getKnownModelLabel(value?: string | null) {
     [
       ...CLAUDE_MODEL_OPTIONS,
       ...resolveCCRModelOptions(runtimeConfig.value?.ccrModels ?? []),
-      ...CODEX_MODEL_OPTIONS,
+      ...codexModelMenuOptions.value.primary,
+      ...codexModelMenuOptions.value.additional,
       ...resolveDevinModelOptions(runtimeConfig.value?.devinModels ?? []),
       ...resolvePiModelOptions(runtimeConfig.value?.piModels ?? []),
-    ].find(option => option.value === normalizedModel)?.label ?? normalizedModel
+    ].find(option => option.value === normalizedModel)?.label ??
+    resolveCodexModelOption(normalizedModel).label
   );
+}
+
+function modelFallbackOption(value: string | number) {
+  return { value, label: getKnownModelLabel(String(value)) };
 }
 
 function renderModelOption(info: {
@@ -12256,7 +12265,9 @@ function builtinModelValuesForAgent(agent: WebSessionAgent) {
     return values;
   }
   if (agent === 'codex') {
-    return CODEX_MODEL_OPTIONS.map(option => option.value);
+    return [...codexModelMenuOptions.value.primary, ...codexModelMenuOptions.value.additional].map(
+      option => option.value
+    );
   }
   if (agent === 'devin') {
     return [
@@ -12351,27 +12362,24 @@ const modelOptions = computed(() => {
       ? filteredPiModelOptionGroups.value
       : withCurrentPiModelOption(filteredPiModelOptionGroups.value, activeModel);
   }
-  if (!showAdditionalCodexModels.value) {
-    return [
-      ...withCurrentModelOption(
-        [...CODEX_PRIMARY_MODEL_OPTIONS, ...customModelOptions.value],
-        activeModel
-      ),
-      { label: t('webSession.customModel'), value: CUSTOM_MODEL_VALUE },
-      { label: t('webSession.moreModels'), value: MORE_MODELS_VALUE },
-    ];
-  }
-  const primaryOptions = withCurrentModelOption(
-    [...CODEX_PRIMARY_MODEL_OPTIONS, ...customModelOptions.value],
+  const { primary, additional } = resolveCodexModelMenuOptions(
+    runtimeConfig.value?.models ?? [],
+    customModelsForAgent('codex'),
     activeModel
   );
-  const additionalOptions = CODEX_ADDITIONAL_MODEL_OPTIONS.filter(
-    option => !primaryOptions.some(primary => primary.value === option.value)
-  );
+  if (!showAdditionalCodexModels.value) {
+    return [
+      ...primary,
+      { label: t('webSession.customModel'), value: CUSTOM_MODEL_VALUE },
+      ...(additional.length
+        ? [{ label: t('webSession.moreModels'), value: MORE_MODELS_VALUE }]
+        : []),
+    ];
+  }
   return [
-    ...primaryOptions,
+    ...primary,
     { label: t('webSession.customModel'), value: CUSTOM_MODEL_VALUE },
-    ...additionalOptions,
+    ...additional,
   ];
 });
 
@@ -17615,7 +17623,6 @@ async function loadCodexRuntimeConfig(force = false) {
     if (generation !== runtimeConfigLoadGeneration) {
       return;
     }
-    codexRuntimeConfig.value = null;
     console.warn('[Web Session] Failed to load runtime config', error);
   } finally {
     if (generation === runtimeConfigLoadGeneration) {

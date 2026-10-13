@@ -6573,7 +6573,7 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		if strings.TrimSpace(session.Model) != "" {
 			args = append(args, "--model", strings.TrimSpace(session.Model))
 		}
-		if effort := normalizeCodexReasoningEffort(session.Model, ReasoningEffort(session.ReasoningEffort)); effort != ReasoningEffortDefault {
+		if effort := m.normalizeCodexReasoningEffort(session.Model, ReasoningEffort(session.ReasoningEffort)); effort != ReasoningEffortDefault {
 			args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", string(effort)))
 		}
 		for _, attachment := range attachments {
@@ -7755,7 +7755,7 @@ func (m *Manager) resolveSessionReasoningEffort(
 			}
 		}
 		if normalizedAgent == AgentCodex {
-			return normalizeCodexReasoningEffort(
+			return m.normalizeCodexReasoningEffort(
 				modelName,
 				ReasoningEffort(utils.DefaultWebSessionCodexReasoningEffort),
 			)
@@ -7763,7 +7763,7 @@ func (m *Manager) resolveSessionReasoningEffort(
 		return defaultReasoningEffort(agent, "")
 	default:
 		if normalizedAgent == AgentCodex {
-			return normalizeCodexReasoningEffort(modelName, ReasoningEffort(configured))
+			return m.normalizeCodexReasoningEffort(modelName, ReasoningEffort(configured))
 		}
 		return normalizeReasoningEffort(ReasoningEffort(configured))
 	}
@@ -7904,11 +7904,30 @@ func normalizeReasoningEffort(effort ReasoningEffort) ReasoningEffort {
 	}
 }
 
+func (m *Manager) normalizeCodexReasoningEffort(modelName string, effort ReasoningEffort) ReasoningEffort {
+	if m != nil {
+		// Use the same catalog as the picker without blocking a turn on a probe.
+		for _, model := range m.codexContextWindow.models.snapshot(cloneCodexModelCatalog) {
+			if !sameCodexModel(model.Model, modelName) {
+				continue
+			}
+			normalized := normalizeReasoningEffort(effort)
+			for _, supported := range model.SupportedReasoningEfforts {
+				if supported == normalized {
+					return normalized
+				}
+			}
+			return ReasoningEffortDefault
+		}
+	}
+	return normalizeCodexReasoningEffort(modelName, effort)
+}
+
 func normalizeCodexReasoningEffort(modelName string, effort ReasoningEffort) ReasoningEffort {
 	normalized := normalizeReasoningEffort(effort)
 	modelName = strings.ToLower(strings.TrimSpace(modelName))
 	switch modelName {
-	case "gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol", "gpt-5.6-terra":
+	case "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol", "gpt-5.6-terra":
 		switch normalized {
 		case ReasoningEffortDefault,
 			ReasoningEffortLow,

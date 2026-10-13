@@ -67,6 +67,7 @@ type runtimeCapabilityProbeHooks struct {
 type CodexModelInfo struct {
 	Model                     string            `json:"model"`
 	DisplayName               string            `json:"displayName"`
+	Hidden                    bool              `json:"hidden"`
 	DefaultReasoningEffort    ReasoningEffort   `json:"defaultReasoningEffort"`
 	SupportedReasoningEfforts []ReasoningEffort `json:"supportedReasoningEfforts"`
 }
@@ -859,6 +860,7 @@ func loadCodexModelCatalog(
 	type modelRecord struct {
 		Model                     string            `json:"model"`
 		DisplayName               string            `json:"displayName"`
+		Hidden                    bool              `json:"hidden"`
 		DefaultReasoningEffort    string            `json:"defaultReasoningEffort"`
 		SupportedReasoningEfforts []reasoningOption `json:"supportedReasoningEfforts"`
 	}
@@ -871,7 +873,7 @@ func loadCodexModelCatalog(
 	cursor := ""
 	for page := 0; page < 20; page++ {
 		params := map[string]any{
-			"includeHidden": true,
+			"includeHidden": false,
 			"limit":         100,
 		}
 		if cursor != "" {
@@ -887,7 +889,7 @@ func loadCodexModelCatalog(
 		}
 		for _, record := range result.Data {
 			modelName := strings.TrimSpace(record.Model)
-			if modelName == "" {
+			if modelName == "" || record.Hidden || strings.EqualFold(modelName, "codex-auto-review") {
 				continue
 			}
 			efforts := make([]ReasoningEffort, 0, len(record.SupportedReasoningEfforts))
@@ -906,6 +908,7 @@ func loadCodexModelCatalog(
 			models = append(models, CodexModelInfo{
 				Model:                     modelName,
 				DisplayName:               strings.TrimSpace(record.DisplayName),
+				Hidden:                    record.Hidden,
 				DefaultReasoningEffort:    ReasoningEffort(strings.ToLower(strings.TrimSpace(record.DefaultReasoningEffort))),
 				SupportedReasoningEfforts: efforts,
 			})

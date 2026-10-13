@@ -404,6 +404,7 @@ export type WebSessionClaudeDefaultRuntime = 'default' | 'claude' | 'ccr';
 export interface WebSessionCodexModelInfo {
   model: string;
   displayName: string;
+  hidden?: boolean;
   defaultReasoningEffort: WebSessionReasoningEffort;
   supportedReasoningEfforts: WebSessionReasoningEffort[];
 }

@@ -3,6 +3,7 @@ import type {
   WebSessionAgentDefaultPermissionLevel,
   WebSessionCCRModelInfo,
   WebSessionCodexDefaultReasoningEffort,
+  WebSessionCodexModelInfo,
   WebSessionDevinModelInfo,
   WebSessionPiModelInfo,
   WebSessionReasoningEffort,
@@ -786,6 +787,7 @@ export const CODEX_PRIMARY_MODEL_OPTIONS: WebSessionModelOption[] = [
   { label: '6L', value: 'gpt-6-luna', menuLabel: 'GPT-6 Luna' },
   { label: '6S', value: 'gpt-6-sol', menuLabel: 'GPT-6 Sol' },
   { label: '6A', value: 'gpt-6-astra', menuLabel: 'GPT-6 Astra' },
+  { label: '6.1S', value: 'gpt-6.1-sol', menuLabel: 'GPT-6.1 Sol' },
 ];
 
 export const CODEX_ADDITIONAL_MODEL_OPTIONS: WebSessionModelOption[] = [
@@ -801,7 +803,101 @@ export const CODEX_MODEL_OPTIONS: WebSessionModelOption[] = [
   ...CODEX_ADDITIONAL_MODEL_OPTIONS,
 ];
 
+const CODEX_MODEL_SUFFIX_LABELS: Record<string, string> = {
+  astra: 'A',
+  sol: 'S',
+  terra: 'T',
+  luna: 'L',
+  codex: 'Codex',
+  'codex-spark': 'Spark',
+  mini: 'mini',
+  nano: 'nano',
+  pro: 'Pro',
+};
+
+// Local templates supply presentation and an offline fallback. A populated
+// runtime catalog is authoritative about which models are available.
+export function resolveCodexModelOption(model: string, displayName = ''): WebSessionModelOption {
+  const value = model.trim();
+  const normalizedModel = value.toLowerCase();
+  const template = CODEX_MODEL_OPTIONS.find(option => option.value === normalizedModel);
+  const match = /^gpt-(\d+(?:\.\d+)*)(?:-(.+))?$/.exec(normalizedModel);
+  const suffix = match?.[2] ?? '';
+  const shortLabel =
+    match && (!suffix || Object.prototype.hasOwnProperty.call(CODEX_MODEL_SUFFIX_LABELS, suffix))
+      ? `${match[1]}${CODEX_MODEL_SUFFIX_LABELS[suffix] ?? ''}`
+      : '';
+  const name = displayName.trim();
+  return {
+    label: template?.label || shortLabel || name || value,
+    value,
+    menuLabel:
+      name && name.toLowerCase() !== normalizedModel ? name : template?.menuLabel || name || value,
+  };
+}
+
+export function resolveCodexModelOptions(
+  models: WebSessionCodexModelInfo[] = []
+): WebSessionModelOption[] {
+  const hasCatalog = models.some(model => model.model.trim());
+  const seen = new Set<string>();
+  const options: WebSessionModelOption[] = [];
+  for (const model of models) {
+    const value = model.model.trim();
+    const key = value.toLowerCase();
+    if (!value || model.hidden || key === 'codex-auto-review' || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    options.push(resolveCodexModelOption(value, model.displayName));
+  }
+  return hasCatalog ? options : CODEX_MODEL_OPTIONS.map(option => ({ ...option }));
+}
+
+export function resolveCodexModelMenuOptions(
+  models: WebSessionCodexModelInfo[] = [],
+  customModels: string[] = [],
+  currentModel = ''
+) {
+  const additionalValues = new Set(CODEX_ADDITIONAL_MODEL_OPTIONS.map(option => option.value));
+  const catalogOptions = resolveCodexModelOptions(models);
+  const primary: WebSessionModelOption[] = [];
+  let additional: WebSessionModelOption[] = [];
+  for (const option of catalogOptions) {
+    (additionalValues.has(option.value.toLowerCase()) ? additional : primary).push(option);
+  }
+  const excludedValues = new Set([
+    'codex-auto-review',
+    ...models.filter(model => model.hidden).map(model => model.model.trim().toLowerCase()),
+  ]);
+  const knownValues = new Set(catalogOptions.map(option => option.value.toLowerCase()));
+  primary.push(
+    ...resolveCustomModelOptions(customModels).filter(
+      option =>
+        !excludedValues.has(option.value.toLowerCase()) &&
+        !knownValues.has(option.value.toLowerCase())
+    )
+  );
+  const currentValue = currentModel.trim();
+  const currentKey = currentValue.toLowerCase();
+  if (
+    currentValue &&
+    !excludedValues.has(currentKey) &&
+    !primary.some(option => option.value.toLowerCase() === currentKey)
+  ) {
+    const currentOption = catalogOptions.find(option => option.value.toLowerCase() === currentKey);
+    // An old selection must not restore a model removed from the live picker.
+    // Explicit custom models remain available; keep the selected label via the UI fallback.
+    if (currentOption || !models.some(model => model.model.trim())) {
+      primary.push(currentOption ?? resolveCodexModelOption(currentValue));
+      additional = additional.filter(option => option.value.toLowerCase() !== currentKey);
+    }
+  }
+  return { primary, additional };
+}
+
 const CODEX_REASONING_EFFORT_FALLBACKS: Record<string, WebSessionReasoningEffort[]> = {
+  'gpt-6.1-sol': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   'gpt-6-sol': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],

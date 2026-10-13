@@ -2139,7 +2139,16 @@
 
 <script setup lang="ts">
 import { contextWindowOptions } from '@/components/web-session/webSessionContextWindow';
-import { computed, nextTick, onMounted, reactive, ref, watch, type Component } from 'vue';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+  type Component,
+} from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useEventListener, useDebounceFn, useStorage } from '@vueuse/core';
@@ -2228,9 +2237,9 @@ import type {
 import {
   BUILTIN_DEFAULT_REASONING_EFFORTS,
   CLAUDE_MODEL_OPTIONS,
-  CODEX_MODEL_OPTIONS,
   DEVIN_MODEL_OPTIONS,
   defaultModelForAgent,
+  resolveCodexModelOptions,
   resolveCodexReasoningEfforts,
   resolveDevinModelForReasoning,
   resolveDevinModelOptionGroups,
@@ -2898,6 +2907,9 @@ const developerOriginal = ref<DeveloperConfig | null>(null);
 const codexModelCatalog = ref<WebSessionCodexModelInfo[]>([]);
 const piModelCatalog = ref<WebSessionPiModelInfo[]>([]);
 const devinModelCatalog = ref<WebSessionDevinModelInfo[]>([]);
+let sessionModelCatalogRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let sessionModelCatalogRetryDelayMs = 500;
+let sessionModelCatalogDisposed = false;
 
 const sessionSubsectionOptions = computed(() => [
   { value: 'general' as SessionSubsection, label: t('settings.sessionGeneralSettings') },
@@ -2935,7 +2947,7 @@ const webSessionSyncModeOptions = computed(() => [
 ]);
 const webSessionCodexDefaultModelOptions = computed(() => [
   { label: t('settings.webSessionCodexDefaultModelOption'), value: 'default' },
-  ...CODEX_MODEL_OPTIONS.map(option => ({
+  ...resolveCodexModelOptions(codexModelCatalog.value).map(option => ({
     label: option.menuLabel || option.label,
     value: option.value,
   })),
@@ -3239,15 +3251,30 @@ async function handleSaveDeveloperConfig() {
 async function loadSessionModelCatalogs() {
   try {
     const config = await webSessionApi.runtimeConfig();
+    if (sessionModelCatalogDisposed) {
+      return;
+    }
     codexModelCatalog.value = config.models ?? [];
     piModelCatalog.value = config.piModels ?? [];
     devinModelCatalog.value = config.devinModels ?? [];
-  } catch {
-    codexModelCatalog.value = [];
-    piModelCatalog.value = [];
-    devinModelCatalog.value = [];
+    if (config.capabilitiesRefreshing) {
+      sessionModelCatalogRetryTimer = setTimeout(() => {
+        sessionModelCatalogRetryTimer = null;
+        void loadSessionModelCatalogs();
+      }, sessionModelCatalogRetryDelayMs);
+      sessionModelCatalogRetryDelayMs = Math.min(sessionModelCatalogRetryDelayMs * 2, 5_000);
+    }
+  } catch (error) {
+    console.warn('[Settings] Failed to load session model catalogs', error);
   }
 }
+
+onBeforeUnmount(() => {
+  sessionModelCatalogDisposed = true;
+  if (sessionModelCatalogRetryTimer != null) {
+    clearTimeout(sessionModelCatalogRetryTimer);
+  }
+});
 
 watch(
   [() => developerForm.webSessionCodexDefaultModel, () => codexModelCatalog.value],

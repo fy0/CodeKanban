@@ -21,6 +21,9 @@ import {
   rememberPiFrequentModel,
   removeCustomModel,
   resolveCCRModelOptions,
+  resolveCodexModelMenuOptions,
+  resolveCodexModelOption,
+  resolveCodexModelOptions,
   resolveCodexReasoningEfforts,
   resolveCustomModelOptions,
   resolveDevinFusionModel,
@@ -39,6 +42,15 @@ import {
 } from '@/components/web-session/webSessionModelOptions';
 
 const panelSource = readFileSync(new URL('../WebSessionPanel.vue', import.meta.url), 'utf8');
+
+function codexModel(model: string, displayName = model) {
+  return {
+    model,
+    displayName,
+    defaultReasoningEffort: 'low' as const,
+    supportedReasoningEfforts: ['low' as const, 'high' as const],
+  };
+}
 
 describe('webSessionModelOptions', () => {
   it('opens the Pi search catalog directly and keeps searches when entering the menu', () => {
@@ -348,6 +360,128 @@ describe('webSessionModelOptions', () => {
       })
     ).toBe('fusion-a');
   });
+  it('replaces local models with the runtime catalog while retaining compact labels', () => {
+    const options = resolveCodexModelOptions([
+      codexModel('gpt-6.1-sol', 'GPT-6.1 Sol'),
+      codexModel('gpt-5.4-pro'),
+      codexModel('future-model', 'Future Model'),
+    ]);
+
+    expect(options).toEqual([
+      { label: '6.1S', value: 'gpt-6.1-sol', menuLabel: 'GPT-6.1 Sol' },
+      { label: '5.4Pro', value: 'gpt-5.4-pro', menuLabel: 'GPT-5.4 Pro' },
+      { label: 'Future Model', value: 'future-model', menuLabel: 'Future Model' },
+    ]);
+    expect(options.some(option => option.value === 'gpt-5.6-sol')).toBe(false);
+  });
+
+  it('normalizes runtime entries and removes duplicates without adding local models', () => {
+    expect(
+      resolveCodexModelOptions([
+        codexModel(' '),
+        codexModel(' gpt-6.1-sol ', ' Custom display name '),
+        codexModel('GPT-6.1-SOL', 'Duplicate'),
+        codexModel('custom-model', ''),
+      ])
+    ).toEqual([
+      { label: '6.1S', value: 'gpt-6.1-sol', menuLabel: 'Custom display name' },
+      { label: 'custom-model', value: 'custom-model', menuLabel: 'custom-model' },
+    ]);
+  });
+
+  it.each(['gpt-daybreak-blue-latest', 'gpt-daybreak-red-latest'])(
+    'uses the returned visibility for %s without blocking its name',
+    model => {
+      expect(resolveCodexModelOptions([{ ...codexModel(model), hidden: false }])).toEqual([
+        resolveCodexModelOption(model),
+      ]);
+      expect(resolveCodexModelOptions([{ ...codexModel(model), hidden: true }])).toEqual([]);
+    }
+  );
+
+  it('does not restore a model missing from the live catalog just because it is selected', () => {
+    const catalog = [codexModel('gpt-6.1-sol')];
+    for (const current of ['gpt-daybreak-blue-latest', 'retired-model', 'codex-auto-review']) {
+      const menu = resolveCodexModelMenuOptions(catalog, [], current);
+      expect(menu.primary.map(option => option.value)).toEqual(['gpt-6.1-sol']);
+      expect(menu.additional).toEqual([]);
+    }
+  });
+
+  it('hides Auto Review from catalog, custom, and current options even when marked visible', () => {
+    const catalog = [
+      codexModel('gpt-6.1-sol'),
+      { ...codexModel('codex-auto-review'), hidden: false },
+    ];
+    const menu = resolveCodexModelMenuOptions(catalog, ['codex-auto-review'], 'codex-auto-review');
+    expect(menu.primary.map(option => option.value)).toEqual(['gpt-6.1-sol']);
+    expect(menu.additional).toEqual([]);
+  });
+
+  it('respects hidden metadata in stored custom options while preserving explicit custom models', () => {
+    const catalog = [
+      codexModel('gpt-6.1-sol'),
+      { ...codexModel('gpt-daybreak-blue-latest'), hidden: true },
+    ];
+    const menu = resolveCodexModelMenuOptions(
+      catalog,
+      ['custom-provider-model', 'gpt-daybreak-blue-latest'],
+      'gpt-daybreak-blue-latest'
+    );
+    expect(menu.primary.map(option => option.value)).toEqual([
+      'gpt-6.1-sol',
+      'custom-provider-model',
+    ]);
+  });
+
+  it('keeps an available current model in the main menu without duplicating it under more', () => {
+    const menu = resolveCodexModelMenuOptions(
+      [codexModel('gpt-6.1-sol'), codexModel('gpt-5.4-pro')],
+      [],
+      'gpt-5.4-pro'
+    );
+    expect(menu.primary.map(option => option.value)).toEqual(['gpt-6.1-sol', 'gpt-5.4-pro']);
+    expect(menu.additional).toEqual([]);
+  });
+
+  it.each([
+    ['gpt-6.2-sol', '6.2S'],
+    ['gpt-6.2-terra', '6.2T'],
+    ['gpt-6.2-luna', '6.2L'],
+    ['gpt-6.2-astra', '6.2A'],
+    ['gpt-7', '7'],
+    ['gpt-7-codex', '7Codex'],
+    ['gpt-7-codex-spark', '7Spark'],
+    ['gpt-7-mini', '7mini'],
+    ['gpt-7-pro', '7Pro'],
+  ])('applies existing abbreviation rules to newly discovered %s', (model, label) => {
+    expect(resolveCodexModelOption(model, 'Runtime model name')).toEqual({
+      label,
+      value: model,
+      menuLabel: 'Runtime model name',
+    });
+  });
+
+  it('keeps new runtime models in the main menu and only available legacy models under more', () => {
+    const menu = resolveCodexModelMenuOptions([
+      codexModel('gpt-7-sol'),
+      codexModel('gpt-5.4-pro'),
+      codexModel('gpt-6.1-sol'),
+    ]);
+    expect(menu.primary.map(option => option.value)).toEqual(['gpt-7-sol', 'gpt-6.1-sol']);
+    expect(menu.additional.map(option => option.value)).toEqual(['gpt-5.4-pro']);
+    expect(resolveCodexModelMenuOptions([codexModel('gpt-7-sol')]).additional).toEqual([]);
+  });
+
+  it('uses local templates only when no usable runtime catalog is available', () => {
+    expect(resolveCodexModelOptions()).toEqual(CODEX_MODEL_OPTIONS);
+    expect(resolveCodexModelOptions([codexModel(' ')])).toEqual(CODEX_MODEL_OPTIONS);
+    expect(resolveCodexModelMenuOptions()).toEqual({
+      primary: CODEX_PRIMARY_MODEL_OPTIONS,
+      additional: CODEX_ADDITIONAL_MODEL_OPTIONS,
+    });
+  });
+
   it('shows only the popular codex models by default', () => {
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.value)).toEqual([
       'gpt-5.5',
@@ -357,6 +491,7 @@ describe('webSessionModelOptions', () => {
       'gpt-6-luna',
       'gpt-6-sol',
       'gpt-6-astra',
+      'gpt-6.1-sol',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.label)).toEqual([
       '5.5',
@@ -366,6 +501,7 @@ describe('webSessionModelOptions', () => {
       '6L',
       '6S',
       '6A',
+      '6.1S',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.menuLabel)).toEqual([
       'GPT-5.5',
@@ -375,6 +511,7 @@ describe('webSessionModelOptions', () => {
       'GPT-6 Luna',
       'GPT-6 Sol',
       'GPT-6 Astra',
+      'GPT-6.1 Sol',
     ]);
   });
 
@@ -486,6 +623,19 @@ describe('webSessionModelOptions', () => {
       'xhigh',
       'max',
     ]);
+  });
+
+  it('uses runtime reasoning capabilities even when they differ from local templates', () => {
+    expect(
+      resolveCodexReasoningEfforts('gpt-6.1-sol', [
+        { model: 'gpt-6.1-sol', supportedReasoningEfforts: ['none', 'high', 'high'] },
+      ])
+    ).toEqual(['none', 'high']);
+    expect(
+      resolveCodexReasoningEfforts('gpt-6.1-sol', [
+        { model: 'gpt-6.1-sol', supportedReasoningEfforts: [] },
+      ])
+    ).toEqual([]);
   });
 
   it('maps the Pi catalog to stable provider/model values and supported thinking levels', () => {
@@ -754,6 +904,14 @@ describe('webSessionModelOptions', () => {
   });
 
   it('falls back per current Codex model without exposing unsupported efforts', () => {
+    expect(resolveCodexReasoningEfforts('gpt-6.1-sol')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+    ]);
     expect(resolveCodexReasoningEfforts('gpt-6-astra')).toEqual([
       'low',
       'medium',
