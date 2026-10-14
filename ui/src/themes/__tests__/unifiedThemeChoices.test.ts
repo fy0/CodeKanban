@@ -40,7 +40,7 @@ describe('flat theme choices', () => {
     expect(choices.some(choice => choice.key === 'theme:studio')).toBe(true);
     expect(choices.some(choice => choice.key === 'preset:dark')).toBe(true);
     expect(choices.map(choice => choice.label)).toEqual(
-      [...choices.map(choice => choice.label)].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+      choices.map(choice => choice.label).sort((a, b) => a.localeCompare(b, 'zh-CN'))
     );
     expect(choices.find(choice => choice.key === 'preset:dark')?.preview.canvas).toBe(
       THEME_PRESETS.find(preset => preset.id === 'dark')?.colors.bodyColor
