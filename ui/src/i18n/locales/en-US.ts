@@ -1008,6 +1008,7 @@ export default {
     fusionFastMode: 'Fast Mode',
     fusionCost: 'Cost',
     modelSearchPlaceholder: 'Search models or providers',
+    modelEffortSearchPlaceholder: 'Search models or reasoning effort',
     customModelTitle: 'Custom Model',
     customModelPlaceholder: 'Enter a model name, for example gpt-5.5',
     customModelEmpty: 'Model name cannot be empty',

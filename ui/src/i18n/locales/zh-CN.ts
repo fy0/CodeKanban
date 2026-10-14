@@ -967,6 +967,7 @@ export default {
     fusionFastMode: '快速模式',
     fusionCost: '费用',
     modelSearchPlaceholder: '搜索模型或提供商',
+    modelEffortSearchPlaceholder: '搜索模型或推理强度',
     customModelTitle: '自定义模型',
     customModelPlaceholder: '输入模型名称，例如 gpt-5.5',
     customModelEmpty: '模型名称不能为空',

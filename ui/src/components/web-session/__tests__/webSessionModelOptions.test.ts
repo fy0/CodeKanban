@@ -53,10 +53,8 @@ function codexModel(model: string, displayName = model) {
 }
 
 describe('webSessionModelOptions', () => {
-  it('opens the Pi search catalog directly and keeps searches when entering the menu', () => {
-    expect(panelSource).toContain(
-      "<template v-if=\"selectedAgent === 'pi' || selectedAgent === 'devin'\" #header>"
-    );
+  it('opens the shared model search catalog directly and keeps searches when entering the menu', () => {
+    expect(panelSource).toContain('<template v-if="hasModelSearch" #header>');
     expect(panelSource).not.toContain('showAllPiModels');
     expect(panelSource).toContain('show === showModelSelector.value ||');
   });
@@ -70,7 +68,7 @@ describe('webSessionModelOptions', () => {
       /function clearModelOptionPopovers\(\) \{\s*modelOptionPopoverValues\.value = new Set\(\);/
     );
     expect(panelSource).toContain('animated: false');
-    expect(panelSource.match(/@update:value="clearModelOptionPopovers"/g)).toHaveLength(2);
+    expect(panelSource.match(/@update:value="clearModelOptionPopovers"/g)).toHaveLength(1);
   });
 
   it('uses the Devin catalog for model, reasoning, and pricing metadata', () => {

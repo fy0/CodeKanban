@@ -2214,7 +2214,7 @@
                   </n-dropdown>
                   <n-select
                     :show="showModelSelector"
-                    v-model:value="selectedModel"
+                    v-model:value="selectedModelOption"
                     placement="top-start"
                     @scroll="clearModelOptionPopovers"
                     @update:show="handleModelSelectorShowChange"
@@ -2229,40 +2229,22 @@
                     :options="modelOptions"
                     :fallback-option="modelFallbackOption"
                   >
-                    <template v-if="selectedAgent === 'pi' || selectedAgent === 'devin'" #header>
+                    <template v-if="hasModelSearch" #header>
                       <div class="pi-model-search-header">
                         <n-input
-                          v-if="selectedAgent === 'pi'"
-                          ref="piModelSearchInputRef"
-                          v-model:value="piModelSearchQuery"
+                          ref="modelSearchInputRef"
+                          v-model:value="modelSearchQuery"
                           @update:value="clearModelOptionPopovers"
                           clearable
                           :bordered="false"
                           size="small"
-                          :placeholder="t('webSession.modelSearchPlaceholder')"
-                          :aria-label="t('webSession.modelSearchPlaceholder')"
-                          @focus="handlePiModelSearchFocus"
-                          @blur="handlePiModelSearchBlur"
-                          @compositionstart="handlePiModelSearchCompositionStart"
-                          @compositionend="handlePiModelSearchCompositionEnd"
-                          @keydown.esc.stop="handlePiModelSearchEscape"
-                        >
-                          <template #prefix>
-                            <n-icon size="15" aria-hidden="true"><SearchOutline /></n-icon>
-                          </template>
-                        </n-input>
-                        <n-input
-                          v-else
-                          ref="devinModelSearchInputRef"
-                          v-model:value="devinModelSearchQuery"
-                          @update:value="clearModelOptionPopovers"
-                          clearable
-                          :bordered="false"
-                          size="small"
-                          :placeholder="t('webSession.modelSearchPlaceholder')"
-                          :aria-label="t('webSession.modelSearchPlaceholder')"
-                          @focus="handleDevinModelSearchFocus"
-                          @blur="handleDevinModelSearchBlur"
+                          :placeholder="modelSearchPlaceholder"
+                          :aria-label="modelSearchPlaceholder"
+                          @focus="handleModelSearchFocus"
+                          @blur="handleModelSearchBlur"
+                          @compositionstart="handleModelSearchCompositionStart"
+                          @compositionend="handleModelSearchCompositionEnd"
+                          @keydown.esc.stop="handleModelSearchEscape"
                         >
                           <template #prefix>
                             <n-icon size="15" aria-hidden="true"><SearchOutline /></n-icon>
@@ -3806,7 +3788,6 @@ import {
   resolveCCRModelOptions,
   DEVIN_MODEL_OPTIONS,
   CUSTOM_MODEL_VALUE,
-  MORE_MODELS_VALUE,
   defaultModelForAgent as resolveDefaultModelForAgent,
   defaultPermissionLevelForAgent as resolveDefaultPermissionLevelForAgent,
   defaultReasoningEffortForAgent as resolveDefaultReasoningEffortForAgent,
@@ -3839,6 +3820,12 @@ import {
   type WebSessionClaudeRuntimeOption,
   type WebSessionModelOptionGroup,
 } from '@/components/web-session/webSessionModelOptions';
+import {
+  codexModelSelectionValue,
+  parseCodexModelSelection,
+  rememberCodexModelSelection,
+  resolveCodexModelOptionGroups,
+} from '@/components/web-session/webSessionCodexModelPicker';
 import {
   buildTimelineRawModeKey,
   pruneActiveTimelineRawBlockKey,
@@ -11380,17 +11367,24 @@ const agentOptions: Array<{ label: string; value: WebSessionAgent }> = [
   { label: 'Pi', value: 'pi' },
   { label: 'Devin', value: 'devin' },
 ];
-const showAdditionalCodexModels = ref(false);
 const showModelSelector = ref(false);
 const showReasoningSelector = ref(false);
-const keepAdditionalCodexModelsForNextOpen = ref(false);
-const piModelSearchQuery = ref('');
-const devinModelSearchQuery = ref('');
-const piModelSearchInputRef = ref<InstanceType<typeof NInput> | null>(null);
-const devinModelSearchInputRef = ref<InstanceType<typeof NInput> | null>(null);
-const piModelSearchFocused = ref(false);
-const piModelSearchComposing = ref(false);
-const devinModelSearchFocused = ref(false);
+const hasModelSearch = computed(() => ['codex', 'pi', 'devin'].includes(selectedAgent.value));
+const modelSearchPlaceholder = computed(() =>
+  t(
+    selectedAgent.value === 'codex'
+      ? 'webSession.modelEffortSearchPlaceholder'
+      : 'webSession.modelSearchPlaceholder'
+  )
+);
+const modelSearchQuery = ref('');
+const modelSearchInputRef = ref<InstanceType<typeof NInput> | null>(null);
+const modelSearchFocused = ref(false);
+const modelSearchComposing = ref(false);
+const codexRecentModelValues = useStorage<string[]>(
+  'codekanban-web-session-codex-recent-models',
+  []
+);
 const piFrequentModelValues = useStorage<string[]>('codekanban-web-session-pi-frequent-models', []);
 const devinFrequentModelValues = useStorage<string[]>(
   'codekanban-web-session-devin-frequent-models',
@@ -11414,7 +11408,7 @@ const MODEL_SELECT_CHAR_WIDTH = 7;
 const modelMenuHovered = ref(false);
 const modelOptionPopoverValues = ref<Set<string>>(new Set());
 const modelSelectMenuProps = computed(() => {
-  const piCatalogOpen = selectedAgent.value === 'pi' || selectedAgent.value === 'devin';
+  const piCatalogOpen = hasModelSearch.value;
   return {
     class: piCatalogOpen
       ? 'web-session-model-select-menu is-pi-model-catalog'
@@ -11929,60 +11923,50 @@ function withCurrentReasoningEffortOption(
   ];
 }
 
-function piModelMenuInteractionState() {
+function modelMenuInteractionState() {
   return {
-    catalogOpen: selectedAgent.value === 'pi' || selectedAgent.value === 'devin',
-    searchFocused: piModelSearchFocused.value || devinModelSearchFocused.value,
-    searchComposing: piModelSearchComposing.value,
+    catalogOpen: hasModelSearch.value,
+    searchFocused: modelSearchFocused.value,
+    searchComposing: modelSearchComposing.value,
   };
 }
 
-function resetPiModelSearchInteraction() {
-  piModelSearchFocused.value = false;
-  piModelSearchComposing.value = false;
-  devinModelSearchFocused.value = false;
+function resetModelSearchInteraction() {
+  modelSearchFocused.value = false;
+  modelSearchComposing.value = false;
 }
 
-function handleDevinModelSearchFocus() {
-  devinModelSearchFocused.value = true;
-  clearComposerSelectorHoverCloseTimer('model');
-}
-
-function handleDevinModelSearchBlur() {
-  devinModelSearchFocused.value = false;
-}
-
-function refocusPiModelSearch() {
-  if (selectedAgent.value === 'pi' && showModelSelector.value) {
-    nextTick(() => piModelSearchInputRef.value?.focus());
+function refocusModelSearch() {
+  if (hasModelSearch.value && showModelSelector.value) {
+    nextTick(() => modelSearchInputRef.value?.focus());
   }
 }
 
-function handlePiModelSearchFocus() {
-  piModelSearchFocused.value = true;
+function handleModelSearchFocus() {
+  modelSearchFocused.value = true;
   clearComposerSelectorHoverCloseTimer('model');
 }
 
-function handlePiModelSearchBlur() {
-  if (!piModelSearchComposing.value) {
-    piModelSearchFocused.value = false;
+function handleModelSearchBlur() {
+  if (!modelSearchComposing.value) {
+    modelSearchFocused.value = false;
   }
 }
 
-function handlePiModelSearchCompositionStart() {
-  piModelSearchFocused.value = true;
-  piModelSearchComposing.value = true;
+function handleModelSearchCompositionStart() {
+  modelSearchFocused.value = true;
+  modelSearchComposing.value = true;
   clearComposerSelectorHoverCloseTimer('model');
 }
 
-function handlePiModelSearchCompositionEnd() {
-  piModelSearchComposing.value = false;
-  piModelSearchFocused.value = true;
-  refocusPiModelSearch();
+function handleModelSearchCompositionEnd() {
+  modelSearchComposing.value = false;
+  modelSearchFocused.value = true;
+  refocusModelSearch();
 }
 
-function handlePiModelSearchEscape(event: KeyboardEvent) {
-  if (event.isComposing || piModelSearchComposing.value) {
+function handleModelSearchEscape(event: KeyboardEvent) {
+  if (event.isComposing || modelSearchComposing.value) {
     return;
   }
   handleModelSelectorShowChange(false);
@@ -11994,7 +11978,11 @@ function removeRecentModel(model: string) {
     return;
   }
   const recentModels =
-    selectedAgent.value === 'pi' ? piFrequentModelValues : devinFrequentModelValues;
+    selectedAgent.value === 'codex'
+      ? codexRecentModelValues
+      : selectedAgent.value === 'pi'
+        ? piFrequentModelValues
+        : devinFrequentModelValues;
   recentModels.value = recentModels.value.filter(item => item !== value);
   clearModelOptionPopovers();
 }
@@ -12025,24 +12013,19 @@ function scrollModelMenuToRecent() {
 function handleModelSelectorShowChange(show: boolean) {
   if (
     show === showModelSelector.value ||
-    (!show && shouldSuppressPiModelMenuClose('show-change', piModelMenuInteractionState()))
+    (!show && shouldSuppressPiModelMenuClose('show-change', modelMenuInteractionState()))
   ) {
     return;
   }
-  if (show && selectedAgent.value === 'codex' && !keepAdditionalCodexModelsForNextOpen.value) {
-    showAdditionalCodexModels.value = false;
-  }
-  resetPiModelSearchInteraction();
-  piModelSearchQuery.value = '';
-  devinModelSearchQuery.value = '';
+  resetModelSearchInteraction();
+  modelSearchQuery.value = '';
   clearModelOptionPopovers();
   showModelSelector.value = show;
   if (show) {
-    keepAdditionalCodexModelsForNextOpen.value = false;
-    if (selectedAgent.value === 'pi' || selectedAgent.value === 'devin') {
+    if (hasModelSearch.value) {
       nextTick(() => window.setTimeout(scrollModelMenuToRecent, 40));
     }
-    refocusPiModelSearch();
+    refocusModelSearch();
   } else {
     modelMenuHovered.value = false;
   }
@@ -12088,7 +12071,7 @@ function handleComposerSelectorPointerLeave(selector: ComposerHoverSelector) {
   }
   if (
     selector === 'model' &&
-    shouldSuppressPiModelMenuClose('pointer-leave', piModelMenuInteractionState())
+    shouldSuppressPiModelMenuClose('pointer-leave', modelMenuInteractionState())
   ) {
     return;
   }
@@ -12120,7 +12103,7 @@ const piModelOptionGroups = computed(() =>
   )
 );
 const filteredPiModelOptionGroups = computed(() =>
-  filterPiModelOptionGroups(piModelOptionGroups.value, piModelSearchQuery.value)
+  filterPiModelOptionGroups(piModelOptionGroups.value, modelSearchQuery.value)
 );
 const piPrimaryModelOptions = computed(() =>
   resolvePiPrimaryModelOptions(runtimeConfig.value?.piModels ?? [], piFrequentModelValues.value)
@@ -12241,7 +12224,7 @@ const fusionFast = computed({
   set: value => applyFusionSelection({ fast: value }),
 });
 const filteredDevinModelOptionGroups = computed(() =>
-  filterDevinModelOptionGroups(devinModelOptionGroups.value, devinModelSearchQuery.value)
+  filterDevinModelOptionGroups(devinModelOptionGroups.value, modelSearchQuery.value)
 );
 
 function customModelsForAgent(agent: WebSessionCustomModelAgent) {
@@ -12280,7 +12263,17 @@ function builtinModelValuesForAgent(agent: WebSessionAgent) {
   return resolvePiModelOptions(runtimeConfig.value?.piModels ?? []).map(option => option.value);
 }
 
-function recordUsedModel(session?: Pick<WebSessionSummary, 'agent' | 'model'> | null) {
+function recordUsedModel(
+  session?: Pick<WebSessionSummary, 'agent' | 'model' | 'reasoningEffort'> | null
+) {
+  if (session?.agent === 'codex') {
+    codexRecentModelValues.value = rememberCodexModelSelection(
+      codexRecentModelValues.value,
+      session.model,
+      session.reasoningEffort
+    );
+    return;
+  }
   if (session?.agent !== 'devin' && session?.agent !== 'pi') {
     return;
   }
@@ -12331,12 +12324,12 @@ const modelOptions = computed(() => {
       );
       const specialOptions = devinSpecialModelOptions.value
         .filter(option =>
-          devinModelSearchQuery.value.trim()
+          modelSearchQuery.value.trim()
             ? [option.label, option.value, option.description, option.modelDescription]
                 .filter(Boolean)
                 .join(' ')
                 .toLowerCase()
-                .includes(devinModelSearchQuery.value.trim().toLowerCase())
+                .includes(modelSearchQuery.value.trim().toLowerCase())
             : true
         )
         .map(option =>
@@ -12358,28 +12351,24 @@ const modelOptions = computed(() => {
     ];
   }
   if (selectedAgent.value === 'pi') {
-    return piModelSearchQuery.value.trim()
+    return modelSearchQuery.value.trim()
       ? filteredPiModelOptionGroups.value
       : withCurrentPiModelOption(filteredPiModelOptionGroups.value, activeModel);
   }
-  const { primary, additional } = resolveCodexModelMenuOptions(
-    runtimeConfig.value?.models ?? [],
-    customModelsForAgent('codex'),
-    activeModel
-  );
-  if (!showAdditionalCodexModels.value) {
-    return [
-      ...primary,
-      { label: t('webSession.customModel'), value: CUSTOM_MODEL_VALUE },
-      ...(additional.length
-        ? [{ label: t('webSession.moreModels'), value: MORE_MODELS_VALUE }]
-        : []),
-    ];
-  }
   return [
-    ...primary,
+    ...resolveCodexModelOptionGroups({
+      models: runtimeConfig.value?.models ?? [],
+      customModels: customModelsForAgent('codex'),
+      recentValues: codexRecentModelValues.value,
+      currentModel: activeModel,
+      query: modelSearchQuery.value,
+      labels: {
+        recent: t('webSession.recentlyUsedModels'),
+        all: t('webSession.allModels'),
+      },
+      effortLabel: reasoningEffortLabel,
+    }),
     { label: t('webSession.customModel'), value: CUSTOM_MODEL_VALUE },
-    ...additional,
   ];
 });
 
@@ -12465,15 +12454,13 @@ const selectedAgent = computed({
 const selectedModel = computed({
   get: () => currentSession.value?.model ?? draftModel.value,
   set: value => {
-    const next = normalizeDevinModelOptionValue(String(value));
-    if (next === MORE_MODELS_VALUE) {
-      showAdditionalCodexModels.value = true;
-      keepAdditionalCodexModelsForNextOpen.value = true;
-      nextTick(() => {
-        handleModelSelectorShowChange(true);
-      });
-      return;
-    }
+    const selection =
+      selectedAgent.value === 'codex' ? parseCodexModelSelection(String(value)) : null;
+    const next =
+      selection?.model ??
+      (selectedAgent.value === 'devin'
+        ? normalizeDevinModelOptionValue(String(value))
+        : String(value));
     if (next === CUSTOM_MODEL_VALUE) {
       openCustomModelDialog();
       return;
@@ -12491,7 +12478,7 @@ const selectedModel = computed({
             'default'
           )
         : selectedAgent.value === 'codex'
-          ? reasoningEffortForModel(next, currentEffort)
+          ? reasoningEffortForModel(next, selection?.reasoningEffort ?? currentEffort)
           : currentEffort;
     draftModel.value = next;
     draftReasoningEffort.value = nextEffort;
@@ -12518,6 +12505,29 @@ const selectedModel = computed({
           message.error(error instanceof Error ? error.message : t('common.error'));
         });
     }
+  },
+});
+
+// Keep wire/session model IDs separate from menu values that include reasoning effort.
+const selectedModelOption = computed({
+  get: () => {
+    if (selectedAgent.value === 'codex') {
+      const value = codexModelSelectionValue(
+        selectedModel.value,
+        currentSession.value?.reasoningEffort ?? draftReasoningEffort.value
+      );
+      if (
+        modelOptions.value.some(
+          option => 'children' in option && option.children.some(child => child.value === value)
+        )
+      ) {
+        return value;
+      }
+    }
+    return selectedModel.value;
+  },
+  set: (value: string) => {
+    selectedModel.value = value;
   },
 });
 
@@ -18421,7 +18431,7 @@ onBeforeUnmount(() => {
   clearRuntimeConfigRetry();
   clearComposerSelectorHoverCloseTimer('model');
   clearComposerSelectorHoverCloseTimer('reasoning');
-  resetPiModelSearchInteraction();
+  resetModelSearchInteraction();
   if (!pendingTimelinePositionRestore.value) {
     captureTimelinePosition(props.projectId, currentSession.value?.id ?? '', true);
   }
