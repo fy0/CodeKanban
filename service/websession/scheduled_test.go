@@ -1102,6 +1102,16 @@ func TestScheduledIdleConditionsBlockWaitingNonPlanSessions(t *testing.T) {
 		}).Error; err != nil {
 		t.Fatalf("mark other session waiting: %v", err)
 	}
+	if _, err := manager.appendHistoryItem(context.Background(), other.ID, HistoryItem{
+		Kind:     "system",
+		ItemType: "user_input_request",
+		Detail: &HistoryDetail{
+			Type:   "user_input_request",
+			Prompt: "Which scope should be implemented?",
+		},
+	}); err != nil {
+		t.Fatalf("append pending user input: %v", err)
+	}
 
 	targetRecord, err := manager.GetSession(context.Background(), target.ID)
 	if err != nil {
@@ -1120,6 +1130,91 @@ func TestScheduledIdleConditionsBlockWaitingNonPlanSessions(t *testing.T) {
 	reasons, conditionError, err = manager.evaluateScheduledIdleConditions(context.Background(), targetRecord)
 	if err != nil || conditionError != "" || len(reasons) != 0 {
 		t.Fatalf("expected plan-mode session to be ignored, got reasons=%#v error=%v detail=%q", reasons, err, conditionError)
+	}
+}
+
+func TestScheduledIdleConditionsIgnoreStaleWaitingInput(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	request := HistoryItem{
+		Kind:     "system",
+		ItemType: "user_input_request",
+		Detail: &HistoryDetail{
+			Type:   "user_input_request",
+			Prompt: "Which scope should be implemented?",
+		},
+	}
+	for _, tc := range []struct {
+		name    string
+		history []HistoryItem
+		blocked bool
+	}{
+		{name: "missing history"},
+		{name: "ordinary completed reply", history: []HistoryItem{{Kind: "assistant", Text: "Done"}}},
+		{name: "unanswered request", history: []HistoryItem{request}, blocked: true},
+		{name: "completed deferred run", history: []HistoryItem{request, {Kind: "system", ItemType: "run_done"}}, blocked: true},
+		{name: "answered request", history: []HistoryItem{request, {
+			Kind: "system", ItemType: "user_input_response", Detail: &HistoryDetail{Type: "user_input_response"},
+		}}},
+		{name: "follow-up message", history: []HistoryItem{request, {Kind: "user", Text: "Continue"}}},
+		{name: "aborted request", history: []HistoryItem{request, {Kind: "system", ItemType: "run_abort"}}},
+		{name: "failed request", history: []HistoryItem{request, {Kind: "system", ItemType: "run_fail"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project := seedProject(t)
+			initScheduledTestGitRepository(t, project.Path)
+			manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+			if err != nil {
+				t.Fatalf("NewManager returned error: %v", err)
+			}
+			target, err := manager.CreateSession(context.Background(), CreateParams{
+				ProjectID: project.ID, Agent: AgentCodex, WorkflowMode: WorkflowModePlan,
+			})
+			if err != nil {
+				t.Fatalf("CreateSession target returned error: %v", err)
+			}
+			other, err := manager.CreateSession(context.Background(), CreateParams{
+				ProjectID: project.ID, Agent: AgentClaude, WorkflowMode: WorkflowModeDefault,
+			})
+			if err != nil {
+				t.Fatalf("CreateSession other returned error: %v", err)
+			}
+			for _, item := range tc.history {
+				if _, err := manager.appendHistoryItem(context.Background(), other.ID, item); err != nil {
+					t.Fatalf("append history: %v", err)
+				}
+			}
+			// A pending question may be older than the default history window.
+			if tc.blocked {
+				for i := 0; i <= DefaultHistoryWindow; i++ {
+					if _, err := manager.appendHistoryItem(context.Background(), other.ID, HistoryItem{
+						Kind: "assistant", Text: "Waiting for an answer",
+					}); err != nil {
+						t.Fatalf("append later history: %v", err)
+					}
+				}
+			}
+			if err := model.GetDB().Model(&tables.WebSessionTable{}).
+				Where("id = ?", other.ID).
+				Updates(map[string]any{
+					"status": string(StatusDone), "assistant_state": string(AssistantStateWaitingInput),
+					"sync_state": string(SyncStateMissing),
+				}).Error; err != nil {
+				t.Fatalf("mark historical session waiting: %v", err)
+			}
+			targetRecord, err := manager.GetSession(context.Background(), target.ID)
+			if err != nil {
+				t.Fatalf("GetSession target returned error: %v", err)
+			}
+			reasons, conditionError, err := manager.evaluateScheduledIdleConditions(context.Background(), targetRecord)
+			if err != nil || conditionError != "" {
+				t.Fatalf("evaluateScheduledIdleConditions returned error: %v, %q", err, conditionError)
+			}
+			if blocked := scheduledBlockingReasonsContain(reasons, ScheduledInputBlockedNonPlanSessionActive); blocked != tc.blocked {
+				t.Fatalf("expected blocked=%v, got reasons=%#v", tc.blocked, reasons)
+			}
+		})
 	}
 }
 
@@ -1163,7 +1258,11 @@ func TestScheduledIdleConditionsDistinguishPlanApproval(t *testing.T) {
 		{name: "plan approval after switching to default", mode: WorkflowModeDefault, status: StatusRunning, state: AssistantStateWaitingPlanApproval},
 		{name: "legacy plan approval", mode: WorkflowModeDefault, status: StatusWaitingApproval, state: AssistantStateNone},
 		{name: "tool approval", mode: WorkflowModeDefault, status: StatusRunning, state: AssistantStateWaitingApproval, blocked: true},
-		{name: "user input", mode: WorkflowModeDefault, status: StatusDone, state: AssistantStateWaitingInput, blocked: true},
+		{name: "stale user input", mode: WorkflowModeDefault, status: StatusDone, state: AssistantStateWaitingInput},
+		{name: "active run with user input", mode: WorkflowModeDefault, status: StatusDone, state: AssistantStateWaitingInput, activeRun: true, blocked: true},
+		{name: "retry with user input", mode: WorkflowModeDefault, status: StatusDone, state: AssistantStateWaitingInput, retrying: true, blocked: true},
+		{name: "aborting with user input", mode: WorkflowModeDefault, status: StatusAborting, state: AssistantStateWaitingInput, blocked: true},
+		{name: "running with user input", mode: WorkflowModeDefault, status: StatusRunning, state: AssistantStateWaitingInput, blocked: true},
 		{name: "active run with plan approval", mode: WorkflowModeDefault, status: StatusRunning, state: AssistantStateWaitingPlanApproval, activeRun: true, blocked: true},
 		{name: "retry with plan approval", mode: WorkflowModeDefault, status: StatusRunning, state: AssistantStateWaitingPlanApproval, retrying: true, blocked: true},
 		{name: "aborting with plan approval", mode: WorkflowModeDefault, status: StatusAborting, state: AssistantStateWaitingPlanApproval, blocked: true},

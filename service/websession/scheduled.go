@@ -1839,25 +1839,61 @@ func (m *Manager) hasBlockingNonPlanSession(ctx context.Context, projectID strin
 		assistantState := effectiveAssistantState(session)
 		status := effectiveStatus(session, assistantState)
 		activeRun := m.hasActiveRun(session.ID)
+		if activeRun || status == StatusAborting || session.AutoRetryNextAt != nil {
+			return true, nil
+		}
 		// A completed plan can retain its plan-approval state after the
 		// workflow mode is changed. It is no longer work in progress unless
 		// an active run, abort, or retry is still present.
-		if assistantState == AssistantStateWaitingPlanApproval &&
-			!activeRun &&
-			status != StatusAborting &&
-			session.AutoRetryNextAt == nil {
+		if assistantState == AssistantStateWaitingPlanApproval {
 			continue
 		}
-		if activeRun ||
-			assistantState != AssistantStateNone ||
+		// Historical sessions can retain waiting_input after their question
+		// was answered or their history was removed. Only an unanswered
+		// request should keep an otherwise inactive session blocking idle.
+		if assistantState == AssistantStateWaitingInput &&
+			status != StatusRunning && status != StatusWaitingApproval {
+			pending, err := m.hasUnansweredUserInput(ctx, session.ID)
+			if err != nil {
+				return false, err
+			}
+			if !pending {
+				continue
+			}
+		}
+		if assistantState != AssistantStateNone ||
 			status == StatusRunning ||
-			status == StatusWaitingApproval ||
-			status == StatusAborting ||
-			session.AutoRetryNextAt != nil {
+			status == StatusWaitingApproval {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func (m *Manager) hasUnansweredUserInput(ctx context.Context, sessionID string) (bool, error) {
+	db := model.GetDB()
+	if db == nil {
+		return false, model.ErrDBNotInitialized
+	}
+	// Read the latest event that can open or clear a pending question, even
+	// when it falls outside the ordinary paginated history window.
+	var rows []tables.WebSessionItemTable
+	if err := db.WithContext(ctx).
+		Select("id", "item_kind", "item_type", "detail_json").
+		Where("web_session_id = ?", sessionID).
+		Where("item_type IN ? OR item_kind = ?", []string{
+			"user_input_request", "user_input_response", "run_abort", "run_fail",
+		}, "user").
+		Order("order_index DESC").
+		Limit(1).
+		Find(&rows).Error; err != nil {
+		return false, err
+	}
+	if len(rows) == 0 {
+		return false, nil
+	}
+	item := mapHistoryItemRowWithSession(rows[0], sessionID)
+	return pendingUserInputFromHistory([]HistoryItem{item}) != nil, nil
 }
 
 func (m *Manager) updateScheduledIdleCondition(
