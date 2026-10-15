@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { WebSessionCommandChannel } from '../src/web-session-command-channel.js';
+import { normalizeWebSessionFrame } from '../src/web-session-shared.js';
 import { FakeWebSocket } from './helpers.js';
 
 function sampleWireSession(overrides = {}) {
@@ -114,6 +115,39 @@ test('WebSessionCommandChannel connect returns a normalized snapshot', async () 
     createdAt: '2024-03-09T16:00:00.004Z',
   });
   channel.close();
+});
+
+test('WebSessionCommandChannel toggles Codex Fast mode and reads the saved state', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => queueMicrotask(() => socket.open()));
+  const channel = new WebSessionCommandChannel({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/ws',
+    WebSocketImpl: FakeWebSocket,
+  });
+  try {
+    await channel.waitForOpen();
+    await assert.rejects(channel.updateCodexFastMode('ws1'), /must be a boolean/);
+    for (const enabled of [true, false]) {
+      const promise = channel.updateCodexFastMode('ws1', { codexFastMode: enabled });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const socket = FakeWebSocket.instances[0];
+      const request = socket.sent.at(-1);
+      assert.equal(request.op, 'set_cfm');
+      assert.deepEqual(request.p, { cfm: enabled });
+      socket.emitJson({
+        v: 1, k: 'ack', rid: request.rid, sid: 'ws1', ts: 1710000000030,
+        op: 'set_cfm', ok: 1, rev: '2',
+      });
+      const ack = await promise;
+      assert.equal(ack.ok, true);
+      const event = normalizeWebSessionFrame({
+        v: 1, k: 'evt', sid: 'ws1', op: 'session', s: sampleWireSession({ cfm: enabled }),
+      });
+      assert.equal(event.session.codexFastMode, enabled);
+    }
+  } finally {
+    channel.close();
+  }
 });
 
 test('WebSessionCommandChannel updates pending text and pause state', async () => {

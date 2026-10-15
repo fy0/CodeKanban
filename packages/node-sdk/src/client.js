@@ -1126,6 +1126,9 @@ export class CodeKanbanClient {
             : {}),
           ...(model ? { model } : {}),
           ...(reasoningEffort ? { reasoningEffort } : {}),
+          ...(input.codexFastMode !== undefined
+            ? { codexFastMode: input.codexFastMode === true }
+            : {}),
           workflowMode:
             ensureOptionalString(input.workflowMode) ||
             defaultWebSessionWorkflowMode(permissionMode),

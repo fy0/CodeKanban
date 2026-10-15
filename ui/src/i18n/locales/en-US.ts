@@ -1006,6 +1006,9 @@ export default {
     fusionSidekick: 'Sidekick',
     fusionSidekickEffort: 'Sidekick effort',
     fusionFastMode: 'Fast Mode',
+    codexFastMode: 'Codex Fast mode',
+    codexFastModeHint:
+      'Use priority service for faster responses, which may increase usage. Changes apply from the next turn.',
     fusionCost: 'Cost',
     modelSearchPlaceholder: 'Search models or providers',
     modelEffortSearchPlaceholder: 'Search models or reasoning effort',

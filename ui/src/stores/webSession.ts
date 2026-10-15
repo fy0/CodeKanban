@@ -67,6 +67,7 @@ type WireSession = {
   be?: 'legacy_exec' | 'codex_app_server' | 'pi_rpc' | 'devin_acp' | string;
   md: string;
   re?: WebSessionReasoningEffort;
+  cfm?: boolean;
   wm: 'default' | 'plan';
   pl: 'default' | 'elevated' | 'yolo';
   acte?: boolean;
@@ -3283,6 +3284,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       title: session.ttl,
       model: session.md,
       reasoningEffort: session.re ?? 'default',
+      codexFastMode: session.cfm === true,
       workflowMode: session.wm ?? 'default',
       permissionLevel: session.pl ?? 'elevated',
       activeCallTimeoutEnabled: session.acte === true,
@@ -8010,6 +8012,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await sendCommand('set_re', sessionId, { re: reasoningEffort });
   }
 
+  async function updateCodexFastMode(sessionId: string, enabled: boolean) {
+    await sendCommand('set_cfm', sessionId, { cfm: enabled });
+  }
+
   async function updateWorkflowMode(sessionId: string, workflowMode: 'default' | 'plan') {
     const session = findSessionById(sessionId);
     const previousWorkflowMode = session?.workflowMode;
@@ -8463,6 +8469,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       claudeRuntime?: 'claude' | 'ccr';
       model?: string;
       reasoningEffort?: WebSessionReasoningEffort;
+      codexFastMode?: boolean;
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
       activeCallTimeoutEnabled?: boolean;
@@ -8569,6 +8576,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updateModel,
     updateClaudeRuntime,
     updateReasoningEffort,
+    updateCodexFastMode,
     updateWorkflowMode,
     refreshGoal,
     setGoal,

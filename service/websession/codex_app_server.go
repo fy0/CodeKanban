@@ -3027,6 +3027,7 @@ func codexThreadStartParams(session tables.WebSessionTable, supportsMultiAgentV2
 		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
 		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
 		"config":         codexSessionThreadConfig(session, supportsMultiAgentV2),
+		"serviceTier":    codexServiceTier(session),
 	}
 	if supportsMultiAgentV2 {
 		params["historyMode"] = "paginated"
@@ -3052,6 +3053,7 @@ func codexThreadResumeParams(
 		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
 		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
 		"config":         codexSessionThreadConfig(session, supportsMultiAgentV2),
+		"serviceTier":    codexServiceTier(session),
 	}
 	if !supportsMultiAgentV2 {
 		params["persistExtendedHistory"] = true
@@ -3081,6 +3083,7 @@ func (m *Manager) codexTurnStartParams(
 		"threadId":          strings.TrimSpace(threadID),
 		"input":             codexUserInputs(text, attachments),
 		"collaborationMode": m.codexCollaborationMode(session),
+		"serviceTier":       codexServiceTier(session),
 	}
 }
 

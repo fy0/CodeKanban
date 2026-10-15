@@ -483,6 +483,7 @@ export const webSessionApi = {
       claudeRuntime?: 'claude' | 'ccr';
       model?: string;
       reasoningEffort?: WebSessionReasoningEffort;
+      codexFastMode?: boolean;
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
       activeCallTimeoutEnabled?: boolean;
@@ -505,6 +506,7 @@ export const webSessionApi = {
           claudeRuntime: data.claudeRuntime ?? 'claude',
           ...(data.model !== undefined ? { model: data.model } : {}),
           ...(data.reasoningEffort !== undefined ? { reasoningEffort: data.reasoningEffort } : {}),
+          ...(data.codexFastMode !== undefined ? { codexFastMode: data.codexFastMode } : {}),
           workflowMode: data.workflowMode ?? 'default',
           ...(data.permissionLevel !== undefined ? { permissionLevel: data.permissionLevel } : {}),
           activeCallTimeoutEnabled: data.activeCallTimeoutEnabled,

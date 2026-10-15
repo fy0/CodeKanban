@@ -92,6 +92,7 @@ type wireSess struct {
 	Backend                           string          `json:"be"`
 	Model                             string          `json:"md"`
 	ReasoningEffort                   string          `json:"re"`
+	CodexFastMode                     bool            `json:"cfm"`
 	WorkflowMode                      string          `json:"wm"`
 	PermissionLevel                   string          `json:"pl"`
 	ActiveCallTimeoutEnabled          bool            `json:"acte"`
@@ -561,6 +562,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		Backend:                           string(session.Backend),
 		Model:                             session.Model,
 		ReasoningEffort:                   string(session.ReasoningEffort),
+		CodexFastMode:                     session.CodexFastMode,
 		WorkflowMode:                      string(session.WorkflowMode),
 		PermissionLevel:                   string(session.PermissionLevel),
 		ActiveCallTimeoutEnabled:          session.ActiveCallTimeoutEnabled,

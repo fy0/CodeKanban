@@ -498,6 +498,7 @@ export function normalizeWebSessionSummaryFromWire(value) {
     title: trimmedString(value?.ttl),
     model: trimmedString(value?.md),
     reasoningEffort: trimmedString(value?.re) || "default",
+    codexFastMode: value?.cfm === true,
     workflowMode: trimmedString(value?.wm) || "default",
     permissionLevel: trimmedString(value?.pl) || "elevated",
     cwd: trimmedString(value?.cwd),

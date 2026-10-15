@@ -602,6 +602,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				ClaudeRuntime                     string  `json:"claudeRuntime"`
 				Model                             string  `json:"model"`
 				ReasoningEffort                   string  `json:"reasoningEffort"`
+				CodexFastMode                     bool    `json:"codexFastMode"`
 				WorkflowMode                      string  `json:"workflowMode"`
 				PermissionLevel                   string  `json:"permissionLevel"`
 				ActiveCallTimeoutEnabled          *bool   `json:"activeCallTimeoutEnabled,omitempty"`
@@ -651,6 +652,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			ClaudeRuntime:                     websession.ClaudeRuntime(input.Body.ClaudeRuntime),
 			Model:                             input.Body.Model,
 			ReasoningEffort:                   websession.ReasoningEffort(input.Body.ReasoningEffort),
+			CodexFastMode:                     input.Body.CodexFastMode,
 			WorkflowMode:                      workflowMode,
 			PermissionLevel:                   permissionLevel,
 			ActiveCallTimeoutEnabled:          input.Body.ActiveCallTimeoutEnabled,

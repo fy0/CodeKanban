@@ -311,6 +311,7 @@ type SessionSummary struct {
 	Title                             string                     `json:"title"`
 	Model                             string                     `json:"model"`
 	ReasoningEffort                   ReasoningEffort            `json:"reasoningEffort"`
+	CodexFastMode                     bool                       `json:"codexFastMode"`
 	WorkflowMode                      WorkflowMode               `json:"workflowMode"`
 	PermissionLevel                   PermissionLevel            `json:"permissionLevel"`
 	ActiveCallTimeoutEnabled          bool                       `json:"activeCallTimeoutEnabled"`
@@ -765,6 +766,7 @@ type CreateParams struct {
 	Backend                           SessionBackend
 	Model                             string
 	ReasoningEffort                   ReasoningEffort
+	CodexFastMode                     bool
 	WorkflowMode                      WorkflowMode
 	PermissionLevel                   PermissionLevel
 	ActiveCallTimeoutEnabled          *bool

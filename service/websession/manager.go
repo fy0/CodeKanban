@@ -1290,6 +1290,9 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 	}
 
 	modelName := m.resolveSessionModel(agent, params.Model)
+	if params.CodexFastMode && agent != AgentCodex {
+		return SessionSummary{}, fmt.Errorf("fast mode is only supported for Codex")
+	}
 	reasoningEffort := m.resolveSessionReasoningEffort(agent, modelName, params.ReasoningEffort)
 	if agent == AgentPi {
 		if modelName != "" {
@@ -1314,6 +1317,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		TitleAuto:                         strings.TrimSpace(params.Title) == "",
 		Model:                             modelName,
 		ReasoningEffort:                   string(reasoningEffort),
+		CodexFastMode:                     params.CodexFastMode,
 		WorkflowMode:                      string(normalizeWorkflowMode(params.WorkflowMode)),
 		SessionStartSource:                string(SessionStartSourceStartup),
 		PermissionLevel:                   string(permissionLevel),
@@ -2826,6 +2830,7 @@ func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent
 		"backend":                            string(defaultSessionBackend(normalized)),
 		"model":                              modelName,
 		"reasoning_effort":                   string(m.resolveSessionReasoningEffort(normalized, modelName, "")),
+		"codex_fast_mode":                    false,
 		"permission_level":                   string(permissionLevel),
 		"native_session_id":                  nil,
 		"source_kind":                        defaultSourceKind(normalized),
@@ -3385,6 +3390,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleSetClaudeRuntimeCommand(ctx, client, frame)
 	case "set_re":
 		return m.handleSetReasoningEffortCommand(ctx, client, frame)
+	case "set_cfm":
+		return m.handleSetCodexFastModeCommand(ctx, client, frame)
 	case "set_wm":
 		return m.handleSetWorkflowModeCommand(ctx, client, frame)
 	case "goal_get":
@@ -3578,6 +3585,7 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 		ClaudeRuntime                     string  `json:"cr"`
 		Model                             string  `json:"md"`
 		ReasoningEffort                   string  `json:"re"`
+		CodexFastMode                     bool    `json:"cfm"`
 		WorkflowMode                      string  `json:"wm"`
 		PermissionLevel                   string  `json:"pl"`
 		AutoRetryEnabled                  bool    `json:"ae"`
@@ -3613,6 +3621,7 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 		ClaudeRuntime:                     ClaudeRuntime(payload.ClaudeRuntime),
 		Model:                             payload.Model,
 		ReasoningEffort:                   ReasoningEffort(payload.ReasoningEffort),
+		CodexFastMode:                     payload.CodexFastMode,
 		WorkflowMode:                      workflowMode,
 		PermissionLevel:                   permissionLevel,
 		AutoRetryEnabled:                  payload.AutoRetryEnabled,
@@ -6582,6 +6591,7 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		return cmd, stdin, true, nil
 	case AgentCodex:
 		args := []string{"exec", "--json", "--skip-git-repo-check"}
+		args = append(args, "-c", fmt.Sprintf("service_tier=%q", codexServiceTier(session)))
 		trimmedText := strings.TrimSpace(preparedText)
 		useStdinPrompt := trimmedText == ""
 		switch permissionLevel {
@@ -7373,6 +7383,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		Title:                             record.Title,
 		Model:                             record.Model,
 		ReasoningEffort:                   ReasoningEffort(record.ReasoningEffort),
+		CodexFastMode:                     record.CodexFastMode,
 		WorkflowMode:                      effectiveWorkflowMode(record),
 		PermissionLevel:                   effectivePermissionLevel(record),
 		ActiveCallTimeoutEnabled:          activeCallTimeoutOverrideOrDefault(record.ActiveCallTimeoutEnabled),

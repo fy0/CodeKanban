@@ -553,6 +553,7 @@ export interface WebSessionSummary {
   title: string;
   model: string;
   reasoningEffort: WebSessionReasoningEffort;
+  codexFastMode?: boolean;
   workflowMode: 'default' | 'plan';
   permissionLevel: 'default' | 'elevated' | 'yolo';
   activeCallTimeoutEnabled?: boolean;

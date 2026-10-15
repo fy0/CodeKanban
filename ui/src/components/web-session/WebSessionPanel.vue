@@ -2368,6 +2368,21 @@
                     :menu-props="reasoningSelectMenuProps"
                     :options="reasoningEffortOptions"
                   />
+                  <n-tooltip v-if="selectedAgent === 'codex'" trigger="hover">
+                    <template #trigger>
+                      <n-switch
+                        v-model:value="selectedCodexFastMode"
+                        size="small"
+                        :loading="codexFastModeUpdating"
+                        :disabled="codexFastModeUpdating"
+                        :aria-label="t('webSession.codexFastMode')"
+                      >
+                        <template #checked>Fast</template>
+                        <template #unchecked>Fast</template>
+                      </n-switch>
+                    </template>
+                    {{ t('webSession.codexFastModeHint') }}
+                  </n-tooltip>
                   <div class="composer-mode-row">
                     <n-button-group class="composer-mode-switch">
                       <n-button
@@ -4561,6 +4576,8 @@ const draftReasoningEffort = ref<WebSessionReasoningEffort>(
   defaultReasoningEffortForAgent('codex')
 );
 const draftWorkflowMode = ref<'default' | 'plan'>('default');
+const draftCodexFastMode = ref(false);
+const codexFastModeUpdating = ref(false);
 const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>(
   defaultPermissionLevelForAgent('codex')
 );
@@ -9784,6 +9801,7 @@ function normalizeDraftSession(
         ? session.reasoningEffort
         : defaultReasoningEffortForAgent(agent),
     workflowMode: session.workflowMode === 'plan' ? 'plan' : 'default',
+    codexFastMode: agent === 'codex' && session.codexFastMode === true,
     permissionLevel:
       session.permissionLevel === 'default' ||
       session.permissionLevel === 'elevated' ||
@@ -10257,6 +10275,7 @@ function createDraftSession(forceAgent?: WebSessionAgent, options?: { title?: st
     title: options?.title || buildDraftTitle(nextAgent),
     model: defaultModelForAgent(nextAgent),
     reasoningEffort: defaultReasoningEffortForAgent(nextAgent),
+    codexFastMode: nextAgent === 'codex' && source?.codexFastMode === true,
     workflowMode: source?.workflowMode || draftWorkflowMode.value,
     permissionLevel: defaultPermissionLevelForAgent(nextAgent),
     activeCallTimeoutEnabled: resolveInheritedActiveCallTimeoutEnabled(source, nextAgent),
@@ -12432,6 +12451,7 @@ const selectedAgent = computed({
     }
     draftModel.value = nextModel;
     draftReasoningEffort.value = nextReasoningEffort;
+    draftCodexFastMode.value = false;
     draftPermissionLevel.value = nextPermissionLevel;
     if (isDraftSession(currentSession.value)) {
       updateActiveDraftSession(current => ({
@@ -12445,6 +12465,7 @@ const selectedAgent = computed({
             : 'claude',
         model: nextModel,
         reasoningEffort: nextReasoningEffort,
+        codexFastMode: false,
         permissionLevel: nextPermissionLevel,
         updatedAt: new Date().toISOString(),
       }));
@@ -12608,6 +12629,38 @@ const selectedReasoningEffort = computed<WebSessionReasoningEffort>({
           message.error(error instanceof Error ? error.message : t('common.error'));
         });
     }
+  },
+});
+
+const selectedCodexFastMode = computed<boolean>({
+  get: () => currentSession.value?.codexFastMode ?? draftCodexFastMode.value,
+  set: enabled => {
+    if (selectedAgent.value !== 'codex' || codexFastModeUpdating.value) return;
+    if (isDraftSession(currentSession.value)) {
+      draftCodexFastMode.value = enabled;
+      updateActiveDraftSession(current => ({
+        ...current,
+        codexFastMode: enabled,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    const sessionId = currentRealSession.value?.id;
+    if (!sessionId) {
+      draftCodexFastMode.value = enabled;
+      return;
+    }
+    const noticeKey = getRuntimeSwitchNoticeKey();
+    codexFastModeUpdating.value = true;
+    void webSessionStore
+      .updateCodexFastMode(sessionId, enabled)
+      .then(() => showRuntimeSwitchNotice(noticeKey))
+      .catch(error => {
+        message.error(error instanceof Error ? error.message : t('common.error'));
+      })
+      .finally(() => {
+        codexFastModeUpdating.value = false;
+      });
   },
 });
 
@@ -14027,6 +14080,7 @@ async function handleCreateSession(
             ? selectedReasoningEffort.value
             : defaultReasoningEffortForAgent(agent)),
         workflowMode: source?.workflowMode || draftWorkflowMode.value,
+        codexFastMode: agent === 'codex' && (source?.codexFastMode ?? draftCodexFastMode.value),
         permissionLevel:
           (source?.permissionLevel === 'default' && agent === 'claude'
             ? 'elevated'
@@ -14076,6 +14130,7 @@ async function handleCreateSession(
       draftReasoningEffort.value =
         session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
       draftWorkflowMode.value = session.workflowMode;
+      draftCodexFastMode.value = session.codexFastMode === true;
       draftPermissionLevel.value = session.permissionLevel;
       await activateTabById(session.id, { connectReal: false });
       scrollToBottom(true);
@@ -14116,6 +14171,7 @@ async function handleStartDraftSession(forceAgent?: WebSessionAgent) {
   draftModel.value = draft.model || defaultModelForAgent(draft.agent);
   draftReasoningEffort.value = draft.reasoningEffort || defaultReasoningEffortForAgent(draft.agent);
   draftWorkflowMode.value = draft.workflowMode;
+  draftCodexFastMode.value = draft.codexFastMode === true;
   draftPermissionLevel.value = draft.permissionLevel;
   closeMobileSessionSelector();
   contextMenuSession.value = null;
@@ -18005,6 +18061,7 @@ watch(
     draftReasoningEffort.value =
       session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
     draftWorkflowMode.value = session.workflowMode;
+    draftCodexFastMode.value = session.codexFastMode === true;
     draftPermissionLevel.value = session.permissionLevel;
     if (timelineSearchOpen.value && normalizedTimelineSearchQuery.value) {
       scheduleTimelineSearchRequest();

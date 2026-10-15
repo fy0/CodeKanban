@@ -125,6 +125,7 @@ export class WebSessionCommandChannel {
         cr: ensureOptionalString(input.claudeRuntime),
         md: ensureOptionalString(input.model),
         re: ensureOptionalString(input.reasoningEffort),
+        ...(input.codexFastMode !== undefined ? { cfm: input.codexFastMode === true } : {}),
         wm: ensureOptionalString(input.workflowMode),
         pl: ensureOptionalString(input.permissionLevel),
         pm: ensureOptionalString(input.permissionMode),
@@ -314,6 +315,17 @@ export class WebSessionCommandChannel {
       payload: {
         re: ensureString(input.reasoningEffort, "reasoningEffort"),
       },
+    });
+  }
+
+  async updateCodexFastMode(sessionId, input = {}) {
+    if (typeof input.codexFastMode !== "boolean") {
+      throw new CodeKanbanValidationError("codexFastMode must be a boolean");
+    }
+    return await this._executeCommand({
+      operation: "set_cfm",
+      sessionId,
+      payload: { cfm: input.codexFastMode },
     });
   }
 

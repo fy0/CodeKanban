@@ -202,7 +202,16 @@ describe('webSessionApi.search', () => {
     const requestBody = postMethodMock.mock.calls.at(-1)?.[1] as Record<string, unknown>;
     expect(requestBody).not.toHaveProperty('model');
     expect(requestBody).not.toHaveProperty('reasoningEffort');
+    expect(requestBody).not.toHaveProperty('codexFastMode');
     expect(requestBody).not.toHaveProperty('permissionLevel');
+  });
+
+  it.each([true, false])('preserves explicit Codex Fast mode %s on creation', async enabled => {
+    postSendMock.mockResolvedValueOnce({ item: { id: 'session-created' } });
+
+    await webSessionApi.create('project-1', { agent: 'codex', codexFastMode: enabled });
+
+    expect(postMethodMock.mock.calls.at(-1)?.[1]).toMatchObject({ codexFastMode: enabled });
   });
 });
 

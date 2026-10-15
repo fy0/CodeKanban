@@ -965,6 +965,8 @@ export default {
     fusionSidekick: '协作模型',
     fusionSidekickEffort: '协作强度',
     fusionFastMode: '快速模式',
+    codexFastMode: 'Codex Fast 模式',
+    codexFastModeHint: '使用优先服务加速响应，可能增加额度消耗。切换后从下一轮生效。',
     fusionCost: '费用',
     modelSearchPlaceholder: '搜索模型或提供商',
     modelEffortSearchPlaceholder: '搜索模型或推理强度',

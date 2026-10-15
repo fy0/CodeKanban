@@ -44,6 +44,15 @@ Mutation HTTP responses that require hydration return a target containing
 `session` and `revision`. The client normally catches up from its hydrated event
 cursor. An explicit `resync_required` notice always forces a full snapshot.
 
+Codex Fast mode is a durable session setting (`codexFastMode` in HTTP summaries
+and create requests, `cfm` in wire summaries and create payloads). The
+`set_cfm` command requires `{ "cfm": true | false }`, returns a revision ack,
+and publishes the updated summary through the event channel. It defaults to
+false and resets when switching agents. The next Codex run explicitly selects
+the `priority` service tier when enabled or `default` when disabled, including
+when resuming a native thread. Existing databases gain the `codex_fast_mode`
+column through the normal GORM auto-migration.
+
 ## Event cursor and history epoch
 
 A full snapshot establishes `(historyEpoch, eventCursor)`. The cursor has the
