@@ -299,6 +299,7 @@ const (
 )
 
 type SessionSummary struct {
+	TokenSpeed                        *TokenSpeed                `json:"tokenSpeed,omitempty"`
 	ID                                string                     `json:"id"`
 	Revision                          string                     `json:"revision"`
 	ProjectID                         string                     `json:"projectId"`
@@ -582,6 +583,7 @@ type SessionSnapshot struct {
 }
 
 type SessionSnapshotResponse struct {
+	TokenSpeed       *TokenSpeed           `json:"tokenSpeed,omitempty"`
 	Revision         string                `json:"revision"`
 	HistoryEpoch     string                `json:"historyEpoch"`
 	EventCursor      string                `json:"eventCursor"`
@@ -614,6 +616,7 @@ func NewSessionHydrationTarget(session SessionSummary) SessionHydrationTarget {
 
 func NewSessionSnapshotResponse(snapshot SessionSnapshot) SessionSnapshotResponse {
 	return SessionSnapshotResponse{
+		TokenSpeed:       snapshot.Session.TokenSpeed,
 		Revision:         snapshot.Revision,
 		HistoryEpoch:     snapshot.HistoryEpoch,
 		EventCursor:      snapshot.EventCursor,

@@ -1243,6 +1243,9 @@ func (m *Manager) handleCodexAppServerMessage(
 	}
 	isRootEvent := rootScope.contains(message.Params)
 	method := strings.TrimSpace(message.Method)
+	if isRootEvent {
+		m.observeCodexTokenSpeed(session, run, method, message.Params)
+	}
 	if isRootEvent && method != "" && run.releaseUserInputResponsePending() {
 		defer m.triggerPendingProcessing(session.ID)
 	}

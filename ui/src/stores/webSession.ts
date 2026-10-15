@@ -42,6 +42,7 @@ import {
 import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 import { selectMostRecentWebSession } from '@/utils/webSessionRecency';
+import { normalizeTokenSpeed, WebSessionTokenSpeedState } from '@/utils/webSessionTokenSpeed';
 
 type WebSessionSocketKind = 'event' | 'command';
 type SessionStatus = WebSessionSummary['status'];
@@ -52,6 +53,7 @@ type SessionAssistantState =
   | 'waiting_plan_approval';
 
 type WireSession = {
+  tsp?: unknown;
   id: string;
   rev?: string;
   ar?: string;
@@ -2153,6 +2155,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const snapshotApprovalsBySession = ref<Record<string, WebSessionApprovalState>>({});
   const subAgentsBySession = ref<Record<string, WebSessionSubAgent[]>>({});
   const codexAppServerBySession = ref<Record<string, CodexAppServerRuntime>>({});
+  const tokenSpeedState = reactive(new WebSessionTokenSpeedState());
+  function getTokenSpeed(sessionId: string) {
+    return tokenSpeedState.get(sessionId);
+  }
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
   const cachedCounts = reactive(new Map<string, number>());
@@ -2328,6 +2334,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function replaceProjectSessions(projectId: string, sessions: WebSessionSummary[]) {
+    for (const session of sessions) tokenSpeedState.apply(session.id, session.tokenSpeed);
     const previous = sessionsByProject.value[projectId] ?? [];
     previous.forEach(session => {
       if (currentSessionProjectById.get(session.id) === projectId) {
@@ -3377,6 +3384,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         session.cws === 'unavailable'
           ? session.cws
           : 'unavailable',
+      tokenSpeed: normalizeTokenSpeed(session.tsp),
       workTiming: {
         completedDurationMs: Math.max(0, Number(session.wt?.dur ?? 0) || 0),
         currentRun:
@@ -3950,6 +3958,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       preserveScopeOrder?: boolean;
     }
   ) {
+    tokenSpeedState.apply(summary.id, summary.tokenSpeed);
     const previous = archivedSessionsById.value[summary.id];
     const nextSummary = mergeSessionAttentionState(
       previous,
@@ -4049,6 +4058,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function clearSessionRuntimeState(sessionId: string, projectId?: string) {
+    tokenSpeedState.remove(sessionId);
     invalidateSessionSnapshotRequests(sessionId);
     const nextEvents = { ...eventsBySession.value };
     delete nextEvents[sessionId];
@@ -4102,6 +4112,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function upsertCurrentSession(summary: WebSessionSummary, options?: { syncCount?: boolean }) {
+    tokenSpeedState.apply(summary.id, summary.tokenSpeed);
     const incomingSummary = applyPendingActiveCallTimeoutOverride(
       applyPendingAutoRetryDispatchOverride(
         applyPendingAutoRetryOverride(normalizeSessionAttentionState(summary))
@@ -5601,6 +5612,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (frame.k === 'evt' && frame.sid) {
+      if (frame.op === 'token_speed') {
+        tokenSpeedState.apply(frame.sid, frame.p);
+        return;
+      }
       if (frame.op === 'pending') {
         const previousProjection = getRuntimeProjection(frame.sid);
         if (applyPendingWireFrame(frame)) {
@@ -6657,6 +6672,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       const responseRevision = normalizeWebSessionRevision(
         snapshot.revision ?? snapshot.session?.revision
       );
+      tokenSpeedState.apply(sessionId, snapshot.tokenSpeed ?? snapshot.session?.tokenSpeed);
       const responseMissingRevision = !responseRevision;
       let result = snapshot;
       let accepted = true;
@@ -8508,6 +8524,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     loadCommandGroupDetail,
     getSubAgents,
     getCodexAppServerRuntime,
+    getTokenSpeed,
     setCodexAppServerRuntime,
     isSessionSnapshotCurrent,
     getBlocks,

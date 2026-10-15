@@ -24,10 +24,11 @@ const piToolProgressInterval = 100 * time.Millisecond
 const piToolHistoryKind = "dynamic_tool_call"
 
 type piRPCMessage struct {
-	Role         string `json:"role"`
-	Timestamp    int64  `json:"timestamp"`
-	StopReason   string `json:"stopReason"`
-	ErrorMessage string `json:"errorMessage"`
+	Usage        *piRPCTokenUsage `json:"usage"`
+	Role         string           `json:"role"`
+	Timestamp    int64            `json:"timestamp"`
+	StopReason   string           `json:"stopReason"`
+	ErrorMessage string           `json:"errorMessage"`
 	Content      []struct {
 		Type      string         `json:"type"`
 		Text      string         `json:"text"`
@@ -140,6 +141,9 @@ func (m *Manager) startPiAssistantMessage(dispatch *piRuntimeRun) error {
 	dispatch.assistantMessageOpen = true
 	dispatch.contents = make(map[int]*piRuntimeContentState)
 	dispatch.mu.Unlock()
+	m.updateTokenSpeed(dispatch.session.ID, dispatch.run.runID, func(s *tokenSpeedState, now time.Time) {
+		s.begin(messageID, now, true)
+	}, true)
 
 	dispatch.run.mu.Lock()
 	dispatch.run.assistantMessageID = messageID
@@ -158,7 +162,16 @@ func (m *Manager) ensurePiAssistantMessage(dispatch *piRuntimeRun) error {
 	if open {
 		return nil
 	}
-	return m.startPiAssistantMessage(dispatch)
+	if err := m.startPiAssistantMessage(dispatch); err != nil {
+		return err
+	}
+	// Reconstructing a missing message_start cannot establish a full timing boundary.
+	m.updateTokenSpeed(dispatch.session.ID, dispatch.run.runID, func(s *tokenSpeedState, _ time.Time) {
+		if cur := s.current(); cur != nil {
+			cur.completeBoundary = false
+		}
+	}, false)
+	return nil
 }
 
 func (m *Manager) handlePiAssistantMessageEvent(dispatch *piRuntimeRun, update piAssistantMessageEvent) error {
@@ -213,6 +226,11 @@ func (m *Manager) handlePiAssistantMessageEvent(dispatch *piRuntimeRun, update p
 	}
 	content := state.text
 	dispatch.mu.Unlock()
+	if update.Type == "text_delta" || update.Type == "thinking_delta" || update.Type == "toolcall_delta" {
+		m.updateTokenSpeed(dispatch.session.ID, dispatch.run.runID, func(s *tokenSpeedState, now time.Time) {
+			s.delta(messageID, fmt.Sprintf("%d", update.ContentIndex), update.Delta, now)
+		}, false)
+	}
 
 	switch update.Type {
 	case "text_delta":
@@ -264,6 +282,13 @@ func (m *Manager) finishPiAssistantMessage(dispatch *piRuntimeRun, message piRPC
 	}
 	dispatch.mu.Unlock()
 
+	m.updateTokenSpeed(dispatch.session.ID, dispatch.run.runID, func(s *tokenSpeedState, now time.Time) {
+		var output *int64
+		if message.Usage != nil {
+			output = &message.Usage.Output
+		}
+		s.finish(messageID, output, now, message.ErrorMessage == "" && message.StopReason != "error" && message.StopReason != "aborted")
+	}, true)
 	for index, block := range message.Content {
 		if block.Type != "thinking" {
 			continue
@@ -286,6 +311,9 @@ func (m *Manager) finishPiAssistantMessage(dispatch *piRuntimeRun, message piRPC
 }
 
 func (m *Manager) handlePiToolExecution(dispatch *piRuntimeRun, event piRPCEvent) error {
+	if event.Type == "tool_execution_start" {
+		m.updateTokenSpeed(dispatch.session.ID, dispatch.run.runID, func(s *tokenSpeedState, now time.Time) { s.finish("", nil, now, true) }, true)
+	}
 	var payload piRPCToolExecutionEvent
 	if err := json.Unmarshal(event.Raw, &payload); err != nil {
 		return fmt.Errorf("decode Pi %s: %w", event.Type, err)
@@ -399,6 +427,9 @@ func (m *Manager) handlePiQueueUpdate(dispatch *piRuntimeRun, event piRPCEvent) 
 }
 
 func (m *Manager) handlePiRetryEvent(dispatch *piRuntimeRun, event piRPCEvent) error {
+	if event.Type == "auto_retry_start" || event.Type == "summarization_retry_scheduled" {
+		m.updateTokenSpeed(dispatch.session.ID, dispatch.run.runID, func(s *tokenSpeedState, now time.Time) { s.finish("", nil, now, false) }, true)
+	}
 	var payload map[string]any
 	if err := json.Unmarshal(event.Raw, &payload); err != nil {
 		return fmt.Errorf("decode Pi %s: %w", event.Type, err)

@@ -366,6 +366,17 @@ export type WebSessionWorkTimingOutcome =
   | 'timeout'
   | 'interrupted';
 
+export interface WebSessionTokenSpeed {
+  epoch: string;
+  version: number;
+  runId: string;
+  sampleId: string;
+  tokensPerSecond: number | null;
+  estimated: boolean;
+  generating: boolean;
+  updatedAt: string;
+}
+
 export interface WebSessionWorkTimingCurrentRun {
   id: string;
   startedAt: string;
@@ -595,6 +606,7 @@ export interface WebSessionSummary {
   contextWindowTokens?: number | null;
   contextWindowSource: WebSessionContextWindowSource;
   workTiming?: WebSessionWorkTiming;
+  tokenSpeed?: WebSessionTokenSpeed | null;
   goal?: WebSessionGoal | null;
   searchMatchSources?: Array<'title' | 'body'>;
 }

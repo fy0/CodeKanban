@@ -2134,6 +2134,7 @@
                 </span>
               </div>
 
+              <WebSessionTokenSpeed v-if="isMobileComposerCollapsed" :speed="currentTokenSpeed" />
               <button
                 v-if="isMobileComposerCollapsed && contextUsageIndicator"
                 type="button"
@@ -3313,6 +3314,7 @@
                 </div>
 
                 <div class="composer-footer-right">
+                  <WebSessionTokenSpeed :speed="currentTokenSpeed" />
                   <n-dropdown
                     trigger="manual"
                     placement="top-end"
@@ -3940,6 +3942,7 @@ import {
   formatWebSessionSidebarTime,
   formatWebSessionTimestamp,
 } from '@/components/web-session/webSessionTimeFormat';
+import WebSessionTokenSpeed from '@/components/web-session/WebSessionTokenSpeed.vue';
 import {
   formatElapsedDuration,
   resolveWebSessionLiveTimeCopy,
@@ -7859,6 +7862,10 @@ const mobileComposerPendingSummary = computed(() => {
     })
   );
 });
+
+const currentTokenSpeed = computed(() =>
+  currentRealSession.value ? webSessionStore.getTokenSpeed(currentRealSession.value.id) : null
+);
 
 type ContextUsageIndicator = {
   state: 'idle' | 'active' | 'warning' | 'unavailable';

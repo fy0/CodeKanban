@@ -196,6 +196,7 @@ func (m *Manager) mapSessionSummaryWithContext(
 	contextConfig codexSessionContextConfig,
 ) SessionSummary {
 	summary := mapSessionRecord(record)
+	summary.TokenSpeed = m.tokenSpeedSnapshot(record.ID)
 	summary.ActiveCallTimeoutEnabled = m.effectiveActiveCallTimeoutEnabled(record)
 	decorateSessionSummaryWithContext(&summary, contextConfig)
 	if normalizeAgent(summary.Agent) == AgentDevin {

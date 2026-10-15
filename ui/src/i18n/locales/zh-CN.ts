@@ -1005,6 +1005,9 @@ export default {
       '说明：可用时使用 Codex 隐藏 usage 的最新快照估算当前上下文占用；累计消耗仍单独展示。',
     contextUsageDisclaimerClaude:
       '说明：窗口上限来自 Claude result.modelUsage；当前占用按会话 usage 估算，自动压缩的实际触发时机由 Claude Code 决定。',
+    tokenSpeedUnavailable: '模型生成速度：暂无数据',
+    tokenSpeedEstimated: '模型生成速度：实时估算，排除工具执行和等待用户的时间',
+    tokenSpeedCalibrated: '模型生成速度：已按本次请求的实际输出用量校准',
     contextUsageWindow: '上限：{count} tokens',
     contextUsageCompactLimit: '压缩线：{count} tokens',
     contextUsageRemainingEstimate: '距压缩线剩余：{count} tokens',

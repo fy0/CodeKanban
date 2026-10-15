@@ -531,6 +531,7 @@ export function normalizeWebSessionSummaryFromWire(value) {
       cost: numberValue(value?.cost, 0),
     },
     latestTurnUsage: value?.ltu ? normalizeContextEstimate(value.ltu, null) : null,
+    tokenSpeed: normalizeTokenSpeed(value?.tsp),
     contextEstimate: normalizeContextEstimate(value?.cea, value?.usa),
     contextEstimateMode: trimmedString(value?.cem) || "cumulative_total",
     lastContextCompactionAt: isoFromUnixMilli(value?.lcca),
@@ -945,6 +946,18 @@ export function decodeWebSessionSocketMessage(raw) {
   return JSON.parse(String(raw ?? ""));
 }
 
+export function normalizeTokenSpeed(value) {
+  if (!value || typeof value.epoch !== "string" || !value.epoch ||
+      !Number.isSafeInteger(value.version) || value.version < 0) return null;
+  return {
+    epoch: value.epoch, version: value.version,
+    runId: trimmedString(value.runId), sampleId: trimmedString(value.sampleId),
+    tokensPerSecond: typeof value.tokensPerSecond === "number" && Number.isFinite(value.tokensPerSecond) && value.tokensPerSecond >= 0 ? value.tokensPerSecond : null,
+    estimated: value.estimated !== false, generating: value.generating === true,
+    updatedAt: trimmedString(value.updatedAt),
+  };
+}
+
 export function normalizeWebSessionFrame(rawFrame) {
   const timestampMs = nullableNumberValue(rawFrame?.ts);
   const base = {
@@ -998,6 +1011,9 @@ export function normalizeWebSessionFrame(rawFrame) {
   }
 
   if (rawFrame?.k === "evt") {
+    if (rawFrame?.op === "token_speed") {
+      return { ...base, type: "tokenSpeed", tokenSpeed: normalizeTokenSpeed(rawFrame.p) };
+    }
     if (rawFrame?.op === "session" && rawFrame?.s) {
       return {
         ...base,

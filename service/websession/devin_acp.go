@@ -1270,6 +1270,7 @@ func (m *Manager) handleDevinACPUpdate(session tables.WebSessionTable, run *acti
 	// feed the sub-agent registry, and context tags every event projected from
 	// this update with the owning sub-agent's id.
 	contextID := m.applyDevinSubAgentMeta(session, run, decodeRawObject(update["_meta"]))
+	m.observeDevinTokenSpeed(session, run, proj, update, contextID)
 	switch kind {
 	case "user_message_chunk":
 		// Only history capture consumes replayed user messages; live runs
@@ -1645,6 +1646,15 @@ func (m *Manager) applyDevinPromptUsageFallback(session tables.WebSessionTable, 
 		return
 	}
 	usage := decodeRawObject(decodeRawObject(raw)["usage"])
+	if output, ok := devinUsageToken(usage, "outputTokens"); ok {
+		m.updateTokenSpeed(session.ID, run.runID, func(s *tokenSpeedState, now time.Time) {
+			// A whole-prompt total can only be attributed when exactly one root
+			// generation was observed and no subagent contributed output.
+			if s.serial == 1 && !s.devinAmbiguous {
+				s.finish("", &output, now, false)
+			}
+		}, true)
+	}
 	in := int64(numberValue(usage["inputTokens"]))
 	out := int64(numberValue(usage["outputTokens"]))
 	cin := int64(numberValue(usage["cachedReadTokens"])) + int64(numberValue(usage["cachedWriteTokens"]))

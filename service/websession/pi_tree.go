@@ -214,6 +214,7 @@ func (m *Manager) NavigatePiSessionTree(
 		return PiTreeNavigateResult{}, err
 	}
 	navigationComplete = true
+	m.clearTokenSpeed(session.ID)
 	if err := m.broadcastResyncRequired(context.Background(), session.ID, resyncReasonTreeNavigation); err != nil && m.logger != nil {
 		m.logger.Warn("failed to broadcast Pi tree navigation resync",
 			zap.String("sessionId", session.ID),

@@ -1046,6 +1046,11 @@ export default {
       'Note: when available, the latest hidden Codex usage snapshot estimates current context occupancy; cumulative usage is still shown separately.',
     contextUsageDisclaimerClaude:
       'The window limit comes from Claude result.modelUsage. Current occupancy is estimated from session usage; Claude Code controls the actual automatic-compaction trigger.',
+    tokenSpeedUnavailable: 'Model generation speed: no data yet',
+    tokenSpeedEstimated:
+      'Estimated model generation speed, excluding tool execution and user waits',
+    tokenSpeedCalibrated:
+      'Model generation speed calibrated using actual output usage for this request',
     contextUsageWindow: 'Window: {count} tokens',
     contextUsageCompactLimit: 'Compact at: {count} tokens',
     contextUsageRemainingEstimate: 'Remaining to compact limit: {count} tokens',

@@ -1342,8 +1342,8 @@ func TestSummaryAndResyncBroadcastsReuseCurrentRevision(t *testing.T) {
 	if after.SnapshotRevision != before.SnapshotRevision {
 		t.Fatalf("broadcasts advanced revision from %d to %d", before.SnapshotRevision, after.SnapshotRevision)
 	}
-	if len(eventConn.frames) != 3 {
-		t.Fatalf("expected focus pending snapshot, summary, and resync events, got %#v", eventConn.frames)
+	if len(eventConn.frames) != 4 {
+		t.Fatalf("expected focus pending and speed snapshots, summary, and resync events, got %#v", eventConn.frames)
 	}
 	pendingFrame := eventConn.frames[0]
 	if pendingFrame.Operation != wireOpPending || pendingFrame.PendingEpoch == "" ||
@@ -1351,7 +1351,10 @@ func TestSummaryAndResyncBroadcastsReuseCurrentRevision(t *testing.T) {
 		pendingFrame.Revision != "" {
 		t.Fatalf("unexpected focus pending snapshot: %#v", pendingFrame)
 	}
-	resync := eventConn.frames[2]
+	if speed := eventConn.frames[1]; speed.Operation != "token_speed" || speed.Revision != "" {
+		t.Fatalf("unexpected focus speed snapshot: %#v", speed)
+	}
+	resync := eventConn.frames[3]
 	if resync.Kind != "evt" || resync.Operation != "resync_required" ||
 		resync.SessionID != session.ID || resync.Revision != formatSnapshotRevision(before.SnapshotRevision) {
 		t.Fatalf("unexpected resync frame: %#v", resync)
@@ -2173,8 +2176,8 @@ func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
 		Text:       "delta",
 	}, nil))
 
-	if len(focusedConn.frames) != 2 {
-		t.Fatalf("expected focused client to receive focus snapshot and one history frame, got %d", len(focusedConn.frames))
+	if len(focusedConn.frames) != 3 {
+		t.Fatalf("expected focused client to receive pending and speed snapshots and one history frame, got %d", len(focusedConn.frames))
 	}
 	if len(otherConn.frames) != 0 {
 		t.Fatalf("expected unfocused client to receive no history frame, got %d", len(otherConn.frames))
@@ -2188,7 +2191,7 @@ func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
 		Status:    StatusRunning,
 	}))
 
-	if len(focusedConn.frames) != 3 {
+	if len(focusedConn.frames) != 4 {
 		t.Fatalf("expected focused client to receive session summary, got %d frames", len(focusedConn.frames))
 	}
 	if len(otherConn.frames) != 1 {

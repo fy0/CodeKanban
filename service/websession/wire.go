@@ -24,6 +24,7 @@ const (
 	wireOpScheduled      = "scheduled"
 	wireOpSubAgent       = "sub_agent"
 	wireOpAppServer      = "app_server"
+	wireOpTokenSpeed     = "token_speed"
 	wireOpResyncRequired = "resync_required"
 )
 
@@ -80,6 +81,7 @@ type wireFrame struct {
 }
 
 type wireSess struct {
+	TokenSpeed                        *TokenSpeed     `json:"tsp,omitempty"`
 	ID                                string          `json:"id"`
 	Revision                          string          `json:"rev,omitempty"`
 	ProjectID                         string          `json:"pid"`
@@ -622,6 +624,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		ContextWindowSource:     string(session.ContextWindowSource),
 		Goal:                    mapWireGoal(session.Goal),
 		WorkTiming:              mapWireWorkTiming(session.WorkTiming),
+		TokenSpeed:              session.TokenSpeed,
 		DevinQuota:              mapWireDevinQuota(session.DevinQuota),
 	}
 	if session.LatestTurnUsage.InputTokens > 0 ||

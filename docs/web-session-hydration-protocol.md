@@ -29,6 +29,17 @@ read into an expensive source reload.
 Pending state is always included because it has an independent in-memory clock
 and can change without advancing `revision`.
 
+Token generation speed is also ephemeral. Every conditional snapshot includes
+`tokenSpeed`, including unchanged responses; summaries carry the same value
+(`tsp` on the wire). Focus heartbeats deliver the latest sample after pending
+state. Focused event clients receive `op: "token_speed"` with the semantic
+`TokenSpeed` object in `p`, independently of history revisions and cursors.
+Clients order samples by `epoch` and `version`, retire old process epochs, and
+must not let a stale summary overwrite a newer sample. Telemetry never changes
+activity, unread state, or the durable revision and is not recovered by replay.
+The latest sample remains in memory until a new run or context reset; after a
+server restart the rate is unavailable until generation produces a new sample.
+
 Mutation HTTP responses that require hydration return a target containing
 `session` and `revision`. The client normally catches up from its hydrated event
 cursor. An explicit `resync_required` notice always forces a full snapshot.

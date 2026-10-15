@@ -95,6 +95,27 @@ describe('webSessionStore work timing', () => {
     calculateWorkTimingMock.mockReset();
   });
 
+  it('restores token speed even when the conditional snapshot is unchanged', async () => {
+    const session = makeSession();
+    const tokenSpeed = {
+      epoch: 'process-1',
+      version: 2,
+      runId: 'run-1',
+      sampleId: '1',
+      tokensPerSecond: 42,
+      estimated: false,
+      generating: false,
+      updatedAt: session.updatedAt,
+    };
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({ revision: '1', unchanged: true, tokenSpeed });
+    const store = useWebSessionStore();
+    await store.loadSessions('project-1');
+    await store.loadSessionSnapshot('project-1', 'session-1');
+    expect(store.getTokenSpeed('session-1')).toEqual(tokenSpeed);
+    expect(store.getSessions('project-1')[0]?.revision).toBe(session.revision);
+  });
+
   it('coalesces lazy calculations and patches the loaded anchor item', async () => {
     const pendingSession = makeSession();
     listMock.mockResolvedValue([pendingSession]);

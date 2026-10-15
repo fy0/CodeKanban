@@ -4,6 +4,7 @@ import type {
   WebSessionReasoningEffort,
   WebSessionRuntimeConfig,
   WebSessionSummary,
+  WebSessionTokenSpeed,
   WebSessionWorkTimingOutcome,
 } from '@/types/models';
 import { ApiError, urlBase } from '@/api';
@@ -371,6 +372,7 @@ export type WebSessionSubAgentRecord = {
 };
 
 export type WebSessionSnapshot = {
+  tokenSpeed?: WebSessionTokenSpeed | null;
   revision?: string;
   historyEpoch?: string;
   eventCursor?: string;

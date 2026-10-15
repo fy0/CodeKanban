@@ -142,6 +142,9 @@ type Manager struct {
 	eventStatesMu        sync.Mutex
 	eventStates          map[string]*sessionEventState
 	textDeltaFlushWindow time.Duration
+	tokenSpeedMu         sync.Mutex
+	tokenSpeedEpoch      string
+	tokenSpeeds          map[string]*tokenSpeedState
 
 	mu   sync.RWMutex
 	runs map[string]*activeRun
@@ -2226,6 +2229,7 @@ func (m *Manager) SnapshotIfChanged(
 		pendingEpoch, pendingVersion, pendingInputs := m.pendingStateSnapshot(record.ID)
 		return SessionSnapshotResponse{
 			Revision:       formatSnapshotRevision(current),
+			TokenSpeed:     m.tokenSpeedSnapshot(sessionID),
 			HistoryEpoch:   strconv.FormatInt(normalizeHistoryEpoch(record.HistoryEpoch), 10),
 			EventCursor:    formatEventCursor(record.LastEventSeq, maxEventCursorOrder),
 			PendingEpoch:   pendingEpoch,
@@ -3054,6 +3058,7 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 		eventState.timer.Stop()
 		eventState.timer = nil
 	}
+	m.clearTokenSpeed(sessionID)
 	eventState.timerGeneration++
 	if eventState.projectionTimer != nil {
 		eventState.projectionTimer.Stop()
@@ -3462,7 +3467,15 @@ func (m *Manager) HandleHeartbeatPayload(client *client, payload []byte) (bool, 
 	case "focus":
 		client.SetFocusedSessionID(frame.SessionID)
 		epoch, version, items := m.pendingStateSnapshot(frame.SessionID)
-		return true, client.send(newPendingFrame(frame.SessionID, epoch, version, items))
+		if err := client.send(newPendingFrame(frame.SessionID, epoch, version, items)); err != nil {
+			return true, err
+		}
+		if frame.SessionID != "" {
+			if err := client.send(wireFrame{Version: protocolVersion, Kind: wireKindEvent, SessionID: frame.SessionID, Timestamp: time.Now().UnixMilli(), Operation: wireOpTokenSpeed, Payload: m.tokenSpeedSnapshot(frame.SessionID)}); err != nil {
+				return true, err
+			}
+		}
+		return true, nil
 	default:
 		return true, nil
 	}
@@ -5344,6 +5357,7 @@ func (m *Manager) handleRuntimePlainLine(session tables.WebSessionTable, run *ac
 }
 
 func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeRun, raw map[string]any) {
+	m.observeClaudeTokenSpeed(session, run, raw)
 	eventType, _ := raw["type"].(string)
 	switch eventType {
 	case "control_request":
@@ -5931,6 +5945,7 @@ func (m *Manager) appendAndBroadcastNow(
 	if err := m.store.appendEvent(sessionID, event); err != nil {
 		return Event{}, err
 	}
+	m.observeTokenSpeedLifecycle(record, event)
 
 	retry := eventProjectionRetry{
 		record: record,
@@ -6347,6 +6362,12 @@ func (m *Manager) updateFields(ctx context.Context, sessionID string, updates ma
 		Updates(withSnapshotRevisionIncrement(updates)).Error; err != nil {
 		return SessionSummary{}, err
 	}
+	for _, key := range []string{"model", "agent", "claude_runtime"} {
+		if _, changed := updates[key]; changed {
+			m.clearTokenSpeed(sessionID)
+			break
+		}
+	}
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return SessionSummary{}, err
@@ -6510,6 +6531,7 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		args := []string{
 			"-p",
 			"--output-format", "stream-json",
+			"--include-partial-messages",
 			"--input-format", "stream-json",
 			"--permission-prompt-tool", "stdio",
 			// Enable a later user-approved transition without starting in bypass mode.
@@ -7186,6 +7208,10 @@ func (m *Manager) releaseActiveRun(sessionID string, run *activeRun) bool {
 	if current != run {
 		return false
 	}
+	m.updateTokenSpeed(sessionID, run.runID, func(s *tokenSpeedState, now time.Time) {
+		s.finish("", nil, now, false)
+		s.stopped = true
+	}, true)
 	m.triggerPendingProcessing(sessionID)
 	return true
 }
@@ -7268,7 +7294,7 @@ func shouldSendFrameToClient(client *client, frame wireFrame) bool {
 	switch frame.Kind {
 	case wireKindEvent:
 		switch strings.ToLower(strings.TrimSpace(frame.Operation)) {
-		case wireOpHistoryItem, wireOpHistoryPage, wireOpPending, wireOpScheduled, wireOpSubAgent, wireOpAppServer, wireOpResyncRequired:
+		case wireOpTokenSpeed, wireOpHistoryItem, wireOpHistoryPage, wireOpPending, wireOpScheduled, wireOpSubAgent, wireOpAppServer, wireOpResyncRequired:
 			return focusedSessionID != "" && focusedSessionID == strings.TrimSpace(frame.SessionID)
 		default:
 			return true
