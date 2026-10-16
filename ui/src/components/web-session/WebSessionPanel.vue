@@ -10458,19 +10458,20 @@ async function activateTabById(
     setComposerTarget(props.projectId, session.id, 'ready');
     return true;
   } else {
+    const projectId = props.projectId;
     replaceDraftSessionState(draftSessions.value, '');
     activeArchivedPreviewId.value = '';
     rememberTabVisit(session.id);
     let activated = true;
     if (options?.connectReal === false) {
       realSessionSnapshotLoadController.cancel();
-      webSessionStore.setActiveSession(props.projectId, session.id);
+      webSessionStore.setActiveSession(projectId, session.id);
+      setComposerTarget(projectId, session.id, 'ready');
     } else {
-      activated = await connectVisibleRealSession(props.projectId, session.id, sessionChanged);
+      activated = await connectVisibleRealSession(projectId, session.id, sessionChanged);
     }
     if (activated) {
       void acknowledgeVisibleSessionView(session.id);
-      setComposerTarget(props.projectId, session.id, 'ready');
     }
     return activated;
   }
@@ -10577,12 +10578,19 @@ async function connectVisibleRealSession(
   if (!projectId || !sessionId) {
     return false;
   }
+  const session = webSessionStore.getSessions(projectId).find(item => item.id === sessionId);
+  if (projectId !== props.projectId || session?.projectId !== projectId) {
+    return false;
+  }
   const sessionChanged =
     forceCatchUp ||
     currentSession.value?.projectId !== projectId ||
     currentSession.value?.id !== sessionId;
   activeArchivedPreviewId.value = '';
   webSessionStore.setActiveSession(projectId, sessionId);
+  // Drafts are already restored locally; timeline hydration must not keep the
+  // composer read-only when it is slow, fails, or is canceled.
+  setComposerTarget(projectId, sessionId, 'ready');
   return realSessionSnapshotLoadController.run(`${projectId}:${sessionId}`, async snapshotLoad => {
     const session = webSessionStore.getSessions(projectId).find(item => item.id === sessionId);
     const hydrationState = webSessionStore.getHistoryMeta(sessionId).hydrationState;
@@ -18322,10 +18330,19 @@ watch(currentDraftSessionId, () => {
 });
 
 watch(
-  () => currentSession.value?.id,
-  (sessionId, previousSessionId) => {
-    if (sessionId && !isProjectSessionInitializing.value) {
+  [() => currentSession.value?.id, isProjectSessionInitializing],
+  ([sessionId, initializing], [previousSessionId]) => {
+    if (
+      sessionId &&
+      !initializing &&
+      currentSession.value?.projectId === props.projectId &&
+      (!pendingRouteActivationSessionId.value ||
+        pendingRouteActivationSessionId.value === sessionId)
+    ) {
       setComposerTarget(props.projectId, sessionId, 'ready');
+    }
+    if (sessionId === previousSessionId) {
+      return;
     }
     showPiTreeDrawer.value = false;
     showQuickInputPopover.value = false;
