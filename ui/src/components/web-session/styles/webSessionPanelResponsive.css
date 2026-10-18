@@ -185,10 +185,17 @@
   .composer-config.is-mobile .composer-mode-row {
     width: auto;
     min-width: 0;
-    grid-column: 1 / -1;
+    grid-column: 1 / 4;
+    grid-row: 2;
     display: flex;
     justify-self: start;
     gap: 6px;
+  }
+
+  .composer-config.is-mobile .composer-fast-mode-switch {
+    grid-column: 4;
+    grid-row: 2;
+    justify-self: start;
   }
 
   .composer-config.is-mobile .composer-mode-switch {
@@ -237,6 +244,17 @@
 }
 
 @media (max-width: 359px) {
+  .composer.is-mobile-settings-expanded .composer-config.is-mobile .composer-mode-row {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .composer.is-mobile-settings-expanded .composer-config.is-mobile .composer-fast-mode-switch {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-self: start;
+  }
+
   .composer.is-mobile-settings-expanded .composer-config.is-mobile .composer-config-row {
     grid-template-columns: 38px minmax(0, 128px) minmax(0, 72px) minmax(0, 1fr);
   }

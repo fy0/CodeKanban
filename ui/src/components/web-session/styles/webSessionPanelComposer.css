@@ -382,6 +382,12 @@
   flex-shrink: 0;
 }
 
+.composer-fast-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .composer-select {
   width: 104px;
   flex-shrink: 0;
@@ -542,16 +548,28 @@
 }
 
 :global(.pi-model-search-header) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   padding: 0;
 }
 
 :global(.pi-model-search-header .n-input),
 :global(.pi-model-search-header .n-input.n-input--focus) {
+  flex: 1;
+  min-width: 0;
   background-color: transparent;
   --n-height: 24px !important;
   --n-font-size: 12px !important;
   --n-padding-left: 6px !important;
   --n-padding-right: 6px !important;
+}
+
+:global(.pi-model-search-header .model-reload-button) {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
 }
 
 :global(.web-session-model-select-menu.is-pi-model-catalog .n-base-select-menu-option-wrapper),

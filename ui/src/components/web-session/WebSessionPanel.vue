@@ -2251,6 +2251,22 @@
                             <n-icon size="15" aria-hidden="true"><SearchOutline /></n-icon>
                           </template>
                         </n-input>
+                        <n-button
+                          class="model-reload-button"
+                          quaternary
+                          size="tiny"
+                          :loading="modelReloading"
+                          :disabled="modelReloading"
+                          :title="t('webSession.reloadModels')"
+                          :aria-label="t('webSession.reloadModels')"
+                          :aria-busy="modelReloading"
+                          @mousedown.prevent.stop
+                          @click.stop="loadCodexRuntimeConfig(true)"
+                        >
+                          <template #icon>
+                            <n-icon size="15"><RefreshOutline /></n-icon>
+                          </template>
+                        </n-button>
                       </div>
                     </template>
                   </n-select>
@@ -2368,21 +2384,23 @@
                     :menu-props="reasoningSelectMenuProps"
                     :options="reasoningEffortOptions"
                   />
-                  <n-tooltip v-if="selectedAgent === 'codex'" trigger="hover">
-                    <template #trigger>
-                      <n-switch
-                        v-model:value="selectedCodexFastMode"
-                        size="small"
-                        :loading="codexFastModeUpdating"
-                        :disabled="codexFastModeUpdating"
-                        :aria-label="t('webSession.codexFastMode')"
-                      >
-                        <template #checked>Fast</template>
-                        <template #unchecked>Fast</template>
-                      </n-switch>
-                    </template>
-                    {{ t('webSession.codexFastModeHint') }}
-                  </n-tooltip>
+                  <div v-if="selectedAgent === 'codex'" class="composer-fast-mode-switch">
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <n-switch
+                          v-model:value="selectedCodexFastMode"
+                          size="small"
+                          :loading="codexFastModeUpdating"
+                          :disabled="codexFastModeUpdating"
+                          :aria-label="t('webSession.codexFastMode')"
+                        >
+                          <template #checked>Fast</template>
+                          <template #unchecked>Fast</template>
+                        </n-switch>
+                      </template>
+                      {{ t('webSession.codexFastModeHint') }}
+                    </n-tooltip>
+                  </div>
                   <div class="composer-mode-row">
                     <n-button-group class="composer-mode-switch">
                       <n-button
@@ -4437,6 +4455,7 @@ const codexModelMenuOptions = computed(() =>
   resolveCodexModelMenuOptions(runtimeConfig.value?.models ?? [])
 );
 const codexRuntimeConfigReady = ref(false);
+const modelReloading = ref(false);
 let runtimeConfigRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let runtimeConfigRetryDelayMs = 500;
 let runtimeConfigLoadGeneration = 0;
@@ -17683,8 +17702,12 @@ function handleTabDragEnd(event: SortableEvent) {
 }
 
 async function loadCodexRuntimeConfig(force = false) {
+  if (modelReloading.value) {
+    return;
+  }
   const generation = ++runtimeConfigLoadGeneration;
   if (force) {
+    modelReloading.value = true;
     clearRuntimeConfigRetry();
     runtimeConfigRetryDelayMs = 500;
   }
@@ -17705,7 +17728,13 @@ async function loadCodexRuntimeConfig(force = false) {
       return;
     }
     console.warn('[Web Session] Failed to load runtime config', error);
+    if (force) {
+      message.error(t('webSession.reloadModelsFailed'));
+    }
   } finally {
+    if (force) {
+      modelReloading.value = false;
+    }
     if (generation === runtimeConfigLoadGeneration) {
       codexRuntimeConfigReady.value = true;
     }
