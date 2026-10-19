@@ -210,6 +210,29 @@ func TestNormalizePiRPCEventBoundsToolResultsAndDropsNonAssistantMessages(t *tes
 	}
 }
 
+func TestNormalizePiRPCEventAcceptsStringMessageContent(t *testing.T) {
+	for _, role := range []string{"system", "user"} {
+		line := []byte(fmt.Sprintf(`{"type":"message_start","message":{"role":%q,"content":""}}`, role))
+		_, discarded, err := normalizePiRPCEvent("message_start", line, piRPCMaxInlineToolEventBytes)
+		if err != nil || !discarded {
+			t.Fatalf("%s message: discarded=%v err=%v", role, discarded, err)
+		}
+	}
+
+	assistant := []byte(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}`)
+	normalized, discarded, err := normalizePiRPCEvent("message_end", assistant, piRPCMaxInlineToolEventBytes)
+	if err != nil || discarded {
+		t.Fatalf("assistant message: discarded=%v err=%v", discarded, err)
+	}
+	var event piRPCMessageEvent
+	if err := json.Unmarshal(normalized, &event); err != nil {
+		t.Fatalf("decode assistant message: %v", err)
+	}
+	if len(event.Message.Content) != 1 || event.Message.Content[0].Text != "ok" {
+		t.Fatalf("unexpected assistant content: %#v", event.Message.Content)
+	}
+}
+
 func TestPiRPCClientBackpressuresEventBursts(t *testing.T) {
 	client, err := startPiRPCClient(fakePiRPCCommand(t, "burst"))
 	if err != nil {

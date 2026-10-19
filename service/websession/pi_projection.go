@@ -1,6 +1,7 @@
 package websession
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,19 +25,76 @@ const piToolProgressInterval = 100 * time.Millisecond
 const piToolHistoryKind = "dynamic_tool_call"
 
 type piRPCMessage struct {
-	Usage        *piRPCTokenUsage `json:"usage"`
-	Role         string           `json:"role"`
-	Timestamp    int64            `json:"timestamp"`
-	StopReason   string           `json:"stopReason"`
-	ErrorMessage string           `json:"errorMessage"`
-	Content      []struct {
-		Type      string         `json:"type"`
-		Text      string         `json:"text"`
-		Thinking  string         `json:"thinking"`
-		ID        string         `json:"id"`
-		Name      string         `json:"name"`
-		Arguments map[string]any `json:"arguments"`
-	} `json:"content"`
+	Usage        *piRPCTokenUsage           `json:"usage"`
+	Role         string                     `json:"role"`
+	Timestamp    int64                      `json:"timestamp"`
+	StopReason   string                     `json:"stopReason"`
+	ErrorMessage string                     `json:"errorMessage"`
+	Content      []piRPCContentMessageBlock `json:"content"`
+}
+
+// Pi uses a string content value for system/user messages and an array of
+// typed blocks for assistant messages. Keep the wire parser tolerant of both
+// forms (and of a single block object from older/custom providers) so a
+// non-assistant lifecycle event cannot abort an otherwise valid run.
+type piRPCContentMessageBlock = struct {
+	Type      string         `json:"type"`
+	Text      string         `json:"text"`
+	Thinking  string         `json:"thinking"`
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+func decodePiRPCMessageContent(data []byte) ([]piRPCContentMessageBlock, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, nil
+	}
+	if trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return nil, err
+		}
+		return []piRPCContentMessageBlock{{Type: "text", Text: text}}, nil
+	}
+	if trimmed[0] == '{' {
+		var block piRPCContentMessageBlock
+		if err := json.Unmarshal(trimmed, &block); err != nil {
+			return nil, err
+		}
+		return []piRPCContentMessageBlock{block}, nil
+	}
+	var list []piRPCContentMessageBlock
+	if err := json.Unmarshal(trimmed, &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func (message *piRPCMessage) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Usage        *piRPCTokenUsage `json:"usage"`
+		Role         string           `json:"role"`
+		Timestamp    int64            `json:"timestamp"`
+		StopReason   string           `json:"stopReason"`
+		ErrorMessage string           `json:"errorMessage"`
+		Content      json.RawMessage  `json:"content"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	content, err := decodePiRPCMessageContent(wire.Content)
+	if err != nil {
+		return fmt.Errorf("decode Pi message content: %w", err)
+	}
+	message.Usage = wire.Usage
+	message.Role = wire.Role
+	message.Timestamp = wire.Timestamp
+	message.StopReason = wire.StopReason
+	message.ErrorMessage = wire.ErrorMessage
+	message.Content = content
+	return nil
 }
 
 type piAssistantMessageEvent struct {

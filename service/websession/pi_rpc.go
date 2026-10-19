@@ -613,7 +613,11 @@ func normalizePiRPCEvent(eventType string, line []byte, maxInlineToolBytes int) 
 	}
 	switch eventType {
 	case "message_start", "message_end":
-		var event piRPCMessageEvent
+		var event struct {
+			Message struct {
+				Role string `json:"role"`
+			} `json:"message"`
+		}
 		if err := json.Unmarshal(line, &event); err != nil {
 			return nil, false, fmt.Errorf("decode Pi RPC %s event: %w", eventType, err)
 		}
