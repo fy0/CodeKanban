@@ -84,6 +84,7 @@ type activeRun struct {
 	codexRolloutMonitor       *codexRolloutMonitor
 	syncSourceAfterRun        bool
 	piCompaction              bool
+	piCompactInstructions     string
 }
 
 func (r *activeRun) setObservationFailure(code string) {

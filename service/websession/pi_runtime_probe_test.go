@@ -55,6 +55,7 @@ func TestPiProbeHelperProcess(t *testing.T) {
 			data = map[string]any{"models": []map[string]any{{
 				"provider": "anthropic", "id": "claude-sonnet-4", "name": "Claude Sonnet 4",
 				"reasoning": true, "input": []string{"text", "image"}, "contextWindow": 200000,
+				"thinking": map[string]any{"efforts": []string{"off", "low", "high"}},
 			}}}
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
@@ -116,6 +117,9 @@ func TestGetWebSessionRuntimeConfigProbesPiRPCAndCachesSuccess(t *testing.T) {
 	}
 	if len(config.PiModels) != 1 || config.PiModels[0].Provider != "anthropic" || !config.PiModels[0].Reasoning {
 		t.Fatalf("Pi model catalog = %#v", config.PiModels)
+	}
+	if got := strings.Join(config.PiModels[0].ReasoningEfforts, ","); got != "none,low,high" {
+		t.Fatalf("Pi model reasoning efforts = %q", got)
 	}
 
 	_ = manager.GetWebSessionRuntimeConfig()
@@ -194,5 +198,26 @@ func TestLoadPiModelCatalogKeepsExtensionsEnabled(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "--no-extensions") {
 		t.Fatal("model catalog probe must keep extensions enabled so plugin providers are listed")
+	}
+}
+
+func TestNormalizePiModelReasoningEfforts(t *testing.T) {
+	max := "max"
+	high := "high"
+	if got := normalizePiModelReasoningEfforts(true, []string{"off", "low", "high", "max"}, nil); strings.Join(got, ",") != "none,low,high,max" {
+		t.Fatalf("explicit Pi reasoning efforts = %#v", got)
+	}
+	if got := normalizePiModelReasoningEfforts(true, nil, map[string]*string{
+		"minimal": nil,
+		"low":     &high,
+		"medium":  nil,
+		"high":    &high,
+		"xhigh":   nil,
+		"max":     &max,
+	}); strings.Join(got, ",") != "low,high,max" {
+		t.Fatalf("mapped Pi reasoning efforts = %#v", got)
+	}
+	if got := normalizePiModelReasoningEfforts(false, []string{"low"}, nil); got != nil {
+		t.Fatalf("non-reasoning Pi model efforts = %#v", got)
 	}
 }

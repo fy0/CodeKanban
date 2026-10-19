@@ -60,6 +60,14 @@ type piProbeResponse struct {
 	Success bool   `json:"success"`
 }
 
+type piAvailableModel struct {
+	PiModelInfo
+	ThinkingLevelMap map[string]*string `json:"thinkingLevelMap"`
+	Thinking         struct {
+		Efforts []string `json:"efforts"`
+	} `json:"thinking"`
+}
+
 func (m *Manager) applyPiRuntimeCapabilitiesWithRefresh(
 	config WebSessionRuntimeConfig,
 	force bool,
@@ -162,6 +170,7 @@ func clonePiRuntimeProbeResult(result piRuntimeProbeResult) piRuntimeProbeResult
 	for index, model := range result.models {
 		cloned.models[index] = model
 		cloned.models[index].Input = append([]string(nil), model.Input...)
+		cloned.models[index].ReasoningEfforts = append([]string(nil), model.ReasoningEfforts...)
 	}
 	return cloned
 }
@@ -253,14 +262,15 @@ func loadPiModelCatalog(ctx context.Context, command, workingDir string) ([]PiMo
 	}
 	defer client.Close()
 	var response struct {
-		Models []PiModelInfo `json:"models"`
+		Models []piAvailableModel `json:"models"`
 	}
 	if err := client.Request(ctx, "get_available_models", nil, &response); err != nil {
 		return nil, err
 	}
-	models := response.Models[:0]
+	models := make([]PiModelInfo, 0, len(response.Models))
 	seen := make(map[string]struct{}, len(response.Models))
-	for _, model := range response.Models {
+	for _, available := range response.Models {
+		model := available.PiModelInfo
 		model.Provider = strings.TrimSpace(model.Provider)
 		model.ID = strings.TrimSpace(model.ID)
 		model.Name = strings.TrimSpace(model.Name)
@@ -273,6 +283,11 @@ func loadPiModelCatalog(ctx context.Context, command, workingDir string) ([]PiMo
 		}
 		seen[key] = struct{}{}
 		model.Input = append([]string(nil), model.Input...)
+		model.ReasoningEfforts = normalizePiModelReasoningEfforts(
+			model.Reasoning,
+			available.Thinking.Efforts,
+			available.ThinkingLevelMap,
+		)
 		models = append(models, model)
 	}
 	sort.SliceStable(models, func(i, j int) bool {
@@ -281,6 +296,46 @@ func loadPiModelCatalog(ctx context.Context, command, workingDir string) ([]PiMo
 		return left < right
 	})
 	return append([]PiModelInfo(nil), models...), nil
+}
+
+func normalizePiModelReasoningEfforts(
+	reasoning bool,
+	explicit []string,
+	levelMap map[string]*string,
+) []string {
+	if !reasoning {
+		return nil
+	}
+	ordered := []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+	values := explicit
+	if len(values) == 0 && len(levelMap) > 0 {
+		values = make([]string, 0, len(ordered))
+		for _, level := range ordered {
+			if mapped, ok := levelMap[level]; ok && mapped != nil && strings.TrimSpace(*mapped) != "" {
+				values = append(values, level)
+			}
+		}
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		level := strings.ToLower(strings.TrimSpace(raw))
+		if level == "off" {
+			level = string(ReasoningEffortNone)
+		}
+		switch ReasoningEffort(level) {
+		case ReasoningEffortNone, ReasoningEffortMinimal, ReasoningEffortLow,
+			ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXHigh, ReasoningEffortMax:
+		default:
+			continue
+		}
+		if _, ok := seen[level]; ok {
+			continue
+		}
+		seen[level] = struct{}{}
+		result = append(result, level)
+	}
+	return result
 }
 
 func detectPiVersion(command string) *string {

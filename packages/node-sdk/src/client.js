@@ -1597,9 +1597,9 @@ export class CodeKanbanClient {
     );
   }
 
-  async compactWebSession({ sessionId }) {
+  async compactWebSession({ sessionId, customInstructions }) {
     return await this.withWebSessionCommandChannel((channel) =>
-      channel.compact(sessionId),
+      channel.compact(sessionId, customInstructions),
     );
   }
 

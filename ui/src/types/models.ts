@@ -466,6 +466,7 @@ export interface WebSessionPiModelInfo {
   id: string;
   name: string;
   reasoning: boolean;
+  reasoningEfforts?: WebSessionReasoningEffort[];
   input: string[];
   contextWindow: number;
   maxTokens: number;

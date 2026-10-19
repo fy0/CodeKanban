@@ -833,13 +833,16 @@ func (m *Manager) reorderPendingInput(sessionID, pendingID string, mode PendingI
 	return nil
 }
 
-func (m *Manager) clearPendingInputsForSession(sessionID string) bool {
+func (m *Manager) clearPendingInputsForSession(sessionID string) (bool, error) {
+	if err := m.clearActivePiQueue(sessionID); err != nil {
+		return false, err
+	}
 	m.mu.Lock()
 	queue := m.pendingInputs[sessionID]
 	if len(queue) == 0 {
 		m.mu.Unlock()
 		m.cancelPendingInputTimer(sessionID)
-		return false
+		return false, nil
 	}
 	retained := make([]PendingInput, 0, len(queue))
 	for _, item := range queue {
@@ -859,12 +862,32 @@ func (m *Manager) clearPendingInputsForSession(sessionID string) bool {
 	delete(m.pendingDirty, sessionID)
 	m.mu.Unlock()
 	if !removed {
-		return false
+		return false, nil
 	}
 	m.cancelPendingInputTimer(sessionID)
 	m.broadcastPendingInputs(sessionID)
 	m.triggerPendingProcessing(sessionID)
-	return true
+	return true, nil
+}
+
+func (m *Manager) clearActivePiQueue(sessionID string) error {
+	m.piRuntimeMu.Lock()
+	runtime := m.piRuntimes[sessionID]
+	m.piRuntimeMu.Unlock()
+	if runtime == nil {
+		return nil
+	}
+	runtime.mu.Lock()
+	active := !runtime.stopped && runtime.active != nil
+	runtime.mu.Unlock()
+	if !active {
+		return nil
+	}
+	if err := requestPiRuntimeControl(runtime.client, "clear_queue", nil, nil); err != nil {
+		return err
+	}
+	m.clearPiNativeQueuedInputs(sessionID)
+	return nil
 }
 
 func (m *Manager) clearPendingInputs(sessionID string) {

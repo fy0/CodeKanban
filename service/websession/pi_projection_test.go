@@ -1,6 +1,7 @@
 package websession
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -129,5 +130,73 @@ func TestPiProjectionCoalescesStreamingTextAndReasoning(t *testing.T) {
 	}
 	if !finalReasoningSeen {
 		t.Fatal("final bounded reasoning snapshot was not persisted")
+	}
+}
+
+func TestPiProjectionStreamsUsageAndNativeStateChanges(t *testing.T) {
+	manager, session := newTextDeltaTestManager(t)
+	dispatch := &piRuntimeRun{
+		run:      &activeRun{runID: "pi-usage-run"},
+		session:  *session,
+		contents: make(map[int]*piRuntimeContentState),
+		tools:    make(map[string]*piRuntimeToolState),
+	}
+
+	usageEvent := piRPCEvent{Type: "message_update", Raw: json.RawMessage(`{
+		"type":"message_update",
+		"usage":{"input":100,"output":20,"cacheRead":15,"cacheWrite":5,"totalTokens":140,"cost":{"total":0.02}},
+		"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"hello"}
+	}`)}
+	if err := manager.handlePiRuntimeEvent(dispatch, usageEvent); err != nil {
+		t.Fatalf("handle usage update: %v", err)
+	}
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.LatestTokenCountInputTokens != 100 || record.LatestTokenCountCachedInputTokens != 20 ||
+		record.LatestTokenCountOutputTokens != 20 || record.LatestTokenCountTotalTokens != 140 ||
+		record.LatestTokenCountUpdatedAt == nil {
+		t.Fatalf("unexpected live Pi usage projection: %#v", record)
+	}
+	events := readTextDeltaTestEvents(t, manager, session.ID)
+	usageCount := 0
+	for _, event := range events {
+		if event.Type == "usage" {
+			usageCount++
+			if int64(numberValue(event.Payload["in"])) != 100 || int64(numberValue(event.Payload["cin"])) != 20 || int64(numberValue(event.Payload["out"])) != 20 {
+				t.Fatalf("unexpected usage event payload: %#v", event.Payload)
+			}
+		}
+	}
+	if usageCount != 1 {
+		t.Fatalf("usage event count = %d, want 1", usageCount)
+	}
+
+	if err := manager.handlePiRuntimeEvent(dispatch, piRPCEvent{
+		Type: "session_info_changed", Raw: json.RawMessage(`{"type":"session_info_changed","name":"Native name"}`),
+	}); err != nil {
+		t.Fatalf("handle session info change: %v", err)
+	}
+	if err := manager.handlePiRuntimeEvent(dispatch, piRPCEvent{
+		Type: "thinking_level_changed", Raw: json.RawMessage(`{"type":"thinking_level_changed","level":"high"}`),
+	}); err != nil {
+		t.Fatalf("handle thinking level change: %v", err)
+	}
+	record, err = manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Title != "Native name" || record.TitleAuto || record.ReasoningEffort != string(ReasoningEffortHigh) {
+		t.Fatalf("native state changes were not projected: title=%q auto=%v reasoning=%q", record.Title, record.TitleAuto, record.ReasoningEffort)
+	}
+
+	// The same cumulative usage snapshot is common across adjacent Pi events;
+	// it should not create duplicate persisted usage events.
+	if err := manager.handlePiRuntimeEvent(dispatch, usageEvent); err != nil {
+		t.Fatalf("deduplicated usage update: %v", err)
+	}
+	if countEventsByType(readTextDeltaTestEvents(t, manager, session.ID), "usage") != 1 {
+		t.Fatal("duplicate Pi usage snapshot was persisted")
 	}
 }

@@ -498,7 +498,8 @@ func shouldDiscardPiRPCEvent(eventType string) bool {
 		"compaction_start", "compaction_end", "queue_update",
 		"auto_retry_start", "auto_retry_end",
 		"summarization_retry_scheduled", "summarization_retry_attempt_start", "summarization_retry_finished",
-		"extension_ui_request", "extension_error":
+		"extension_ui_request", "extension_error",
+		"session_info_changed", "thinking_level_changed":
 		return false
 	default:
 		return true

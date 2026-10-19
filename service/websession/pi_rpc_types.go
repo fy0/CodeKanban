@@ -46,11 +46,45 @@ type piRPCImage struct {
 }
 
 type piRPCTokenUsage struct {
-	Input      int64 `json:"input"`
-	Output     int64 `json:"output"`
-	CacheRead  int64 `json:"cacheRead"`
-	CacheWrite int64 `json:"cacheWrite"`
-	Total      int64 `json:"total"`
+	Input       int64      `json:"input"`
+	Output      int64      `json:"output"`
+	CacheRead   int64      `json:"cacheRead"`
+	CacheWrite  int64      `json:"cacheWrite"`
+	Total       int64      `json:"total"`
+	TotalTokens int64      `json:"totalTokens"`
+	Cost        *piRPCCost `json:"cost"`
+}
+
+type piRPCCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
+	Total      float64 `json:"total"`
+}
+
+func (usage piRPCTokenUsage) totalTokens() int64 {
+	if usage.TotalTokens > 0 {
+		return usage.TotalTokens
+	}
+	if usage.Total > 0 {
+		return usage.Total
+	}
+	return maxInt64(0, usage.Input) + maxInt64(0, usage.Output) + maxInt64(0, usage.CacheRead) + maxInt64(0, usage.CacheWrite)
+}
+
+func (usage piRPCTokenUsage) cachedInputTokens() int64 {
+	return maxInt64(0, usage.CacheRead) + maxInt64(0, usage.CacheWrite)
+}
+
+func (usage piRPCTokenUsage) costTotal() float64 {
+	if usage.Cost == nil {
+		return 0
+	}
+	if usage.Cost.Total != 0 {
+		return usage.Cost.Total
+	}
+	return usage.Cost.Input + usage.Cost.Output + usage.Cost.CacheRead + usage.Cost.CacheWrite
 }
 
 type piRPCContextUsage struct {

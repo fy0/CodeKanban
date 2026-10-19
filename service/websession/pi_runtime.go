@@ -42,12 +42,7 @@ type piRuntimeToolState struct {
 }
 
 type piRuntimeDialog struct {
-	id        string
-	method    string
-	itemID    string
-	title     string
-	requested time.Time
-	expiresAt *time.Time
+	id string
 }
 
 type piRuntimeRun struct {
@@ -64,9 +59,10 @@ type piRuntimeRun struct {
 	tools                map[string]*piRuntimeToolState
 	dialog               *piRuntimeDialog
 	compactionToolID     string
-	compactionStarted    time.Time
 	compactionCompleted  time.Time
 	lastAttemptError     string
+	latestUsage          piRPCTokenUsage
+	hasLatestUsage       bool
 }
 
 func (r *piRuntimeRun) settle(err error) {
@@ -213,6 +209,10 @@ func (m *Manager) startPiRuntime(
 	}
 	if modelName != "" {
 		updates["model"] = modelName
+	}
+	if sessionName := strings.TrimSpace(state.SessionName); sessionName != "" {
+		updates["title"] = sessionName
+		updates["title_auto"] = false
 	}
 	if normalized := piThinkingLevelToReasoning(state.ThinkingLevel); normalized != ReasoningEffortDefault {
 		updates["reasoning_effort"] = string(normalized)
@@ -784,7 +784,11 @@ func (m *Manager) runPiRPCCompaction(ctx context.Context, run *activeRun, sessio
 	go func() {
 		requestCtx, cancel := context.WithTimeout(context.Background(), piRPCRequestTimeout)
 		defer cancel()
-		requestDone <- runtime.client.Request(requestCtx, "compact", nil, nil)
+		payload := map[string]any{}
+		if instructions := strings.TrimSpace(run.piCompactInstructions); instructions != "" {
+			payload["customInstructions"] = instructions
+		}
+		requestDone <- runtime.client.Request(requestCtx, "compact", payload, nil)
 	}()
 	select {
 	case err := <-requestDone:
@@ -834,6 +838,11 @@ func (m *Manager) finishSuccessfulPiRun(runtime *piSessionRuntime, dispatch *piR
 	}
 	if err := m.syncPiRuntimeSnapshot(context.Background(), runtime, session, compactionAt); err != nil {
 		return err
+	}
+	if compactionAt == nil {
+		if err := m.finalizeLatestTurnUsage(context.Background(), session.ID); err != nil {
+			return err
+		}
 	}
 	if err := m.broadcastResyncRequired(context.Background(), session.ID, resyncReasonRuntimeReconciled); err != nil {
 		return err

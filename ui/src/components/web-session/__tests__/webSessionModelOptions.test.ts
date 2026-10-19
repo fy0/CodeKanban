@@ -745,6 +745,27 @@ describe('webSessionModelOptions', () => {
     ).toEqual(frequentValues.slice(0, 6));
   });
 
+  it('limits Pi reasoning choices to the selected model capability map', () => {
+    const efforts = resolvePiReasoningEfforts(
+      [
+        {
+          provider: 'commandcode',
+          id: 'deepseek/deepseek-v4.1-flash',
+          name: 'DeepSeek V4.1 Flash',
+          reasoning: true,
+          reasoningEfforts: ['none', 'low', 'high', 'max'],
+          input: ['text', 'image'],
+          contextWindow: 1_000_000,
+          maxTokens: 65_536,
+        },
+      ],
+      'commandcode/deepseek/deepseek-v4.1-flash'
+    );
+    expect(efforts).toEqual(['default', 'none', 'low', 'high', 'max']);
+    expect(efforts).not.toContain('medium');
+    expect(efforts).not.toContain('xhigh');
+  });
+
   it('keeps the Pi catalog open for IME composition without blocking explicit closes', () => {
     expect(
       shouldSuppressPiModelMenuClose('show-change', {

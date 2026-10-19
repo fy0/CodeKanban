@@ -3831,7 +3831,9 @@ func (m *Manager) handlePendingReorderCommand(client *client, frame wireCommandF
 }
 
 func (m *Manager) handlePendingClearCommand(client *client, frame wireCommandFrame) error {
-	m.clearPendingInputsForSession(frame.SessionID)
+	if _, err := m.clearPendingInputsForSession(frame.SessionID); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "clear_queue_failed", err.Error(), true))
+	}
 	return m.sendPendingMutationAck(client, frame, nil)
 }
 
@@ -4152,10 +4154,20 @@ func (m *Manager) handleListCommand(ctx context.Context, client *client, frame w
 }
 
 func (m *Manager) handleCompactCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
-	if len(bytes.TrimSpace(frame.Payload)) > 0 && string(bytes.TrimSpace(frame.Payload)) != "{}" {
-		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "compact takes no payload", false))
+	var payload struct {
+		CustomInstructions     string `json:"ci"`
+		LongCustomInstructions string `json:"customInstructions"`
 	}
-	if err := m.CompactSession(ctx, frame.SessionID); err != nil {
+	if len(bytes.TrimSpace(frame.Payload)) > 0 && string(bytes.TrimSpace(frame.Payload)) != "{}" {
+		if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+			return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid compact payload", false))
+		}
+	}
+	customInstructions := payload.CustomInstructions
+	if strings.TrimSpace(customInstructions) == "" {
+		customInstructions = payload.LongCustomInstructions
+	}
+	if err := m.CompactSession(ctx, frame.SessionID, customInstructions); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
 	return m.sendMutationAck(ctx, client, frame, nil)
@@ -4321,7 +4333,7 @@ func (m *Manager) SendMessageWithFreshContext(
 	})
 }
 
-func (m *Manager) CompactSession(ctx context.Context, sessionID string) error {
+func (m *Manager) CompactSession(ctx context.Context, sessionID string, customInstructions ...string) error {
 	dispatchLock := &m.sessionDispatchLocks[sessionRevisionLockIndex(sessionID)]
 	dispatchLock.Lock()
 	defer dispatchLock.Unlock()
@@ -4369,10 +4381,15 @@ func (m *Manager) CompactSession(ctx context.Context, sessionID string) error {
 	m.broadcastSessionSummary(ctx, sessionID)
 
 	runCtx, cancel := context.WithCancel(context.Background())
+	compactionInstructions := ""
+	if len(customInstructions) > 0 {
+		compactionInstructions = strings.TrimSpace(customInstructions[0])
+	}
 	run := &activeRun{
 		sessionID: sessionID, projectID: record.ProjectID, agent: AgentPi, backend: SessionBackendPiRPC,
 		contextWindowSetting: record.ContextWindowSetting,
 		runID:                runID, cancel: cancel, done: make(chan struct{}), piCompaction: true,
+		piCompactInstructions: compactionInstructions,
 	}
 	m.mu.Lock()
 	delete(m.codexTerminationRequests, sessionID)

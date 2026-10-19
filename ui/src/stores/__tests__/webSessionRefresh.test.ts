@@ -2673,6 +2673,64 @@ describe('webSession loading behavior', () => {
     expect(store.getPendingInputs(session.id)).toEqual([]);
   });
 
+  it('clears a Pi-only native queue through the backend command channel', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-pi-native-clear',
+      agent: 'pi',
+      backend: 'pi_rpc',
+      status: 'running',
+      assistantState: 'working',
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: { items: [], hasMore: false, total: 0 },
+      pendingInputs: [
+        {
+          id: 'pi-native-1',
+          mode: 'queue',
+          text: 'Accepted by Pi',
+          attachmentIds: [],
+          nativeQueued: true,
+          createdAt: '2026-04-09T10:01:00.000Z',
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+    const clearPromise = store.clearPendingInputs(session.id);
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'pending_clear',
+      p: {},
+    });
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_clear',
+      ok: 1,
+    });
+    await clearPromise;
+  });
+
   it('sends queued input immediately and applies the pending snapshot from its ack', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
@@ -4246,7 +4304,7 @@ describe('webSession loading behavior', () => {
     listMock.mockResolvedValue([idleSession]);
     await store.loadSessions(idleSession.projectId);
 
-    const compactPromise = store.compactSession(idleSession.id);
+    const compactPromise = store.compactSession(idleSession.id, 'Keep the important decisions');
     let commandSocket = findSocket('/api/v1/web-sessions/ws');
     for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
       await Promise.resolve();
@@ -4257,7 +4315,7 @@ describe('webSession loading behavior', () => {
     expect(commandSocket?.sent.at(-1)).toMatchObject({
       sid: idleSession.id,
       op: 'compact',
-      p: {},
+      p: { ci: 'Keep the important decisions' },
     });
     const requestId = String(
       (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''

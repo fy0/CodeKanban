@@ -7552,10 +7552,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   async function clearPendingInputs(sessionId: string) {
-    const hasAuthoritative = (pendingInputsBySession.value[sessionId] ?? []).some(
-      item => !item.nativeQueued && item.status !== 'persisting'
-    );
-    if (hasAuthoritative) {
+    if ((pendingInputsBySession.value[sessionId] ?? []).length > 0) {
       await runPendingMutationCommand(sessionId, 'pending_clear', {});
     }
     setStagedPendingInputs(sessionId, []);
@@ -7843,11 +7840,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
     );
   }
 
-  async function compactSession(sessionId: string) {
+  async function compactSession(sessionId: string, customInstructions = '') {
+    const normalizedInstructions = customInstructions.trim();
     await runRuntimeMutationCommand(
       sessionId,
       'compact',
-      {},
+      normalizedInstructions ? { ci: normalizedInstructions } : {},
       {
         label: 'compact',
         predicate: () => getLiveState(sessionId).running,

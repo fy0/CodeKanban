@@ -40,6 +40,31 @@ func TestNormalizePiSessionUsageIncludesCachedReadsAndWrites(t *testing.T) {
 	}
 }
 
+func TestPiRPCTokenUsageAcceptsOfficialAndLegacyTotals(t *testing.T) {
+	var official piRPCTokenUsage
+	if err := json.Unmarshal([]byte(`{"input":100,"output":20,"cacheRead":15,"cacheWrite":5,"totalTokens":140,"cost":{"total":0.02}}`), &official); err != nil {
+		t.Fatal(err)
+	}
+	if official.totalTokens() != 140 || official.cachedInputTokens() != 20 || official.costTotal() != 0.02 {
+		t.Fatalf("unexpected official Pi usage: %#v", official)
+	}
+	var componentCost piRPCTokenUsage
+	if err := json.Unmarshal([]byte(`{"cost":{"input":0.01,"output":0.02}}`), &componentCost); err != nil {
+		t.Fatal(err)
+	}
+	if componentCost.costTotal() != 0.03 {
+		t.Fatalf("component Pi cost = %v, want 0.03", componentCost.costTotal())
+	}
+
+	var legacy piRPCTokenUsage
+	if err := json.Unmarshal([]byte(`{"input":100,"output":20,"cacheRead":15,"cacheWrite":5,"total":140}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.totalTokens() != 140 {
+		t.Fatalf("legacy Pi usage total = %d, want 140", legacy.totalTokens())
+	}
+}
+
 func TestPiRPCSessionStatsPreservesUnavailableContextUsage(t *testing.T) {
 	var stats piRPCSessionStats
 	if err := json.Unmarshal([]byte(`{
@@ -355,6 +380,11 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 			}
 			writeFakePiEvent(map[string]any{"type": "queue_update", "steering": steering, "followUp": followUp})
 			writeFakePiResponse(id, kind, nil)
+		case "clear_queue":
+			pr5Steered = false
+			pr5FollowedUp = false
+			writeFakePiEvent(map[string]any{"type": "queue_update", "steering": []string{}, "followUp": []string{}})
+			writeFakePiResponse(id, kind, map[string]any{"steering": []string{}, "followUp": []string{}})
 		case "extension_ui_response":
 			requestID, _ := command["id"].(string)
 			switch requestID {
@@ -600,6 +630,10 @@ func ensureFakePiSessionFile(sessionPath, sessionID, cwd string) error {
 func TestPiRuntimeValidatesModelAndReasoningControls(t *testing.T) {
 	if _, _, err := splitPiModel("anthropic/claude-sonnet-4"); err != nil {
 		t.Fatalf("valid Pi model: %v", err)
+	}
+	provider, modelID, err := splitPiModel("commandcode/deepseek/deepseek-v4.1-flash")
+	if err != nil || provider != "commandcode" || modelID != "deepseek/deepseek-v4.1-flash" {
+		t.Fatalf("nested provider/model id parsed as %q/%q, err=%v", provider, modelID, err)
 	}
 	if _, _, err := splitPiModel("claude-sonnet-4"); err == nil {
 		t.Fatal("model without provider should fail")
@@ -1663,7 +1697,7 @@ func TestManagerPiRPCManualCompactionUsesNativeRuntime(t *testing.T) {
 	beforeUserCount := historyKindCount(before, "user")
 	beforeLeaf := pointerString(mustGetSession(t, manager, created.ID).NativeLeafID)
 
-	if err := manager.CompactSession(context.Background(), created.ID); err != nil {
+	if err := manager.CompactSession(context.Background(), created.ID, "Keep API decisions and risks"); err != nil {
 		t.Fatal(err)
 	}
 	waitForSessionToSettle(t, manager, created.ID)
@@ -1713,6 +1747,9 @@ func TestManagerPiRPCManualCompactionUsesNativeRuntime(t *testing.T) {
 		}
 		if command["type"] == "compact" {
 			compacts++
+			if command["customInstructions"] != "Keep API decisions and risks" {
+				t.Fatalf("manual compaction lost custom instructions: %#v", command)
+			}
 		}
 	}
 	if starts != 1 || compacts != 1 {

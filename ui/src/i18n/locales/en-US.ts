@@ -1130,7 +1130,19 @@ export default {
     piRpcTimeout: 'Pi RPC capability detection timed out.',
     piCompactRequiresSession: 'Start the Pi session before compacting its context.',
     piCompactUnavailable: 'Pi context compaction is unavailable.',
+    piTreeRequiresSession: 'Start the Pi session before opening its conversation tree.',
+    piTreeUnavailable: 'The Pi conversation tree is unavailable for this session.',
     compactAttachmentsUnsupported: '/compact does not accept attachments.',
+    piSlashCommandAttachmentsUnsupported: 'Pi slash commands do not accept attachments.',
+    piSlashCommandArgumentRequired: '{command} requires an argument.',
+    piSlashCommandNoArguments: '{command} does not accept arguments.',
+    piModelInvalid: 'Pi model must use the provider/model format.',
+    piThinkingLevelInvalid:
+      'Unsupported Pi thinking level. Use off, minimal, low, medium, high, xhigh, or max.',
+    piThinkingLevelUnsupported: 'Pi model {model} does not support thinking level {level}.',
+    piCommandModelChanged: 'Pi model changed to {model}.',
+    piCommandThinkingChanged: 'Pi thinking level changed to {level}.',
+    piCommandNameChanged: 'Pi session name updated.',
     composerHintUploading:
       'Image upload is in progress. Sending is disabled until it finishes, but you can keep adding images.',
     composerHintRunning:

@@ -332,9 +332,17 @@ export function resolvePiReasoningEfforts(
   selectedModel: string
 ): WebSessionReasoningEffort[] {
   const selected = models.find(model => `${model.provider}/${model.id}` === selectedModel);
-  return selected?.reasoning
-    ? ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-    : ['default', 'none'];
+  if (!selected?.reasoning) {
+    return ['default', 'none'];
+  }
+  const supported = Array.isArray(selected.reasoningEfforts)
+    ? selected.reasoningEfforts.filter(effort => effort !== 'default')
+    : [];
+  if (supported.length === 0) {
+    return ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+  }
+  const normalized: WebSessionReasoningEffort[] = ['none', ...supported];
+  return ['default', ...new Set(normalized)];
 }
 
 export const CLAUDE_MODEL_OPTIONS: WebSessionModelOption[] = [

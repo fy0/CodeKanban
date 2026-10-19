@@ -3818,6 +3818,11 @@ import {
   replaceTextSelection,
 } from '@/components/web-session/webSessionCodexSkills';
 import {
+  parseWebSessionPiSlashCommand,
+  type ParsedWebSessionPiSlashCommand,
+  type WebSessionPiSlashCommand,
+} from '@/components/web-session/webSessionPiCommands';
+import {
   CLAUDE_RUNTIME_OPTIONS,
   CLAUDE_MODEL_OPTIONS,
   resolveCCRModelOptions,
@@ -12534,7 +12539,13 @@ const selectedModel = computed({
           )
         : selectedAgent.value === 'codex'
           ? reasoningEffortForModel(next, selection?.reasoningEffort ?? currentEffort)
-          : currentEffort;
+          : selectedAgent.value === 'pi'
+            ? resolvePiReasoningEfforts(runtimeConfig.value?.piModels ?? [], next).includes(
+                currentEffort
+              )
+              ? currentEffort
+              : 'default'
+            : currentEffort;
     draftModel.value = next;
     draftReasoningEffort.value = nextEffort;
     if (isDraftSession(currentSession.value)) {
@@ -15019,6 +15030,124 @@ async function continueErroredSession(session: WebSessionSummary) {
   }
 }
 
+function piSlashCommandErrorMessage(
+  command: Extract<ParsedWebSessionPiSlashCommand, { kind: 'error' }>
+) {
+  if (command.reason === 'invalid_level') {
+    return t('webSession.piThinkingLevelInvalid');
+  }
+  if (command.reason === 'invalid_model') {
+    return t('webSession.piModelInvalid');
+  }
+  if (command.reason === 'unexpected_argument') {
+    return t('webSession.piSlashCommandNoArguments', {
+      command: `/${command.command}`,
+    });
+  }
+  return t('webSession.piSlashCommandArgumentRequired', {
+    command: `/${command.command}`,
+  });
+}
+
+function piModelInfo(model: string) {
+  const normalized = model.trim().toLowerCase();
+  return (runtimeConfig.value?.piModels ?? []).find(
+    item => `${item.provider}/${item.id}`.trim().toLowerCase() === normalized
+  );
+}
+
+function assertPiThinkingLevelSupported(model: string, level: WebSessionReasoningEffort) {
+  const info = piModelInfo(model);
+  if (!info) {
+    return;
+  }
+  const supported = resolvePiReasoningEfforts(runtimeConfig.value?.piModels ?? [], model);
+  if (!supported.includes(level)) {
+    throw new Error(
+      t('webSession.piThinkingLevelUnsupported', {
+        level: level === 'none' ? 'off' : level,
+        model,
+      })
+    );
+  }
+}
+
+async function executePiSlashCommand(
+  command: WebSessionPiSlashCommand,
+  initialSession: SessionTab | null,
+  realSession: WebSessionSummary | null
+) {
+  if (command.kind === 'tree') {
+    if (!realSession || isDraftSession(initialSession)) {
+      throw new Error(t('webSession.piTreeRequiresSession'));
+    }
+    if (!canOpenPiTree.value) {
+      throw new Error(t('webSession.piTreeUnavailable'));
+    }
+    showPiTreeDrawer.value = true;
+    return;
+  }
+
+  if (command.kind === 'compact') {
+    if (!realSession || isDraftSession(initialSession)) {
+      throw new Error(t('webSession.piCompactRequiresSession'));
+    }
+    if (!runtimeCapabilityFor('pi').supportsCompaction) {
+      throw new Error(t('webSession.piCompactUnavailable'));
+    }
+    await webSessionStore.compactSession(realSession.id, command.customInstructions);
+    return;
+  }
+
+  if (command.kind === 'model') {
+    if (!realSession || isDraftSession(initialSession)) {
+      selectedModel.value = command.model;
+      message.success(t('webSession.piCommandModelChanged', { model: command.model }));
+      return;
+    }
+    const currentEffort = realSession.reasoningEffort;
+    const catalogEntry = piModelInfo(command.model);
+    const supportedEffort = catalogEntry
+      ? resolvePiReasoningEfforts(runtimeConfig.value?.piModels ?? [], command.model)
+      : null;
+    const nextEffort = supportedEffort?.includes(currentEffort) ? currentEffort : 'default';
+    await webSessionStore.updateModel(realSession.id, command.model);
+    if (nextEffort !== currentEffort) {
+      await webSessionStore.updateReasoningEffort(realSession.id, nextEffort);
+    }
+    message.success(t('webSession.piCommandModelChanged', { model: command.model }));
+    return;
+  }
+
+  if (command.kind === 'thinking') {
+    const model = realSession?.model ?? selectedModel.value;
+    assertPiThinkingLevelSupported(model, command.level);
+    if (!realSession || isDraftSession(initialSession)) {
+      selectedReasoningEffort.value = command.level;
+    } else {
+      await webSessionStore.updateReasoningEffort(realSession.id, command.level);
+    }
+    message.success(
+      t('webSession.piCommandThinkingChanged', {
+        level: command.level === 'none' ? 'off' : command.level,
+      })
+    );
+    return;
+  }
+
+  if (!realSession || isDraftSession(initialSession)) {
+    updateActiveDraftSession(current => ({
+      ...current,
+      title: command.title,
+      updatedAt: new Date().toISOString(),
+    }));
+    message.success(t('webSession.piCommandNameChanged'));
+    return;
+  }
+  await webSessionStore.renameSession(realSession.projectId, realSession.id, command.title);
+  message.success(t('webSession.piCommandNameChanged'));
+}
+
 async function handleSubmit() {
   const submitProjectId = props.projectId;
   const initialSubmitOwnerId = currentDraftSessionId.value;
@@ -15039,9 +15168,15 @@ async function handleSubmit() {
   }
   const submitAgent = initialRealSession?.agent ?? selectedAgent.value;
   const submitKind = resolveComposerSubmitKind();
-  const isPiCompactCommand = submitAgent === 'pi' && draftText.trim() === '/compact';
-  const shouldStageOutgoingMessage = !goalCommand && !isPiCompactCommand;
-  if (submitKind === 'execute_send' && !goalCommand) {
+  const parsedPiSlashCommand =
+    submitAgent === 'pi' ? parseWebSessionPiSlashCommand(draftText) : null;
+  if (parsedPiSlashCommand?.kind === 'error') {
+    message.error(piSlashCommandErrorMessage(parsedPiSlashCommand));
+    return;
+  }
+  const isPiSlashCommand = Boolean(parsedPiSlashCommand);
+  const shouldStageOutgoingMessage = !goalCommand && !isPiSlashCommand;
+  if (submitKind === 'execute_send' && !goalCommand && !isPiSlashCommand) {
     if (!ensureSendConflictConfirmed(sendConfirmationSignature.value)) {
       return;
     }
@@ -15074,19 +15209,17 @@ async function handleSubmit() {
     if (submitAgent === 'pi' && !(await ensurePiProjectTrust())) {
       return;
     }
-    if (isPiCompactCommand) {
-      if (!initialRealSession || isDraftSession(initialSession)) {
-        throw new Error(t('webSession.piCompactRequiresSession'));
-      }
+    if (parsedPiSlashCommand) {
       if (attachments.length > 0) {
-        throw new Error(t('webSession.compactAttachmentsUnsupported'));
+        throw new Error(
+          parsedPiSlashCommand.kind === 'compact'
+            ? t('webSession.compactAttachmentsUnsupported')
+            : t('webSession.piSlashCommandAttachmentsUnsupported')
+        );
       }
-      if (!runtimeCapabilityFor('pi').supportsCompaction) {
-        throw new Error(t('webSession.piCompactUnavailable'));
-      }
-      await webSessionStore.compactSession(initialRealSession.id);
+      await executePiSlashCommand(parsedPiSlashCommand, initialSession, initialRealSession);
       submissionSucceeded = true;
-      recordSubmittedPrompt(draftText, initialRealSession.projectId || submitProjectId);
+      recordSubmittedPrompt(draftText, initialRealSession?.projectId || submitProjectId);
       return;
     }
     let session = initialRealSession;

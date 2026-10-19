@@ -211,8 +211,13 @@ export class WebSessionCommandChannel {
     return await this._executeCommand({ operation: "abort", sessionId });
   }
 
-  async compact(sessionId) {
-    return await this._executeCommand({ operation: "compact", sessionId });
+  async compact(sessionId, customInstructions = "") {
+    const normalizedInstructions = ensureOptionalString(customInstructions);
+    return await this._executeCommand({
+      operation: "compact",
+      sessionId,
+      payload: normalizedInstructions ? { ci: normalizedInstructions } : {},
+    });
   }
 
   async getTree(sessionId) {

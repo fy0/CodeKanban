@@ -286,6 +286,39 @@ test('WebSessionCommandChannel sends native compact without a message payload', 
   channel.close();
 });
 
+test('WebSessionCommandChannel sends Pi compact custom instructions', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const channel = new WebSessionCommandChannel({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/ws',
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  await channel.waitForOpen();
+  const promise = channel.compact('ws1', 'Keep API decisions and risks');
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const socket = FakeWebSocket.instances[0];
+  assert.deepEqual(socket.sent[0].p, {
+    ci: 'Keep API decisions and risks',
+  });
+  socket.emitJson({
+    v: 1,
+    k: 'ack',
+    rid: socket.sent[0].rid,
+    sid: 'ws1',
+    ts: 1710000000015,
+    op: 'compact',
+    ok: 1,
+  });
+
+  await promise;
+  channel.close();
+});
+
 test('WebSessionCommandChannel rejects sendMessage when the server follows the ack with an error frame', async () => {
   FakeWebSocket.reset();
   FakeWebSocket.setFactory(socket => {

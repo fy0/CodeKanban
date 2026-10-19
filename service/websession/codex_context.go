@@ -115,13 +115,14 @@ type AgentCapability struct {
 }
 
 type PiModelInfo struct {
-	Provider      string   `json:"provider"`
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Reasoning     bool     `json:"reasoning"`
-	Input         []string `json:"input"`
-	ContextWindow int64    `json:"contextWindow"`
-	MaxTokens     int64    `json:"maxTokens"`
+	Provider         string   `json:"provider"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Reasoning        bool     `json:"reasoning"`
+	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
+	Input            []string `json:"input"`
+	ContextWindow    int64    `json:"contextWindow"`
+	MaxTokens        int64    `json:"maxTokens"`
 }
 
 type WebSessionRuntimeConfig struct {
