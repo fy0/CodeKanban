@@ -227,6 +227,7 @@ func (m *Manager) CatchUpSession(
 		return SessionCatchUpResponse{}, err
 	}
 	response.ScheduledInputs = scheduledInputs
+	response.Session.HasScheduledInput = ptr(scheduledInputsHavePendingInput(scheduledInputs))
 	response.Session.HasScheduledPlanExecution = scheduledInputsHavePendingPlanExecution(scheduledInputs)
 	response.SubAgents, err = m.sessionSubAgents(ctx, sessionID)
 	if err != nil {

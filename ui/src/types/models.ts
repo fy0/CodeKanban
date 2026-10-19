@@ -571,6 +571,7 @@ export interface WebSessionSummary {
   nativeLeafId?: string | null;
   sourceRevision?: string | null;
   cyberPolicyFlagged?: boolean;
+  hasScheduledInput?: boolean;
   hasScheduledPlanExecution?: boolean;
   status: 'idle' | 'running' | 'waiting_approval' | 'done' | 'err' | 'aborting';
   assistantState?:

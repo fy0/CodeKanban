@@ -85,6 +85,95 @@ func TestScheduleInputIncludesScheduledInputsInSnapshot(t *testing.T) {
 	if snapshot.Session.HasScheduledPlanExecution {
 		t.Fatalf("expected a delayed message not to mark the session as a scheduled plan, got %#v", snapshot.Session)
 	}
+	if snapshot.Session.HasScheduledInput == nil || !*snapshot.Session.HasScheduledInput {
+		t.Fatal("expected a delayed message to mark the session as waiting for scheduled input")
+	}
+}
+
+func TestScheduledInputSummaryUpdatesUnfocusedClients(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Completed session with follow-ups", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	if err := manager.updateRuntimeState(ctx, session.ID, map[string]any{"status": string(StatusDone)}); err != nil {
+		t.Fatalf("set completed status: %v", err)
+	}
+	t.Cleanup(func() { manager.cancelScheduledInputTimersForSession(session.ID) })
+
+	backgroundConn := &captureWSConn{}
+	backgroundClient := manager.RegisterEventClient(backgroundConn)
+	backgroundClient.SetFocusedSessionID("another-session")
+	defer manager.UnregisterClient(backgroundClient)
+	focusedConn := &captureWSConn{}
+	focusedClient := manager.RegisterEventClient(focusedConn)
+	focusedClient.SetFocusedSessionID(session.ID)
+	defer manager.UnregisterClient(focusedClient)
+
+	assertWaiting := func(want bool) wireFrame {
+		t.Helper()
+		if len(backgroundConn.frames) == 0 {
+			t.Fatal("background client did not receive a schedule summary")
+		}
+		for _, frame := range backgroundConn.frames {
+			if frame.Operation != "session" {
+				t.Fatalf("background client received schedule details: %#v", frame)
+			}
+		}
+		frame := backgroundConn.frames[len(backgroundConn.frames)-1]
+		if frame.Session == nil || frame.Session.HasScheduledInput == nil || *frame.Session.HasScheduledInput != want {
+			t.Fatalf("waiting marker = %#v, want %t", frame.Session, want)
+		}
+		if frame.Session.Status != string(StatusDone) {
+			t.Fatalf("scheduled marker changed completed status: %#v", frame.Session)
+		}
+		if frame.Revision == "" {
+			t.Fatal("scheduled summary is missing its durable revision")
+		}
+		return frame
+	}
+
+	first, err := manager.ScheduleInput(ctx, session.ID, "First follow-up", nil, ScheduledInputModeSend, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("schedule first follow-up: %v", err)
+	}
+	assertWaiting(true)
+	second, err := manager.ScheduleInput(ctx, session.ID, "Second follow-up", nil, ScheduledInputModeSend, time.Now().Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("schedule second follow-up: %v", err)
+	}
+	assertWaiting(true)
+
+	manager.cancelScheduledInputTimer(first.ID)
+	if err := manager.markScheduledInputDispatched(ctx, first.ID); err != nil {
+		t.Fatalf("dispatch first follow-up: %v", err)
+	}
+	manager.broadcastScheduledInputs(session.ID)
+	assertWaiting(true)
+
+	manager.cancelScheduledInputTimer(second.ID)
+	if err := manager.markScheduledInputDispatched(ctx, second.ID); err != nil {
+		t.Fatalf("dispatch last follow-up: %v", err)
+	}
+	manager.broadcastScheduledInputs(session.ID)
+	finalFrame := assertWaiting(false)
+	encoded, err := json.Marshal(finalFrame.Session)
+	if err != nil || !strings.Contains(string(encoded), `"hsi":false`) {
+		t.Fatalf("summary must send an explicit cleared marker, got %s, err %v", encoded, err)
+	}
+	lastDetails := focusedConn.frames[len(focusedConn.frames)-2]
+	if lastDetails.Operation != "scheduled" || len(lastDetails.Scheduled) != 0 {
+		t.Fatalf("focused client did not receive the empty schedule update: %#v", lastDetails)
+	}
+	summaries, err := manager.ListSessions(ctx, project.ID)
+	if err != nil || len(summaries) != 1 || summaries[0].HasScheduledInput == nil || *summaries[0].HasScheduledInput {
+		t.Fatalf("list did not recover the cleared waiting marker: %#v, err %v", summaries, err)
+	}
 }
 
 func TestScheduledInputLocksContextWindowSnapshot(t *testing.T) {

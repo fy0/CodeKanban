@@ -111,6 +111,7 @@ type wireSess struct {
 	NativeLeafID                      *string         `json:"nlid,omitempty"`
 	SourceRevision                    *string         `json:"srev,omitempty"`
 	CyberPolicyFlagged                bool            `json:"cpf,omitempty"`
+	HasScheduledInput                 *bool           `json:"hsi,omitempty"`
 	HasScheduledPlanExecution         bool            `json:"spe,omitempty"`
 	Status                            string          `json:"st"`
 	AssistantState                    string          `json:"ast,omitempty"`
@@ -581,6 +582,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		NativeLeafID:                      session.NativeLeafID,
 		SourceRevision:                    session.SourceRevision,
 		CyberPolicyFlagged:                session.CyberPolicyFlagged,
+		HasScheduledInput:                 session.HasScheduledInput,
 		HasScheduledPlanExecution:         session.HasScheduledPlanExecution,
 		Status:                            string(session.Status),
 		AssistantState:                    string(session.AssistantState),

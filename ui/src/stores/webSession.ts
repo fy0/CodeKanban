@@ -85,6 +85,7 @@ type WireSession = {
   nsid?: string | null;
   cpf?: boolean;
   spe?: boolean;
+  hsi?: boolean;
   st: SessionStatus;
   ast?: SessionAssistantState | null;
   unr: boolean;
@@ -2552,6 +2553,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return scheduledInputsBySession.value[sessionId] ?? [];
   }
 
+  function hasScheduledInput(session: Pick<WebSessionSummary, 'id' | 'hasScheduledInput'>) {
+    // Only the focused session receives schedule details; summaries keep
+    // background markers current even when those cached details are stale.
+    return (
+      session.hasScheduledInput ??
+      getScheduledInputs(session.id).some(item => item.status === 'scheduled')
+    );
+  }
+
   function getHistoryMeta(sessionId: string): HistoryMeta {
     return (
       historyBySession.value[sessionId] ?? {
@@ -3306,6 +3316,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       cwd: session.cwd,
       nativeSessionId: session.nsid ?? null,
       cyberPolicyFlagged: session.cpf === true,
+      ...(typeof session.hsi === 'boolean' ? { hasScheduledInput: session.hsi } : {}),
       hasScheduledPlanExecution: session.spe === true,
       status: session.st,
       assistantState: normalizeAssistantStateValue(session.ast) || null,
@@ -4354,6 +4365,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       sessionId,
       current => ({
         ...current,
+        hasScheduledInput: items.some(item => item.status === 'scheduled'),
         hasScheduledPlanExecution,
       }),
       { preserveOrder: true }
@@ -6325,6 +6337,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       session.status === 'running' ||
       session.status === 'waiting_approval' ||
       session.status === 'aborting' ||
+      hasScheduledInput(session) ||
       Boolean(session.assistantState)
     );
   }
@@ -8526,6 +8539,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     setDraftText,
     getPendingInputs,
     getScheduledInputs,
+    hasScheduledInput,
     getHistoryMeta,
     fetchHistoryWindow,
     loadCommandGroupDetail,

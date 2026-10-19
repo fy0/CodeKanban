@@ -150,6 +150,7 @@ function toWireSession(session: WebSessionSummary) {
     cwd: session.cwd,
     nsid: session.nativeSessionId,
     cpf: session.cyberPolicyFlagged === true,
+    hsi: session.hasScheduledInput,
     spe: session.hasScheduledPlanExecution === true,
     st: session.status,
     ast: session.assistantState ?? undefined,
@@ -1973,6 +1974,80 @@ describe('webSession loading behavior', () => {
     ]);
   });
 
+  it.each(['event', 'reconcile'] as const)(
+    'clears a background waiting marker from a %s summary after dispatch',
+    async transport => {
+      const store = useWebSessionStore();
+      const session = makeSession({
+        id: 'background-scheduled',
+        revision: '2',
+        status: 'done',
+        assistantState: null,
+        hasScheduledInput: true,
+      });
+      listMock.mockResolvedValue([session]);
+      snapshotMock.mockResolvedValue({
+        revision: '2',
+        session,
+        history: { items: [], hasMore: false, total: 0 },
+        pendingInputs: [],
+        scheduledInputs: [
+          {
+            id: 'scheduled-background',
+            mode: 'send',
+            status: 'scheduled',
+            text: 'Follow up later',
+            scheduleKind: 'when_idle',
+          },
+        ],
+      });
+      await store.loadSessions(session.projectId);
+      await store.loadSessionSnapshot(session.projectId, session.id);
+      expect(store.hasScheduledInput(store.getSessions(session.projectId)[0]!)).toBe(true);
+      expect(store.hasReconcilePrioritySessions).toBe(true);
+      store.setEventSessionFocus('another-session');
+
+      const completed = { ...session, revision: '3', hasScheduledInput: false };
+      if (transport === 'event') {
+        await store.openEventStream();
+        findSocket('/api/v1/web-sessions/events')?.dispatch({
+          v: 1,
+          k: 'evt',
+          sid: session.id,
+          rev: '3',
+          ts: Date.now(),
+          op: 'session',
+          s: toWireSession(completed),
+        });
+      } else {
+        reconcileMock.mockResolvedValue({ items: [completed], missingIds: [] });
+        await store.reconcileRecentSessions();
+        expect(reconcileMock).toHaveBeenCalledWith([{ id: session.id, revision: '2' }]);
+      }
+
+      // Background detail caches are intentionally not hydrated by summaries.
+      expect(store.getScheduledInputs(session.id)).toHaveLength(1);
+      expect(store.hasScheduledInput(store.getSessions(session.projectId)[0]!)).toBe(false);
+      expect(store.hasReconcilePrioritySessions).toBe(false);
+      expect(store.getSessions(session.projectId)[0]?.status).toBe('done');
+      expect(snapshotMock).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('shows a future waiting marker on a completed background session without cached details', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      status: 'done',
+      assistantState: null,
+      hasScheduledInput: true,
+    });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    expect(store.getScheduledInputs(session.id)).toEqual([]);
+    expect(store.hasScheduledInput(store.getSessions(session.projectId)[0]!)).toBe(true);
+  });
+
   it('restores scheduled inputs from snapshot responses', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
@@ -2032,6 +2107,7 @@ describe('webSession loading behavior', () => {
       },
     ]);
     expect(store.getSessions(session.projectId)[0]?.hasScheduledPlanExecution).toBe(false);
+    expect(store.getSessions(session.projectId)[0]?.hasScheduledInput).toBe(true);
   });
 
   it('removes pending inputs via the backend command channel and pending events', async () => {

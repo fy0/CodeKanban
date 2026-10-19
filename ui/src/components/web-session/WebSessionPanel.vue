@@ -17187,12 +17187,9 @@ function hasScheduledPlanExecution(
 }
 
 function shouldHighlightScheduledInputSession(
-  session: Pick<WebSessionSummary, 'id'> | null | undefined
+  session: Pick<WebSessionSummary, 'id' | 'hasScheduledInput'> | null | undefined
 ) {
-  return Boolean(
-    session &&
-      webSessionStore.getScheduledInputs(session.id).some(item => item.status === 'scheduled')
-  );
+  return Boolean(session && webSessionStore.hasScheduledInput(session));
 }
 
 function createTabProps(session: (typeof sessions.value)[number]): HTMLAttributes {

@@ -505,6 +505,7 @@ export function normalizeWebSessionSummaryFromWire(value) {
     nativeSessionId: trimmedString(value?.nsid) || null,
     nativeLeafId: trimmedString(value?.nlid) || null,
     sourceRevision: trimmedString(value?.srev) || null,
+    ...(typeof value?.hsi === "boolean" ? { hasScheduledInput: value.hsi } : {}),
     status: trimmedString(value?.st) || "idle",
     assistantState: trimmedString(value?.ast) || null,
     hasUnread: booleanValue(value?.unr),

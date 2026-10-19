@@ -1083,7 +1083,7 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 	for _, record := range records {
 		items = append(items, m.mapSessionSummaryWithContext(record, contextConfig))
 	}
-	if err := m.decorateScheduledPlanExecutionState(ctx, items); err != nil {
+	if err := m.decorateScheduledInputState(ctx, items); err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -1152,7 +1152,7 @@ func (m *Manager) ReconcileSessions(
 		}
 		result.Items = append(result.Items, m.mapSessionSummaryWithContext(record, contextConfig))
 	}
-	if err := m.decorateScheduledPlanExecutionState(ctx, result.Items); err != nil {
+	if err := m.decorateScheduledInputState(ctx, result.Items); err != nil {
 		return SessionReconcileResult{}, err
 	}
 	return result, nil
@@ -1249,7 +1249,7 @@ func (m *Manager) QuerySessions(
 	for _, record := range records {
 		items = append(items, m.mapSessionSummaryWithContext(record, contextConfig))
 	}
-	if err := m.decorateScheduledPlanExecutionState(ctx, items); err != nil {
+	if err := m.decorateScheduledInputState(ctx, items); err != nil {
 		return SessionPageResult{}, err
 	}
 	nextOffset := offset + len(items)
@@ -2329,6 +2329,7 @@ func (m *Manager) loadSnapshotLocal(
 		return SessionSnapshot{}, err
 	}
 	summary := m.mapSessionSummary(record)
+	summary.HasScheduledInput = ptr(scheduledInputsHavePendingInput(scheduledInputs))
 	summary.HasScheduledPlanExecution = scheduledInputsHavePendingPlanExecution(scheduledInputs)
 	subAgents, err := m.sessionSubAgents(ctx, record.ID)
 	if err != nil {

@@ -40,6 +40,33 @@ function sampleSnapshotFrame(sessionId) {
   };
 }
 
+test('WebSessionEventStream carries cleared background schedule markers in session summaries', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => queueMicrotask(() => socket.open()));
+  const stream = new WebSessionEventStream({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/events',
+    WebSocketImpl: FakeWebSocket,
+  });
+  await stream.waitForOpen();
+  try {
+    for (const hasScheduledInput of [true, false]) {
+      const waiting = stream.waitFor(event => event.type === 'session', { timeoutMs: 1000 });
+      FakeWebSocket.instances[0].emitJson({
+        v: 1,
+        k: 'evt',
+        sid: 'completed-background',
+        op: 'session',
+        s: { ...sampleSnapshotFrame('completed-background').s, st: 'done', hsi: hasScheduledInput },
+      });
+      const event = await waiting;
+      assert.equal(event.session.status, 'done');
+      assert.equal(event.session.hasScheduledInput, hasScheduledInput);
+    }
+  } finally {
+    stream.close();
+  }
+});
+
 test('WebSessionEventStream filters by sessionId and does not duplicate iterator events', async () => {
   FakeWebSocket.reset();
   FakeWebSocket.setFactory(socket => {

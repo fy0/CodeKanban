@@ -214,7 +214,7 @@ func (m *Manager) SearchSessionsChunk(
 		}
 		result.Items = append(result.Items, summary)
 	}
-	if err := m.decorateScheduledPlanExecutionState(ctx, result.Items); err != nil {
+	if err := m.decorateScheduledInputState(ctx, result.Items); err != nil {
 		return SessionSearchChunkResult{}, err
 	}
 	return result, nil

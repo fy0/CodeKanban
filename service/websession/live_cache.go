@@ -720,7 +720,7 @@ func (m *Manager) summaryForBroadcast(ctx context.Context, sessionID string) *Se
 		return nil
 	}
 	summaries := []SessionSummary{m.mapSessionSummary(record)}
-	if err := m.decorateScheduledPlanExecutionState(ctx, summaries); err != nil {
+	if err := m.decorateScheduledInputState(ctx, summaries); err != nil {
 		return nil
 	}
 	return &summaries[0]

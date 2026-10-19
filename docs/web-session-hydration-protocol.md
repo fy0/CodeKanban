@@ -81,7 +81,8 @@ reconciles every 25 to 30 seconds. The loop stops when the page is hidden or no
 session needs reconciliation, and resumes immediately when visibility returns.
 
 The request contains at most 256 `{ id, revision }` targets: every locally
-non-terminal session, the focused session, and up to 48 other sessions active
+non-terminal session, every session with a waiting scheduled input, the focused
+session, and up to 48 other sessions active
 within the last six hours.
 
 The server reads only those IDs and returns:
@@ -94,6 +95,11 @@ when a user has hundreds of sessions and avoids loading any conversation history
 until the focused session actually requires hydration. Background sessions
 receive summaries only. Detailed history, scheduled-input, and sub-agent frames
 are sent only for the session named by the connection's focus heartbeat.
+Session summaries include `hasScheduledInput` (`hsi` on the wire), including an
+explicit `false` when no input is waiting. Every scheduled-input change also
+publishes a summary, so background waiting markers update without loading the
+scheduled-input details. Session completion does not itself clear this flag:
+a completed session can still have a future scheduled input.
 When fallback reconciliation advances that focused session's revision, the
 client starts its ordinary cursor-based catch-up so the visible timeline and
 summary converge together.

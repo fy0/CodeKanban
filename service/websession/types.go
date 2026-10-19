@@ -329,6 +329,7 @@ type SessionSummary struct {
 	NativeLeafID                      *string                    `json:"nativeLeafId,omitempty"`
 	SourceRevision                    *string                    `json:"sourceRevision,omitempty"`
 	CyberPolicyFlagged                bool                       `json:"cyberPolicyFlagged"`
+	HasScheduledInput                 *bool                      `json:"hasScheduledInput,omitempty"`
 	HasScheduledPlanExecution         bool                       `json:"hasScheduledPlanExecution,omitempty"`
 	Status                            Status                     `json:"status"`
 	AssistantState                    AssistantState             `json:"assistantState,omitempty"`

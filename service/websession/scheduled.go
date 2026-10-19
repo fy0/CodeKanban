@@ -532,7 +532,16 @@ func scheduledInputsHavePendingPlanExecution(items []ScheduledInput) bool {
 	return false
 }
 
-func (m *Manager) decorateScheduledPlanExecutionState(
+func scheduledInputsHavePendingInput(items []ScheduledInput) bool {
+	for _, item := range items {
+		if item.Status == ScheduledInputStatusScheduled {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) decorateScheduledInputState(
 	ctx context.Context,
 	summaries []SessionSummary,
 ) error {
@@ -553,26 +562,35 @@ func (m *Manager) decorateScheduledPlanExecutionState(
 		return nil
 	}
 
-	var scheduledSessionIDs []string
+	var scheduledInputs []struct {
+		WebSessionID string
+		Action       string
+	}
 	if err := db.WithContext(ctx).
 		Model(&tables.WebSessionScheduledInputTable{}).
-		Distinct("web_session_id").
+		Distinct("web_session_id", "action").
 		Where(
-			"web_session_id IN ? AND action = ? AND status = ?",
+			"web_session_id IN ? AND status = ?",
 			sessionIDs,
-			string(ScheduledInputActionExecutePlan),
 			string(ScheduledInputStatusScheduled),
 		).
-		Pluck("web_session_id", &scheduledSessionIDs).Error; err != nil {
+		Find(&scheduledInputs).Error; err != nil {
 		return err
 	}
 
-	pendingBySession := make(map[string]struct{}, len(scheduledSessionIDs))
-	for _, sessionID := range scheduledSessionIDs {
-		pendingBySession[strings.TrimSpace(sessionID)] = struct{}{}
+	pendingBySession := make(map[string]struct{}, len(scheduledInputs))
+	plansBySession := make(map[string]struct{}, len(scheduledInputs))
+	for _, item := range scheduledInputs {
+		sessionID := strings.TrimSpace(item.WebSessionID)
+		pendingBySession[sessionID] = struct{}{}
+		if item.Action == string(ScheduledInputActionExecutePlan) {
+			plansBySession[sessionID] = struct{}{}
+		}
 	}
 	for index := range summaries {
-		_, summaries[index].HasScheduledPlanExecution = pendingBySession[summaries[index].ID]
+		_, hasScheduledInput := pendingBySession[summaries[index].ID]
+		summaries[index].HasScheduledInput = ptr(hasScheduledInput)
+		_, summaries[index].HasScheduledPlanExecution = plansBySession[summaries[index].ID]
 	}
 	return nil
 }
@@ -1415,7 +1433,12 @@ func (m *Manager) broadcastScheduledInputs(sessionID string) {
 	if err != nil {
 		return
 	}
-	_ = m.broadcastTransientFrame(context.Background(), sessionID, newScheduledFrame(sessionID, items))
+	if err := m.broadcastTransientFrame(context.Background(), sessionID, newScheduledFrame(sessionID, items)); err != nil {
+		return
+	}
+	// Background clients receive summaries rather than scheduled-input details.
+	// Publish the waiting marker after every schedule change, including removal.
+	m.broadcastSessionSummary(context.Background(), sessionID)
 }
 
 func (m *Manager) recoverPendingScheduledInputs(ctx context.Context) error {
