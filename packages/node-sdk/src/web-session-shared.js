@@ -948,15 +948,51 @@ export function decodeWebSessionSocketMessage(raw) {
   return JSON.parse(String(raw ?? ""));
 }
 
+function nonNegativeTokenSpeedNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function normalizeTokenSpeedSummary(value) {
+  if (!value || !nonNegativeTokenSpeedNumber(value.outputTokens) ||
+      !nonNegativeTokenSpeedNumber(value.durationMs) ||
+      !Number.isSafeInteger(value.sampleCount) || value.sampleCount < 0) return null;
+  return {
+    tokensPerSecond: nonNegativeTokenSpeedNumber(value.tokensPerSecond) ? value.tokensPerSecond : null,
+    outputTokens: value.outputTokens, durationMs: value.durationMs,
+    sampleCount: value.sampleCount, estimated: value.estimated !== false,
+  };
+}
+
+function normalizeTokenSpeedHistoryRecord(value) {
+  if (!value || !trimmedString(value.runId) || !trimmedString(value.sampleId) ||
+      typeof value.startedAt !== "string" || !Number.isFinite(Date.parse(value.startedAt)) ||
+      typeof value.endedAt !== "string" || !Number.isFinite(Date.parse(value.endedAt)) ||
+      !nonNegativeTokenSpeedNumber(value.outputTokens) ||
+      !nonNegativeTokenSpeedNumber(value.durationMs) || value.durationMs < 500 ||
+      !nonNegativeTokenSpeedNumber(value.tokensPerSecond)) return null;
+  return {
+    runId: trimmedString(value.runId), sampleId: trimmedString(value.sampleId),
+    agent: trimmedString(value.agent), model: trimmedString(value.model),
+    startedAt: value.startedAt, endedAt: value.endedAt,
+    outputTokens: value.outputTokens, durationMs: value.durationMs,
+    tokensPerSecond: value.tokensPerSecond, estimated: value.estimated !== false,
+  };
+}
+
 export function normalizeTokenSpeed(value) {
   if (!value || typeof value.epoch !== "string" || !value.epoch ||
       !Number.isSafeInteger(value.version) || value.version < 0) return null;
+  const summaries = ["currentRun", "recent5", "recent20", "session"]
+    .map(key => [key, normalizeTokenSpeedSummary(value.stats?.[key])]);
+  const stats = summaries.every(([, summary]) => summary) ? Object.fromEntries(summaries) : null;
   return {
     epoch: value.epoch, version: value.version,
     runId: trimmedString(value.runId), sampleId: trimmedString(value.sampleId),
     tokensPerSecond: typeof value.tokensPerSecond === "number" && Number.isFinite(value.tokensPerSecond) && value.tokensPerSecond >= 0 ? value.tokensPerSecond : null,
     estimated: value.estimated !== false, generating: value.generating === true,
     updatedAt: trimmedString(value.updatedAt),
+    ...(stats ? { stats } : {}),
+    ...(Array.isArray(value.history) ? { history: value.history.map(normalizeTokenSpeedHistoryRecord).filter(Boolean).slice(0, 20) } : {}),
   };
 }
 

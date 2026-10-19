@@ -139,12 +139,13 @@ type Manager struct {
 	aiSessionSvc  *service.AISessionService
 	agentTrustSvc *service.ProjectAgentTrustService
 
-	eventStatesMu        sync.Mutex
-	eventStates          map[string]*sessionEventState
-	textDeltaFlushWindow time.Duration
-	tokenSpeedMu         sync.Mutex
-	tokenSpeedEpoch      string
-	tokenSpeeds          map[string]*tokenSpeedState
+	eventStatesMu          sync.Mutex
+	eventStates            map[string]*sessionEventState
+	textDeltaFlushWindow   time.Duration
+	tokenSpeedMu           sync.Mutex
+	tokenSpeedEpoch        string
+	tokenSpeeds            map[string]*tokenSpeedState
+	tokenSpeedStorageLocks [64]sync.Mutex
 
 	mu   sync.RWMutex
 	runs map[string]*activeRun
@@ -2228,6 +2229,7 @@ func (m *Manager) SnapshotIfChanged(
 	if err != nil {
 		return SessionSnapshotResponse{}, err
 	}
+	m.ensureTokenSpeedState(sessionID)
 	current := normalizeSnapshotRevision(record.SnapshotRevision)
 	if known > 0 && known == current {
 		pendingEpoch, pendingVersion, pendingInputs := m.pendingStateSnapshot(record.ID)
@@ -2317,6 +2319,7 @@ func (m *Manager) loadSnapshotLocal(
 	record tables.WebSessionTable,
 	limit int,
 ) (SessionSnapshot, error) {
+	m.ensureTokenSpeedState(record.ID)
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
@@ -3053,6 +3056,10 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 		return err
 	}
 	if err := db.WithContext(ctx).Unscoped().Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionRunTimingTable{}).Error; err != nil {
+		eventState.closed = false
+		return err
+	}
+	if err := m.deleteTokenSpeedRecords(ctx, sessionID); err != nil {
 		eventState.closed = false
 		return err
 	}

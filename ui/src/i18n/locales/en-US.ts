@@ -1052,6 +1052,20 @@ export default {
     contextUsageDisclaimerClaude:
       'The window limit comes from Claude result.modelUsage. Current occupancy is estimated from session usage; Claude Code controls the actual automatic-compaction trigger.',
     tokenSpeedUnavailable: 'Model generation speed: no data yet',
+    tokenSpeedDetails: 'Token speed statistics',
+    tokenSpeedMetric_latest: 'Current / last',
+    tokenSpeedMetric_currentRun: 'This run',
+    tokenSpeedMetric_recent5: 'Last 5',
+    tokenSpeedMetric_recent20: 'Last 20',
+    tokenSpeedMetric_session: 'Session average',
+    tokenSpeedSampleCount: '{count} generations',
+    tokenSpeedMethod:
+      'Average = total output tokens ÷ total generation time, excluding tools and idle gaps between generations. ≈ includes estimates. Recent averages use completed generations; run and session averages include the active generation.',
+    tokenSpeedHistory: 'Recent generations',
+    tokenSpeedOldToNew: 'Trend: oldest to newest',
+    tokenSpeedTrend: 'Speed trend for the last 20 generations',
+    tokenSpeedNoHistory:
+      'Completed generations are saved automatically and remain available after refresh or restart.',
     tokenSpeedEstimated:
       'Estimated model generation speed, excluding tool execution and user waits',
     tokenSpeedCalibrated:

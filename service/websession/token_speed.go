@@ -10,16 +10,18 @@ import (
 
 const tokenSpeedInterval = 500 * time.Millisecond
 
-// TokenSpeed is ephemeral telemetry. Its clock is independent of history revisions.
+// TokenSpeed has its own telemetry clock, independent of history revisions.
 type TokenSpeed struct {
-	Epoch           string    `json:"epoch"`
-	Version         uint64    `json:"version"`
-	RunID           string    `json:"runId"`
-	SampleID        string    `json:"sampleId"`
-	TokensPerSecond *float64  `json:"tokensPerSecond"`
-	Estimated       bool      `json:"estimated"`
-	Generating      bool      `json:"generating"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	Epoch           string             `json:"epoch"`
+	Version         uint64             `json:"version"`
+	RunID           string             `json:"runId"`
+	SampleID        string             `json:"sampleId"`
+	TokensPerSecond *float64           `json:"tokensPerSecond"`
+	Estimated       bool               `json:"estimated"`
+	Generating      bool               `json:"generating"`
+	UpdatedAt       time.Time          `json:"updatedAt"`
+	Stats           TokenSpeedStats    `json:"stats"`
+	History         []TokenSpeedRecord `json:"history"`
 }
 
 type tokenSpeedSample struct {
@@ -33,6 +35,7 @@ type tokenSpeedSample struct {
 	completeBoundary  bool
 	usageClaimed      bool
 	reasoningObserved bool
+	record            *TokenSpeedRecord
 }
 
 type tokenSpeedState struct {
@@ -50,6 +53,13 @@ type tokenSpeedState struct {
 	claudeMessageID string
 	devinAmbiguous  bool
 	devinUsageSeen  map[string]bool
+	agent           string
+	model           string
+	history         []TokenSpeedRecord
+	totals          tokenSpeedAccumulator
+	runTotals       tokenSpeedAccumulator
+	pendingRecords  map[string]tables.WebSessionTokenSpeedTable
+	deleted         bool
 }
 
 func estimateOutputTokens(text string) float64 {
@@ -92,6 +102,7 @@ func (s *tokenSpeedState) begin(key string, now time.Time, complete bool) *token
 			}
 			cur.ended = now
 			cur.completeBoundary = false
+			s.recordSample(cur)
 		}
 	}
 	s.serial++
@@ -141,10 +152,12 @@ func (s *tokenSpeedState) finish(key string, output *int64, now time.Time, compl
 		cur.output = &value
 		cur.usageClaimed = true
 	}
+	s.recordSample(cur)
 }
 
 func (s *tokenSpeedState) snapshot(epoch string) TokenSpeed {
 	result := TokenSpeed{Epoch: epoch, Version: s.version, RunID: s.runID, Estimated: true, UpdatedAt: s.updatedAt}
+	result.Stats, result.History = s.statistics()
 	cur := s.current()
 	if cur == nil {
 		return result
@@ -182,6 +195,7 @@ func (m *Manager) updateTokenSpeed(sessionID, runID string, change func(*tokenSp
 		return
 	}
 	now := time.Now()
+	m.ensureTokenSpeedState(sessionID)
 	m.tokenSpeedMu.Lock()
 	if m.tokenSpeedEpoch == "" {
 		m.tokenSpeedEpoch = utils.NewID()
@@ -190,17 +204,17 @@ func (m *Manager) updateTokenSpeed(sessionID, runID string, change func(*tokenSp
 		m.tokenSpeeds = make(map[string]*tokenSpeedState)
 	}
 	s := m.tokenSpeeds[sessionID]
-	if s == nil {
-		s = &tokenSpeedState{runID: runID}
-		m.tokenSpeeds[sessionID] = s
+	if s.runID == "" && !s.stopped {
+		s.runID = runID
 	}
-	if s.runID != runID {
+	if s.deleted || s.runID != runID {
 		m.tokenSpeedMu.Unlock()
 		return
 	}
 	change(s, now)
 	s.updatedAt = now
 	s.version++
+	rows := s.takePendingRecords(sessionID)
 	publish := force || now.Sub(s.lastPublished) >= tokenSpeedInterval
 	if publish {
 		s.lastPublished = now
@@ -219,6 +233,7 @@ func (m *Manager) updateTokenSpeed(sessionID, runID string, change func(*tokenSp
 		s.published = &snapshot
 	}
 	m.tokenSpeedMu.Unlock()
+	m.persistTokenSpeedRecords(sessionID, rows)
 	if publish {
 		m.publishTokenSpeed(sessionID, snapshot)
 	}
@@ -235,44 +250,62 @@ func (m *Manager) tokenSpeedSnapshot(sessionID string) *TokenSpeed {
 	if m.tokenSpeedEpoch == "" {
 		m.tokenSpeedEpoch = utils.NewID()
 	}
-	if s := m.tokenSpeeds[sessionID]; s != nil {
-		if s.published != nil {
-			value := *s.published
-			return &value
-		}
-		value := s.snapshot(m.tokenSpeedEpoch)
+	s := m.tokenSpeeds[sessionID]
+	if s == nil {
+		// Summary mapping also runs inside database transactions. Keep it
+		// read-only; explicit snapshots and run events hydrate the ledger.
+		value := (&tokenSpeedState{}).snapshot(m.tokenSpeedEpoch)
 		return &value
 	}
-	return &TokenSpeed{Epoch: m.tokenSpeedEpoch, Estimated: true}
+	if s.published != nil {
+		value := *s.published
+		return &value
+	}
+	value := s.snapshot(m.tokenSpeedEpoch)
+	return &value
 }
 
 func (m *Manager) clearTokenSpeed(sessionID string) {
 	m.tokenSpeedMu.Lock()
+	var rows []tables.WebSessionTokenSpeedTable
 	if s := m.tokenSpeeds[sessionID]; s != nil {
 		if s.timer != nil {
 			s.timer.Stop()
 		}
-		m.tokenSpeeds[sessionID] = &tokenSpeedState{version: s.version + 1, stopped: true, updatedAt: time.Now()}
+		s.finish("", nil, time.Now(), false)
+		rows = s.takePendingRecords(sessionID)
+		m.tokenSpeeds[sessionID] = &tokenSpeedState{version: s.version + 1, stopped: true, updatedAt: time.Now(), history: s.history, totals: s.totals, deleted: s.deleted}
 	}
 	m.tokenSpeedMu.Unlock()
+	m.persistTokenSpeedRecords(sessionID, rows)
 	m.publishTokenSpeed(sessionID, *m.tokenSpeedSnapshot(sessionID))
 }
 
 func (m *Manager) observeTokenSpeedLifecycle(session tables.WebSessionTable, event Event) {
 	if event.Type == "run_st" {
+		m.ensureTokenSpeedState(session.ID)
 		m.tokenSpeedMu.Lock()
 		if m.tokenSpeeds == nil {
 			m.tokenSpeeds = make(map[string]*tokenSpeedState)
 		}
-		var version uint64
-		if old := m.tokenSpeeds[session.ID]; old != nil {
-			version = old.version
-			if old.timer != nil {
-				old.timer.Stop()
-			}
+		old := m.tokenSpeeds[session.ID]
+		if old.deleted {
+			m.tokenSpeedMu.Unlock()
+			return
 		}
-		m.tokenSpeeds[session.ID] = &tokenSpeedState{runID: event.RunID, version: version, codexTotal: session.TotalOutputTokens}
+		if old.runID == event.RunID {
+			m.tokenSpeedMu.Unlock()
+			return
+		}
+		if old.timer != nil {
+			old.timer.Stop()
+		}
+		old.finish("", nil, time.Now(), false)
+		rows := old.takePendingRecords(session.ID)
+		m.tokenSpeeds[session.ID] = &tokenSpeedState{runID: event.RunID, version: old.version, codexTotal: session.TotalOutputTokens,
+			agent: session.Agent, model: session.Model, history: old.history, totals: old.totals, pendingRecords: old.pendingRecords}
 		m.tokenSpeedMu.Unlock()
+		m.persistTokenSpeedRecords(session.ID, rows)
 		m.updateTokenSpeed(session.ID, event.RunID, func(*tokenSpeedState, time.Time) {}, true)
 		return
 	}

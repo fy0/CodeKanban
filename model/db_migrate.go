@@ -24,6 +24,7 @@ func GetAllModels() []any {
 		&tables.WebSessionTurnTable{},
 		&tables.WebSessionItemTable{},
 		&tables.WebSessionRunTimingTable{},
+		&tables.WebSessionTokenSpeedTable{},
 		&tables.WebSessionSubAgentTable{},
 	}
 }

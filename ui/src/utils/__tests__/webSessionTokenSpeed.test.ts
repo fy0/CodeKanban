@@ -3,6 +3,7 @@ import { reactive } from 'vue';
 import {
   formatTokenSpeed,
   normalizeTokenSpeed,
+  selectTokenSpeedMetric,
   WebSessionTokenSpeedState,
 } from '../webSessionTokenSpeed';
 
@@ -44,6 +45,81 @@ describe('token speed telemetry', () => {
     state.apply('s2', { ...sample(), tokensPerSecond: 7 });
     expect(state.get('s2')?.tokensPerSecond).toBe(7);
     expect(state.get('s1')?.tokensPerSecond).toBe(42.4);
+  });
+
+  it('preserves summaries and recent records across updates and process epochs', () => {
+    const summary = {
+      tokensPerSecond: 50,
+      outputTokens: 200,
+      durationMs: 4000,
+      sampleCount: 2,
+      estimated: false,
+    };
+    const record = {
+      runId: 'run-1',
+      sampleId: '1',
+      agent: 'codex',
+      model: 'model',
+      startedAt: '2026-10-19T00:00:00Z',
+      endedAt: '2026-10-19T00:00:04Z',
+      outputTokens: 200,
+      durationMs: 4000,
+      tokensPerSecond: 50,
+      estimated: false,
+    };
+    const payload = {
+      ...sample(),
+      stats: { currentRun: summary, recent5: summary, recent20: summary, session: summary },
+      history: [record],
+    };
+    expect(normalizeTokenSpeed(payload)).toEqual(payload);
+    const state = new WebSessionTokenSpeedState();
+    state.apply('s1', payload);
+    state.apply('s1', { ...payload, ...sample(0, 'process-2'), tokensPerSecond: null });
+    state.apply('s1', { ...payload, ...sample(99) });
+    expect(state.get('s1')?.history).toEqual([record]);
+    expect(state.get('s1')?.stats?.session).toEqual(summary);
+    expect(selectTokenSpeedMetric(state.get('s1'), 'recent5').value?.tokensPerSecond).toBe(50);
+  });
+
+  it('filters invalid history and summary fields without losing legacy telemetry', () => {
+    const normalized = normalizeTokenSpeed({
+      ...sample(),
+      stats: { session: { sampleCount: -1 } },
+      history: [null, { runId: 'run' }],
+    });
+    expect(normalized).toEqual({ ...sample(), history: [] });
+    expect(selectTokenSpeedMetric(normalized, 'recent5')).toEqual({
+      metric: 'latest',
+      value: normalized,
+    });
+  });
+
+  it('uses the run average while the first recent generation is still pending', () => {
+    const empty = {
+      tokensPerSecond: null,
+      outputTokens: 0,
+      durationMs: 0,
+      sampleCount: 0,
+      estimated: true,
+    };
+    const active = {
+      tokensPerSecond: 30,
+      outputTokens: 60,
+      durationMs: 2000,
+      sampleCount: 1,
+      estimated: true,
+    };
+    const speed = {
+      ...sample(),
+      stats: { currentRun: active, recent5: empty, recent20: empty, session: active },
+    };
+    expect(selectTokenSpeedMetric(speed, 'recent5')).toEqual({
+      metric: 'currentRun',
+      value: active,
+    });
+    expect(selectTokenSpeedMetric(speed, 'session')).toEqual({ metric: 'session', value: active });
+    expect(selectTokenSpeedMetric(speed, 'recent20')).toEqual({ metric: 'recent20', value: empty });
   });
 
   it('clears stale sessions on a process restart and rejects retired epochs', () => {

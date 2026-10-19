@@ -40,6 +40,9 @@ codekanban
 - **📜 History**
   Record your conversations with AI and trace prompt history in one click.
 
+- **Token Speed Statistics**
+  Click the speed beside the session composer to view current/last generation, run, last 5/20 generations, and session averages, plus recent trends, models, output tokens, and generation durations. Averages divide total output by total generation time, excluding tools and idle gaps between generations; `≈` marks estimates. Completed measurements are stored locally and survive refreshes and restarts. Conversations without prior measurements are not backfilled. Automatic migration creates `web_session_token_speeds`; deployments with automatic migration disabled need to run `go run . -m` once.
+
 - **🌿 Worktree Management**
   A hybrid Git engine uses go-git for fast in-process status, diff, and line statistics, while
   preferring system Git for commits and repository mutations so hooks, signing, filters, and user

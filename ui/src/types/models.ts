@@ -366,6 +366,34 @@ export type WebSessionWorkTimingOutcome =
   | 'timeout'
   | 'interrupted';
 
+export interface WebSessionTokenSpeedSummary {
+  tokensPerSecond: number | null;
+  outputTokens: number;
+  durationMs: number;
+  sampleCount: number;
+  estimated: boolean;
+}
+
+export interface WebSessionTokenSpeedRecord {
+  runId: string;
+  sampleId: string;
+  agent: string;
+  model: string;
+  startedAt: string;
+  endedAt: string;
+  outputTokens: number;
+  durationMs: number;
+  tokensPerSecond: number;
+  estimated: boolean;
+}
+
+export interface WebSessionTokenSpeedStats {
+  currentRun: WebSessionTokenSpeedSummary;
+  recent5: WebSessionTokenSpeedSummary;
+  recent20: WebSessionTokenSpeedSummary;
+  session: WebSessionTokenSpeedSummary;
+}
+
 export interface WebSessionTokenSpeed {
   epoch: string;
   version: number;
@@ -375,6 +403,8 @@ export interface WebSessionTokenSpeed {
   estimated: boolean;
   generating: boolean;
   updatedAt: string;
+  stats?: WebSessionTokenSpeedStats;
+  history?: WebSessionTokenSpeedRecord[];
 }
 
 export interface WebSessionWorkTimingCurrentRun {
