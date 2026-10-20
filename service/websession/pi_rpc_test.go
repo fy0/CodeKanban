@@ -214,7 +214,7 @@ func TestNormalizePiRPCEventAcceptsStringMessageContent(t *testing.T) {
 	for _, role := range []string{"system", "user"} {
 		line := []byte(fmt.Sprintf(`{"type":"message_start","message":{"role":%q,"content":""}}`, role))
 		_, discarded, err := normalizePiRPCEvent("message_start", line, piRPCMaxInlineToolEventBytes)
-		if err != nil || !discarded {
+		if err != nil || discarded != (role == "system") {
 			t.Fatalf("%s message: discarded=%v err=%v", role, discarded, err)
 		}
 	}
@@ -230,6 +230,24 @@ func TestNormalizePiRPCEventAcceptsStringMessageContent(t *testing.T) {
 	}
 	if len(event.Message.Content) != 1 || event.Message.Content[0].Text != "ok" {
 		t.Fatalf("unexpected assistant content: %#v", event.Message.Content)
+	}
+}
+
+func TestNormalizePiRPCEventKeepsUserTextWithoutImageData(t *testing.T) {
+	line := []byte(`{"type":"message_start","message":{"role":"user","timestamp":1234,"content":[{"type":"text","text":"redirect"},{"type":"image","data":"inline-image-data","mimeType":"image/png"}]}}`)
+	normalized, discarded, err := normalizePiRPCEvent("message_start", line, piRPCMaxInlineToolEventBytes)
+	if err != nil || discarded {
+		t.Fatalf("normalize user message: discarded=%v err=%v", discarded, err)
+	}
+	var event piRPCMessageEvent
+	if err := json.Unmarshal(normalized, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Message.Role != "user" || event.Message.Timestamp != 1234 || piMessageText(event.Message) != "redirect" {
+		t.Fatalf("user message lost consumption metadata: %#v", event.Message)
+	}
+	if len(event.Message.Content) != 1 || bytes.Contains(normalized, []byte("inline-image-data")) {
+		t.Fatalf("normalized user message retained image data: %s", normalized)
 	}
 }
 

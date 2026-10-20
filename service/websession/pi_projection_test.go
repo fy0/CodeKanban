@@ -5,7 +5,54 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestPiQueuedUserMessagesKeepDistinctRequestsAndAttachments(t *testing.T) {
+	manager, session := newTextDeltaTestManager(t)
+	runtime := &piSessionRuntime{
+		queued: []*piRuntimeQueuedInput{
+			{input: PendingInput{ID: "follow-up", Text: "same instruction", Mode: PendingInputModeQueue}},
+			{
+				input:       PendingInput{ID: "redirect-1", Text: "same instruction", Mode: PendingInputModeRedirect},
+				attachments: []Attachment{{ID: "image-1", Name: "image.png", Mime: "image/png"}},
+			},
+			{input: PendingInput{ID: "redirect-2", Text: "same instruction", Mode: PendingInputModeRedirect}},
+		},
+	}
+	dispatch := &piRuntimeRun{runtime: runtime, run: &activeRun{runID: "queued-run"}, session: *session}
+	for _, id := range []string{"redirect-1", "redirect-2", "follow-up"} {
+		payload, err := json.Marshal(map[string]any{
+			"type": "message_start",
+			"message": map[string]any{
+				"role": "user", "timestamp": int64(1234),
+				"content": []any{map[string]any{"type": "text", "text": "same instruction"}},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.handlePiRuntimeEvent(dispatch, piRPCEvent{Type: "message_start", Raw: payload}); err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.handlePiRuntimeEvent(dispatch, piRPCEvent{Type: "message_end", Raw: payload}); err != nil {
+			t.Fatal(err)
+		}
+		events := readTextDeltaTestEvents(t, manager, session.ID)
+		last := events[len(events)-1]
+		if stringValue(last.Payload["mid"]) != id || !last.Timestamp.Equal(time.UnixMilli(1234)) {
+			t.Fatalf("consumed message lost its identity or timestamp: %#v", last)
+		}
+	}
+	events := readTextDeltaTestEvents(t, manager, session.ID)
+	if texts := userMessageTexts(events); len(texts) != 3 {
+		t.Fatalf("distinct queued requests were duplicated or dropped: %#v", texts)
+	}
+	attachments, ok := events[0].Payload["atts"].([]any)
+	if !ok || len(attachments) != 1 || stringValue(decodeRawObject(attachments[0])["id"]) != "image-1" {
+		t.Fatalf("consumed redirect lost its attachment: %#v", events[0].Payload["atts"])
+	}
+}
 
 func TestPiProjectionBoundsToolOutputBeforePersistence(t *testing.T) {
 	manager, session := newTextDeltaTestManager(t)

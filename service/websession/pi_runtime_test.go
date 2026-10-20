@@ -123,6 +123,8 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 	pr5InputAnswered := false
 	pr5Steered := false
 	pr5FollowedUp := false
+	pr5SteeringMessage := ""
+	pr5FollowUpMessage := ""
 	pr5Finished := false
 	entrySequence := len(entries)
 	mutationSequence := 0
@@ -152,6 +154,13 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 			return
 		}
 		pr5Finished = true
+		writeFakePiEvent(map[string]any{"type": "queue_update", "steering": []string{}, "followUp": []string{}})
+		for _, text := range []string{pr5SteeringMessage, pr5FollowUpMessage} {
+			appendEntry("user", text)
+			message := map[string]any{"role": "user", "content": text, "timestamp": time.Now().UnixMilli()}
+			writeFakePiEvent(map[string]any{"type": "message_start", "message": message})
+			writeFakePiEvent(map[string]any{"type": "message_end", "message": message})
+		}
 		writeFakePiEvent(map[string]any{"type": "auto_retry_start", "attempt": 1, "maxAttempts": 3, "delayMs": 1, "errorMessage": "retryable"})
 		writeFakePiEvent(map[string]any{"type": "auto_retry_end", "success": true, "attempt": 1})
 		writeFakePiEvent(map[string]any{"type": "compaction_start", "reason": "threshold"})
@@ -378,19 +387,20 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 			writeFakePiResponse(id, kind, result)
 		case "steer", "follow_up":
 			message, _ := command["message"].(string)
-			appendEntry("user", message)
 			if kind == "steer" {
 				pr5Steered = true
+				pr5SteeringMessage = message
 			} else {
 				pr5FollowedUp = true
+				pr5FollowUpMessage = message
 			}
 			steering := []string{}
 			followUp := []string{}
 			if pr5Steered {
-				steering = append(steering, "redirect while active")
+				steering = append(steering, pr5SteeringMessage)
 			}
 			if pr5FollowedUp {
-				followUp = append(followUp, "queue while active")
+				followUp = append(followUp, pr5FollowUpMessage)
 			}
 			writeFakePiEvent(map[string]any{"type": "queue_update", "steering": steering, "followUp": followUp})
 			writeFakePiResponse(id, kind, nil)
@@ -1403,6 +1413,13 @@ func TestManagerPiRPCProjectsPR5EventsAndNativePendingInputs(t *testing.T) {
 		t.Fatalf("respondToUserInput: %v", err)
 	}
 	waitForPiNativeQueue(t, manager, created.ID, 2)
+	queuedEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if texts := userMessageTexts(queuedEvents); containsString(texts, "redirect while active") || containsString(texts, "queue while active") {
+		t.Fatalf("Pi inputs appeared in history before leaving the native queue: %#v", texts)
+	}
 	manager.piRuntimeMu.Lock()
 	managerRuntime := manager.piRuntimes[created.ID]
 	manager.piRuntimeMu.Unlock()
@@ -1425,6 +1442,9 @@ func TestManagerPiRPCProjectsPR5EventsAndNativePendingInputs(t *testing.T) {
 	texts := userMessageTexts(events)
 	if !containsString(texts, "redirect while active") || !containsString(texts, "queue while active") {
 		t.Fatalf("queued Pi messages were not projected: %#v", texts)
+	}
+	if len(texts) != 3 {
+		t.Fatalf("consumed Pi inputs should appear in history exactly once: %#v", texts)
 	}
 	var authoritative, stale bool
 	toolEnds := map[string]string{}

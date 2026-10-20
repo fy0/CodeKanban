@@ -45,6 +45,11 @@ type piRuntimeDialog struct {
 	id string
 }
 
+type piRuntimeQueuedInput struct {
+	input       PendingInput
+	attachments []Attachment
+}
+
 type piRuntimeRun struct {
 	runtime *piSessionRuntime
 	run     *activeRun
@@ -85,6 +90,7 @@ type piSessionRuntime struct {
 
 	mu        sync.Mutex
 	active    *piRuntimeRun
+	queued    []*piRuntimeQueuedInput
 	idleTimer *time.Timer
 	stopped   bool
 	stopOnce  sync.Once
@@ -901,10 +907,6 @@ func (m *Manager) sendActivePiPendingInput(
 	runtime.mu.Lock()
 	dispatch := runtime.active
 	valid := !runtime.stopped && dispatch != nil && dispatch.run == run
-	var session tables.WebSessionTable
-	if valid {
-		session = dispatch.session
-	}
 	runtime.mu.Unlock()
 	if !valid {
 		return false, nil
@@ -934,27 +936,55 @@ func (m *Manager) sendActivePiPendingInput(
 	if len(images) > 0 {
 		payload["images"] = images
 	}
+	if strings.TrimSpace(pending.ID) == "" {
+		pending.ID = utils.NewID()
+	}
+	queued := &piRuntimeQueuedInput{input: clonePendingInput(pending), attachments: attachments}
+	queued.input.Text = text
+	runtime.mu.Lock()
+	if runtime.stopped || runtime.active != dispatch {
+		runtime.mu.Unlock()
+		return false, nil
+	}
+	runtime.queued = append(runtime.queued, queued)
+	runtime.mu.Unlock()
 	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	err = runtime.client.Request(requestCtx, command, payload, nil)
 	cancel()
-	if err != nil {
+	if err != nil && runtime.removeQueuedInput(queued) {
 		return true, err
 	}
 
-	messageID := strings.TrimSpace(pending.ID)
-	if messageID == "" {
-		messageID = utils.NewID()
-	}
 	m.markPendingInputDelivered(sessionID, pending)
-	if _, err := m.appendAndBroadcast(context.Background(), sessionID, session, Event{
-		ID: utils.NewID(), Type: "msg_u", RunID: run.runID, ParentID: messageID, Timestamp: time.Now(),
-		Payload: map[string]any{
-			"mid": messageID, "txt": text, "atts": attachmentPayloads(attachments), "piQueueMode": string(pending.Mode),
-		},
-	}); err != nil && m.logger != nil {
-		m.logger.Error("failed to persist Pi queued message", zap.String("sessionId", sessionID), zap.Error(err))
-	}
 	return true, nil
+}
+
+func (r *piSessionRuntime) removeQueuedInput(input *piRuntimeQueuedInput) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for index, queued := range r.queued {
+		if queued == input {
+			r.queued = append(r.queued[:index], r.queued[index+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (r *piSessionRuntime) takeQueuedInput(message piRPCMessage) *piRuntimeQueuedInput {
+	text := strings.TrimSpace(piMessageText(message))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Pi consumes steering before follow-up, including when their text matches.
+	for _, mode := range []PendingInputMode{PendingInputModeRedirect, PendingInputModeQueue} {
+		for index, queued := range r.queued {
+			if queued.input.Mode == mode && queued.input.Text == text {
+				r.queued = append(r.queued[:index], r.queued[index+1:]...)
+				return queued
+			}
+		}
+	}
+	return nil
 }
 
 func (m *Manager) syncPiRuntimeSnapshot(ctx context.Context, runtime *piSessionRuntime, session tables.WebSessionTable, compactionAt ...*time.Time) error {

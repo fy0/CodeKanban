@@ -622,6 +622,16 @@ func normalizePiRPCEvent(eventType string, line []byte, maxInlineToolBytes int) 
 		if err := json.Unmarshal(line, &event); err != nil {
 			return nil, false, fmt.Errorf("decode Pi RPC %s event: %w", eventType, err)
 		}
+		if eventType == "message_start" && strings.EqualFold(strings.TrimSpace(event.Message.Role), "user") {
+			var userEvent piRPCMessageEvent
+			if err := json.Unmarshal(line, &userEvent); err != nil {
+				return nil, false, fmt.Errorf("decode Pi RPC user message: %w", err)
+			}
+			// Queue consumption needs text and timing; attachment data is already stored locally.
+			userEvent.Message.Content = []piRPCContentMessageBlock{{Type: "text", Text: piMessageText(userEvent.Message)}}
+			normalized, err := json.Marshal(userEvent)
+			return normalized, false, err
+		}
 		if !strings.EqualFold(strings.TrimSpace(event.Message.Role), "assistant") {
 			return nil, true, nil
 		}

@@ -156,6 +156,9 @@ func (m *Manager) handlePiRuntimeEvent(dispatch *piRuntimeRun, event piRPCEvent)
 		if strings.EqualFold(payload.Message.Role, "assistant") {
 			return m.startPiAssistantMessage(dispatch)
 		}
+		if strings.EqualFold(payload.Message.Role, "user") {
+			return m.startPiQueuedUserMessage(dispatch, payload.Message)
+		}
 	case "message_update":
 		var payload struct {
 			Usage                 *piRPCTokenUsage        `json:"usage"`
@@ -217,6 +220,28 @@ func (m *Manager) handlePiRuntimeEvent(dispatch *piRuntimeRun, event piRPCEvent)
 		return m.finishPiSettledProjection(dispatch)
 	}
 	return nil
+}
+
+func (m *Manager) startPiQueuedUserMessage(dispatch *piRuntimeRun, message piRPCMessage) error {
+	if dispatch.runtime == nil {
+		return nil
+	}
+	queued := dispatch.runtime.takeQueuedInput(message)
+	if queued == nil {
+		return nil
+	}
+	observedAt := time.Now()
+	if message.Timestamp > 0 {
+		observedAt = time.UnixMilli(message.Timestamp)
+	}
+	_, err := m.appendAndBroadcast(context.Background(), dispatch.session.ID, dispatch.session, Event{
+		ID: utils.NewID(), Type: "msg_u", RunID: dispatch.run.runID, ParentID: queued.input.ID, Timestamp: observedAt,
+		Payload: map[string]any{
+			"mid": queued.input.ID, "txt": piMessageText(message), "atts": attachmentPayloads(queued.attachments),
+			"piQueueMode": string(queued.input.Mode),
+		},
+	})
+	return err
 }
 
 func (m *Manager) handlePiUsageUpdate(dispatch *piRuntimeRun, usage piRPCTokenUsage) error {
