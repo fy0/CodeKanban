@@ -11996,7 +11996,11 @@ function resetModelSearchInteraction() {
 
 function refocusModelSearch() {
   if (hasModelSearch.value && showModelSelector.value) {
-    nextTick(() => modelSearchInputRef.value?.focus());
+    nextTick(() => {
+      if (hasModelSearch.value && showModelSelector.value) {
+        modelSearchInputRef.value?.focus();
+      }
+    });
   }
 }
 
@@ -12068,6 +12072,15 @@ function scrollModelMenuToRecent() {
   }
 }
 
+function closeModelSelector() {
+  clearComposerSelectorHoverCloseTimer('model');
+  resetModelSearchInteraction();
+  modelSearchQuery.value = '';
+  clearModelOptionPopovers();
+  showModelSelector.value = false;
+  modelMenuHovered.value = false;
+}
+
 function handleModelSelectorShowChange(show: boolean) {
   if (
     show === showModelSelector.value ||
@@ -12075,18 +12088,18 @@ function handleModelSelectorShowChange(show: boolean) {
   ) {
     return;
   }
+  if (!show) {
+    closeModelSelector();
+    return;
+  }
   resetModelSearchInteraction();
   modelSearchQuery.value = '';
   clearModelOptionPopovers();
-  showModelSelector.value = show;
-  if (show) {
-    if (hasModelSearch.value) {
-      nextTick(() => window.setTimeout(scrollModelMenuToRecent, 40));
-    }
-    refocusModelSearch();
-  } else {
-    modelMenuHovered.value = false;
+  showModelSelector.value = true;
+  if (hasModelSearch.value) {
+    nextTick(() => window.setTimeout(scrollModelMenuToRecent, 40));
   }
+  refocusModelSearch();
 }
 
 function handleReasoningSelectorShowChange(show: boolean) {
@@ -12593,6 +12606,9 @@ const selectedModelOption = computed({
     return selectedModel.value;
   },
   set: (value: string) => {
+    // Selection commits the choice even if an IME composition never ended.
+    // Close before updating options, since recent-model regrouping can unmount the clicked row.
+    closeModelSelector();
     selectedModel.value = value;
   },
 });
