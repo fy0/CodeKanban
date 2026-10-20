@@ -144,6 +144,9 @@ func (m *Manager) startPiRuntime(
 	if threadPath != "" {
 		args = append(args, "--session", threadPath)
 	} else {
+		if nativeID := strings.TrimSpace(pointerString(session.NativeSessionID)); nativeID != "" {
+			args = append(args, "--session-id", nativeID)
+		}
 		args = append(args, "--name", session.Title)
 	}
 	// The reusable RPC process must outlive the active run that triggered its start.
@@ -196,12 +199,12 @@ func (m *Manager) startPiRuntime(
 	}
 	modelName := canonicalPiModel(state.Model)
 	updates := map[string]any{
-		"source_kind": string(SessionBackendPiRPC),
-		"sync_error":  nil,
-		"updated_at":  time.Now(),
+		"native_session_id": strings.TrimSpace(state.SessionID),
+		"source_kind":       string(SessionBackendPiRPC),
+		"sync_error":        nil,
+		"updated_at":        time.Now(),
 	}
 	if _, statErr := os.Stat(state.SessionFile); statErr == nil {
-		updates["native_session_id"] = strings.TrimSpace(state.SessionID)
 		updates["thread_path"] = filepath.Clean(state.SessionFile)
 		updates["native_leaf_id"] = nilIfEmpty(pointerString(entries.LeafID))
 		updates["source_revision"] = nilIfEmpty(piSourceRevision(state.SessionFile, pointerString(entries.LeafID)))
@@ -745,6 +748,9 @@ func (m *Manager) runPiRPCSession(
 			return
 		}
 		if err != nil {
+			if syncErr := m.syncPiRuntimeSnapshot(context.Background(), runtime, session); syncErr != nil {
+				m.logger.Warn("failed to sync Pi session after run failure", zap.String("sessionId", session.ID), zap.Error(syncErr))
+			}
 			m.handleRunFailure(session.ID, session, run, err)
 			return
 		}

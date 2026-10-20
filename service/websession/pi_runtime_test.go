@@ -311,6 +311,20 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 			if message == "hold" {
 				continue
 			}
+			if message == "fail-first-run" {
+				appendEntry("user", message)
+				failedMessage := map[string]any{
+					"role": "assistant", "content": []any{}, "stopReason": "error",
+					"errorMessage": "503: Service temporarily unavailable",
+				}
+				appendNativeEntry(map[string]any{"type": "message", "message": failedMessage})
+				writeFakePiEvent(map[string]any{"type": "agent_start"})
+				writeFakePiEvent(map[string]any{"type": "message_start", "message": map[string]any{"role": "assistant", "content": []any{}}})
+				writeFakePiEvent(map[string]any{"type": "message_end", "message": failedMessage})
+				writeFakePiEvent(map[string]any{"type": "agent_end", "messages": []any{failedMessage}})
+				writeFakePiEvent(map[string]any{"type": "agent_settled"})
+				continue
+			}
 			if message == "pr5-events" {
 				pr5Active = true
 				appendEntry("user", message)
@@ -1657,6 +1671,80 @@ func TestManagerPiRPCSettledAndAbortClosePendingDialogs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestManagerPiRPCFailedFirstRunPreservesNativeHistoryForCompaction(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+	project := seedProject(t)
+	fakeDir := t.TempDir()
+	sessionPath := filepath.Join(fakeDir, "failed-first-run.jsonl")
+	logPath := filepath.Join(fakeDir, "failed-first-run-commands.jsonl")
+	t.Setenv("CODEKANBAN_FAKE_PI_RUNTIME", "1")
+	t.Setenv("CODEKANBAN_FAKE_PI_SESSION", sessionPath)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", fakeDir)
+	t.Setenv("CODEKANBAN_FAKE_PI_LOG", logPath)
+	manager, err := NewManager(Config{
+		DataDir: t.TempDir(), PiPath: fmt.Sprintf("%q -test.run=^TestPiRuntimeFakeProcess$ --", os.Args[0]),
+		PiRuntimeIdleTTL: time.Minute,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.StopProjectPiRuntimes(project.ID)
+	if _, err := manager.TrustProjectForPi(context.Background(), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{ProjectID: project.ID, Agent: AgentPi})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := manager.getOrStartPiRuntime(context.Background(), mustGetSession(t, manager, created.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.scheduleIdle()
+	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
+		t.Fatalf("new Pi runtime should not have written history yet: %v", err)
+	}
+	startup := mustGetSession(t, manager, created.ID)
+	if pointerString(startup.NativeSessionID) != "fake-pi-session" || pointerString(startup.ThreadPath) != "" {
+		t.Fatalf("new Pi runtime lost its reserved identity: id=%q path=%q", pointerString(startup.NativeSessionID), pointerString(startup.ThreadPath))
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "fail-first-run", nil); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+	record := mustGetSession(t, manager, created.ID)
+	if record.Status != string(StatusError) || !strings.Contains(pointerString(record.LastError), "503") {
+		t.Fatalf("failed run lost its upstream error: status=%q error=%q", record.Status, pointerString(record.LastError))
+	}
+	if pointerString(record.NativeSessionID) != "fake-pi-session" || pointerString(record.ThreadPath) != sessionPath || pointerString(record.NativeLeafID) == "" {
+		t.Fatalf("failed first run lost native history: id=%q path=%q leaf=%q", pointerString(record.NativeSessionID), pointerString(record.ThreadPath), pointerString(record.NativeLeafID))
+	}
+	if record.SessionContextWindowTokens != 32000 {
+		t.Fatalf("failed run lost its context window: %d", record.SessionContextWindowTokens)
+	}
+	if err := manager.CompactSession(context.Background(), created.ID); err != nil {
+		t.Fatalf("compact after failed first run: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+	record = mustGetSession(t, manager, created.ID)
+	if record.Status != string(StatusDone) || record.LastContextCompactionAt == nil {
+		t.Fatalf("compaction did not recover failed session: status=%q error=%q", record.Status, pointerString(record.LastError))
+	}
+	starts, compacts := 0, 0
+	for _, command := range readFakePiLog(t, logPath) {
+		if _, ok := command["startup"]; ok {
+			starts++
+		}
+		if command["type"] == "compact" {
+			compacts++
+		}
+	}
+	if starts != 1 || compacts != 1 {
+		t.Fatalf("failed-run compaction did not reuse native history: starts=%d compacts=%d", starts, compacts)
 	}
 }
 
