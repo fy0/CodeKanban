@@ -79,7 +79,7 @@ export async function createTestEnvironment({ sessionCount = 48 } = {}) {
     for (let offset=0;offset<sessionCount;offset+=6) {
       const batch = await Promise.all(Array.from({length:Math.min(6,sessionCount-offset)},async (_,j)=>{
         const i=offset+j;
-        const { item } = await request(`/projects/${project.id}/web-sessions`,{worktreeId:worktree.id,agent:'codex',claudeRuntime:'',model:'',reasoningEffort:'',workflowMode:'default',permissionLevel:'standard',autoRetryEnabled:false,title:`${String(i+1).padStart(4,'0')} · ${names[i%names.length]}`});
+        const { item } = await request(`/projects/${project.id}/web-sessions`,{worktreeId:worktree.id,agent:'codex',claudeRuntime:'',model:'',reasoningEffort:'',workflowMode:'default',permissionLevel:'standard',autoRetryEnabled:false,codexFastMode:false,title:`${String(i+1).padStart(4,'0')} · ${names[i%names.length]}`});
         return item;
       })); sessions.push(...batch);
     }
