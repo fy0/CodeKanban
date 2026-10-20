@@ -679,8 +679,33 @@
   flex-shrink: 0;
 }
 
-.composer-mode-switch :deep(.n-button) {
+.composer-mode-switch :deep(.n-button[aria-pressed]) {
   min-width: 54px;
+  border-radius: 3px;
+  color: var(--app-text-primary);
+  background-color: var(--app-surface);
+  /* Keep the label and fill in sync when switching between button types. */
+  transition: none;
+}
+
+.composer-mode-switch :deep(.n-button[aria-pressed='false']:hover),
+.composer-mode-switch :deep(.n-button[aria-pressed='false']:focus-visible) {
+  color: var(--app-accent);
+  background-color: var(--app-surface-hover);
+}
+
+.composer-mode-switch :deep(.n-button[aria-pressed='true']) {
+  color: var(--app-accent-contrast);
+  background-color: var(--app-accent);
+}
+
+.composer-mode-switch :deep(.n-button[aria-pressed='true']:hover),
+.composer-mode-switch :deep(.n-button[aria-pressed='true']:focus-visible) {
+  background-color: var(--app-accent-hover);
+}
+
+.composer-mode-switch :deep(.n-button[aria-pressed='true']:active) {
+  background-color: var(--app-accent-pressed);
 }
 
 .permission-select {

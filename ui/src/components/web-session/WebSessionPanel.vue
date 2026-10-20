@@ -2264,7 +2264,7 @@
                           @click.stop="loadCodexRuntimeConfig(true)"
                         >
                           <template #icon>
-                            <n-icon size="15"><RefreshOutline /></n-icon>
+                            <n-icon size="15"><ReloadOutline /></n-icon>
                           </template>
                         </n-button>
                       </div>
@@ -2406,6 +2406,7 @@
                       <n-button
                         size="small"
                         :type="selectedWorkflowMode === 'default' ? 'primary' : 'default'"
+                        :aria-pressed="selectedWorkflowMode === 'default'"
                         @click="setWorkflowMode('default')"
                       >
                         {{ t('webSession.workflowDefault') }}
@@ -2413,6 +2414,7 @@
                       <n-button
                         size="small"
                         :type="selectedWorkflowMode === 'plan' ? 'primary' : 'default'"
+                        :aria-pressed="selectedWorkflowMode === 'plan'"
                         @click="setWorkflowMode('plan')"
                       >
                         {{ t('webSession.workflowPlan') }}
@@ -3684,6 +3686,7 @@ import {
   ImageOutline,
   RefreshCircleOutline,
   RefreshOutline,
+  ReloadOutline,
   SettingsOutline,
   SearchOutline,
   ServerOutline,
