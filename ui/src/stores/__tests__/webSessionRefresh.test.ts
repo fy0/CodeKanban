@@ -2817,6 +2817,132 @@ describe('webSession loading behavior', () => {
     ]);
   });
 
+  it.each(['ack-first', 'queue-first'] as const)(
+    'keeps Pi follow-ups out of the timeline until individually consumed (%s)',
+    async order => {
+      const store = useWebSessionStore();
+      const session = makeSession({
+        id: 'session-pi-follow-ups',
+        agent: 'pi',
+        backend: 'pi_rpc',
+        status: 'running',
+        assistantState: 'working',
+        itemCount: 0,
+      });
+      listMock.mockResolvedValue([session]);
+      snapshotMock.mockResolvedValue({
+        session,
+        history: { items: [], hasMore: false, total: 0 },
+        pendingInputs: [],
+      });
+      await store.loadSessions(session.projectId);
+      await store.loadSessionSnapshot(session.projectId, session.id);
+      await store.openEventStream();
+      const eventSocket = findSocket('/api/v1/web-sessions/events');
+      expect(eventSocket).not.toBeNull();
+      const texts = ['First queued follow-up', 'Second queued follow-up'];
+      const now = Date.now();
+      const nativeItems = texts.map((text, index) => ({
+        id: `pi-native:queue:${index}`,
+        m: 'queue',
+        txt: text,
+        nq: true,
+        ca: now,
+      }));
+
+      for (const [index, text] of texts.entries()) {
+        const sendPromise = store.sendMessage(session.id, text, [], 'queue');
+        expect(store.getTimelineBlocks(session.id)).toEqual([]);
+        const commandSocket = await waitForCommandCount(index + 1);
+        const command = commandSocket?.sent.at(-1) as { rid: string; p: { pid: string } };
+        expect(command).toMatchObject({
+          op: 'send',
+          p: { mode: 'queue', txt: text },
+        });
+        const acknowledge = () =>
+          commandSocket?.dispatch({
+            v: 1,
+            k: 'ack',
+            rid: command.rid,
+            sid: session.id,
+            ts: now,
+            op: 'send',
+            ok: 1,
+            pe: 'pi-process',
+            pv: index * 2 + 1,
+            pi: [
+              ...nativeItems.slice(0, index),
+              { id: command.p.pid, m: 'queue', txt: text, ca: now },
+            ],
+          });
+        const updateQueue = () =>
+          eventSocket?.dispatch({
+            v: 1,
+            k: 'evt',
+            sid: session.id,
+            ts: now,
+            op: 'pending',
+            pe: 'pi-process',
+            pv: index * 2 + 2,
+            pi: nativeItems.slice(0, index + 1),
+          });
+        if (order === 'ack-first') {
+          acknowledge();
+          updateQueue();
+        } else {
+          updateQueue();
+          acknowledge();
+        }
+        await sendPromise;
+        expect(store.getPendingInputs(session.id)).toMatchObject(
+          texts.slice(0, index + 1).map(queuedText => ({
+            text: queuedText,
+            mode: 'queue',
+            nativeQueued: true,
+          }))
+        );
+        expect(store.getTimelineBlocks(session.id)).toEqual([]);
+      }
+
+      for (const [index, text] of texts.entries()) {
+        eventSocket?.dispatch({
+          v: 1,
+          k: 'evt',
+          sid: session.id,
+          ts: now + index + 1,
+          op: 'pending',
+          pe: 'pi-process',
+          pv: 5 + index,
+          pi: nativeItems.slice(index + 1),
+        });
+        expect(store.getTimelineBlocks(session.id).map(block => block.text)).toEqual(
+          texts.slice(0, index)
+        );
+        const consumedMessage = {
+          v: 1,
+          k: 'evt',
+          sid: session.id,
+          ts: now + index + 1,
+          op: 'hist_item',
+          i: makeWireHistoryItem(index + 1, {
+            id: `consumed-${index}`,
+            kd: 'user',
+            tp: 'user_message',
+            txt: text,
+          }),
+        };
+        eventSocket?.dispatch(consumedMessage);
+        eventSocket?.dispatch(consumedMessage);
+        expect(store.getPendingInputs(session.id).map(item => item.text)).toEqual(
+          texts.slice(index + 1)
+        );
+        expect(store.getTimelineBlocks(session.id).map(block => block.text)).toEqual(
+          texts.slice(0, index + 1)
+        );
+      }
+    }
+  );
+
   it('keeps redirects in session storage for five seconds before sending', async () => {
     vi.useFakeTimers();
     const startedAt = Date.parse('2026-08-29T06:00:00.000Z');

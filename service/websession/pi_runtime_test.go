@@ -126,6 +126,8 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 	pr5SteeringMessage := ""
 	pr5FollowUpMessage := ""
 	pr5Finished := false
+	followUpQueueActive := false
+	followUpQueue := []string{}
 	entrySequence := len(entries)
 	mutationSequence := 0
 	appendNativeEntry := func(entry map[string]any) {
@@ -320,6 +322,13 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 			if message == "hold" {
 				continue
 			}
+			if message == "hold-follow-up-queue" {
+				followUpQueueActive = true
+				appendEntry("user", message)
+				writeFakePiEvent(map[string]any{"type": "agent_start"})
+				writeFakePiEvent(map[string]any{"type": "message_start", "message": map[string]any{"role": "assistant", "content": []any{}}})
+				continue
+			}
 			if message == "fail-first-run" {
 				appendEntry("user", message)
 				failedMessage := map[string]any{
@@ -387,6 +396,12 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 			writeFakePiResponse(id, kind, result)
 		case "steer", "follow_up":
 			message, _ := command["message"].(string)
+			if followUpQueueActive && kind == "follow_up" {
+				followUpQueue = append(followUpQueue, message)
+				writeFakePiEvent(map[string]any{"type": "queue_update", "steering": []string{}, "followUp": followUpQueue})
+				writeFakePiResponse(id, kind, nil)
+				continue
+			}
 			if kind == "steer" {
 				pr5Steered = true
 				pr5SteeringMessage = message
@@ -403,6 +418,26 @@ func TestPiRuntimeFakeProcess(t *testing.T) {
 				followUp = append(followUp, pr5FollowUpMessage)
 			}
 			writeFakePiEvent(map[string]any{"type": "queue_update", "steering": steering, "followUp": followUp})
+			writeFakePiResponse(id, kind, nil)
+		case "test_consume_follow_up":
+			if len(followUpQueue) == 0 {
+				writeFakePiError(id, kind, "follow-up queue is empty")
+				continue
+			}
+			text := followUpQueue[0]
+			followUpQueue = followUpQueue[1:]
+			writeFakePiEvent(map[string]any{"type": "queue_update", "steering": []string{}, "followUp": followUpQueue})
+			appendEntry("user", text)
+			message := map[string]any{"role": "user", "content": text, "timestamp": time.Now().UnixMilli()}
+			writeFakePiEvent(map[string]any{"type": "message_start", "message": message})
+			writeFakePiEvent(map[string]any{"type": "message_end", "message": message})
+			if len(followUpQueue) == 0 {
+				followUpQueueActive = false
+				appendEntry("assistant", "queued replies complete")
+				writeFakePiEvent(map[string]any{"type": "message_end", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "queued replies complete"}}}})
+				writeFakePiEvent(map[string]any{"type": "agent_end", "messages": []any{}})
+				writeFakePiEvent(map[string]any{"type": "agent_settled"})
+			}
 			writeFakePiResponse(id, kind, nil)
 		case "clear_queue":
 			pr5Steered = false
@@ -1345,6 +1380,91 @@ func TestManagerPiRPCTreeMutationFailureKeepsSourceAndCreatesNoTarget(t *testing
 	if starts != 2 {
 		t.Fatalf("expected source runtime restore after failed mutation, starts=%d", starts)
 	}
+}
+
+func TestManagerPiRPCFollowUpQueueWaitsForEachConsumption(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+	project := seedProject(t)
+	fakeDir := t.TempDir()
+	t.Setenv("CODEKANBAN_FAKE_PI_RUNTIME", "1")
+	t.Setenv("CODEKANBAN_FAKE_PI_SESSION", filepath.Join(fakeDir, "follow-up-session.jsonl"))
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", fakeDir)
+	manager, err := NewManager(Config{
+		DataDir: t.TempDir(), PiPath: fmt.Sprintf("%q -test.run=^TestPiRuntimeFakeProcess$ --", os.Args[0]),
+		PiRuntimeIdleTTL: time.Minute,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.StopProjectPiRuntimes(project.ID)
+	if _, err := manager.TrustProjectForPi(context.Background(), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateSession(context.Background(), CreateParams{ProjectID: project.ID, Agent: AgentPi})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SendMessage(context.Background(), created.ID, "hold-follow-up-queue", nil); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for countEventsByType(readTextDeltaTestEvents(t, manager, created.ID), "msg_a_st") == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("Pi did not start its initial response")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for index, text := range []string{"first queued input", "second queued input"} {
+		if err := manager.sendMessageWithMode(context.Background(), created.ID, text, nil, PendingInputModeQueue, fmt.Sprintf("follow-up-%d", index)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitForPiNativeQueue(t, manager, created.ID, 2)
+	assertUserTexts := func(want []string) {
+		t.Helper()
+		got := userMessageTexts(readTextDeltaTestEvents(t, manager, created.ID))
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Fatalf("queued inputs appeared before consumption or were duplicated: got %#v, want %#v", got, want)
+		}
+	}
+	assertUserTexts([]string{"hold-follow-up-queue"})
+	manager.piRuntimeMu.Lock()
+	runtime := manager.piRuntimes[created.ID]
+	manager.piRuntimeMu.Unlock()
+	if runtime == nil {
+		t.Fatal("expected active Pi runtime")
+	}
+	runtime.mu.Lock()
+	dispatch := runtime.active
+	runtime.mu.Unlock()
+	if dispatch == nil {
+		t.Fatal("expected active Pi dispatch")
+	}
+	consume := func(remaining int) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := runtime.client.Request(ctx, "test_consume_follow_up", nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		if remaining > 0 {
+			if err := runtime.client.BarrierAndWait(ctx, dispatch.run.runID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	consume(1)
+	waitForPiNativeQueue(t, manager, created.ID, 1)
+	queued := manager.pendingInputsDisplaySnapshot(created.ID)
+	if queued[0].Mode != PendingInputModeQueue || queued[0].Text != "second queued input" {
+		t.Fatalf("unconsumed follow-up disappeared from the queue: %#v", queued)
+	}
+	assertUserTexts([]string{"hold-follow-up-queue", "first queued input"})
+	consume(0)
+	waitForSessionToSettle(t, manager, created.ID)
+	waitForPiNativeQueue(t, manager, created.ID, 0)
+	assertUserTexts([]string{"hold-follow-up-queue", "first queued input", "second queued input"})
 }
 
 func TestManagerPiRPCProjectsPR5EventsAndNativePendingInputs(t *testing.T) {
