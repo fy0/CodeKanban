@@ -194,6 +194,11 @@ func addPayloadSections(result *utils.SettingsBackupPreviewResult, backup utils.
 				Key: "server.dailyTip", Label: "Daily tip", Action: "replace", Target: "server", ChangedKeys: []string{"enabled"},
 			})
 		}
+		if server.RecentProjectsLimit != nil {
+			result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
+				Key: "server.recentProjectsLimit", Label: "Recent projects limit", Action: "replace", Target: "server", ChangedKeys: []string{"recentProjectsLimit"},
+			})
+		}
 		if server.WebSessionQuickInput != nil {
 			if server.WebSessionQuickInput.Pinned != nil {
 				result.Sections = append(result.Sections, utils.SettingsBackupPreviewSection{
@@ -242,6 +247,11 @@ func addPayloadSections(result *utils.SettingsBackupPreviewResult, backup utils.
 }
 
 func validateServerPayload(result *utils.SettingsBackupPreviewResult, payload *utils.SettingsBackupServerPayload) {
+	if payload.RecentProjectsLimit != nil && (*payload.RecentProjectsLimit < 1 || *payload.RecentProjectsLimit > utils.MaxRecentProjectsLimit) {
+		result.Errors = append(result.Errors, utils.SettingsBackupPreviewIssue{
+			Code: "invalid_recent_projects_limit", Level: "error", Message: "recent projects limit must be between 1 and 20",
+		})
+	}
 	if payload.Developer != nil {
 		normalized := utils.NormalizeDeveloperConfig(*payload.Developer)
 		payload.Developer = &normalized
@@ -373,6 +383,9 @@ func applySettingsBackup(
 		}
 		if server.DailyTip != nil {
 			c.UI.DailyTipEnabled = server.DailyTip.Enabled
+		}
+		if server.RecentProjectsLimit != nil {
+			c.UI.RecentProjectsLimit = *server.RecentProjectsLimit
 		}
 		if server.WebSessionQuickInput != nil {
 			next := c.UI.WebSessionQuickInput

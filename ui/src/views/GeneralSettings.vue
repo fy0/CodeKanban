@@ -117,10 +117,13 @@
                 >
                   <n-space vertical size="small">
                     <n-input-number
-                      v-model:value="recentProjectsLimitValue"
+                      :value="recentProjectsLimit"
                       :min="1"
                       :max="20"
                       :step="1"
+                      :update-value-on-input="false"
+                      :disabled="!recentProjectsSettingsLoaded || recentProjectsSettingsSaving"
+                      @update:value="handleRecentProjectsLimitChange"
                     />
                     <span class="form-tip">{{ t('settings.recentProjectsLimitTip') }}</span>
                   </n-space>
@@ -2365,6 +2368,8 @@ const {
   activeTheme: theme,
   customTheme,
   recentProjectsLimit,
+  recentProjectsSettingsLoaded,
+  recentProjectsSettingsSaving,
   maxTerminalsPerProject,
   dailyTipEnabled,
   dailyTipSettingsLoaded,
@@ -3600,6 +3605,7 @@ useInit(() => {
   loadShellsConfig();
   loadAuthAccessConfig();
   void settingsStore.loadPageTitleSettings();
+  void settingsStore.loadRecentProjectsSettings();
   void settingsStore.loadDailyTipSettings();
   void settingsStore.loadWebSessionQuickInput();
 });
@@ -3973,6 +3979,9 @@ async function refreshSettingsAfterBackupImport(importedBackup: SettingsBackupFi
   if (typeof server?.pageTitle === 'string') {
     tasks.push(settingsStore.loadPageTitleSettings(true));
   }
+  if (typeof server?.recentProjectsLimit === 'number') {
+    tasks.push(settingsStore.loadRecentProjectsSettings(true));
+  }
   if (
     server?.webSessionQuickInput?.pinned ||
     server?.webSessionQuickInput?.recent ||
@@ -4173,21 +4182,19 @@ const customEditorCommandValue = computed({
 
 const showCustomEditorInput = computed(() => defaultEditorValue.value === 'custom');
 
-// 使用本地 ref + 防抖来避免输入过程中立即删除项目
-const recentProjectsLimitLocal = ref(recentProjectsLimit.value);
-const debouncedUpdateRecentProjectsLimit = useDebounceFn((value: number) => {
-  settingsStore.updateRecentProjectsLimit(value ?? 10);
-}, 800);
+async function handleRecentProjectsLimitChange(value: number | null) {
+  if (value == null || value === recentProjectsLimit.value) {
+    return;
+  }
+  try {
+    await settingsStore.updateRecentProjectsLimit(value);
+  } catch (error) {
+    console.error('Failed to save recent projects settings:', error);
+    message.error(t('common.saveFailed'));
+  }
+}
 
-const recentProjectsLimitValue = computed({
-  get: () => recentProjectsLimitLocal.value,
-  set: value => {
-    recentProjectsLimitLocal.value = value ?? 10;
-    debouncedUpdateRecentProjectsLimit(value ?? 10);
-  },
-});
-
-// 单项目终端上限也应用相同的防抖机制
+// 单项目终端上限使用本地输入和防抖更新
 const terminalLimitLocal = ref(maxTerminalsPerProject.value);
 const debouncedUpdateTerminalLimit = useDebounceFn((value: number) => {
   settingsStore.updateMaxTerminalsPerProject(value ?? 12);

@@ -36,6 +36,7 @@ terminal:
     linux: /bin/sh
 ui:
   pageTitle: Legacy Board
+  recentProjectsLimit: 7
   dailyTipEnabled: true
   webSessionQuickInput:
     pinned: [Plan]
@@ -63,6 +64,9 @@ ui:
 	}
 	if config.UI.PageTitle != "Legacy Board" || !config.UI.DailyTipEnabled {
 		t.Fatalf("legacy UI settings were not imported: %#v", config.UI)
+	}
+	if config.UI.RecentProjectsLimit != 7 {
+		t.Fatalf("legacy recent projects limit = %d, want 7", config.UI.RecentProjectsLimit)
 	}
 	if config.Auth.FrontendSalt != "legacy-frontend-salt" || config.Auth.TokenSecret != "legacy-token-secret" {
 		t.Fatalf("legacy auth credentials were not imported: %#v", config.Auth)
@@ -95,6 +99,7 @@ ui:
 
 	if err := UpdateConfig(config, func(next *AppConfig) {
 		next.UI.PageTitle = "Database Board"
+		next.UI.RecentProjectsLimit = 4
 		next.UI.DailyTipEnabled = false
 		next.Developer.EnableTerminalScrollback = false
 	}); err != nil {
@@ -114,6 +119,9 @@ ui:
 	}
 	if restartedConfig.UI.PageTitle != "Database Board" || restartedConfig.UI.DailyTipEnabled {
 		t.Fatalf("runtime settings did not survive restart: %#v", restartedConfig.UI)
+	}
+	if restartedConfig.UI.RecentProjectsLimit != 4 {
+		t.Fatalf("restarted recent projects limit = %d, want 4", restartedConfig.UI.RecentProjectsLimit)
 	}
 	if restartedConfig.Developer.EnableTerminalScrollback {
 		t.Fatalf("developer settings did not survive restart: %#v", restartedConfig.Developer)
@@ -136,6 +144,29 @@ ui:
 		t.Fatal("one-time legacy backup was overwritten on restart")
 	}
 	assertBootstrapOnlyConfig(t, configPath)
+}
+
+func TestConfigDatabaseDefaultsRecentProjectsLimitForOlderSettings(t *testing.T) {
+	prepareConfigDatabaseTest(t, []byte("ui:\n  pageTitle: Original\n"))
+	config := ReadConfig()
+	store, err := InitConfigDatabase(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Model(&runtimeSettingRow{}).Where("key = ?", runtimeSettingUI).
+		Update("value_json", `{"pageTitle":"Original","dailyTipEnabled":false}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted := ReadConfig()
+	if _, err := InitConfigDatabase(restarted); err != nil {
+		t.Fatal(err)
+	}
+	if restarted.UI.RecentProjectsLimit != DefaultRecentProjectsLimit {
+		t.Fatalf("limit = %d, want %d", restarted.UI.RecentProjectsLimit, DefaultRecentProjectsLimit)
+	}
 }
 
 func TestUpdateConfigRequiresInitializedDatabase(t *testing.T) {

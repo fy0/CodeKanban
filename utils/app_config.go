@@ -135,6 +135,7 @@ type WebSessionQuickInputConfig struct {
 
 type UIConfig struct {
 	PageTitle            string                     `json:"pageTitle" yaml:"pageTitle"`
+	RecentProjectsLimit  int                        `json:"recentProjectsLimit" yaml:"recentProjectsLimit"`
 	DailyTipEnabled      bool                       `json:"dailyTipEnabled" yaml:"dailyTipEnabled"`
 	WebSessionQuickInput WebSessionQuickInputConfig `json:"webSessionQuickInput" yaml:"webSessionQuickInput"`
 }
@@ -142,6 +143,8 @@ type UIConfig struct {
 const (
 	DefaultPageTitle                      = "Code Kanban"
 	MaxPageTitleRunes                     = 64
+	DefaultRecentProjectsLimit            = 10
+	MaxRecentProjectsLimit                = 20
 	WebSessionQuickInputRecentLimit       = 30
 	DefaultWebSessionCodexModel           = "gpt-5.6-sol"
 	DefaultWebSessionCodexClientName      = "codekanban-web-session"
@@ -475,6 +478,7 @@ func ReadConfig() *AppConfig {
 		},
 		UI: UIConfig{
 			PageTitle:            DefaultPageTitle,
+			RecentProjectsLimit:  DefaultRecentProjectsLimit,
 			DailyTipEnabled:      false,
 			WebSessionQuickInput: NormalizeWebSessionQuickInputConfig(defaultWebSessionQuickInputConfig),
 		},
@@ -521,6 +525,7 @@ func ReadConfig() *AppConfig {
 		pageTitle = DefaultPageTitle
 	}
 	config.UI.PageTitle = pageTitle
+	config.UI.RecentProjectsLimit = NormalizeRecentProjectsLimit(config.UI.RecentProjectsLimit)
 	config.UI.WebSessionQuickInput = NormalizeWebSessionQuickInputConfig(config.UI.WebSessionQuickInput)
 	config.Developer = NormalizeDeveloperConfig(config.Developer)
 	config.Git = NormalizeGitConfig(config.Git)
@@ -541,6 +546,13 @@ func ReadConfig() *AppConfig {
 	}
 
 	return &config
+}
+
+func NormalizeRecentProjectsLimit(value int) int {
+	if value == 0 {
+		return DefaultRecentProjectsLimit
+	}
+	return min(max(value, 1), MaxRecentProjectsLimit)
 }
 
 func NormalizePageTitle(value string) (string, error) {

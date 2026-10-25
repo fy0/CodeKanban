@@ -65,6 +65,10 @@ type pageTitleSettings struct {
 	Title string `json:"title" doc:"浏览器标签页使用的应用标题"`
 }
 
+type recentProjectsSettings struct {
+	Limit int `json:"limit" minimum:"1" maximum:"20" doc:"侧边栏最近项目的显示数量"`
+}
+
 type gitSettingsResult struct {
 	ReadEngine  string                `json:"readEngine" enum:"auto,builtin,system"`
 	WriteEngine string                `json:"writeEngine" enum:"auto,builtin,system"`
@@ -290,6 +294,34 @@ func registerSystemRoutes(
 		op.OperationID = "system-codex-skills"
 		op.Summary = "获取本机可用 Codex skill 列表"
 		op.Description = "扫描已安装和仓库内置的 Codex skill 元数据，返回用于前端展示和插入的摘要信息"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Get(group, "/system/recent-projects-settings", func(ctx context.Context, input *struct{}) (*h.ItemResponse[recentProjectsSettings], error) {
+		resp := h.NewItemResponse(recentProjectsSettings{Limit: utils.NormalizeRecentProjectsLimit(cfg.UI.RecentProjectsLimit)})
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-recent-projects-settings-get"
+		op.Summary = "获取最近项目数量设置"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/recent-projects-settings/update", func(ctx context.Context, input *struct {
+		Body recentProjectsSettings `json:"body"`
+	}) (*h.ItemResponse[recentProjectsSettings], error) {
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			c.UI.RecentProjectsLimit = input.Body.Limit
+		}); err != nil {
+			return nil, configStoreAPIError(err, "failed to save recent projects settings")
+		}
+		resp := h.NewItemResponse(input.Body)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-recent-projects-settings-update"
+		op.Summary = "更新最近项目数量设置"
+		op.Description = "保存侧边栏最近项目的显示数量到配置数据库"
 		op.Tags = []string{systemTag}
 	})
 

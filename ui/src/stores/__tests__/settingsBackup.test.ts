@@ -43,8 +43,8 @@ describe('settings backup helpers in store', () => {
   });
 
   it('exports client backup with persisted settings shape', () => {
+    localStorage.setItem('general_settings', JSON.stringify({ recentProjectsLimit: 7 }));
     const store = useSettingsStore();
-    store.updateRecentProjectsLimit(7);
     store.updateShowWebSessionReasoning(true);
 
     const payload = store.exportClientBackup('en-US', {
@@ -53,7 +53,7 @@ describe('settings backup helpers in store', () => {
 
     expect(payload.locale).toBe('en-US');
     expect(payload.settings.version).toBe(9);
-    expect(payload.settings.recentProjectsLimit).toBe(7);
+    expect(payload.settings.recentProjectsLimit).toBeUndefined();
     expect(payload.settings.showWebSessionReasoning).toBe(true);
     expect('webSessionAutoRetryDispatchPendingOnFailure' in payload.settings).toBe(false);
     expect(payload.settings.webSessionQuickInput).toBeUndefined();
@@ -112,7 +112,7 @@ describe('settings backup helpers in store', () => {
       },
     });
 
-    expect(recentProjectsLimit.value).toBe(6);
+    expect(recentProjectsLimit.value).toBe(10);
     expect(showWebSessionReasoning.value).toBe(true);
     expect(store.webSessionQuickInput).toEqual({
       pinned: ['Server pinned'],

@@ -263,6 +263,10 @@ export interface PageTitleSettings {
   title: string;
 }
 
+interface RecentProjectsSettings {
+  limit: number;
+}
+
 interface GeneralSettings {
   currentPresetId: string;
   followSystemThemeSetting: FollowSystemThemeSetting;
@@ -417,6 +421,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const appearance = useAppearanceStore();
   const loadedSettings = loadSettings();
   const settings = ref<GeneralSettings>(loadedSettings.settings);
+  const recentProjectsSettingsLoaded = ref(false);
+  const recentProjectsSettingsSaving = ref(false);
+  let recentProjectsSettingsLoadTask: Promise<void> | null = null;
   const pageTitle = ref(APP_NAME);
   const pageTitleSettingsLoaded = ref(false);
   const pageTitleSettingsSaving = ref(false);
@@ -569,8 +576,53 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.customTerminalTheme = null;
   }
 
-  function updateRecentProjectsLimit(limit: number) {
-    settings.value.recentProjectsLimit = sanitizeRecentProjectsLimit(limit);
+  async function loadRecentProjectsSettings(force = false) {
+    if (!force && recentProjectsSettingsLoaded.value) {
+      return;
+    }
+    if (recentProjectsSettingsLoadTask) {
+      return recentProjectsSettingsLoadTask;
+    }
+
+    const task = http
+      .Get<ItemResponse<RecentProjectsSettings>>('/system/recent-projects-settings', {
+        cacheFor: 0,
+      })
+      .send(true)
+      .then(response => {
+        settings.value.recentProjectsLimit = sanitizeRecentProjectsLimit(response?.item?.limit);
+        recentProjectsSettingsLoaded.value = true;
+      })
+      .catch(error => {
+        console.warn('Failed to load recent projects settings.', error);
+      })
+      .finally(() => {
+        recentProjectsSettingsLoadTask = null;
+      });
+
+    recentProjectsSettingsLoadTask = task;
+    return task;
+  }
+
+  async function updateRecentProjectsLimit(limit: number) {
+    recentProjectsSettingsSaving.value = true;
+    try {
+      if (recentProjectsSettingsLoadTask) {
+        await recentProjectsSettingsLoadTask;
+      }
+      const payload = { limit: sanitizeRecentProjectsLimit(limit) };
+      const response = await http
+        .Post<
+          ItemResponse<RecentProjectsSettings>
+        >('/system/recent-projects-settings/update', payload)
+        .send();
+      const next = sanitizeRecentProjectsLimit(response?.item?.limit ?? payload.limit);
+      settings.value.recentProjectsLimit = next;
+      recentProjectsSettingsLoaded.value = true;
+      return next;
+    } finally {
+      recentProjectsSettingsSaving.value = false;
+    }
   }
 
   function updateMaxTerminalsPerProject(limit: number) {
@@ -1050,6 +1102,7 @@ export const useSettingsStore = defineStore('settings', () => {
         const serverQuickInput = cloneWebSessionQuickInput(settings.value.webSessionQuickInput);
         const next = deserializeSettingsFromBackup(importedSettings);
         next.webSessionQuickInput = serverQuickInput;
+        next.recentProjectsLimit = settings.value.recentProjectsLimit;
         settings.value = next;
       }
     }
@@ -1073,6 +1126,8 @@ export const useSettingsStore = defineStore('settings', () => {
     customTheme,
     activeTheme,
     recentProjectsLimit,
+    recentProjectsSettingsLoaded,
+    recentProjectsSettingsSaving,
     maxTerminalsPerProject,
     dailyTipEnabled,
     dailyTipSettingsLoaded,
@@ -1103,6 +1158,7 @@ export const useSettingsStore = defineStore('settings', () => {
     effectiveTerminalThemeId,
     activeTerminalTheme,
     resetTheme,
+    loadRecentProjectsSettings,
     updateRecentProjectsLimit,
     updateMaxTerminalsPerProject,
     loadPageTitleSettings,
@@ -1191,6 +1247,7 @@ function serializeSettingsForBackup(settings: GeneralSettings): SettingsBackupCl
   const {
     followSystemThemeSetting,
     webSessionQuickInput: _serverQuickInput,
+    recentProjectsLimit: _serverRecentProjectsLimit,
     ...restSettings
   } = settings;
   return {

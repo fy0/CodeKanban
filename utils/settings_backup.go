@@ -33,6 +33,7 @@ func (s *SettingsBackupQuickInputSection) HasContent() bool {
 type SettingsBackupServerPayload struct {
 	Developer            *DeveloperConfig                 `json:"developer,omitempty"`
 	PageTitle            *string                          `json:"pageTitle,omitempty"`
+	RecentProjectsLimit  *int                             `json:"recentProjectsLimit,omitempty"`
 	DailyTip             *BackupDailyTipSettings          `json:"dailyTip,omitempty"`
 	WebSessionQuickInput *SettingsBackupQuickInputSection `json:"webSessionQuickInput,omitempty"`
 	Worktree             *WorktreeConfig                  `json:"worktree,omitempty"`
@@ -44,6 +45,7 @@ type SettingsBackupServerPayload struct {
 func (p *SettingsBackupServerPayload) HasContent() bool {
 	return p != nil && (p.Developer != nil ||
 		p.PageTitle != nil ||
+		p.RecentProjectsLimit != nil ||
 		p.DailyTip != nil ||
 		p.WebSessionQuickInput.HasContent() ||
 		p.Worktree != nil ||
@@ -139,9 +141,10 @@ func BuildSettingsBackupServerPayload(cfg *AppConfig) SettingsBackupServerPayloa
 	authAccess := SanitizeAuthAccessConfig(AuthAccessConfigFromAuthConfig(cfg.Auth))
 
 	return SettingsBackupServerPayload{
-		Developer: ptrValue(developer),
-		PageTitle: ptrValue(cfg.UI.PageTitle),
-		DailyTip:  ptrValue(dailyTip),
+		Developer:           ptrValue(developer),
+		PageTitle:           ptrValue(cfg.UI.PageTitle),
+		RecentProjectsLimit: ptrValue(NormalizeRecentProjectsLimit(cfg.UI.RecentProjectsLimit)),
+		DailyTip:            ptrValue(dailyTip),
 		WebSessionQuickInput: &SettingsBackupQuickInputSection{
 			Pinned:          ptrStringSlice(quickInput.Pinned),
 			Recent:          ptrStringSlice(quickInput.Recent),

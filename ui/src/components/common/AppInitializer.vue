@@ -59,6 +59,7 @@ async function ensureSettingsLoaded() {
 
   await Promise.all([
     settingsStore.loadWebSessionQuickInput(),
+    settingsStore.loadRecentProjectsSettings(),
     settingsStore.loadDailyTipSettings(),
   ]);
 }

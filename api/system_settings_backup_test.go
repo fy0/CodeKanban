@@ -50,6 +50,7 @@ func TestSystemSettingsBackupExportReturnsServerPayload(t *testing.T) {
 	cfg, _ := loadSystemSettingsBackupTestConfig(t, `
 ui:
   pageTitle: Staging Board
+  recentProjectsLimit: 7
   dailyTipEnabled: false
   webSessionQuickInput:
     pinned: ["Ship"]
@@ -93,6 +94,9 @@ terminal:
 	}
 	if item.Payload.Server.PageTitle == nil || *item.Payload.Server.PageTitle != "Staging Board" {
 		t.Fatalf("expected exported page title, got %#v", item.Payload.Server.PageTitle)
+	}
+	if item.Payload.Server.RecentProjectsLimit == nil || *item.Payload.Server.RecentProjectsLimit != 7 {
+		t.Fatalf("expected exported recent projects limit, got %#v", item.Payload.Server.RecentProjectsLimit)
 	}
 	if item.Payload.Server.TerminalShell == nil {
 		t.Fatal("expected terminal shell payload")
@@ -321,7 +325,8 @@ terminal:
 		SourceApp:           utils.SettingsBackupSourceApp{Name: "Code Kanban", Version: "1.0.0", Channel: "stable"},
 		Payload: utils.SettingsBackupPayload{
 			Server: &utils.SettingsBackupServerPayload{
-				PageTitle: loPtr("Imported Board"),
+				PageTitle:           loPtr("Imported Board"),
+				RecentProjectsLimit: loPtr(4),
 				Developer: loPtr(utils.DeveloperConfig{
 					EnableTerminalScrollback:              true,
 					EnableTerminalStateSnapshot:           true,
@@ -387,6 +392,9 @@ terminal:
 	}
 	if got := cfg.UI.PageTitle; got != "Imported Board" {
 		t.Fatalf("page title = %q, want Imported Board", got)
+	}
+	if cfg.UI.RecentProjectsLimit != 4 {
+		t.Fatalf("recent projects limit = %d, want 4", cfg.UI.RecentProjectsLimit)
 	}
 	if !cfg.Developer.EnableTerminalScrollback {
 		t.Fatalf("developer config not applied: %#v", cfg.Developer)

@@ -147,6 +147,35 @@ describe('settingsBackup helpers', () => {
     expect(hasSettingsBackupContent(backup)).toBe(true);
   });
 
+  it.each([undefined, 4])(
+    'promotes the legacy recent projects limit while preserving server value %s',
+    serverLimit => {
+      const backup = parseSettingsBackupJSON(
+        JSON.stringify({
+          backupSchemaVersion: SETTINGS_BACKUP_SCHEMA_VERSION,
+          backupKind: SETTINGS_BACKUP_KIND,
+          sourceApp: { name: 'Code Kanban', version: '1.0.0', channel: 'stable' },
+          payload: {
+            server: { recentProjectsLimit: serverLimit },
+            client: { settings: { recentProjectsLimit: 7 } },
+          },
+        })
+      );
+
+      expect(backup.payload.server?.recentProjectsLimit).toBe(serverLimit ?? 7);
+      expect(backup.payload.client?.settings?.recentProjectsLimit).toBeUndefined();
+      expect(hasSettingsBackupContent(backup)).toBe(true);
+
+      const selected = buildImportableSettingsBackup(backup, ['server.recentProjectsLimit']);
+      expect(selected.payload.server?.recentProjectsLimit).toBe(serverLimit ?? 7);
+      expect(selected.payload.client).toBeUndefined();
+
+      const unselected = buildImportableSettingsBackup(backup, ['client.settings']);
+      expect(unselected.payload.server).toBeUndefined();
+      expect(unselected.payload.client?.settings?.recentProjectsLimit).toBeUndefined();
+    }
+  );
+
   it('parses backup JSON text', () => {
     const parsed = parseSettingsBackupJSON(
       JSON.stringify({

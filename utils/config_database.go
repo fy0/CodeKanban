@@ -77,8 +77,9 @@ type runtimeAuthCredentials struct {
 }
 
 type runtimeUISettings struct {
-	PageTitle       string `json:"pageTitle"`
-	DailyTipEnabled bool   `json:"dailyTipEnabled"`
+	PageTitle           string `json:"pageTitle"`
+	RecentProjectsLimit int    `json:"recentProjectsLimit"`
+	DailyTipEnabled     bool   `json:"dailyTipEnabled"`
 }
 
 type WebSessionQuickInputView struct {
@@ -437,8 +438,9 @@ func persistRuntimeSettingsTx(tx *gorm.DB, config *AppConfig) error {
 		runtimeSettingWorktree:      config.Worktree,
 		runtimeSettingTerminalShell: config.Terminal.Shell,
 		runtimeSettingUI: runtimeUISettings{
-			PageTitle:       config.UI.PageTitle,
-			DailyTipEnabled: config.UI.DailyTipEnabled,
+			PageTitle:           config.UI.PageTitle,
+			RecentProjectsLimit: config.UI.RecentProjectsLimit,
+			DailyTipEnabled:     config.UI.DailyTipEnabled,
 		},
 		runtimeSettingQuickPinned: config.UI.WebSessionQuickInput.Pinned,
 	}
@@ -551,6 +553,7 @@ func (store *ConfigDatabase) loadRuntimeConfig(config *AppConfig) error {
 	}
 	config.Terminal.Shell = shell
 	config.UI.PageTitle = pageTitle
+	config.UI.RecentProjectsLimit = NormalizeRecentProjectsLimit(ui.RecentProjectsLimit)
 	config.UI.DailyTipEnabled = ui.DailyTipEnabled
 	config.UI.WebSessionQuickInput.Pinned = NormalizeWebSessionQuickInputConfig(WebSessionQuickInputConfig{Pinned: pinned}).Pinned
 	return store.refreshQuickInputCache(config)
@@ -572,6 +575,7 @@ func normalizeRuntimeConfig(config *AppConfig) error {
 		return err
 	}
 	config.UI.PageTitle = pageTitle
+	config.UI.RecentProjectsLimit = NormalizeRecentProjectsLimit(config.UI.RecentProjectsLimit)
 	config.UI.WebSessionQuickInput.Pinned = NormalizeWebSessionQuickInputConfig(WebSessionQuickInputConfig{
 		Pinned: config.UI.WebSessionQuickInput.Pinned,
 	}).Pinned

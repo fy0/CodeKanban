@@ -47,6 +47,7 @@ export interface SettingsBackupQuickInputSection {
 export interface SettingsBackupServerPayload {
   developer?: DeveloperConfig;
   pageTitle?: string;
+  recentProjectsLimit?: number;
   dailyTip?: {
     enabled: boolean;
   };
@@ -61,7 +62,7 @@ export interface SettingsBackupClientSettings {
   currentPresetId: string;
   followSystemTheme: FollowSystemThemeSetting;
   customTheme: ThemeSettings | null;
-  recentProjectsLimit: number;
+  recentProjectsLimit?: number;
   maxTerminalsPerProject: number;
   panelShortcuts: ShortcutSettings;
   webSessionQuickInput?: Partial<WebSessionQuickInputSettings>;
@@ -240,18 +241,27 @@ export function parseSettingsBackupJSON(text: string): SettingsBackupFile {
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('invalid backup JSON');
   }
-  const backup = promoteLegacyClientQuickInput(parsed);
+  const backup = promoteLegacyClientSettings(parsed);
   // Validate appearance before the server preview/import can mutate any settings.
   if (backup.payload?.client?.appearance !== undefined) {
-    backup.payload.client.appearance = validateState(backup.payload.client.appearance, getRegisteredThemes());
+    backup.payload.client.appearance = validateState(
+      backup.payload.client.appearance,
+      getRegisteredThemes()
+    );
   }
   return backup;
 }
 
-function promoteLegacyClientQuickInput(backup: SettingsBackupFile): SettingsBackupFile {
+function promoteLegacyClientSettings(backup: SettingsBackupFile): SettingsBackupFile {
   const cloned = cloneBackup(backup);
   if (!cloned.payload || typeof cloned.payload !== 'object') {
     return cloned;
+  }
+  const recentProjectsLimit = cloned.payload.client?.settings?.recentProjectsLimit;
+  if (typeof recentProjectsLimit === 'number') {
+    const server = (cloned.payload.server ??= {});
+    server.recentProjectsLimit ??= recentProjectsLimit;
+    delete cloned.payload.client?.settings?.recentProjectsLimit;
   }
   const clientQuickInput = cloned.payload.client?.settings?.webSessionQuickInput;
   if (!hasQuickInputSectionContent(clientQuickInput)) {
@@ -318,6 +328,9 @@ export function buildImportableSettingsBackup(
     }
     if (!selectedKeys.has('server.pageTitle')) {
       delete server.pageTitle;
+    }
+    if (!selectedKeys.has('server.recentProjectsLimit')) {
+      delete server.recentProjectsLimit;
     }
     if (!selectedKeys.has('server.dailyTip')) {
       delete server.dailyTip;
@@ -437,6 +450,7 @@ function hasServerPayloadContent(payload: SettingsBackupServerPayload | undefine
   return Boolean(
     payload.developer ||
       typeof payload.pageTitle === 'string' ||
+      typeof payload.recentProjectsLimit === 'number' ||
       payload.dailyTip ||
       hasQuickInputSectionContent(payload.webSessionQuickInput) ||
       payload.worktree ||
