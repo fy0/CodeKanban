@@ -3878,6 +3878,8 @@ func TestNormalizeCodexReasoningEffortUsesModelCapabilities(t *testing.T) {
 		{name: "GPT-6 Sol None", model: "gpt-6-sol", effort: ReasoningEffortNone, want: ReasoningEffortDefault},
 		{name: "GPT-6.1 Sol Ultra", model: "gpt-6.1-sol", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
 		{name: "GPT-6.1 Sol None", model: "gpt-6.1-sol", effort: ReasoningEffortNone, want: ReasoningEffortDefault},
+		{name: "GPT-6.1 Terra Ultra", model: "gpt-6.1-terra", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
+		{name: "GPT-6.1 Terra None", model: "gpt-6.1-terra", effort: ReasoningEffortNone, want: ReasoningEffortDefault},
 		{name: "GPT-6 Luna Max", model: "gpt-6-luna", effort: ReasoningEffortMax, want: ReasoningEffortMax},
 		{name: "GPT-6 Luna Ultra", model: "gpt-6-luna", effort: ReasoningEffortUltra, want: ReasoningEffortDefault},
 		{name: "Sol Ultra", model: "gpt-5.6-sol", effort: ReasoningEffortUltra, want: ReasoningEffortUltra},
@@ -3966,6 +3968,7 @@ func TestUsesCodexIncompleteTurnGuard(t *testing.T) {
 		{model: "gpt-6-astra", want: true},
 		{model: "gpt-6-sol", want: true},
 		{model: "gpt-6.1-sol", want: true},
+		{model: "gpt-6.1-terra", want: true},
 		{model: "gpt-6-luna", want: true},
 		{model: "gpt-5.5", want: false},
 	}

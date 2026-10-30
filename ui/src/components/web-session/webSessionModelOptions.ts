@@ -795,6 +795,7 @@ export const CODEX_PRIMARY_MODEL_OPTIONS: WebSessionModelOption[] = [
   { label: '6L', value: 'gpt-6-luna', menuLabel: 'GPT-6 Luna' },
   { label: '6S', value: 'gpt-6-sol', menuLabel: 'GPT-6 Sol' },
   { label: '6A', value: 'gpt-6-astra', menuLabel: 'GPT-6 Astra' },
+  { label: '6.1T', value: 'gpt-6.1-terra', menuLabel: 'GPT-6.1 Terra' },
   { label: '6.1S', value: 'gpt-6.1-sol', menuLabel: 'GPT-6.1 Sol' },
 ];
 
@@ -905,6 +906,7 @@ export function resolveCodexModelMenuOptions(
 }
 
 const CODEX_REASONING_EFFORT_FALLBACKS: Record<string, WebSessionReasoningEffort[]> = {
+  'gpt-6.1-terra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   'gpt-6.1-sol': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   'gpt-6-sol': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],

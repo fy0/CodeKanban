@@ -489,6 +489,7 @@ describe('webSessionModelOptions', () => {
       'gpt-6-luna',
       'gpt-6-sol',
       'gpt-6-astra',
+      'gpt-6.1-terra',
       'gpt-6.1-sol',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.label)).toEqual([
@@ -499,6 +500,7 @@ describe('webSessionModelOptions', () => {
       '6L',
       '6S',
       '6A',
+      '6.1T',
       '6.1S',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.menuLabel)).toEqual([
@@ -509,6 +511,7 @@ describe('webSessionModelOptions', () => {
       'GPT-6 Luna',
       'GPT-6 Sol',
       'GPT-6 Astra',
+      'GPT-6.1 Terra',
       'GPT-6.1 Sol',
     ]);
   });
@@ -923,6 +926,14 @@ describe('webSessionModelOptions', () => {
   });
 
   it('falls back per current Codex model without exposing unsupported efforts', () => {
+    expect(resolveCodexReasoningEfforts('gpt-6.1-terra')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+    ]);
     expect(resolveCodexReasoningEfforts('gpt-6.1-sol')).toEqual([
       'low',
       'medium',
