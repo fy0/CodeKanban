@@ -14,13 +14,14 @@ func (m *Manager) observeCodexTokenSpeed(session tables.WebSessionTable, run *ac
 		return
 	}
 	switch method {
-	case "item/started", "item/completed", "item/agentMessage/delta", "item/reasoning/textDelta",
+	case "item/started", "item/completed", "item/agentMessage/delta", "item/plan/delta", "item/reasoning/textDelta",
 		"item/reasoning/summaryTextDelta", "rawResponseItem/completed", "rawResponse/completed", "thread/tokenUsage/updated":
 	default:
 		return
 	}
 	payload := decodeRawObject(raw)
-	force := method == "rawResponse/completed" || method == "thread/tokenUsage/updated"
+	force := method == "item/started" || method == "item/completed" ||
+		method == "rawResponse/completed" || method == "thread/tokenUsage/updated"
 	m.updateTokenSpeed(session.ID, run.runID, func(s *tokenSpeedState, now time.Time) {
 		if threadID := codexNotificationThreadID(raw); threadID != "" && s.codexThreadID == "" {
 			s.codexThreadID = threadID
@@ -30,80 +31,186 @@ func (m *Manager) observeCodexTokenSpeed(session tables.WebSessionTable, run *ac
 				s.codexTotal = 0
 			}
 		}
-		item := decodeRawObject(payload["item"])
-		kind := normalizeCodexItemType(stringValue(item["type"]))
-		switch method {
-		case "item/started":
-			switch kind {
-			case "reasoning", "agent_message":
-				if sample := s.begin("", now, true); sample != nil && kind == "reasoning" {
-					sample.reasoningObserved = true
-				}
-			case "user_message":
-			default:
-				s.finish("", nil, now, true)
+		s.observeCodexTokenSpeed(method, payload, now)
+	}, force)
+}
+
+func (s *tokenSpeedState) observeCodexTokenSpeed(method string, payload map[string]any, now time.Time) {
+	item := decodeRawObject(payload["item"])
+	kind := normalizeCodexItemType(stringValue(item["type"]))
+	switch method {
+	case "item/started":
+		switch kind {
+		case "reasoning", "agent_message", "plan":
+			if sample := s.beginCodexItem(stringValue(item["id"]), now, true); sample != nil && kind == "reasoning" {
+				sample.reasoningObserved = true
 			}
-		case "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
-			channel := stringValue(payload["itemId"])
-			if method == "item/reasoning/summaryTextDelta" {
-				channel += ":summary"
-			}
-			if method == "item/reasoning/textDelta" {
-				if cur := s.current(); cur != nil {
-					delete(cur.weights, channel+":summary")
-				}
-			}
-			if method == "item/reasoning/summaryTextDelta" {
-				if cur := s.current(); cur != nil && cur.weights[strings.TrimSuffix(channel, ":summary")] > 0 {
-					return
+		case "user_message":
+		default:
+			channel := "tool:" + stringValue(item["id"])
+			sample := s.codexItemSample(channel)
+			if sample == nil {
+				sample = s.current()
+				if sample != nil {
+					sample.weights[channel] = 0
 				}
 			}
-			s.delta("", channel, stringValue(payload["delta"]), now)
-		case "item/completed":
-			if kind == "agent_message" {
-				if cur := s.current(); cur != nil && cur.ended.IsZero() {
-					cur.weights[stringValue(item["id"])] = estimateOutputTokens(stringValue(item["text"]))
-				}
-			}
-		case "rawResponseItem/completed":
-			if stringValue(item["type"]) == "function_call" {
-				if cur := s.current(); cur != nil && cur.ended.IsZero() {
-					cur.weights["tool:"+stringValue(item["call_id"])] = estimateOutputTokens(stringValue(item["arguments"]))
-				}
-			}
-		case "rawResponse/completed":
-			s.finish("", nil, now, true)
-		case "thread/tokenUsage/updated":
-			usage := decodeRawObject(payload["tokenUsage"])
-			total, hasTotal := parseCodexTokenUsageSnapshot(usage["total"])
-			last, hasLast := parseCodexTokenUsageSnapshot(usage["last"])
-			if !hasTotal || total.OutputTokens <= s.codexTotal {
+			s.finishSample(sample, nil, now, true)
+		}
+	case "item/agentMessage/delta", "item/plan/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
+		text := stringValue(payload["delta"])
+		if text == "" || s.stopped {
+			return
+		}
+		channel := stringValue(payload["itemId"])
+		sample := s.beginCodexItem(channel, now, false)
+		if sample == nil || !sample.ended.IsZero() {
+			return
+		}
+		if method == "item/reasoning/summaryTextDelta" {
+			channel += ":summary"
+		}
+		if method == "item/reasoning/textDelta" {
+			delete(sample.weights, channel+":summary")
+		}
+		if method == "item/reasoning/summaryTextDelta" {
+			if sample.weights[strings.TrimSuffix(channel, ":summary")] > 0 {
 				return
 			}
-			delta := total.OutputTokens - s.codexTotal
-			s.codexTotal = total.OutputTokens
-			var pending []*tokenSpeedSample
-			for _, sample := range s.samples {
-				if !sample.usageClaimed {
-					pending = append(pending, sample)
-				}
+		}
+		sample.weights[channel] += estimateOutputTokens(text)
+	case "item/completed":
+		if kind == "agent_message" || kind == "plan" {
+			channel := stringValue(item["id"])
+			sample := s.codexItemSample(channel)
+			if sample == nil {
+				sample = s.current()
 			}
-			// Without a response id, only an unambiguous single request can be
-			// calibrated. A batched or delayed report must not retarget a new request.
-			if len(pending) == 1 && hasLast && delta == last.OutputTokens {
-				lastRaw := decodeRawObject(usage["last"])
-				reasoning, _ := codexInt64Field(lastRaw, "reasoningOutputTokens", "reasoning_output_tokens")
-				if reasoning > 0 && !pending[0].reasoningObserved {
-					pending[0].completeBoundary = false
-				}
-				s.finish(pending[0].key, &last.OutputTokens, now, true)
-			} else {
-				for _, sample := range pending {
-					sample.usageClaimed = true
-				}
+			if text := stringValue(item["text"]); sample != nil && text != "" {
+				sample.weights[channel] = estimateOutputTokens(text)
+				s.recordSample(sample)
 			}
 		}
-	}, force)
+	case "rawResponseItem/completed":
+		if kind == "function_call" || kind == "custom_tool_call" {
+			channel := "tool:" + stringValue(item["call_id"])
+			sample := s.codexItemSample(channel)
+			if sample == nil {
+				sample = s.current()
+			}
+			if sample != nil {
+				text := stringValue(item["arguments"])
+				if kind == "custom_tool_call" {
+					text = stringValue(item["input"])
+				}
+				sample.weights[channel] = estimateOutputTokens(text)
+				s.recordSample(sample)
+			}
+		}
+	case "rawResponse/completed":
+		responseID := stringValue(payload["responseId"])
+		if responseID != "" {
+			if s.codexResponses[responseID] {
+				return
+			}
+			if s.codexResponses == nil {
+				s.codexResponses = make(map[string]bool)
+			}
+			s.codexResponses[responseID] = true
+		}
+		// Commands may have already ended this response's generation, and a
+		// later response may be streaming by the time completion is delivered.
+		var sample *tokenSpeedSample
+		for _, pending := range s.samples {
+			if !pending.codexResponseComplete {
+				sample = pending
+				sample.codexResponseComplete = true
+				break
+			}
+		}
+		usage := decodeRawObject(payload["usage"])
+		if output, ok := codexInt64Field(usage, "outputTokens", "output_tokens"); ok {
+			if sample == nil || !sample.usageClaimed {
+				s.codexPendingOutput += output
+			}
+			if sample != nil {
+				// Per-response usage is authoritative, including a correction
+				// below an earlier cumulative usage estimate.
+				sample.output = nil
+			}
+			s.finishCodexSample(sample, usage, now)
+		} else {
+			s.finishSample(sample, nil, now, true)
+		}
+	case "thread/tokenUsage/updated":
+		usage := decodeRawObject(payload["tokenUsage"])
+		total, hasTotal := parseCodexTokenUsageSnapshot(usage["total"])
+		last, hasLast := parseCodexTokenUsageSnapshot(usage["last"])
+		if !hasTotal || total.OutputTokens <= s.codexTotal {
+			return
+		}
+		delta := total.OutputTokens - s.codexTotal
+		s.codexTotal = total.OutputTokens
+		// A cumulative notification can arrive after the next request starts.
+		// Consume usage already attributed by rawResponse/completed first.
+		claimed := min(delta, s.codexPendingOutput)
+		s.codexPendingOutput -= claimed
+		delta -= claimed
+		if delta == 0 {
+			return
+		}
+		var pending []*tokenSpeedSample
+		for _, sample := range s.samples {
+			if !sample.usageClaimed {
+				pending = append(pending, sample)
+			}
+		}
+		// Without a response id, only an unambiguous single request can be
+		// calibrated. A batched or delayed report must not retarget a new request.
+		if len(pending) == 1 && hasLast && delta == last.OutputTokens {
+			s.finishCodexSample(pending[0], decodeRawObject(usage["last"]), now)
+		} else {
+			for _, sample := range pending {
+				sample.usageClaimed = true
+			}
+		}
+	}
+}
+
+func (s *tokenSpeedState) codexItemSample(channel string) *tokenSpeedSample {
+	if channel != "" {
+		for i := len(s.samples) - 1; i >= 0; i-- {
+			if _, ok := s.samples[i].weights[channel]; ok {
+				return s.samples[i]
+			}
+		}
+	}
+	return nil
+}
+
+func (s *tokenSpeedState) beginCodexItem(channel string, now time.Time, complete bool) *tokenSpeedSample {
+	if sample := s.codexItemSample(channel); sample != nil {
+		return sample
+	}
+	sample := s.begin("", now, complete)
+	if sample != nil && channel != "" {
+		sample.weights[channel] = 0
+	}
+	return sample
+}
+
+func (s *tokenSpeedState) finishCodexSample(sample *tokenSpeedSample, usage map[string]any, now time.Time) {
+	if sample == nil {
+		return
+	}
+	reasoning, _ := codexInt64Field(usage, "reasoningOutputTokens", "reasoning_output_tokens")
+	if reasoning > 0 && !sample.reasoningObserved {
+		sample.completeBoundary = false
+	}
+	output, ok := codexInt64Field(usage, "outputTokens", "output_tokens")
+	if ok {
+		s.finishSample(sample, &output, now, true)
+	}
 }
 
 func (m *Manager) observeClaudeTokenSpeed(session tables.WebSessionTable, run *activeRun, raw map[string]any) {

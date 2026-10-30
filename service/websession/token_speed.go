@@ -25,41 +25,44 @@ type TokenSpeed struct {
 }
 
 type tokenSpeedSample struct {
-	id                string
-	key               string
-	started           time.Time
-	ended             time.Time
-	weights           map[string]float64
-	output            *int64
-	reportedOutput    *int64
-	completeBoundary  bool
-	usageClaimed      bool
-	reasoningObserved bool
-	record            *TokenSpeedRecord
+	id                    string
+	key                   string
+	started               time.Time
+	ended                 time.Time
+	weights               map[string]float64
+	output                *int64
+	reportedOutput        *int64
+	completeBoundary      bool
+	usageClaimed          bool
+	reasoningObserved     bool
+	codexResponseComplete bool
+	record                *TokenSpeedRecord
 }
 
 type tokenSpeedState struct {
-	runID           string
-	version         uint64
-	serial          uint64
-	samples         []*tokenSpeedSample
-	stopped         bool
-	timer           *time.Timer
-	lastPublished   time.Time
-	updatedAt       time.Time
-	published       *TokenSpeed
-	codexTotal      int64
-	codexThreadID   string
-	claudeMessageID string
-	devinAmbiguous  bool
-	devinUsageSeen  map[string]bool
-	agent           string
-	model           string
-	history         []TokenSpeedRecord
-	totals          tokenSpeedAccumulator
-	runTotals       tokenSpeedAccumulator
-	pendingRecords  map[string]tables.WebSessionTokenSpeedTable
-	deleted         bool
+	runID              string
+	version            uint64
+	serial             uint64
+	samples            []*tokenSpeedSample
+	stopped            bool
+	timer              *time.Timer
+	lastPublished      time.Time
+	updatedAt          time.Time
+	published          *TokenSpeed
+	codexTotal         int64
+	codexThreadID      string
+	codexResponses     map[string]bool
+	codexPendingOutput int64
+	claudeMessageID    string
+	devinAmbiguous     bool
+	devinUsageSeen     map[string]bool
+	agent              string
+	model              string
+	history            []TokenSpeedRecord
+	totals             tokenSpeedAccumulator
+	runTotals          tokenSpeedAccumulator
+	pendingRecords     map[string]tables.WebSessionTokenSpeedTable
+	deleted            bool
 }
 
 func estimateOutputTokens(text string) float64 {
@@ -138,6 +141,10 @@ func (s *tokenSpeedState) finish(key string, output *int64, now time.Time, compl
 			}
 		}
 	}
+	s.finishSample(cur, output, now, complete)
+}
+
+func (s *tokenSpeedState) finishSample(cur *tokenSpeedSample, output *int64, now time.Time, complete bool) {
 	if cur == nil {
 		return
 	}
