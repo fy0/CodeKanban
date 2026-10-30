@@ -21,7 +21,7 @@ const sample = (version = 1, epoch = 'process-1') => ({
 describe('token speed telemetry', () => {
   it('formats unavailable, estimated and calibrated rates', () => {
     expect(formatTokenSpeed()).toBe('-- t/s');
-    expect(formatTokenSpeed(sample())).toBe('≈42 t/s');
+    expect(formatTokenSpeed(sample())).toBe('42 t/s');
     expect(formatTokenSpeed({ ...sample(), estimated: false, tokensPerSecond: 42.6 })).toBe(
       '43 t/s'
     );

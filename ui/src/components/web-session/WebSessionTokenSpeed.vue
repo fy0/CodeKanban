@@ -1,14 +1,12 @@
 <template>
-  <n-popover trigger="click" placement="top-end" :show-arrow="false">
+  <n-popover trigger="hover" placement="top-end" :show-arrow="false" :keep-alive-on-hover="true">
     <template #trigger>
       <button
         type="button"
         class="token-speed"
         :style="themeStyle"
-        :title="t('webSession.tokenSpeedDetails')"
         :aria-label="`${t('webSession.tokenSpeedDetails')}: ${metricLabel} ${label}`"
       >
-        <span class="token-speed-source">{{ metricLabel }}</span>
         <Transition name="token-speed-update">
           <span :key="label" class="token-speed-value">{{ label }}</span>
         </Transition>
@@ -147,7 +145,6 @@ function formatTime(value: string, full = false) {
 .token-speed {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   flex: 0 0 auto;
   color: var(--token-speed-secondary);
   background: transparent;
@@ -162,9 +159,6 @@ function formatTime(value: string, full = false) {
 .token-speed:hover,
 .token-speed:focus-visible {
   color: var(--token-speed-accent);
-}
-.token-speed-source {
-  opacity: 0.7;
 }
 .token-speed-value {
   display: inline-block;
@@ -189,11 +183,6 @@ function formatTime(value: string, full = false) {
 @media (prefers-reduced-motion: reduce) {
   .token-speed-update-enter-active {
     animation: none;
-  }
-}
-@media (max-width: 600px) {
-  .token-speed-source {
-    display: none;
   }
 }
 .token-speed-details {

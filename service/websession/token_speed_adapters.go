@@ -79,16 +79,27 @@ func (s *tokenSpeedState) observeCodexTokenSpeed(method string, payload map[stri
 			}
 		}
 		sample.weights[channel] += estimateOutputTokens(text)
+		sample.codexOutputAt = now
 	case "item/completed":
-		if kind == "agent_message" || kind == "plan" {
+		if kind == "agent_message" || kind == "plan" || kind == "reasoning" {
 			channel := stringValue(item["id"])
 			sample := s.codexItemSample(channel)
 			if sample == nil {
 				sample = s.current()
 			}
-			if text := stringValue(item["text"]); sample != nil && text != "" {
-				sample.weights[channel] = estimateOutputTokens(text)
-				s.recordSample(sample)
+			if sample != nil {
+				// Hidden reasoning can have no text deltas. Its item completion
+				// still marks generated output, unlike a later usage/done signal.
+				if kind == "reasoning" && sample.ended.IsZero() {
+					sample.codexOutputAt = now
+				}
+				if text := stringValue(item["text"]); text != "" {
+					if sample.weights[channel] == 0 && sample.ended.IsZero() {
+						sample.codexOutputAt = now
+					}
+					sample.weights[channel] = estimateOutputTokens(text)
+					s.recordSample(sample)
+				}
 			}
 		}
 	case "rawResponseItem/completed":
@@ -104,6 +115,9 @@ func (s *tokenSpeedState) observeCodexTokenSpeed(method string, payload map[stri
 					text = stringValue(item["input"])
 				}
 				sample.weights[channel] = estimateOutputTokens(text)
+				if text != "" && sample.ended.IsZero() {
+					sample.codexOutputAt = now
+				}
 				s.recordSample(sample)
 			}
 		}
@@ -140,7 +154,7 @@ func (s *tokenSpeedState) observeCodexTokenSpeed(method string, payload map[stri
 			}
 			s.finishCodexSample(sample, usage, now)
 		} else {
-			s.finishSample(sample, nil, now, true)
+			s.finishSample(sample, nil, codexGenerationEnd(sample, now), true)
 		}
 	case "thread/tokenUsage/updated":
 		usage := decodeRawObject(payload["tokenUsage"])
@@ -207,10 +221,21 @@ func (s *tokenSpeedState) finishCodexSample(sample *tokenSpeedSample, usage map[
 	if reasoning > 0 && !sample.reasoningObserved {
 		sample.completeBoundary = false
 	}
+	// outputTokens includes reasoningOutputTokens; reasoning is a breakdown,
+	// not an additional output count. Timing comes from local event boundaries.
 	output, ok := codexInt64Field(usage, "outputTokens", "output_tokens")
 	if ok {
-		s.finishSample(sample, &output, now, true)
+		s.finishSample(sample, &output, codexGenerationEnd(sample, now), true)
 	}
+}
+
+func codexGenerationEnd(sample *tokenSpeedSample, now time.Time) time.Time {
+	// Usage and done notifications can lag behind the actual output. They
+	// calibrate the count without adding their delivery delay to generation.
+	if sample != nil && !sample.codexOutputAt.IsZero() && !sample.codexOutputAt.Before(sample.started) && !sample.codexOutputAt.After(now) {
+		return sample.codexOutputAt
+	}
+	return now
 }
 
 func (m *Manager) observeClaudeTokenSpeed(session tables.WebSessionTable, run *activeRun, raw map[string]any) {

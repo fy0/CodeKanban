@@ -115,7 +115,7 @@ export function formatTokenSpeed(
 ) {
   const value = speed?.tokensPerSecond;
   if (value == null || !Number.isFinite(value) || value < 0) return '-- t/s';
-  return `${speed?.estimated ? '≈' : ''}${Math.round(value)} t/s`;
+  return `${Math.round(value)} t/s`;
 }
 
 export type TokenSpeedMetric = 'latest' | keyof WebSessionTokenSpeedStats;

@@ -1060,7 +1060,7 @@ export default {
     tokenSpeedMetric_session: 'Session average',
     tokenSpeedSampleCount: '{count} generations',
     tokenSpeedMethod:
-      'Average = total output tokens ÷ total generation time, excluding tools and idle gaps between generations. ≈ includes estimates. Recent averages use completed generations; run and session averages include the active generation.',
+      'Average = total output tokens ÷ total generation time. Completed requests are calibrated with actual usage, including reported hidden reasoning; before that, visible content is estimated. ≈ includes estimates. Time is measured from local events, excluding tools and idle gaps; this is not server-side decoding speed. Recent averages use completed generations; run and session averages include the active generation.',
     tokenSpeedHistory: 'Recent generations',
     tokenSpeedOldToNew: 'Trend: oldest to newest',
     tokenSpeedTrend: 'Speed trend for the last 20 generations',

@@ -35,6 +35,7 @@ type tokenSpeedSample struct {
 	completeBoundary      bool
 	usageClaimed          bool
 	reasoningObserved     bool
+	codexOutputAt         time.Time
 	codexResponseComplete bool
 	record                *TokenSpeedRecord
 }

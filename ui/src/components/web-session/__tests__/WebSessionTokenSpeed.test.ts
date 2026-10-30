@@ -10,6 +10,8 @@ vi.mock('naive-ui', async () => {
   const { computed, defineComponent, h } = await import('vue');
   return {
     NPopover: defineComponent({
+      name: 'NPopover',
+      props: ['trigger', 'placement', 'showArrow', 'keepAliveOnHover'],
       setup(_, { slots }) {
         return () => h('div', [slots.trigger?.(), slots.default?.()]);
       },
@@ -76,6 +78,11 @@ describe('WebSessionTokenSpeed', () => {
     const speed = makeSpeed();
     const wrapper = render(speed);
     expect(wrapper.get('.token-speed').attributes('aria-label')).toContain('Last 5 50 t/s');
+    expect(wrapper.get('.token-speed').text()).toBe('50 t/s');
+    expect(wrapper.getComponent({ name: 'NPopover' }).props()).toMatchObject({
+      trigger: 'hover',
+      keepAliveOnHover: true,
+    });
     expect(wrapper.findAll('.token-speed-record')).toHaveLength(2);
     expect(wrapper.find('svg').attributes('aria-label')).toContain('last 20');
     const sessionButton = wrapper
@@ -86,6 +93,7 @@ describe('WebSessionTokenSpeed', () => {
     expect(wrapper.get('.token-speed').attributes('aria-label')).toContain(
       'Session average 40 t/s'
     );
+    expect(wrapper.get('.token-speed').text()).toBe('40 t/s');
     await wrapper.setProps({
       speed: { ...speed, version: 2, runId: 'next-run', sampleId: '', tokensPerSecond: null },
     });
@@ -96,11 +104,13 @@ describe('WebSessionTokenSpeed', () => {
     wrapper.unmount();
   });
 
-  it('shows an empty state and supports older telemetry without statistics', () => {
+  it('shows an empty state and supports older telemetry without statistics', async () => {
     const wrapper = render();
     expect(wrapper.get('.token-speed').text()).toContain('-- t/s');
     expect(wrapper.text()).toContain('saved automatically');
     expect(wrapper.find('svg').exists()).toBe(false);
+    await wrapper.setProps({ speed: { ...makeSpeed(), stats: undefined } });
+    expect(wrapper.get('.token-speed').text()).toBe('100 t/s');
     wrapper.unmount();
   });
 });
