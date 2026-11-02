@@ -109,14 +109,14 @@ describe('WebSessionAsyncUserInput', () => {
   it('preselects a suggestion without sending and submits all answers including free text', async () => {
     answer.mockResolvedValue(undefined);
     const wrapper = render();
-    const options = wrapper.findAll('.async-input-option');
+    const options = wrapper.findAll('.question-card-option');
     expect(options.map(option => option.attributes('aria-pressed'))).toEqual(['true', 'false']);
     expect(answer).not.toHaveBeenCalled();
     await options[1]!.trigger('click');
     await wrapper.find('form').trigger('submit');
     expect(answer).not.toHaveBeenCalled();
-    expect(wrapper.find('.async-input-header h3').text()).toBe('What is the error?');
-    expect(wrapper.find('.async-input-submit').attributes('disabled')).toBeDefined();
+    expect(wrapper.find('.question-card-header h3').text()).toBe('What is the error?');
+    expect(wrapper.find('.question-card-submit').attributes('disabled')).toBeDefined();
     await wrapper.find('textarea').setValue('404 on assets');
     await wrapper.find('form').trigger('submit');
     await flushPromises();
@@ -134,7 +134,7 @@ describe('WebSessionAsyncUserInput', () => {
     await wrapper.find('textarea').setValue('Both deployments fail');
     expect(
       wrapper
-        .findAll('.async-input-option')
+        .findAll('.question-card-option')
         .some(option => option.attributes('aria-pressed') === 'true')
     ).toBe(false);
     await wrapper.find('form').trigger('submit');
@@ -145,7 +145,7 @@ describe('WebSessionAsyncUserInput', () => {
     expect(restored.find<HTMLTextAreaElement>('textarea').element.value).toBe(
       'Both deployments fail'
     );
-    await restored.findAll('.async-input-option')[0]!.trigger('click');
+    await restored.findAll('.question-card-option')[0]!.trigger('click');
     expect(restored.find<HTMLTextAreaElement>('textarea').element.value).toBe('');
     await restored.find('form').trigger('submit');
     expect(restored.find<HTMLTextAreaElement>('textarea').element.value).toBe('Missing WASM');
@@ -181,12 +181,12 @@ describe('WebSessionAsyncUserInput', () => {
   it('allows closing and resuming without sending or losing the current answer', async () => {
     const wrapper = render();
     await wrapper.find('textarea').setValue('Both');
-    await wrapper.find('.async-input-close').trigger('click');
+    await wrapper.find('.question-card-close').trigger('click');
     expect(wrapper.find('form').exists()).toBe(false);
     expect(answer).not.toHaveBeenCalled();
-    await wrapper.find('.async-input-later').trigger('click');
+    await wrapper.find('.question-card-later').trigger('click');
     expect(wrapper.find<HTMLTextAreaElement>('textarea').element.value).toBe('Both');
-    expect(wrapper.find('.async-input-progress').text()).toBe('1 / 2');
+    expect(wrapper.find('.question-card-progress').text()).toBe('1 / 2');
     wrapper.unmount();
   });
 

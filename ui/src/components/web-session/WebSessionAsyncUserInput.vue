@@ -1,33 +1,33 @@
 <template>
   <section
-    class="async-input-card"
+    class="question-card"
     :class="{ 'is-collapsed': collapsed, 'is-submitted': submitted }"
     :aria-label="t('webSession.asyncInputTitle')"
   >
     <template v-if="submitted">
-      <div class="async-input-heading">
+      <div class="question-card-heading">
         <strong>{{ t('webSession.asyncInputTitle') }}</strong>
-        <span class="async-input-status">{{ t('webSession.asyncInputSubmitted') }}</span>
+        <span class="question-card-status">{{ t('webSession.asyncInputSubmitted') }}</span>
       </div>
-      <div v-for="answer in displayedAnswers" :key="answer.id" class="async-input-answer">
+      <div v-for="answer in displayedAnswers" :key="answer.id" class="question-card-answer">
         <strong>{{ answer.label }}</strong>
         <span>{{ answer.values.join('\n') }}</span>
       </div>
     </template>
-    <div v-else-if="collapsed" class="async-input-heading">
+    <div v-else-if="collapsed" class="question-card-heading">
       <span>{{ t('webSession.asyncInputTitle') }}</span>
-      <button class="async-input-later" type="button" @click="collapsed = false">
+      <button class="question-card-later" type="button" @click="collapsed = false">
         {{ t('webSession.asyncInputResume') }}
       </button>
     </div>
     <form v-else-if="currentQuestion" @submit.prevent="submit">
-      <div class="async-input-header">
+      <div class="question-card-header">
         <h3>{{ currentQuestion.question }}</h3>
-        <div class="async-input-navigation">
+        <div class="question-card-navigation">
           <template v-if="questions.length > 1">
             <button
               type="button"
-              class="async-input-icon"
+              class="question-card-icon"
               :aria-label="t('webSession.asyncInputPrevious')"
               :disabled="questionIndex === 0 || submitting"
               @click="changeQuestion(questionIndex - 1)"
@@ -35,7 +35,7 @@
               ‹
             </button>
             <span
-              class="async-input-progress"
+              class="question-card-progress"
               :aria-label="
                 t('webSession.asyncInputProgress', {
                   current: questionIndex + 1,
@@ -46,7 +46,7 @@
             >
             <button
               type="button"
-              class="async-input-icon"
+              class="question-card-icon"
               :aria-label="t('webSession.asyncInputNext')"
               :disabled="questionIndex === questions.length - 1 || submitting"
               @click="changeQuestion(questionIndex + 1)"
@@ -56,7 +56,7 @@
           </template>
           <button
             type="button"
-            class="async-input-icon async-input-close"
+            class="question-card-icon question-card-close"
             :aria-label="t('webSession.asyncInputLater')"
             :disabled="submitting"
             @click="collapsed = true"
@@ -65,26 +65,26 @@
           </button>
         </div>
       </div>
-      <div class="async-input-options" role="group" :aria-label="currentQuestion.question">
+      <div class="question-card-options" role="group" :aria-label="currentQuestion.question">
         <button
           v-for="(option, index) in currentQuestion.options"
           :key="`${currentQuestion.id}:${index}`"
-          class="async-input-option"
+          class="question-card-option"
           :class="{ 'is-selected': selections[currentQuestion.id]?.includes(option.label) }"
           type="button"
           :aria-pressed="selections[currentQuestion.id]?.includes(option.label) ?? false"
           :disabled="disabled || submitting"
           @click="selectAnswer(currentQuestion.id, [option.label])"
         >
-          <span class="async-input-number">{{ index + 1 }}</span>
-          <span class="async-input-option-label">{{ option.label }}</span>
-          <span class="async-input-arrow" aria-hidden="true">→</span>
+          <span class="question-card-number">{{ index + 1 }}</span>
+          <span class="question-card-option-label">{{ option.label }}</span>
+          <span class="question-card-arrow" aria-hidden="true">→</span>
         </button>
         <div
-          class="async-input-custom"
+          class="question-card-custom"
           :class="{ 'is-selected': drafts[currentQuestion.id]?.trim() }"
         >
-          <span class="async-input-number">{{ currentQuestion.options.length + 1 }}</span>
+          <span class="question-card-number">{{ currentQuestion.options.length + 1 }}</span>
           <n-input
             :key="currentQuestion.id"
             :value="drafts[currentQuestion.id] ?? ''"
@@ -98,11 +98,11 @@
           />
         </div>
       </div>
-      <p v-if="error" class="async-input-error" role="alert">{{ error }}</p>
-      <div class="async-input-footer">
-        <span class="async-input-hint">{{ t('webSession.asyncInputWorkingHint') }}</span>
+      <p v-if="error" class="question-card-error" role="alert">{{ error }}</p>
+      <div class="question-card-footer">
+        <span class="question-card-hint">{{ t('webSession.asyncInputWorkingHint') }}</span>
         <button
-          class="async-input-later"
+          class="question-card-later"
           type="button"
           :disabled="submitting"
           @click="collapsed = true"
@@ -110,7 +110,7 @@
           {{ t('webSession.asyncInputLater') }}
         </button>
         <button
-          class="async-input-submit"
+          class="question-card-submit"
           type="submit"
           :disabled="
             disabled || submitting || (questionIndex === questions.length - 1 && !canSubmit)
@@ -241,234 +241,4 @@ async function submit() {
 }
 </script>
 
-<style scoped>
-.async-input-card {
-  min-width: 0;
-  padding: 16px 10px 10px;
-  border: 1px solid color-mix(in srgb, var(--app-border-color, #d1d5db) 55%, transparent);
-  border-radius: 22px;
-  background: var(--app-surface-raised, var(--app-surface-color, #fff));
-  color: var(--app-text-primary, #172238);
-  box-shadow: 0 4px 24px rgb(0 0 0 / 5%);
-}
-.async-input-header,
-.async-input-heading,
-.async-input-navigation,
-.async-input-footer {
-  display: flex;
-  align-items: center;
-}
-.async-input-header {
-  gap: 12px;
-  padding: 2px 6px 12px;
-  align-items: flex-start;
-}
-.async-input-header h3 {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-.async-input-navigation {
-  gap: 3px;
-  flex-shrink: 0;
-  height: 24px;
-}
-.async-input-progress {
-  color: var(--n-text-color-2, #737373);
-  font-size: 10px;
-  white-space: nowrap;
-}
-button {
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-}
-button:disabled {
-  cursor: default;
-}
-button:focus-visible {
-  outline: 2px solid var(--app-accent-color, #7385a3);
-  outline-offset: 2px;
-}
-.async-input-icon {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  font-size: 19px;
-  line-height: 1;
-}
-.async-input-icon:disabled {
-  opacity: 0.28;
-}
-.async-input-icon:hover:enabled {
-  background: var(--app-surface-sunken, #f3f3f3);
-}
-.async-input-close {
-  margin-left: 8px;
-  font-size: 18px;
-}
-.async-input-options {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.async-input-option,
-.async-input-custom {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-height: 38px;
-  padding: 6px;
-  border: 0;
-  border-radius: 24px;
-  background: transparent;
-  text-align: left;
-}
-.async-input-option.is-selected,
-.async-input-option:hover:enabled,
-.async-input-custom:focus-within {
-  background: var(--app-surface-sunken, #f3f3f3);
-}
-.async-input-number {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--app-border-color, #ddd);
-  border-radius: 50%;
-  font-size: 11px;
-  font-weight: 400;
-}
-.async-input-option-label {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.async-input-arrow {
-  flex-shrink: 0;
-  padding-right: 8px;
-  color: var(--n-text-color-2, #737373);
-  opacity: 0;
-}
-.async-input-option.is-selected .async-input-arrow,
-.async-input-option:hover .async-input-arrow {
-  opacity: 1;
-}
-.async-input-option:disabled {
-  opacity: 0.55;
-}
-.async-input-custom {
-  align-items: flex-start;
-  border-radius: 16px;
-}
-.async-input-custom > .async-input-number {
-  margin-top: 3px;
-}
-.async-input-custom :deep(.n-input) {
-  --n-color: transparent !important;
-  --n-color-focus: transparent !important;
-  --n-box-shadow-focus: none !important;
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-}
-.async-input-custom :deep(.n-input-wrapper) {
-  padding-left: 0;
-  padding-right: 8px;
-}
-.async-input-footer {
-  gap: 8px;
-  padding: 10px 6px 2px;
-}
-.async-input-hint {
-  flex: 1;
-  color: var(--n-text-color-2, #888);
-  font-size: 11px;
-}
-.async-input-later,
-.async-input-submit {
-  flex-shrink: 0;
-  padding: 5px 12px;
-  border: 1px solid var(--app-border-color, #ddd);
-  border-radius: 999px;
-  background: transparent;
-  font-size: 11px;
-  line-height: 1.5;
-}
-.async-input-later:hover:enabled {
-  background: var(--app-surface-sunken, #f3f3f3);
-}
-.async-input-submit {
-  border-color: transparent;
-  background: var(--app-text-primary, #172238);
-  color: var(--app-surface-raised, #fff);
-}
-.async-input-submit:disabled {
-  opacity: 0.35;
-}
-.async-input-error {
-  margin: 8px 6px 0;
-  color: var(--app-error, #dc2626);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.async-input-heading {
-  justify-content: space-between;
-  gap: 12px;
-  padding: 0 6px 6px;
-  font-size: 13px;
-}
-.async-input-status {
-  color: var(--app-success, #15803d);
-  font-size: 12px;
-}
-.async-input-answer {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin: 14px 6px 6px;
-  font-size: 13px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.async-input-card.is-collapsed {
-  padding-top: 10px;
-  border-radius: 16px;
-  box-shadow: none;
-}
-@media (max-width: 480px) {
-  .async-input-header {
-    flex-wrap: wrap-reverse;
-    gap: 6px;
-  }
-  .async-input-navigation {
-    margin-left: auto;
-  }
-  .async-input-header h3 {
-    flex-basis: 100%;
-  }
-  .async-input-footer {
-    flex-wrap: wrap;
-  }
-  .async-input-hint {
-    flex-basis: 100%;
-  }
-  .async-input-later {
-    margin-left: auto;
-  }
-}
-</style>
+<style scoped src="./styles/webSessionQuestionCard.css"></style>

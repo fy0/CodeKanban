@@ -920,6 +920,7 @@ export default {
     asyncInputProgress: '第 {current} 题，共 {total} 题',
     asyncInputPlaceholder: '或填写自己的回答',
     asyncInputSubmitted: '已提交',
+    userInputWaitingHint: '助手正在等待你的回答',
     userInputPromptFallback: 'Agent 需要你补充一些信息后才能继续。',
     userInputSubmit: '提交答案',
     userInputSubmitSlow: '正在提交答案，请勿重复点击。',

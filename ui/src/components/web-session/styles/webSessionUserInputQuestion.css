@@ -1,108 +1,143 @@
-.user-input-question-header {
+.user-input-question {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   min-width: 0;
-  color: var(--app-text-primary, var(--app-text-color, #111827));
+}
+
+.user-input-question-header {
+  color: var(--app-text-primary, #172238);
   font-size: 13px;
-  font-weight: 700;
-  line-height: 1.4;
+  font-weight: 500;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 
 .user-input-question-copy {
-  margin-top: -2px;
-  overflow-wrap: anywhere;
+  color: var(--n-text-color-2, #737373);
   font-size: 12px;
   line-height: 1.5;
-  color: var(--n-text-color-2);
+  overflow-wrap: anywhere;
 }
 
 .user-input-options {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 2px;
   min-width: 0;
 }
 
-.user-input-option {
+.user-input-option,
+.user-input-custom {
   box-sizing: border-box;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
   min-width: 0;
-  padding: 9px 11px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 88%, transparent);
-  border-radius: 8px;
-  background: color-mix(
-    in srgb,
-    var(--app-surface-raised, var(--app-surface-color, #fff)) 94%,
-    var(--app-surface-sunken, #f2f3f5)
-  );
-  color: var(--app-text-primary, var(--app-text-color, #111827));
-  transition:
-    border-color 0.16s ease,
-    background-color 0.16s ease;
+  min-height: 38px;
+  border-radius: 24px;
+  background: transparent;
 }
 
-.user-input-option:hover:not(.is-disabled) {
-  border-color: color-mix(
-    in srgb,
-    var(--web-session-approval-accent, var(--n-primary-color)) 54%,
-    var(--n-border-color)
-  );
-  background: color-mix(
-    in srgb,
-    var(--web-session-approval-bg, var(--app-accent-soft, rgba(59, 105, 169, 0.1))) 42%,
-    var(--app-surface-raised, var(--app-surface-color, #fff))
-  );
+.user-input-option:hover:not(.is-disabled),
+.user-input-option.is-selected,
+.user-input-custom:focus-within {
+  background: var(--app-surface-sunken, #f3f3f3);
 }
 
 .user-input-option:focus-within {
-  outline: 2px solid
-    color-mix(in srgb, var(--web-session-approval-accent, var(--n-primary-color)) 54%, transparent);
-  outline-offset: 1px;
-}
-
-.user-input-option.is-selected {
-  border-color: color-mix(
-    in srgb,
-    var(--web-session-approval-accent, var(--n-primary-color)) 68%,
-    var(--n-border-color)
-  );
-  background: color-mix(
-    in srgb,
-    var(--web-session-approval-bg, var(--app-accent-soft, rgba(59, 105, 169, 0.1))) 70%,
-    var(--app-surface-raised, var(--app-surface-color, #fff))
-  );
+  outline: 2px solid var(--app-accent-color, #7385a3);
+  outline-offset: 2px;
 }
 
 .user-input-option.is-disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
+  opacity: 0.55;
 }
 
 .user-input-option :deep(.n-radio),
 .user-input-option :deep(.n-checkbox) {
-  align-items: flex-start;
+  align-items: center;
+  width: 100%;
   min-width: 0;
+  padding: 6px;
+}
+
+.user-input-option :deep(.n-radio__dot-wrapper),
+.user-input-option :deep(.n-checkbox__box-wrapper) {
+  display: none;
 }
 
 .user-input-option :deep(.n-radio__label),
 .user-input-option :deep(.n-checkbox__label) {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 12px;
   min-width: 0;
-  overflow-wrap: anywhere;
+  padding: 0;
+}
+
+.user-input-number {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--app-border-color, #ddd);
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.user-input-option-copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
 }
 
 .user-input-option-label {
-  color: var(--app-text-primary, var(--app-text-color, #111827));
-  font-size: 12px;
-  line-height: 1.45;
-  font-weight: 600;
+  color: var(--app-text-primary, #172238);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .user-input-option-description {
-  min-width: 0;
-  padding-left: 28px;
-  color: var(--n-text-color-2);
+  color: var(--n-text-color-2, #737373);
   font-size: 11px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.user-input-arrow {
+  flex-shrink: 0;
+  padding-right: 8px;
+  color: var(--n-text-color-2, #737373);
+  opacity: 0;
+}
+
+.user-input-option.is-selected .user-input-arrow,
+.user-input-option:hover .user-input-arrow {
+  opacity: 1;
+}
+
+.user-input-custom {
+  gap: 12px;
+  padding: 6px;
+  border-radius: 16px;
+}
+
+.user-input-custom :deep(.n-input) {
+  --n-color: transparent !important;
+  --n-color-focus: transparent !important;
+  --n-box-shadow-focus: none !important;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.user-input-custom :deep(.n-input-wrapper) {
+  padding-left: 0;
+  padding-right: 8px;
 }

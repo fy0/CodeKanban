@@ -21,6 +21,40 @@ const question = {
 };
 
 describe('WebSessionUserInputQuestion', () => {
+  it('retains multiple selections with numbered options', async () => {
+    const wrapper = mount(WebSessionUserInputQuestion, {
+      props: {
+        question: { ...question, multiSelect: true },
+        selection: [],
+        draft: '',
+        disabled: false,
+        placeholder: 'Other',
+      },
+    });
+    await wrapper.findAll('[role="checkbox"]')[0]!.trigger('click');
+    expect(wrapper.emitted('update:selection')?.[0]).toEqual([['Recent 10']]);
+    await wrapper.setProps({ selection: ['Recent 10'] });
+    await wrapper.findAll('[role="checkbox"]')[2]!.trigger('click');
+    expect(wrapper.emitted('update:selection')?.[1]).toEqual([['Recent 10', 'Recent 20']]);
+    expect(wrapper.find('.user-input-number').text()).toBe('✓');
+  });
+
+  it('keeps secret answers masked and disables stale inputs', async () => {
+    const wrapper = mount(WebSessionUserInputQuestion, {
+      props: {
+        question: { ...question, options: [], isSecret: true },
+        selection: [],
+        draft: 'secret',
+        disabled: true,
+        placeholder: 'Secret',
+      },
+    });
+    const input = wrapper.find<HTMLInputElement>('input[type="password"]');
+    expect(input.element.value).toBe('secret');
+    expect(input.element.disabled).toBe(true);
+    expect(input.attributes('aria-label')).toBe(question.question);
+  });
+
   it('restores editable state after switching sessions and keeps one radio selected', async () => {
     const activeSessionId = ref<'session-a' | 'session-b'>('session-a');
     const stateBySession = reactive({

@@ -1,10 +1,12 @@
 <template>
   <div class="user-input-question">
-    <div class="user-input-question-header">
+    <div v-if="!hideTitle" class="user-input-question-header">
       {{ question.header || question.question }}
     </div>
     <div
-      v-if="question.header && question.question && question.header !== question.question"
+      v-if="
+        !hideTitle && question.header && question.question && question.header !== question.question
+      "
       class="user-input-question-copy"
     >
       {{ question.question }}
@@ -17,7 +19,7 @@
       @update:value="handleMultiSelect"
     >
       <div
-        v-for="option in question.options"
+        v-for="(option, index) in question.options"
         :key="`${question.id}:${option.label}`"
         class="user-input-option"
         :class="{
@@ -26,11 +28,16 @@
         }"
       >
         <n-checkbox :value="option.label">
-          <span class="user-input-option-label">{{ option.label }}</span>
+          <span class="user-input-number" aria-hidden="true">{{
+            selection.includes(option.label) ? '✓' : index + 1
+          }}</span>
+          <span class="user-input-option-copy">
+            <span class="user-input-option-label">{{ option.label }}</span>
+            <span v-if="option.description" class="user-input-option-description">{{
+              option.description
+            }}</span>
+          </span>
         </n-checkbox>
-        <div v-if="option.description" class="user-input-option-description">
-          {{ option.description }}
-        </div>
       </div>
     </n-checkbox-group>
     <n-radio-group
@@ -41,7 +48,7 @@
       @update:value="handleSingleSelect"
     >
       <div
-        v-for="option in question.options"
+        v-for="(option, index) in question.options"
         :key="`${question.id}:${option.label}`"
         class="user-input-option"
         :class="{
@@ -50,24 +57,31 @@
         }"
       >
         <n-radio :value="option.label">
-          <span class="user-input-option-label">{{ option.label }}</span>
+          <span class="user-input-number" aria-hidden="true">{{ index + 1 }}</span>
+          <span class="user-input-option-copy">
+            <span class="user-input-option-label">{{ option.label }}</span>
+            <span v-if="option.description" class="user-input-option-description">{{
+              option.description
+            }}</span>
+          </span>
+          <span class="user-input-arrow" aria-hidden="true">→</span>
         </n-radio>
-        <div v-if="option.description" class="user-input-option-description">
-          {{ option.description }}
-        </div>
       </div>
     </n-radio-group>
-    <n-input
-      v-if="question.isOther || question.options.length === 0"
-      :value="draft"
-      :type="question.isSecret ? 'password' : 'text'"
-      size="small"
-      :disabled="disabled"
-      :show-password-on="question.isSecret ? 'mousedown' : undefined"
-      :placeholder="placeholder"
-      @update:value="emit('update:draft', $event)"
-      @keydown="emit('keydown', $event)"
-    />
+    <div v-if="question.isOther || question.options.length === 0" class="user-input-custom">
+      <span class="user-input-number" aria-hidden="true">{{ question.options.length + 1 }}</span>
+      <n-input
+        :value="draft"
+        :type="question.isSecret ? 'password' : 'text'"
+        :bordered="false"
+        :disabled="disabled"
+        :show-password-on="question.isSecret ? 'mousedown' : undefined"
+        :placeholder="placeholder"
+        :input-props="{ 'aria-label': question.question || question.header }"
+        @update:value="emit('update:draft', $event)"
+        @keydown="emit('keydown', $event)"
+      />
+    </div>
   </div>
 </template>
 
@@ -82,6 +96,7 @@ defineProps<{
   draft: string;
   disabled: boolean;
   placeholder: string;
+  hideTitle?: boolean;
 }>();
 
 const emit = defineEmits<{

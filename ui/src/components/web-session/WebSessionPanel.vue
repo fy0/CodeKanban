@@ -1919,61 +1919,23 @@
                     v-else-if="pendingUserInput && !inlinePlanChoice"
                     ref="pendingUserInputCardRef"
                     :key="pendingUserInput.itemId"
-                    class="approval-card user-input-card"
-                    :class="{ 'is-stale': pendingUserInput.stale }"
                   >
-                    <div class="approval-card-header">
-                      <span class="approval-badge">{{ t('webSession.userInputTitle') }}</span>
-                      <span
-                        class="approval-time"
-                        :title="formatDateTime(pendingUserInput.requestedAt)"
-                        >{{ formatTime(pendingUserInput.requestedAt) }}</span
-                      >
-                    </div>
-                    <div class="approval-prompt">
-                      {{ pendingUserInput.prompt || t('webSession.userInputPromptFallback') }}
-                    </div>
-                    <div v-if="pendingUserInput.stale" class="approval-note">
-                      {{ pendingUserInput.recoveryMessage || t('webSession.recoveredRuntimeHint') }}
-                    </div>
-                    <WebSessionUserInputQuestionField
-                      v-for="question in pendingUserInput.questions"
-                      :key="`${pendingUserInputSyncKey}:${question.id}`"
-                      :question="question"
-                      :selection="userInputSelections[question.id] ?? []"
-                      :draft="userInputDrafts[question.id] ?? ''"
+                    <WebSessionUserInputCard
+                      :request-key="pendingUserInputSyncKey"
+                      :questions="pendingUserInput.questions"
+                      :selections="userInputSelections"
+                      :drafts="userInputDrafts"
+                      :prompt="pendingUserInput.prompt"
                       :disabled="isUserInputInteractionDisabled"
-                      :placeholder="userInputPlaceholder(question)"
-                      @update:selection="handleUserInputSelectionUpdate(question.id, $event)"
-                      @update:draft="handleUserInputDraftUpdate(question.id, $event)"
-                      @keydown="handleUserInputEnter"
+                      :submitting="isSubmittingUserInput"
+                      :stale="pendingUserInput.stale"
+                      :recovery-message="pendingUserInput.recoveryMessage"
+                      :slow="showUserInputSubmitSlowHint"
+                      @update:selection="handleUserInputSelectionUpdate"
+                      @update:draft="handleUserInputDraftUpdate"
+                      @submit="handleUserInputSubmit"
+                      @stop="handleAbortCurrent"
                     />
-                    <div class="approval-actions">
-                      <n-button
-                        size="small"
-                        type="primary"
-                        :loading="isSubmittingUserInput"
-                        :disabled="isUserInputInteractionDisabled"
-                        @click="handleUserInputSubmit"
-                      >
-                        {{ t('webSession.userInputSubmit') }}
-                      </n-button>
-                      <n-button
-                        size="small"
-                        tertiary
-                        :disabled="isUserInputInteractionDisabled"
-                        @click="handleAbortCurrent"
-                      >
-                        {{ t('webSession.stop') }}
-                      </n-button>
-                    </div>
-                    <div
-                      v-if="showUserInputSubmitSlowHint"
-                      class="approval-note"
-                      aria-live="polite"
-                    >
-                      {{ t('webSession.userInputSubmitSlow') }}
-                    </div>
                   </div>
                 </div>
               </div>
@@ -3809,7 +3771,7 @@ import WebSessionSidebar from '@/components/web-session/WebSessionSidebar.vue';
 import { useWebSessionSidebarResize } from '@/components/web-session/useWebSessionSidebarResize';
 import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkillCatalogPanel.vue';
 import WebSessionTreeDrawer from '@/components/web-session/WebSessionTreeDrawer.vue';
-import WebSessionUserInputQuestionField from '@/components/web-session/WebSessionUserInputQuestion.vue';
+import WebSessionUserInputCard from '@/components/web-session/WebSessionUserInputCard.vue';
 import WebSessionAsyncUserInput from '@/components/web-session/WebSessionAsyncUserInput.vue';
 import type { WebSessionComposerEditorExposed } from '@/components/web-session/webSessionComposerEditor';
 import {
@@ -6069,6 +6031,16 @@ function isPendingApprovalRequestBlock(block: WebSessionBlock) {
   return (block.sourceItemId?.trim() || block.id) === pending.itemId;
 }
 
+// The runtime card includes the question and its controls while awaiting input.
+// Restore the history record after the request has been answered.
+function isPendingUserInputRequestBlock(block: WebSessionBlock) {
+  const pending = pendingUserInput.value;
+  if (!pending?.itemId || block.detail?.type !== 'user_input_request') {
+    return false;
+  }
+  return (block.sourceItemId?.trim() || block.id) === pending.itemId;
+}
+
 const knownSubAgents = computed<WebSessionSubAgent[]>(() =>
   currentRealSession.value ? webSessionStore.getSubAgents(currentRealSession.value.id) : []
 );
@@ -6145,6 +6117,9 @@ const liveState = computed(() =>
 const pendingApproval = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingApproval(currentRealSession.value.id) : null
 );
+const pendingUserInput = computed(() =>
+  currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
+);
 
 function shouldRenderToolBlockInTimeline(block: WebSessionBlock) {
   if (block.kind !== 'tool' || !block.tool) {
@@ -6181,6 +6156,9 @@ const filteredTimelineBlocks = computed(() =>
       return false;
     }
     if (isPendingApprovalRequestBlock(block)) {
+      return false;
+    }
+    if (isPendingUserInputRequestBlock(block)) {
       return false;
     }
     if (!shouldRenderToolBlockInTimeline(block)) {
@@ -6376,9 +6354,6 @@ const approvalDetailsMissing = computed(
 );
 const approvalDetailsLoading = computed(
   () => approvalDetailsMissing.value && approvalRecoveryStatus.value !== 'unavailable'
-);
-const pendingUserInput = computed(() =>
-  currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
 );
 
 function currentApprovalRecoveryKey() {
@@ -15726,24 +15701,6 @@ const sendConflictWarningBody = computed(() =>
   showSendConflictWarning.value ? buildSendConflictWarningBody(sendConflictSessions.value) : ''
 );
 
-function handleUserInputEnter(event: KeyboardEvent) {
-  if (event.key !== 'Enter') {
-    return;
-  }
-  if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) {
-    return;
-  }
-  if (event.isComposing || event.keyCode === 229) {
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
-  if (isSubmittingUserInput.value) {
-    return;
-  }
-  void handleUserInputSubmit();
-}
-
 function handleUserInputSelectionUpdate(questionId: string, value: string[]) {
   const normalizedQuestionId = String(questionId || '').trim();
   if (!normalizedQuestionId) {
@@ -16271,16 +16228,6 @@ async function handleRemoveScheduledInput(inputId: string) {
   } finally {
     scheduledInputActionId.value = '';
   }
-}
-
-function userInputPlaceholder(question: WebSessionUserInputQuestion) {
-  if (question.options.length === 0) {
-    return t('webSession.userInputAnswerPlaceholder');
-  }
-  if (question.isOther) {
-    return t('webSession.userInputOtherPlaceholder');
-  }
-  return t('webSession.userInputAnswerPlaceholder');
 }
 
 function buildUserInputAnswers() {

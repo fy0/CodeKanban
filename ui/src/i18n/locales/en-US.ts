@@ -955,6 +955,7 @@ export default {
     asyncInputProgress: 'Question {current} of {total}',
     asyncInputPlaceholder: 'Or write your own answer',
     asyncInputSubmitted: 'Submitted',
+    userInputWaitingHint: 'The assistant is waiting for your answer',
     userInputPromptFallback: 'The agent needs more information before it can continue.',
     userInputSubmit: 'Submit Answers',
     userInputSubmitSlow: 'Submitting your answers. Please do not click again.',
