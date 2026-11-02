@@ -20,11 +20,12 @@ import sql from 'highlight.js/lib/languages/sql';
 import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
-import { Marked, type Tokens } from 'marked';
+import { Marked, Renderer, type Tokens } from 'marked';
 import { stripMagicContextTags } from '@/utils/magicContextTags';
 import { getStreamingMarkdownSource, repairMalformedOuterFence } from '@/utils/markdownFences';
 import { createMarkdownMathExtension } from '@/utils/markdownMath';
 import { resolveCopyableAbsoluteHref } from '@/utils/messageLinkNavigation';
+import { resolveMarkdownImageSrc } from '@/utils/webSessionImages';
 
 type HljsLanguageModule = Parameters<typeof hljs.registerLanguage>[1];
 export interface RenderMarkdownOptions {
@@ -321,6 +322,12 @@ function createMarkdownRenderer(options: RenderMarkdownOptions = {}) {
     renderer: {
       code(token) {
         return renderCodeBlock(token, options);
+      },
+      image(token) {
+        return Renderer.prototype.image.call(this, {
+          ...token,
+          href: resolveMarkdownImageSrc(token.href),
+        });
       },
       link(token) {
         const hrefValue = token.href ?? '';

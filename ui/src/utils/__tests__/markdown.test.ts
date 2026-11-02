@@ -94,6 +94,58 @@ describe('renderMarkdown', () => {
     expect(html).toContain('target="_blank"');
   });
 
+  it.each([
+    [
+      'D:/codes/2025/zayud/screenshots/progress-relogin-two.png',
+      'D:/codes/2025/zayud/screenshots/progress-relogin-two.png',
+    ],
+    [
+      '/D:/codes/2025/zayud/screenshots/progress-relogin-two.png',
+      'D:/codes/2025/zayud/screenshots/progress-relogin-two.png',
+    ],
+    [
+      String.raw`D:\codes\2025\zayud\screenshots\progress-relogin-two.png`,
+      'D:/codes/2025/zayud/screenshots/progress-relogin-two.png',
+    ],
+    ['/d:/screenshots/整改%20台账%231.png', 'd:/screenshots/整改 台账#1.png'],
+    ['file:///D:/screenshots/整改%20台账%231.png', 'D:/screenshots/整改 台账#1.png'],
+    ['file://localhost/D:/screenshots/preview.png', 'D:/screenshots/preview.png'],
+  ])('loads a local Markdown image through the preview endpoint: %s', (source, path) => {
+    const markdown = `![重新登录后的整改台账](${source} "整改截图")`;
+    const html = renderMarkdown(markdown);
+    const src = /<img src="([^"]+)"/.exec(html)?.[1];
+    expect(src).toBeDefined();
+    const url = new URL(src!, 'http://localhost');
+
+    expect(url.pathname).toBe('/api/v1/web-sessions/image-view');
+    expect(url.searchParams.get('path')).toBe(path);
+    expect(html).toContain('alt="重新登录后的整改台账"');
+    expect(html).toContain('title="整改截图"');
+    expect(
+      renderStreamingMarkdownBlocks(`image:${source}`, markdown)
+        .map(block => block.html)
+        .join('')
+    ).toBe(html);
+  });
+
+  it.each([
+    'https://example.com/preview.png',
+    '//example.com/preview.png',
+    '/images/preview.png',
+    '/api/v1/web-sessions/attachments/preview.png',
+    './screenshots/preview.png',
+    'data:image/png;base64,aGVsbG8=',
+  ])('preserves web and relative image sources: %s', source => {
+    expect(renderMarkdown(`![preview](${source})`)).toContain(`src="${source}"`);
+  });
+
+  it('keeps image syntax inside code as literal text', () => {
+    const image = '![preview](/D:/screenshots/preview.png)';
+
+    expect(renderMarkdown('`' + image + '`')).not.toContain('<img');
+    expect(renderMarkdown('```markdown\n' + image + '\n```')).not.toContain('<img');
+  });
+
   it('adds a copy button only for absolute http and https links when enabled', () => {
     const html = renderMarkdown(
       [

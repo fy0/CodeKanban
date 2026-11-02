@@ -192,3 +192,29 @@ export function buildImageViewPreviewUrl(
   const baseUrl = typeof options?.baseUrl === 'string' ? options.baseUrl : urlBase;
   return baseUrl ? new URL(requestPath, baseUrl).toString() : requestPath;
 }
+
+export function resolveMarkdownImageSrc(source: string) {
+  let path = source.trim();
+  if (/^file:/i.test(path)) {
+    try {
+      const url = new URL(path);
+      if (url.hostname && url.hostname !== 'localhost') {
+        return source;
+      }
+      path = url.pathname;
+    } catch {
+      return source;
+    }
+  } else if (!/^\/?[a-z]:[\\/]/i.test(path)) {
+    // Root-relative web URLs and relative image URLs keep their browser semantics.
+    return source;
+  }
+
+  path = path.replace(/\\/g, '/').replace(/^\/([a-z]:\/)/i, '$1');
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    // A literal percent sign is valid in a filesystem path.
+  }
+  return buildImageViewPreviewUrl(path);
+}
