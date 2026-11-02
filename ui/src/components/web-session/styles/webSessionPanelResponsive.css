@@ -192,20 +192,9 @@
     gap: 6px;
   }
 
-  .composer-config.is-mobile .composer-fast-mode-switch {
-    grid-column: 4;
-    grid-row: 2;
-    justify-self: start;
-  }
-
   .composer-config.is-mobile .composer-mode-switch {
     width: 112px;
     min-width: 112px;
-  }
-
-  .composer-config.is-mobile .permission-select {
-    width: 132px;
-    min-width: 132px;
   }
 
   .composer-config.is-mobile .composer-mode-switch :deep(.n-button) {
@@ -247,12 +236,6 @@
   .composer.is-mobile-settings-expanded .composer-config.is-mobile .composer-mode-row {
     grid-column: 1 / -1;
     grid-row: 2;
-  }
-
-  .composer.is-mobile-settings-expanded .composer-config.is-mobile .composer-fast-mode-switch {
-    grid-column: 1 / -1;
-    grid-row: 3;
-    justify-self: start;
   }
 
   .composer.is-mobile-settings-expanded .composer-config.is-mobile .composer-config-row {

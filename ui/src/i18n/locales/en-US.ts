@@ -982,6 +982,7 @@ export default {
     planActionImplementFreshContext: 'Clear Context and Implement',
     planActionSchedule: 'Delay Plan Implementation',
     planActionCancel: 'Cancel for Now',
+    permissionLevel: 'Permission level',
     permissionDefault: 'Default Access',
     permissionElevated: 'Elevated Access',
     permissionUnrestricted: 'Unrestricted',

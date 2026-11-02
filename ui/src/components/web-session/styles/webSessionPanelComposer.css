@@ -382,12 +382,6 @@
   flex-shrink: 0;
 }
 
-.composer-fast-mode-switch {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
 .composer-select {
   width: 104px;
   flex-shrink: 0;
@@ -572,6 +566,31 @@
   padding: 0;
 }
 
+:global(.web-session-model-select-menu .n-base-select-menu__action) {
+  padding: 8px 10px;
+}
+
+:global(.model-select-settings) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+:global(.model-select-settings .model-permission-select) {
+  flex: 1;
+  min-width: 0;
+  max-width: 160px;
+}
+
+:global(.model-select-settings .model-permission-select .n-base-selection-label) {
+  font-size: 12px;
+}
+
+:global(.model-select-settings .n-switch) {
+  flex-shrink: 0;
+}
+
 :global(.web-session-model-select-menu.is-pi-model-catalog .n-base-select-menu-option-wrapper),
 :global(.web-session-model-select-menu.is-pi-model-catalog .v-vl-visible-items) {
   padding-top: 2px !important;
@@ -706,15 +725,6 @@
 
 .composer-mode-switch :deep(.n-button[aria-pressed='true']:active) {
   background-color: var(--app-accent-pressed);
-}
-
-.permission-select {
-  width: 132px;
-  flex-shrink: 0;
-}
-
-.permission-select :deep(.n-base-selection-label) {
-  font-size: 12px;
 }
 
 .composer-path {

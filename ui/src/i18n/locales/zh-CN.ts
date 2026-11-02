@@ -943,6 +943,7 @@ export default {
     planActionImplementFreshContext: '清除上下文并实现',
     planActionSchedule: '延迟实现计划',
     planActionCancel: '暂时取消',
+    permissionLevel: '授权级别',
     permissionDefault: '默认权限',
     permissionElevated: '较高权限',
     permissionUnrestricted: '不受限',

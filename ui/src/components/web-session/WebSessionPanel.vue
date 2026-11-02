@@ -2269,6 +2269,37 @@
                         </n-button>
                       </div>
                     </template>
+                    <template #action>
+                      <div class="model-select-settings" @mouseenter="clearModelOptionPopovers">
+                        <n-select
+                          v-model:value="selectedPermissionLevel"
+                          class="model-permission-select"
+                          size="small"
+                          placement="top-start"
+                          :to="false"
+                          :disabled="selectedAgent === 'pi'"
+                          :options="permissionLevelOptions"
+                          :aria-label="t('webSession.permissionLevel')"
+                          :title="t('webSession.permissionLevel')"
+                        />
+                        <n-tooltip v-if="selectedAgent === 'codex'" trigger="hover">
+                          <template #trigger>
+                            <!-- Loading blocks changes while preserving focus inside the menu. -->
+                            <n-switch
+                              v-model:value="selectedCodexFastMode"
+                              size="small"
+                              :loading="codexFastModeUpdating"
+                              :aria-disabled="codexFastModeUpdating"
+                              :aria-label="t('webSession.codexFastMode')"
+                            >
+                              <template #checked>Fast</template>
+                              <template #unchecked>Fast</template>
+                            </n-switch>
+                          </template>
+                          {{ t('webSession.codexFastModeHint') }}
+                        </n-tooltip>
+                      </div>
+                    </template>
                   </n-select>
                   <n-popover
                     v-if="isDevinFusionModel"
@@ -2384,23 +2415,6 @@
                     :menu-props="reasoningSelectMenuProps"
                     :options="reasoningEffortOptions"
                   />
-                  <div v-if="selectedAgent === 'codex'" class="composer-fast-mode-switch">
-                    <n-tooltip trigger="hover">
-                      <template #trigger>
-                        <n-switch
-                          v-model:value="selectedCodexFastMode"
-                          size="small"
-                          :loading="codexFastModeUpdating"
-                          :disabled="codexFastModeUpdating"
-                          :aria-label="t('webSession.codexFastMode')"
-                        >
-                          <template #checked>Fast</template>
-                          <template #unchecked>Fast</template>
-                        </n-switch>
-                      </template>
-                      {{ t('webSession.codexFastModeHint') }}
-                    </n-tooltip>
-                  </div>
                   <div class="composer-mode-row">
                     <n-button-group class="composer-mode-switch">
                       <n-button
@@ -2420,13 +2434,6 @@
                         {{ t('webSession.workflowPlan') }}
                       </n-button>
                     </n-button-group>
-                    <n-select
-                      v-model:value="selectedPermissionLevel"
-                      class="composer-select permission-select"
-                      size="small"
-                      :disabled="selectedAgent === 'pi'"
-                      :options="permissionLevelOptions"
-                    />
                   </div>
                   <div v-if="currentSession" class="composer-path" :title="currentSession.cwd">
                     {{ currentSession.cwd }}
