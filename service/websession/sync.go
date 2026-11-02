@@ -129,6 +129,10 @@ func (m *Manager) mapThreadReadItem(
 		result.Kind = "assistant"
 		result.Text = stringValue(item["text"])
 		result.Done = true
+		result.Detail = codexAsyncInputDetail(item)
+		if result.Detail != nil {
+			result.SourceItemID = nilIfEmptyHistory("assistant:" + sourceItemID)
+		}
 		return result, nil
 	case "plan":
 		result.Kind = "tool"

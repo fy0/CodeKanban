@@ -168,6 +168,7 @@ type Manager struct {
 	scheduledProjectLocks       [64]sync.Mutex
 	scheduledBroadcastLocks     [64]sync.Mutex
 	sessionDispatchLocks        [64]sync.Mutex
+	asyncUserInputLocks         [64]sync.Mutex
 	revisionBroadcastLocks      [64]sync.Mutex
 	pendingInputs               map[string][]PendingInput
 	piNativeQueuedInputs        map[string][]PendingInput
@@ -3438,6 +3439,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleApprovalCommand(client, frame, "reject")
 	case "user_input":
 		return m.handleUserInputCommand(client, frame)
+	case "async_user_input":
+		return m.handleCodexAsyncInputCommand(ctx, client, frame)
 	case "pending_del":
 		return m.handlePendingDeleteCommand(client, frame)
 	case "pending_update":
@@ -6176,6 +6179,8 @@ func (m *Manager) sessionAgentDB(ctx context.Context, db *gorm.DB, sessionID str
 
 func shouldMarkSessionUnreadForEvent(event Event) bool {
 	switch strings.TrimSpace(event.Type) {
+	case "txt_end":
+		return codexAsyncInputDetail(event.Payload) != nil
 	case "approval_req", "user_input_req", "run_fail", "run_done":
 		return true
 	case "run_abort":

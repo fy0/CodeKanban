@@ -1069,8 +1069,23 @@
                     </span>
                   </div>
 
+                  <WebSessionAsyncUserInput
+                    v-if="item.detail?.type === 'async_user_input_request' && currentRealSession"
+                    :key="`${currentRealSession.id}:${item.id}`"
+                    :session-id="currentRealSession.id"
+                    :item="item"
+                    :disabled="
+                      currentRealSession.agent !== 'codex' ||
+                      Boolean(currentRealSession.archivedAt) ||
+                      Boolean(
+                        item.sourceThreadId &&
+                          currentRealSession.nativeSessionId &&
+                          item.sourceThreadId !== currentRealSession.nativeSessionId
+                      )
+                    "
+                  />
                   <div
-                    v-if="item.kind === 'tool' && item.tool && isPlanTool(item.tool)"
+                    v-else-if="item.kind === 'tool' && item.tool && isPlanTool(item.tool)"
                     class="timeline-tool-shell plan-tool-shell"
                   >
                     <div
@@ -3795,6 +3810,7 @@ import { useWebSessionSidebarResize } from '@/components/web-session/useWebSessi
 import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkillCatalogPanel.vue';
 import WebSessionTreeDrawer from '@/components/web-session/WebSessionTreeDrawer.vue';
 import WebSessionUserInputQuestionField from '@/components/web-session/WebSessionUserInputQuestion.vue';
+import WebSessionAsyncUserInput from '@/components/web-session/WebSessionAsyncUserInput.vue';
 import type { WebSessionComposerEditorExposed } from '@/components/web-session/webSessionComposerEditor';
 import {
   isWebSessionDevMode,

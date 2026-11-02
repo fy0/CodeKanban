@@ -423,7 +423,38 @@ func (m *Manager) applyEventToHistoryCacheDB(
 				next.Timestamp = ptr(event.Timestamp)
 			}
 			next.Done = true
+			if detail := codexAsyncInputDetail(payload); detail != nil {
+				if next.Detail == nil || next.Detail.Action == "" {
+					next.Detail = detail
+				}
+			}
 			next.Payload = payload
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "async_user_input_res":
+		var row tables.WebSessionItemTable
+		if err := db.WithContext(ctx).Where("web_session_id = ? AND id = ?", sessionID, stringValue(payload["iid"])).First(&row).Error; err != nil {
+			return nil, err
+		}
+		sourceKey := ""
+		if row.SourceItemID != nil {
+			sourceKey = *row.SourceItemID
+		}
+		item, err := upsertEventItem(event.ThreadID, sourceKey, func(next *HistoryItem) {
+			if next.Detail != nil && next.Detail.Type == codexAsyncInputDetailType {
+				var answers map[string][]string
+				decodeJSONText(mustJSONText(payload["ans"]), &answers)
+				next.Detail.Answers = nil
+				for _, question := range next.Detail.Questions {
+					next.Detail.Answers = append(next.Detail.Answers, historyAnswerEntries(
+						map[string]any{question.ID: answers[question.ID]}, []toolRequestQuestion{question},
+					)...)
+				}
+				next.Detail.Action = "submitted"
+			}
 		})
 		if err != nil {
 			return nil, err

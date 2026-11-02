@@ -565,6 +565,11 @@ func codexDeepMessagesMatch(left, right HistoryItem) bool {
 	if !isCodexDeepMessage(left) || !isCodexDeepMessage(right) || left.Kind != right.Kind {
 		return false
 	}
+	if left.Detail != nil && right.Detail != nil &&
+		left.Detail.Type == codexAsyncInputDetailType && right.Detail.Type == codexAsyncInputDetailType &&
+		pointerString(left.SourceItemID) != pointerString(right.SourceItemID) {
+		return false
+	}
 	if normalizedCodexDeepMessageText(left.Text) != normalizedCodexDeepMessageText(right.Text) {
 		return false
 	}
@@ -615,6 +620,9 @@ func mergeCodexDeepMessage(
 ) {
 	if target == nil {
 		return
+	}
+	if source.Detail != nil && target.Detail == nil {
+		target.Detail = source.Detail
 	}
 	if sourceOrigin == codexDeepMessageOriginEvent {
 		target.Text = source.Text
@@ -937,6 +945,7 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 			Timestamp:  ptr(ts),
 			ObservedAt: ptr(ts),
 			Done:       true,
+			Detail:     codexAsyncInputDetail(payload),
 			Payload:    cloneMap(payload),
 		}}
 	case "turn_aborted":
@@ -986,6 +995,12 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 	case "item_completed":
 		item := decodeRawObject(payload["item"])
 		rawItemType := strings.TrimSpace(stringValue(item["type"]))
+		if strings.EqualFold(rawItemType, "AgentMessage") && codexAsyncInputDetail(item) != nil {
+			next := codexAsyncInputHistoryItem(item, ts)
+			next.SourceThreadID = nilIfEmptyHistory(stringValue(payload["thread_id"]))
+			next.SourceTurnID = nilIfEmptyHistory(stringValue(payload["turn_id"]))
+			return []HistoryItem{next}
+		}
 		if rawItemType == "SubAgentActivity" {
 			activity := deepSyncSubAgentActivityHistoryItem(
 				stringValue(item["id"]),
@@ -1272,6 +1287,17 @@ func (m *Manager) applyCodexResponseItem(
 		}
 		toolName := strings.TrimSpace(stringValue(payload["name"]))
 		input := decodeDeepSyncArguments(stringValue(payload["arguments"]))
+		if toolName == "request_user_input_async" {
+			item := decodeRawObject(input)
+			item["id"] = callID
+			item["delivery"] = "async"
+			if codexAsyncInputDetail(item) != nil {
+				next := codexAsyncInputHistoryItem(item, ts)
+				next.SourceTurnID = nilIfEmptyHistory(codexResponseItemTurnID(payload))
+				appendMessage(next, codexDeepMessageOriginResponse)
+			}
+			return
+		}
 		if toolName == "request_user_input" {
 			questions := decodeToolQuestions(decodeRawObject(input)["questions"])
 			prompt := summarizeToolQuestions(questions)
@@ -1370,6 +1396,13 @@ func (m *Manager) applyCodexResponseItem(
 			(*items)[toolIndex] = item
 			delete(pendingTools, callID)
 			return
+		}
+		for _, item := range *items {
+			if item.Detail != nil && item.Detail.Type == codexAsyncInputDetailType &&
+				item.SourceItemID != nil && *item.SourceItemID == "assistant:"+callID {
+				// {"accepted":true} acknowledges delivery, not a user answer.
+				return
+			}
 		}
 
 		appendItem(HistoryItem{

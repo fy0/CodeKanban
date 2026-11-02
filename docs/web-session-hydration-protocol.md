@@ -141,6 +141,17 @@ Acknowledgement fields depend on the operation:
 
 An empty pending queue is encoded as `"pi": []`, not by omitting `pi`.
 
+Codex async questions arrive as assistant history items with
+`dt.type = "async_user_input_request"` and normalized `dt.questions`. They do
+not create a blocking user-input request or change the session to waiting input.
+The `async_user_input` command accepts `{ "iid": "history-row-id", "ans":
+{ "0": ["answer"] } }`, with one answer per question. It sends an ordinary
+user message through the redirect path (or starts a turn when idle), then updates
+the original item's `dt.action` to `"submitted"` and `dt.answers`. Its ACK
+contains the committed `rev`. Duplicate submissions for a submitted item are
+acknowledged without sending another message. Fast and deep history sync retain
+the questions and locally submitted answers.
+
 The event channel may send:
 
 - `session`: compact session summary;

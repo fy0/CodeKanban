@@ -243,7 +243,12 @@ type WireHistoryItem = {
   lvl?: 'info' | 'warn' | 'error' | string;
   dn?: boolean;
   dt?: {
-    type: 'approval_request' | 'approval_response' | 'user_input_request' | 'user_input_response';
+    type:
+      | 'approval_request'
+      | 'approval_response'
+      | 'user_input_request'
+      | 'user_input_response'
+      | 'async_user_input_request';
     prompt?: string;
     approvalKind?: string;
     command?: string;
@@ -387,7 +392,12 @@ export interface WebSessionHistoryAnswerEntry {
 }
 
 export interface WebSessionHistoryDetail {
-  type: 'approval_request' | 'approval_response' | 'user_input_request' | 'user_input_response';
+  type:
+    | 'approval_request'
+    | 'approval_response'
+    | 'user_input_request'
+    | 'user_input_response'
+    | 'async_user_input_request';
   prompt?: string;
   approvalKind?: string;
   command?: string;
@@ -3811,7 +3821,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 inferredDetailType === 'approval_request' ||
                 inferredDetailType === 'approval_response' ||
                 inferredDetailType === 'user_input_request' ||
-                inferredDetailType === 'user_input_response'
+                inferredDetailType === 'user_input_response' ||
+                inferredDetailType === 'async_user_input_request'
                   ? inferredDetailType
                   : 'approval_request',
               prompt: typeof rawDetail?.prompt === 'string' ? rawDetail.prompt : undefined,
@@ -7903,6 +7914,25 @@ export const useWebSessionStore = defineStore('web-session', () => {
     );
   }
 
+  async function answerAsyncUserInput(
+    sessionId: string,
+    itemId: string,
+    answers: Record<string, string[]>
+  ) {
+    await runRuntimeMutationCommand(
+      sessionId,
+      'async_user_input',
+      { iid: itemId, ans: answers },
+      {
+        label: 'async_user_input',
+        predicate: () =>
+          buildBlocks(sessionId).some(
+            block => block.id === itemId && block.detail?.action === 'submitted'
+          ),
+      }
+    );
+  }
+
   async function answerUserInput(
     sessionId: string,
     itemId: string,
@@ -8583,6 +8613,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     approveSession,
     rejectSession,
     answerUserInput,
+    answerAsyncUserInput,
     loadMoreHistory,
     trimInactiveSessionEvents,
     updateModel,

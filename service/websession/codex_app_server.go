@@ -1813,7 +1813,9 @@ func (m *Manager) handleCodexAppServerItemStarted(
 		messageID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
 		if isRootEvent {
 			run.setAssistantMessageID(messageID)
-			run.recordAssistantMessageStarted(messageID, stringValue(item["phase"]))
+			if !strings.EqualFold(stringValue(item["delivery"]), "async") {
+				run.recordAssistantMessageStarted(messageID, stringValue(item["phase"]))
+			}
 		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
@@ -1951,7 +1953,7 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			fallbackMessageID = run.assistantMessageID
 		}
 		messageID := firstNonEmpty(stringValue(item["id"]), fallbackMessageID, utils.NewID())
-		if isRootEvent {
+		if isRootEvent && !strings.EqualFold(stringValue(item["delivery"]), "async") {
 			run.recordAssistantMessageCompleted(
 				messageID,
 				stringValue(item["phase"]),
@@ -1987,7 +1989,9 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			TurnID:    turnID,
 			Timestamp: time.Now(),
 			Payload: map[string]any{
-				"mid": messageID,
+				"mid":       messageID,
+				"delivery":  item["delivery"],
+				"questions": item["questions"],
 			},
 		})
 	default:

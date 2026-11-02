@@ -241,6 +241,42 @@ describe('webSession pending user input', () => {
     expect(pending?.prompt).toBe('Please choose a scope');
   });
 
+  it('keeps async questions interactive without entering a blocking input state', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({ assistantState: 'working' });
+    listMock.mockResolvedValue([session]);
+    syncMock.mockResolvedValue({ revision: '4', session: { ...session, revision: '4' } });
+    snapshotMock.mockResolvedValue({
+      revision: '4',
+      session: { ...session, revision: '4' },
+      history: {
+        items: [
+          {
+            id: 'async-question',
+            oi: 1,
+            kd: 'assistant',
+            tp: 'agent_message',
+            txt: 'Which deployment?',
+            dn: true,
+            dt: {
+              type: 'async_user_input_request',
+              questions: [{ id: '0', question: 'Which deployment?', isOther: true, options: [] }],
+            },
+          },
+        ],
+        hasMore: false,
+        total: 1,
+      },
+    });
+    await store.loadSessions(session.projectId);
+    await store.syncSession(session.projectId, session.id);
+    expect(store.getBlocks(session.id)[0]?.detail?.type).toBe('async_user_input_request');
+    expect(store.getPendingUserInput(session.id)).toBeNull();
+    expect(store.getPendingApproval(session.id)).toBeNull();
+    expect(store.getLiveState(session.id).running).toBe(true);
+    expect(store.getLiveState(session.id).phase).not.toBe('waiting_input');
+  });
+
   it('renders submitted user input answers from legacy payloads', async () => {
     const store = useWebSessionStore();
     const session = makeSession({

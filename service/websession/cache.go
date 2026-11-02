@@ -722,7 +722,7 @@ func mergeReconciledHistoryItem(existing, incoming HistoryItem) HistoryItem {
 		merged.Level = existing.Level
 	}
 	merged.Done = merged.Done || existing.Done
-	if merged.Detail == nil {
+	if merged.Detail == nil || existing.Detail != nil && existing.Detail.Type == codexAsyncInputDetailType && existing.Detail.Action != "" {
 		merged.Detail = existing.Detail
 	}
 	merged.Payload = mergeReconciledHistoryMap(existing.Payload, incoming.Payload)
