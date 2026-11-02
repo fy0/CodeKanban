@@ -31,3 +31,22 @@ export function resolveWebSessionSidebarProjectIds(input: {
   });
   return ordered;
 }
+
+/**
+ * Returns a key for operations whose result depends on the project set rather
+ * than its presentation order. All-scope lists intentionally put the active
+ * project first, so that order changes when the user switches sessions across
+ * projects even though the search scope is unchanged.
+ */
+export function resolveWebSessionSidebarProjectIdsKey(input: {
+  scope: WebSessionSidebarScope;
+  projectIds: readonly string[];
+}) {
+  const normalized = input.projectIds
+    .map(projectId => normalizeProjectId(projectId))
+    .filter((projectId, index, values) => projectId && values.indexOf(projectId) === index);
+  if (normalizeWebSessionSidebarScope(input.scope) === 'all') {
+    normalized.sort();
+  }
+  return normalized.join('|');
+}

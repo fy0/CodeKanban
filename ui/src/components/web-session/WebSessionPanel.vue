@@ -4032,6 +4032,7 @@ import {
 import {
   normalizeWebSessionSidebarScope,
   resolveWebSessionSidebarProjectIds,
+  resolveWebSessionSidebarProjectIdsKey,
   resolveWebSessionSidebarToggleScope,
   type WebSessionSidebarScope,
 } from '@/components/web-session/webSessionSidebarScope';
@@ -9763,6 +9764,12 @@ const sidebarVisibleProjectIds = computed(() =>
     allProjectIds: sidebarProjectIdsToLoad.value,
   })
 );
+const sidebarSearchScopeKey = computed(() =>
+  resolveWebSessionSidebarProjectIdsKey({
+    scope: sidebarScope.value,
+    projectIds: sidebarVisibleProjectIds.value,
+  })
+);
 
 function parseTimestamp(value?: string | null) {
   if (!value) {
@@ -11184,7 +11191,7 @@ async function loadSidebarSearch() {
   }
 
   cancelSidebarSearchRequest();
-  const scopeKey = projectIds.join('|');
+  const scopeKey = sidebarSearchScopeKey.value;
   const includeArchived = sidebarSearchArchived.value;
   const includeBody = sidebarSearchBody.value;
   const requestVersion = ++sidebarSearchRequestVersion;
@@ -11212,7 +11219,7 @@ async function loadSidebarSearch() {
       if (
         requestVersion !== sidebarSearchRequestVersion ||
         query !== normalizedSidebarSearchQuery.value ||
-        scopeKey !== sidebarVisibleProjectIds.value.join('|') ||
+        scopeKey !== sidebarSearchScopeKey.value ||
         includeArchived !== sidebarSearchArchived.value ||
         includeBody !== sidebarSearchBody.value
       ) {
@@ -18191,12 +18198,7 @@ watch(
 );
 
 watch(
-  [
-    normalizedSidebarSearchQuery,
-    sidebarSearchArchived,
-    sidebarSearchBody,
-    () => sidebarVisibleProjectIds.value.join('|'),
-  ],
+  [normalizedSidebarSearchQuery, sidebarSearchArchived, sidebarSearchBody, sidebarSearchScopeKey],
   () => {
     const searchActive = normalizedSidebarSearchQuery.value.length > 0;
     clearSidebarSearchState(searchActive);

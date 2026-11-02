@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   normalizeWebSessionSidebarScope,
   resolveWebSessionSidebarProjectIds,
+  resolveWebSessionSidebarProjectIdsKey,
   resolveWebSessionSidebarToggleScope,
 } from '@/components/web-session/webSessionSidebarScope';
 
@@ -51,5 +52,26 @@ describe('webSessionSidebarScope', () => {
         allProjectIds: ['project-1'],
       })
     ).toEqual([]);
+  });
+
+  it('keeps the all-scope key stable when projects are reordered', () => {
+    expect(
+      resolveWebSessionSidebarProjectIdsKey({
+        scope: 'all',
+        projectIds: ['project-2', 'project-1', 'project-3'],
+      })
+    ).toBe('project-1|project-2|project-3');
+    expect(
+      resolveWebSessionSidebarProjectIdsKey({
+        scope: 'all',
+        projectIds: ['project-3', 'project-1', 'project-2'],
+      })
+    ).toBe('project-1|project-2|project-3');
+  });
+
+  it('keeps current-scope keys tied to the active project', () => {
+    expect(
+      resolveWebSessionSidebarProjectIdsKey({ scope: 'current', projectIds: ['project-2'] })
+    ).toBe('project-2');
   });
 });
