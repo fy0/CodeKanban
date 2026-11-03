@@ -357,6 +357,7 @@ func (m *Manager) runDevinACPSession(ctx context.Context, run *activeRun, sessio
 	proj := newDevinRunProjection()
 	nativeSessionID := pointerString(session.NativeSessionID)
 	var sessionModes *devinACPSessionModes
+	var sessionResult json.RawMessage
 	if nativeSessionID == "" {
 		result, requestErr := client.request(ctx, "session/new", map[string]any{
 			"cwd":        session.Cwd,
@@ -375,6 +376,7 @@ func (m *Manager) runDevinACPSession(ctx context.Context, run *activeRun, sessio
 		}
 		nativeSessionID = created.SessionID
 		session.NativeSessionID = &nativeSessionID
+		sessionResult = result
 		sessionModes = parseDevinSessionModes(result)
 		_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
 			"native_session_id": nativeSessionID,
@@ -392,6 +394,7 @@ func (m *Manager) runDevinACPSession(ctx context.Context, run *activeRun, sessio
 				"mcpServers": []any{},
 			}); requestErr == nil {
 				resumed = true
+				sessionResult = result
 				sessionModes = parseDevinSessionModes(result)
 			} else {
 				resumeErr = requestErr
@@ -405,6 +408,7 @@ func (m *Manager) runDevinACPSession(ctx context.Context, run *activeRun, sessio
 				m.handleRunFailure(session.ID, session, run, fmt.Errorf("Devin ACP session/load failed: %w", requestErr))
 				return
 			}
+			sessionResult = result
 			sessionModes = parseDevinSessionModes(result)
 		case resumeErr != nil:
 			m.handleRunFailure(session.ID, session, run, fmt.Errorf("Devin ACP session/resume failed: %w", resumeErr))
@@ -419,6 +423,13 @@ func (m *Manager) runDevinACPSession(ctx context.Context, run *activeRun, sessio
 		defer close(eventsDone)
 		m.consumeDevinACPEvents(ctx, client, session, run, proj)
 	}()
+
+	// --model only supplies the default for new ACP sessions. Loading or
+	// resuming restores the native session's old model and thinking level.
+	if err := applyDevinSessionModel(ctx, client, session, nativeSessionID, sessionResult); err != nil {
+		m.handleRunFailure(session.ID, session, run, fmt.Errorf("Devin ACP model switch failed: %w", err))
+		return
+	}
 
 	prompt := make([]map[string]any, 0, 1+len(images))
 	if strings.TrimSpace(text) != "" {
