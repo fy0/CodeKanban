@@ -1397,6 +1397,44 @@
   align-self: flex-end;
 }
 
+.runtime-status-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.runtime-status-row .live-card {
+  flex: 1;
+  min-width: 0;
+}
+
+.runtime-question-reminder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--app-warning, #d97706) 42%, var(--app-border, #ddd));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-warning, #d97706) 10%, var(--app-surface, #fff));
+  color: var(--app-text-primary, var(--n-text-color));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.runtime-question-reminder:hover {
+  background: color-mix(in srgb, var(--app-warning, #d97706) 18%, var(--app-surface, #fff));
+}
+
+.runtime-question-reminder:focus-visible {
+  outline: 2px solid var(--app-warning, #d97706);
+  outline-offset: 2px;
+}
+
 .live-card,
 .approval-card {
   border: 1px solid var(--app-border, var(--n-border-color));

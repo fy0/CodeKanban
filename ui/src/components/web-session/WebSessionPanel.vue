@@ -1072,6 +1072,7 @@
                   <WebSessionAsyncUserInput
                     v-if="item.detail?.type === 'async_user_input_request' && currentRealSession"
                     :key="`${currentRealSession.id}:${item.id}`"
+                    :ref="instance => setAsyncUserInputRef(instance, item.key)"
                     :session-id="currentRealSession.id"
                     :item="item"
                     :disabled="
@@ -1765,49 +1766,65 @@
                 </div>
 
                 <div v-if="showRuntimeStrip && !timelineHydrationBlocking" class="runtime-strip">
-                  <button
-                    type="button"
-                    class="live-card"
-                    :class="`phase-${displayLiveState.phase}`"
-                    :aria-label="liveCardAriaLabel"
-                    @click="handleLiveCardClick"
-                  >
-                    <div class="live-card-main">
-                      <span class="live-orb"></span>
-                      <div class="live-copy">
-                        <div class="live-title">{{ liveStateLabel }}</div>
-                        <div
-                          class="live-detail"
-                          :class="{ 'is-placeholder': !liveStateDetail }"
-                          :title="liveStateDetailTitle"
-                        >
-                          {{ liveStateSecondaryText }}
-                        </div>
-                      </div>
-                    </div>
-                    <div class="live-meta">
-                      <span v-if="liveStateWorking" class="live-activity" aria-hidden="true">
-                        <span class="live-activity-bar"></span>
-                        <span class="live-activity-bar"></span>
-                        <span class="live-activity-bar"></span>
-                      </span>
-                      <n-tooltip placement="top-end" :delay="120">
-                        <template #trigger>
-                          <span class="live-time">{{ getLiveTimeText(displayLiveState) }}</span>
-                        </template>
-                        <div class="live-time-tooltip">
+                  <div class="runtime-status-row">
+                    <button
+                      type="button"
+                      class="live-card"
+                      :class="`phase-${displayLiveState.phase}`"
+                      :aria-label="liveCardAriaLabel"
+                      @click="handleLiveCardClick"
+                    >
+                      <div class="live-card-main">
+                        <span class="live-orb"></span>
+                        <div class="live-copy">
+                          <div class="live-title">{{ liveStateLabel }}</div>
                           <div
-                            v-for="item in getLiveTimeTooltipItems(displayLiveState)"
-                            :key="item.key"
-                            class="live-time-tooltip-row"
+                            class="live-detail"
+                            :class="{ 'is-placeholder': !liveStateDetail }"
+                            :title="liveStateDetailTitle"
                           >
-                            <span class="live-time-tooltip-label">{{ item.label }}</span>
-                            <span class="live-time-tooltip-value">{{ item.value }}</span>
+                            {{ liveStateSecondaryText }}
                           </div>
                         </div>
-                      </n-tooltip>
-                    </div>
-                  </button>
+                      </div>
+                      <div class="live-meta">
+                        <span v-if="liveStateWorking" class="live-activity" aria-hidden="true">
+                          <span class="live-activity-bar"></span>
+                          <span class="live-activity-bar"></span>
+                          <span class="live-activity-bar"></span>
+                        </span>
+                        <n-tooltip placement="top-end" :delay="120">
+                          <template #trigger>
+                            <span class="live-time">{{ getLiveTimeText(displayLiveState) }}</span>
+                          </template>
+                          <div class="live-time-tooltip">
+                            <div
+                              v-for="item in getLiveTimeTooltipItems(displayLiveState)"
+                              :key="item.key"
+                              class="live-time-tooltip-row"
+                            >
+                              <span class="live-time-tooltip-label">{{ item.label }}</span>
+                              <span class="live-time-tooltip-value">{{ item.value }}</span>
+                            </div>
+                          </div>
+                        </n-tooltip>
+                      </div>
+                    </button>
+                    <button
+                      v-if="pendingAsyncUserInputs.length > 0"
+                      type="button"
+                      class="runtime-question-reminder"
+                      :title="t('webSession.asyncInputJumpToPending')"
+                      :aria-label="t('webSession.asyncInputJumpToPending')"
+                      @click="void locatePendingAsyncUserInput()"
+                    >
+                      <n-icon size="16"><ChatbubbleEllipsesOutline /></n-icon>
+                      <span>{{
+                        t('webSession.asyncInputPending', { count: pendingAsyncUserInputs.length })
+                      }}</span>
+                      <span aria-hidden="true">↑</span>
+                    </button>
+                  </div>
 
                   <n-button
                     v-if="isAwaitingRuntimeDelayed"
@@ -3655,6 +3672,7 @@ import {
   ArchiveOutline,
   ArrowDownOutline,
   ArrowUpOutline,
+  ChatbubbleEllipsesOutline,
   ChevronDownOutline,
   ChevronUpOutline,
   CloseOutline,
@@ -3773,6 +3791,7 @@ import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkil
 import WebSessionTreeDrawer from '@/components/web-session/WebSessionTreeDrawer.vue';
 import WebSessionUserInputCard from '@/components/web-session/WebSessionUserInputCard.vue';
 import WebSessionAsyncUserInput from '@/components/web-session/WebSessionAsyncUserInput.vue';
+import { getPendingWebSessionAsyncUserInputs } from '@/components/web-session/webSessionAsyncUserInput';
 import type { WebSessionComposerEditorExposed } from '@/components/web-session/webSessionComposerEditor';
 import {
   isWebSessionDevMode,
@@ -4332,6 +4351,7 @@ const timelineListRef = ref<HTMLDivElement | null>(null);
 const pendingUserInputCardRef = ref<HTMLDivElement | null>(null);
 const timelineUserMessageElements = new Map<string, HTMLElement>();
 const timelineBlockElements = new Map<string, HTMLElement>();
+const asyncUserInputCards = new Map<string, InstanceType<typeof WebSessionAsyncUserInput>>();
 type TimelineNavigationAction = 'start' | 'end' | 'previous' | 'next';
 type TimelineEdgeWindow = WebSessionHistoryPage & { sessionId: string };
 const timelineEdgeWindow = shallowRef<TimelineEdgeWindow | null>(null);
@@ -5356,6 +5376,9 @@ async function toggleGoalCard() {
 }
 const liveBlocks = computed(() =>
   currentRealSession.value ? webSessionStore.getTimelineBlocks(currentRealSession.value.id) : []
+);
+const pendingAsyncUserInputs = computed(() =>
+  getPendingWebSessionAsyncUserInputs(liveBlocks.value, currentRealSession.value)
 );
 const blocks = computed(() =>
   webSessionCatchUpActive.value ? (frozenBlocks.value ?? []) : liveBlocks.value
@@ -6602,7 +6625,7 @@ const isAwaitingRuntimeDelayed = computed(
     liveStateClockMs.value - (currentAwaitingRuntime.value?.startedAt ?? 0) >= 15_000
 );
 const showRuntimeStrip = computed(() => {
-  if (pendingApproval.value || pendingUserInput.value) {
+  if (pendingApproval.value || pendingUserInput.value || pendingAsyncUserInputs.value.length > 0) {
     return true;
   }
   if (isPlanWaitingApprovalState.value && !isOptimisticExecuteFeedbackActive.value) {
@@ -6945,6 +6968,32 @@ function setTimelineBlockRef(element: unknown, block: WebSessionBlock) {
   timelineUserMessageElements.delete(block.key);
 }
 
+function setAsyncUserInputRef(instance: unknown, key: string) {
+  if (instance) {
+    asyncUserInputCards.set(key, instance as InstanceType<typeof WebSessionAsyncUserInput>);
+  } else {
+    asyncUserInputCards.delete(key);
+  }
+}
+
+async function locatePendingAsyncUserInput() {
+  const sessionId = currentRealSession.value?.id;
+  const target = pendingAsyncUserInputs.value[0];
+  if (!sessionId || !target) return;
+
+  cancelTimelinePositionRestore();
+  invalidateTimelineScrollSync();
+  autoFollowBottom.value = false;
+  showJumpToBottom.value = true;
+  resetTimelineEdgeWindow();
+  stopWebSessionCatchUp('locate-pending-question');
+  await nextTick();
+  if (currentRealSession.value?.id !== sessionId) return;
+  await asyncUserInputCards.get(target.key)?.reveal();
+  if (currentRealSession.value?.id !== sessionId) return;
+  scrollToTimelineBlock(target.key, undefined, 'auto');
+}
+
 function readTimelineViewportUserMessageCandidates() {
   const visibleUserKeys = new Set(
     visibleBlocks.value.filter(block => block.kind === 'user').map(block => block.key)
@@ -7067,7 +7116,11 @@ async function navigateTimelineViewportUserMessage(
   }
 }
 
-function scrollToTimelineBlock(targetKey: string, highlight?: HTMLElement) {
+function scrollToTimelineBlock(
+  targetKey: string,
+  highlight?: HTMLElement,
+  behavior: ScrollBehavior = highlight ? 'auto' : 'smooth'
+) {
   const container = timelineScrollRef.value;
   const element = timelineBlockElements.get(targetKey);
   if (!container || !element) {
@@ -7098,7 +7151,7 @@ function scrollToTimelineBlock(targetKey: string, highlight?: HTMLElement) {
   lastTimelineScrollTop.value = container.scrollTop;
   container.scrollTo({
     top: Math.max(0, targetTop),
-    behavior: highlight ? 'auto' : 'smooth',
+    behavior,
   });
 }
 

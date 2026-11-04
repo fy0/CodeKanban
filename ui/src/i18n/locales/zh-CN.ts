@@ -912,6 +912,8 @@ export default {
     userInputTitle: '需要补充信息',
     asyncInputTitle: '助手提问',
     asyncInputWorkingHint: '助手会继续工作',
+    asyncInputPending: '待回答 · {count}',
+    asyncInputJumpToPending: '跳转到待回答的问题',
     asyncInputPrevious: '上一题',
     asyncInputNext: '下一题',
     asyncInputLater: '稍后回答',

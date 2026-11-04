@@ -1,6 +1,8 @@
 <template>
   <section
+    ref="cardRef"
     class="question-card"
+    tabindex="-1"
     :class="{ 'is-collapsed': collapsed, 'is-submitted': submitted }"
     :aria-label="t('webSession.asyncInputTitle')"
   >
@@ -130,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { NInput } from 'naive-ui';
 
@@ -139,6 +141,7 @@ import { useWebSessionStore, type WebSessionBlock } from '@/stores/webSession';
 const props = defineProps<{ sessionId: string; item: WebSessionBlock; disabled?: boolean }>();
 const { t } = useI18n();
 const store = useWebSessionStore();
+const cardRef = ref<HTMLElement | null>(null);
 const selections = ref<Record<string, string[]>>({});
 const drafts = ref<Record<string, string>>({});
 const submitting = ref(false);
@@ -219,6 +222,14 @@ function writeAnswer(id: string, value: string) {
   drafts.value[id] = value;
   if (value.trim()) selections.value[id] = [];
 }
+
+async function reveal() {
+  collapsed.value = false;
+  await nextTick();
+  cardRef.value?.focus({ preventScroll: true });
+}
+
+defineExpose({ reveal });
 
 async function submit() {
   if (props.disabled || submitting.value || submitted.value) return;

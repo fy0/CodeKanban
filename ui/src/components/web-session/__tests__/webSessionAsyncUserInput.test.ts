@@ -202,6 +202,20 @@ describe('WebSessionAsyncUserInput', () => {
     wrapper.unmount();
   });
 
+  it('reveals a deferred question and preserves its draft and question index', async () => {
+    const wrapper = render();
+    await wrapper.find('form').trigger('submit');
+    await wrapper.find('textarea').setValue('Keep this answer');
+    await wrapper.find('.question-card-close').trigger('click');
+    expect(wrapper.find('form').exists()).toBe(false);
+
+    await wrapper.vm.reveal();
+    expect(wrapper.find('.question-card-progress').text()).toBe('2 / 2');
+    expect(wrapper.find<HTMLTextAreaElement>('textarea').element.value).toBe('Keep this answer');
+    expect(answer).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
   it('does not send when the session is unavailable', async () => {
     const wrapper = render(makeItem(), true);
     await wrapper.find('form').trigger('submit');

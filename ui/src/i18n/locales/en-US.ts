@@ -947,6 +947,8 @@ export default {
     userInputTitle: 'More Input Required',
     asyncInputTitle: 'Question from the assistant',
     asyncInputWorkingHint: 'The assistant keeps working',
+    asyncInputPending: 'Unanswered · {count}',
+    asyncInputJumpToPending: 'Jump to an unanswered question',
     asyncInputPrevious: 'Previous question',
     asyncInputNext: 'Next question',
     asyncInputLater: 'Not now',
