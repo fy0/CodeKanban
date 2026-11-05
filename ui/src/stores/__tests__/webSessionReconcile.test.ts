@@ -1,4 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia';
+import { computed } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useWebSessionStore } from '@/stores/webSession';
@@ -115,6 +116,68 @@ describe('web session resume reconciliation', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('reads live state in linear work across hundreds of sessions without scanning their IDs', async () => {
+    const sessions = Array.from({ length: 500 }, (_, index) =>
+      makeSession({ id: `session-${index}` })
+    );
+    listMock.mockResolvedValue(sessions);
+    const store = useWebSessionStore();
+    await store.loadSessions('project-1');
+    let reads = 0;
+    sessions.forEach(session => {
+      const id = session.id;
+      Object.defineProperty(session, 'id', {
+        configurable: true,
+        get: () => {
+          reads += 1;
+          return id;
+        },
+      });
+    });
+    sessions.forEach((_session, index) => store.getLiveState(`session-${index}`));
+    expect(reads).toBeLessThan(sessions.length * 10);
+  });
+
+  it('reactively updates indexed sessions and removes entries replaced by an authoritative list', async () => {
+    const session = makeSession({ status: 'running', assistantState: 'working' });
+    listMock.mockResolvedValue([session]);
+    const store = useWebSessionStore();
+    await store.loadSessions(session.projectId);
+    const running = computed(() => store.getLiveState(session.id).running);
+    expect(running.value).toBe(true);
+    store.cacheSessionSummaries([
+      makeSession({ ...session, status: 'idle', assistantState: null, revision: '2' }),
+    ]);
+    expect(running.value).toBe(false);
+    listMock.mockResolvedValue([]);
+    await store.loadSessions(session.projectId, true);
+    expect(store.getActiveSession(session.projectId)).toBeNull();
+    expect(store.getSessions(session.projectId)).toEqual([]);
+    expect(store.getLiveState(session.id).running).toBe(false);
+  });
+
+  it('moves indexed sessions between projects without leaving the previous project active', async () => {
+    const session = makeSession({ status: 'running', assistantState: 'working' });
+    listMock.mockResolvedValue([session]);
+    const store = useWebSessionStore();
+    await store.loadSessions(session.projectId);
+    const running = computed(() => store.getLiveState(session.id).running);
+    expect(running.value).toBe(true);
+    store.cacheSessionSummaries([
+      makeSession({
+        ...session,
+        projectId: 'project-2',
+        status: 'idle',
+        assistantState: null,
+        revision: '2',
+      }),
+    ]);
+    expect(store.getSessions('project-1')).toEqual([]);
+    expect(store.getSessions('project-2').map(item => item.id)).toEqual([session.id]);
+    expect(store.getActiveSession('project-1')).toBeNull();
+    expect(running.value).toBe(false);
   });
 
   it('reconciles all locally active sessions plus only the 48 most recent idle sessions', async () => {

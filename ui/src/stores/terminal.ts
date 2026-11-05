@@ -571,8 +571,8 @@ export const useTerminalStore = defineStore('terminal', () => {
   const sessionIndex = new Map<string, SessionRecord>();
   const activeTabByProject = reactive(new Map<string, string>());
   const sockets = new Map<string, WebSocket>();
-  const manualCloseIds = new Set<string>();
-  const pausedSocketIds = new Set<string>();
+  const sentRenderPreferences = new Map<string, string>();
+  const availableLiveReplays = new Set<string>();
   let globalLoadToken = 0;
   const projectLoadTokens = new Map<string, number>();
   const emitter = new EventEmitter();
@@ -771,12 +771,12 @@ export const useTerminalStore = defineStore('terminal', () => {
     return sanitizeTerminalSnapshotIntervalMs(preference.snapshotIntervalMs);
   }
 
-  function applyRenderPreferenceToTab(tab: TerminalTabState) {
+  function applyRenderPreferenceToTab(tab: TerminalTabState, connectionMode?: TerminalRenderMode) {
     const preference = getStoredRenderPreference(tab.projectId, tab.id);
     tab.useGlobalRenderMode = preference?.useGlobalRenderMode !== false;
     tab.useGlobalSnapshotInterval = preference?.useGlobalSnapshotInterval !== false;
     tab.renderMode = getEffectiveRenderMode(tab.projectId, tab.id);
-    tab.connectionRenderMode = getRequestedConnectionRenderMode(tab);
+    tab.connectionRenderMode = connectionMode ?? getRequestedConnectionRenderMode(tab);
     tab.snapshotIntervalMs = getEffectiveSnapshotIntervalMs(tab.projectId, tab.id);
     return tab;
   }
@@ -847,23 +847,8 @@ export const useTerminalStore = defineStore('terminal', () => {
   }
 
   function setConnectionRenderMode(sessionId: string, mode: TerminalRenderMode) {
-    const record = sessionIndex.get(sessionId);
-    if (!record) {
-      return;
-    }
-    const bucket = tabStore.get(record.projectId);
-    if (!bucket) {
-      return;
-    }
-    const index = bucket.findIndex(tab => tab.id === sessionId);
-    if (index === -1) {
-      return;
-    }
-    bucket[index] = {
-      ...bucket[index],
-      connectionRenderMode: sanitizeTerminalRenderMode(mode),
-    };
-    record.tab = bucket[index];
+    const tab = sessionIndex.get(sessionId)?.tab;
+    if (tab) tab.connectionRenderMode = sanitizeTerminalRenderMode(mode);
   }
 
   function clearTerminalSnapshotState(sessionId: string) {
@@ -884,7 +869,11 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (!message) {
       return false;
     }
-    return send(sessionId, message);
+    const serialized = JSON.stringify(message);
+    if (sentRenderPreferences.get(sessionId) === serialized) return true;
+    if (!send(sessionId, message)) return false;
+    sentRenderPreferences.set(sessionId, serialized);
+    return true;
   }
 
   function updateRenderModeAck(
@@ -894,68 +883,25 @@ export const useTerminalStore = defineStore('terminal', () => {
     _snapshotCompressionEnabled: boolean | undefined,
     _snapshotIncrementalEnabled: boolean | undefined
   ) {
-    const record = sessionIndex.get(sessionId);
-    if (!record) {
-      return;
-    }
-    const bucket = tabStore.get(record.projectId);
-    if (!bucket) {
-      return;
-    }
-    const index = bucket.findIndex(tab => tab.id === sessionId);
-    if (index === -1) {
-      return;
-    }
-    const actualMode = sanitizeTerminalRenderMode(mode ?? getConnectionRenderMode(bucket[index]));
-    bucket[index] = {
-      ...bucket[index],
-      connectionRenderMode: actualMode,
-      snapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(
-        snapshotIntervalMs ?? bucket[index].snapshotIntervalMs
-      ),
-    };
-    record.tab = bucket[index];
-    if (actualMode === 'live') {
-      clearTerminalSnapshotState(sessionId);
-    }
+    const tab = sessionIndex.get(sessionId)?.tab;
+    if (!tab) return;
+    const actualMode = sanitizeTerminalRenderMode(mode ?? getConnectionRenderMode(tab));
+    tab.connectionRenderMode = actualMode;
+    tab.snapshotIntervalMs = sanitizeTerminalSnapshotIntervalMs(
+      snapshotIntervalMs ?? tab.snapshotIntervalMs
+    );
+    if (actualMode === 'live') clearTerminalSnapshotState(sessionId);
   }
 
   function applyGlobalRenderDefaultsToTabs() {
-    sessionIndex.forEach(({ projectId }, sessionId) => {
-      const record = sessionIndex.get(sessionId);
-      if (!record) {
-        return;
-      }
-      const bucket = tabStore.get(projectId);
-      if (!bucket) {
-        return;
-      }
-      const index = bucket.findIndex(tab => tab.id === sessionId);
-      if (index === -1) {
-        return;
-      }
-      const current = bucket[index];
-      const nextRenderMode = current.useGlobalRenderMode
-        ? getGlobalRenderMode()
-        : current.renderMode;
-      const nextSnapshotIntervalMs = current.useGlobalSnapshotInterval
-        ? getGlobalSnapshotIntervalMs()
-        : current.snapshotIntervalMs;
-      const nextMode = sanitizeTerminalRenderMode(nextRenderMode);
-      const renderModeChanged = nextMode !== current.renderMode;
-      const currentConnectionMode = getConnectionRenderMode(current);
-      bucket[index] = {
-        ...current,
-        renderMode: nextMode,
-        connectionRenderMode: hasAttachedSocket(sessionId)
-          ? currentConnectionMode
-          : renderModeChanged
-            ? getRequestedConnectionRenderMode({ ...current, renderMode: nextMode })
-            : currentConnectionMode,
-        snapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(nextSnapshotIntervalMs),
-      };
-      record.tab = bucket[index];
-      void sendRenderModePreference(sessionId);
+    sessionIndex.forEach(({ tab }, sessionId) => {
+      const currentConnectionMode = getConnectionRenderMode(tab);
+      if (tab.useGlobalRenderMode) tab.renderMode = getGlobalRenderMode();
+      if (tab.useGlobalSnapshotInterval) tab.snapshotIntervalMs = getGlobalSnapshotIntervalMs();
+      tab.connectionRenderMode = hasAttachedSocket(sessionId)
+        ? currentConnectionMode
+        : getRequestedConnectionRenderMode(tab);
+      sendRenderModePreference(sessionId);
     });
   }
 
@@ -1011,7 +957,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       return '';
     }
     const current = activeTabByProject.get(projectId);
-    if (current && bucket.some(tab => tab.id === current)) {
+    if (current && sessionIndex.get(current)?.projectId === projectId) {
       rememberStoredActiveTab(projectId, current);
       return current;
     }
@@ -1212,23 +1158,13 @@ export const useTerminalStore = defineStore('terminal', () => {
         : { useGlobalRenderMode: false, renderMode: sanitizeTerminalRenderMode(mode) };
     persistRenderPreference(resolved, sessionId, nextPreference);
 
-    const bucket = tabStore.get(resolved);
-    if (!bucket) {
-      return false;
-    }
-    const index = bucket.findIndex(tab => tab.id === sessionId);
-    if (index === -1) {
-      return false;
-    }
-    const currentConnectionMode = getConnectionRenderMode(bucket[index]);
-    bucket[index] = applyRenderPreferenceToTab({ ...bucket[index] });
-    if (hasAttachedSocket(sessionId)) {
-      bucket[index].connectionRenderMode = currentConnectionMode;
-    }
-    record.tab = bucket[index];
-    if (getConnectionRenderMode(record.tab) === 'live') {
-      clearTerminalSnapshotState(sessionId);
-    }
+    const currentConnectionMode = getConnectionRenderMode(record.tab);
+    applyRenderPreferenceToTab(
+      record.tab,
+      hasAttachedSocket(sessionId) ? currentConnectionMode : undefined
+    );
+    if (getConnectionRenderMode(record.tab) === 'live') clearTerminalSnapshotState(sessionId);
+
     return sendRenderModePreference(sessionId);
   }
 
@@ -1252,18 +1188,9 @@ export const useTerminalStore = defineStore('terminal', () => {
           };
     persistRenderPreference(resolved, sessionId, nextPreference);
 
-    const bucket = tabStore.get(resolved);
-    if (!bucket) {
-      return false;
-    }
-    const index = bucket.findIndex(tab => tab.id === sessionId);
-    if (index === -1) {
-      return false;
-    }
-    const currentConnectionMode = getConnectionRenderMode(bucket[index]);
-    bucket[index] = applyRenderPreferenceToTab({ ...bucket[index] });
-    bucket[index].connectionRenderMode = currentConnectionMode;
-    record.tab = bucket[index];
+    const currentConnectionMode = getConnectionRenderMode(record.tab);
+    applyRenderPreferenceToTab(record.tab, currentConnectionMode);
+
     return sendRenderModePreference(sessionId);
   }
 
@@ -1295,26 +1222,33 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (!socket) {
       return;
     }
-    pausedSocketIds.add(sessionId);
-    socket.close();
     sockets.delete(sessionId);
+    sentRenderPreferences.delete(sessionId);
+    socket.close();
   }
 
-  function disconnectTab(sessionId: string, remove = true) {
+  // A live renderer cannot reconstruct its buffer from only the tail received while
+  // it was evicted. Reattach to the existing PTY to replay the server's scrollback.
+  function prepareViewport(sessionId: string) {
+    const tab = sessionIndex.get(sessionId)?.tab;
+    if (!tab || getConnectionRenderMode(tab) !== 'live') return;
     const socket = sockets.get(sessionId);
-    if (socket) {
-      manualCloseIds.add(sessionId);
-      socket.close();
-      sockets.delete(sessionId);
-    }
-    pausedSocketIds.delete(sessionId);
+    if (socket?.readyState !== WebSocket.OPEN || availableLiveReplays.has(sessionId)) return;
+    pauseSocket(sessionId);
+    connect(tab);
+  }
+
+  function disconnectTab(sessionId: string, remove = true, updateBucket = true) {
+    // Detach before closing so a delayed close cannot affect a replacement socket.
+    pauseSocket(sessionId);
+    if (!remove) updateTabStatus(sessionId, 'closed');
     if (remove) {
       const record = sessionIndex.get(sessionId);
       if (!record) {
         return;
       }
       const bucket = tabStore.get(record.projectId);
-      if (bucket) {
+      if (bucket && updateBucket) {
         const index = bucket.findIndex(tab => tab.id === sessionId);
         if (index !== -1) {
           bucket.splice(index, 1);
@@ -1327,11 +1261,12 @@ export const useTerminalStore = defineStore('terminal', () => {
         }
       }
       sessionIndex.delete(sessionId);
-      if (activeTabByProject.get(record.projectId) === sessionId) {
+      if (updateBucket && activeTabByProject.get(record.projectId) === sessionId) {
         const nextId = tabStore.get(record.projectId)?.[0]?.id;
         setActiveTab(record.projectId, nextId);
       }
       messageBuffers.delete(sessionId); // Clean up message buffer
+      availableLiveReplays.delete(sessionId);
       latestServerSnapshots.delete(sessionId);
       latestServerSnapshotSequence.delete(sessionId);
       serializedSnapshots.delete(sessionId);
@@ -1344,6 +1279,7 @@ export const useTerminalStore = defineStore('terminal', () => {
    * Called when TerminalViewport remounts after being unmounted (e.g., project switch).
    */
   function replayBufferedMessages(sessionId: string): ReplayBufferedMessagesResult {
+    availableLiveReplays.delete(sessionId);
     const buffer = messageBuffers.get(sessionId);
     if (!buffer || buffer.length === 0) {
       return { count: 0 };
@@ -1374,6 +1310,8 @@ export const useTerminalStore = defineStore('terminal', () => {
       serializedSnapshots.delete(sessionId);
       return;
     }
+    // A renderer can unmount after its session has already been removed.
+    if (!sessionIndex.has(sessionId)) return;
     serializedSnapshots.set(sessionId, snapshot);
   }
 
@@ -1426,34 +1364,14 @@ export const useTerminalStore = defineStore('terminal', () => {
     sessionId: string,
     role: TerminalConnectionRole
   ): TerminalTabState | undefined {
-    const record = sessionIndex.get(sessionId);
-    if (!record) {
-      return undefined;
-    }
-    if (record.tab.connectionRole === role) {
-      return record.tab;
-    }
-    const bucket = tabStore.get(record.projectId);
-    if (!bucket) {
-      return record.tab;
-    }
-    const index = bucket.findIndex(tab => tab.id === sessionId);
-    if (index === -1) {
-      return record.tab;
-    }
-
-    const currentConnectionMode = getConnectionRenderMode(bucket[index]);
-    bucket[index] = {
-      ...bucket[index],
-      connectionRole: role,
-      connectionRenderMode: hasAttachedSocket(sessionId)
-        ? currentConnectionMode
-        : role === 'mirror'
-          ? 'snapshot'
-          : sanitizeTerminalRenderMode(bucket[index].renderMode),
-    };
-    record.tab = bucket[index];
-    return record.tab;
+    const tab = sessionIndex.get(sessionId)?.tab;
+    if (!tab || tab.connectionRole === role) return tab;
+    const currentConnectionMode = getConnectionRenderMode(tab);
+    tab.connectionRole = role;
+    tab.connectionRenderMode = hasAttachedSocket(sessionId)
+      ? currentConnectionMode
+      : getRequestedConnectionRenderMode(tab);
+    return tab;
   }
 
   function applyConnectionPolicy(projectId: string | undefined) {
@@ -1517,7 +1435,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (!bucket || bucket.length === 0) {
       return false;
     }
-    const exists = bucket.some(tab => tab.id === storedId);
+    const exists = sessionIndex.get(storedId)?.projectId === projectId;
     if (!exists) {
       forgetStoredActiveTab(projectId);
       return false;
@@ -1535,7 +1453,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       return;
     }
     const current = activeTabByProject.get(projectId);
-    if (current && bucket.some(tab => tab.id === current)) {
+    if (current && sessionIndex.get(current)?.projectId === projectId) {
       rememberStoredActiveTab(projectId, current);
       return;
     }
@@ -1545,27 +1463,21 @@ export const useTerminalStore = defineStore('terminal', () => {
     setActiveTab(projectId, bucket[0].id);
   }
 
-  function applyLocalTabOrder(projectId: string, bucket: TerminalTabState[]) {
+  function applyLocalTabOrder(_projectId: string, bucket: TerminalTabState[]) {
     bucket.forEach((tab, index) => {
-      const nextTab = {
-        ...tab,
-        orderIndex: (index + 1) * 1000,
-      };
-      bucket.splice(index, 1, nextTab);
-      const record = sessionIndex.get(nextTab.id);
-      if (record) {
-        record.tab = nextTab;
-      }
+      tab.orderIndex = (index + 1) * 1000;
     });
-    applyConnectionPolicy(projectId);
   }
 
   function restoreProjectTabs(projectId: string, previousTabs: TerminalTabState[]) {
     const bucket = ensureBucket(projectId);
-    bucket.splice(0, bucket.length, ...previousTabs);
-    previousTabs.forEach(tab => {
+    const restored = previousTabs.map(previous => {
+      const tab = sessionIndex.get(previous.id)?.tab ?? reactive(previous);
+      tab.orderIndex = previous.orderIndex;
       sessionIndex.set(tab.id, { projectId, tab });
+      return tab;
     });
+    bucket.splice(0, bucket.length, ...restored);
     ensureActiveTab(projectId);
     applyConnectionPolicy(projectId);
   }
@@ -1626,131 +1538,73 @@ export const useTerminalStore = defineStore('terminal', () => {
     void persistTerminalTabMove(projectId, tab.id, previousSessionId, nextSessionId, previousTabs);
   }
 
+  function upsertSessionRecord(session: TerminalSession, projectId: string) {
+    const existing = sessionIndex.get(session.id);
+    if (existing) {
+      if (existing.projectId !== projectId) {
+        console.warn('[Terminal Store] Skip terminal session with mismatched project', session.id);
+        return undefined;
+      }
+      // Keep reactive identities stable so metadata changes do not invalidate list structure.
+      Object.assign(existing.tab, session, { projectId });
+      return existing.tab;
+    }
+    const tab = reactive(
+      applyRenderPreferenceToTab({
+        ...session,
+        projectId,
+        clientStatus: 'connecting',
+        connectionRole: 'detached',
+        renderMode: getEffectiveRenderMode(projectId, session.id),
+        snapshotIntervalMs: getEffectiveSnapshotIntervalMs(projectId, session.id),
+        useGlobalRenderMode: true,
+        useGlobalSnapshotInterval: true,
+      })
+    );
+    sessionIndex.set(tab.id, { projectId, tab });
+    return tab;
+  }
+
   function attachOrUpdateSession(
     session: TerminalSession,
     options?: { activate?: boolean; projectIdOverride?: string; insertAfterSessionId?: string }
   ) {
-    const existing = sessionIndex.get(session.id);
-    if (existing) {
-      const immutableProjectId = existing.projectId;
-      const payloadProjectId = normalizeProjectId(session.projectId);
-      if (payloadProjectId && payloadProjectId !== immutableProjectId) {
-        console.warn(
-          '[Terminal Store] Received mismatched project for terminal session',
-          session.id,
-          'payload project:',
-          payloadProjectId,
-          'tracked as:',
-          immutableProjectId
-        );
-      }
-      const updatedTab: TerminalTabState = {
-        ...existing.tab,
-        ...session,
-        projectId: immutableProjectId,
-        connectionRole: existing.tab.connectionRole,
-        renderMode: existing.tab.renderMode,
-        connectionRenderMode: existing.tab.connectionRenderMode,
-        snapshotIntervalMs: existing.tab.snapshotIntervalMs,
-        useGlobalRenderMode: existing.tab.useGlobalRenderMode,
-        useGlobalSnapshotInterval: existing.tab.useGlobalSnapshotInterval,
-      };
-      // 用 splice 替换以触发 Vue 响应式更新
-      const bucket = tabStore.get(immutableProjectId);
-      if (bucket) {
-        const index = bucket.findIndex(t => t.id === session.id);
-        if (index !== -1) {
-          bucket.splice(index, 1, updatedTab);
-        }
-      }
-      existing.tab = updatedTab;
-      if (options?.activate) {
-        setActiveTab(immutableProjectId, session.id);
-      }
-      applyConnectionPolicy(immutableProjectId);
-      return updatedTab;
+    const projectId = resolveSessionProjectId(session, options?.projectIdOverride);
+    if (!projectId) return;
+    const existed = sessionIndex.has(session.id);
+    const tab = upsertSessionRecord(session, projectId);
+    if (!tab) return;
+    if (!existed) {
+      const bucket = ensureBucket(projectId);
+      const index = options?.insertAfterSessionId
+        ? bucket.findIndex(item => item.id === options.insertAfterSessionId)
+        : -1;
+      if (index >= 0) bucket.splice(index + 1, 0, tab);
+      else bucket.push(tab);
     }
-
-    const resolvedProjectId = resolveSessionProjectId(session, options?.projectIdOverride);
-    if (!resolvedProjectId) {
-      console.warn('[Terminal Store] Skip terminal session with unknown projectId', session.id);
-      return;
-    }
-
-    const bucket = ensureBucket(resolvedProjectId);
-    const tab = applyRenderPreferenceToTab({
-      ...session,
-      projectId: resolvedProjectId,
-      clientStatus: 'connecting',
-      connectionRole: 'detached',
-      renderMode: getEffectiveRenderMode(resolvedProjectId, session.id),
-      connectionRenderMode: getEffectiveRenderMode(resolvedProjectId, session.id),
-      snapshotIntervalMs: getEffectiveSnapshotIntervalMs(resolvedProjectId, session.id),
-      useGlobalRenderMode: true,
-      useGlobalSnapshotInterval: true,
-    });
-    // 如果指定了 insertAfterSessionId，在其后插入；否则添加到末尾
-    if (options?.insertAfterSessionId) {
-      const insertIndex = bucket.findIndex(t => t.id === options.insertAfterSessionId);
-      if (insertIndex !== -1) {
-        bucket.splice(insertIndex + 1, 0, tab);
-      } else {
-        bucket.push(tab);
-      }
-    } else {
-      bucket.push(tab);
-    }
-    sessionIndex.set(tab.id, { projectId: resolvedProjectId, tab });
-    if (options?.activate) {
-      setActiveTab(resolvedProjectId, tab.id);
-    } else if (!activeTabByProject.get(resolvedProjectId)) {
-      const storedId = storedActiveTabs.get(resolvedProjectId);
-      if (!storedId) {
-        setActiveTab(resolvedProjectId, tab.id);
-      } else if (storedId === tab.id) {
-        setActiveTab(resolvedProjectId, tab.id);
-      }
-    }
-    applyConnectionPolicy(resolvedProjectId);
+    if (options?.activate) setActiveTab(projectId, tab.id);
+    else ensureActiveTab(projectId);
+    applyConnectionPolicy(projectId);
     return tab;
   }
 
   function updateTabStatus(sessionId: string, status: ClientStatus) {
-    const record = sessionIndex.get(sessionId);
-    if (!record) return;
-
-    const bucket = tabStore.get(record.projectId);
-    if (!bucket) return;
-
-    const index = bucket.findIndex(t => t.id === sessionId);
-    if (index === -1) return;
-
-    bucket[index] = { ...bucket[index], clientStatus: status };
-    record.tab = bucket[index];
+    const tab = sessionIndex.get(sessionId)?.tab;
+    if (tab) tab.clientStatus = status;
   }
 
   function updateTabMetadata(sessionId: string, metadata: ServerMessage['metadata']) {
-    const record = sessionIndex.get(sessionId);
-    if (!record || !metadata) return;
-
-    const bucket = tabStore.get(record.projectId);
-    if (!bucket) return;
-
-    const index = bucket.findIndex(t => t.id === sessionId);
-    if (index === -1) return;
-
-    const nextTitle = metadata.title;
-    bucket[index] = {
-      ...bucket[index],
+    const tab = sessionIndex.get(sessionId)?.tab;
+    if (!tab || !metadata) return;
+    Object.assign(tab, {
       processPid: metadata.processPid,
-      processStatus: metadata.processStatus as 'idle' | 'busy' | 'unknown' | undefined,
+      processStatus: metadata.processStatus,
       processHasChildren: metadata.processHasChildren,
       runningCommand: metadata.runningCommand,
       metadataCapturedAt: metadata.capturedAt,
       aiAssistant: metadata.aiAssistant,
-      title: typeof nextTitle === 'string' ? nextTitle : bucket[index].title,
-    };
-    record.tab = bucket[index];
+      title: typeof metadata.title === 'string' ? metadata.title : tab.title,
+    });
   }
 
   function connect(tab: TerminalTabState) {
@@ -1765,10 +1619,15 @@ export const useTerminalStore = defineStore('terminal', () => {
     ) {
       return;
     }
-    pausedSocketIds.delete(tab.id);
+    // Each connection supplies a fresh replay. Never prepend the previous
+    // connection's buffered tail to it.
+    messageBuffers.delete(tab.id);
+    sentRenderPreferences.delete(tab.id);
     const resolvedWsURL = resolveWsUrl(tab.wsUrl || tab.wsPath, urlBase);
     const wsURL = new URL(resolvedWsURL);
     const initialRenderMode = getRequestedConnectionRenderMode(tab);
+    if (initialRenderMode === 'live') availableLiveReplays.add(tab.id);
+    else availableLiveReplays.delete(tab.id);
     const initialSnapshotIntervalMs =
       tab.connectionRole === 'mirror'
         ? getInactiveSnapshotIntervalMs()
@@ -1787,12 +1646,10 @@ export const useTerminalStore = defineStore('terminal', () => {
     sockets.set(tab.id, socket);
 
     socket.addEventListener('open', () => {
+      if (sockets.get(tab.id) !== socket) return;
       updateTabStatus(tab.id, 'ready');
       latestServerSnapshotSequence.delete(tab.id);
-      const renderModeMessage = buildRenderModeMessage(tab.id);
-      if (renderModeMessage) {
-        socket.send(JSON.stringify(renderModeMessage));
-      }
+      sendRenderModePreference(tab.id);
       socket.send(
         JSON.stringify({
           type: 'resize',
@@ -1842,6 +1699,9 @@ export const useTerminalStore = defineStore('terminal', () => {
             };
           }
           if (payload.type === 'render-mode') {
+            // A mirror interval omits PTY bytes; its buffered tail is no longer
+            // a complete live replay even if the connection later switches back.
+            if (payload.mode === 'snapshot') availableLiveReplays.delete(tab.id);
             updateRenderModeAck(
               tab.id,
               payload.mode,
@@ -1863,6 +1723,7 @@ export const useTerminalStore = defineStore('terminal', () => {
           // Check if there are any listeners for this session
           // If not, buffer the message for later replay when component remounts
           if (emitter.listenerCount(tab.id) > 0) {
+            availableLiveReplays.delete(tab.id);
             emitter.emit(tab.id, payload);
           } else if (
             payload.type === 'data' ||
@@ -1884,6 +1745,7 @@ export const useTerminalStore = defineStore('terminal', () => {
             });
             // Limit buffer size to prevent memory issues
             if (buffer.length > MESSAGE_BUFFER_MAX_SIZE) {
+              availableLiveReplays.delete(tab.id);
               buffer.shift();
             }
           }
@@ -1895,16 +1757,9 @@ export const useTerminalStore = defineStore('terminal', () => {
     });
 
     socket.addEventListener('close', () => {
+      if (sockets.get(tab.id) !== socket) return;
       sockets.delete(tab.id);
-      if (pausedSocketIds.has(tab.id)) {
-        pausedSocketIds.delete(tab.id);
-        return;
-      }
-      if (manualCloseIds.has(tab.id)) {
-        manualCloseIds.delete(tab.id);
-        updateTabStatus(tab.id, 'closed');
-        return;
-      }
+      sentRenderPreferences.delete(tab.id);
       const record = sessionIndex.get(tab.id);
       if (record && resolveConnectionRole(record.projectId, tab.id) !== 'detached') {
         updateTabStatus(tab.id, 'connecting');
@@ -1918,6 +1773,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     });
 
     socket.addEventListener('error', () => {
+      if (sockets.get(tab.id) !== socket) return;
       updateTabStatus(tab.id, 'error');
     });
   }
@@ -1952,32 +1808,23 @@ export const useTerminalStore = defineStore('terminal', () => {
   function reconcileSessions(projectId: string, sessions: TerminalSession[]) {
     const bucket = ensureBucket(projectId);
     const incomingIds = new Set(sessions.map(session => session.id));
-    for (const tab of bucket.slice()) {
-      if (!incomingIds.has(tab.id)) {
-        disconnectTab(tab.id, true);
-      }
+    for (const tab of bucket) {
+      if (!incomingIds.has(tab.id)) disconnectTab(tab.id, true, false);
     }
-    const orderedSessions = sortSessionsWithServerOrder(projectId, sessions);
-    for (const session of orderedSessions) {
-      attachOrUpdateSession(session, { projectIdOverride: projectId });
+    const next: TerminalTabState[] = [];
+    const seen = new Set<string>();
+    for (const session of sortSessionsWithServerOrder(projectId, sessions)) {
+      if (seen.has(session.id)) continue;
+      seen.add(session.id);
+      const tab = upsertSessionRecord(session, projectId);
+      if (tab) next.push(tab);
     }
-    const orderById = new Map(orderedSessions.map((session, index) => [session.id, index]));
-    const finalBucket = tabStore.get(projectId);
-    if (finalBucket) {
-      finalBucket.sort((left, right) => {
-        const leftIndex = orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
-        const rightIndex = orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
-        if (leftIndex !== rightIndex) {
-          return leftIndex - rightIndex;
-        }
-        return left.id.localeCompare(right.id);
-      });
+    if (bucket.length !== next.length || next.some((tab, index) => bucket[index] !== tab)) {
+      bucket.splice(0, bucket.length, ...next);
     }
-    if (!finalBucket || finalBucket.length === 0) {
-      setActiveTab(projectId, undefined);
-    } else {
-      ensureActiveTab(projectId);
-    }
+    if (next.length) ensureActiveTab(projectId);
+    else setActiveTab(projectId, undefined);
+    applyConnectionPolicy(projectId);
   }
 
   function ensureProjectSelected(projectId?: string) {
@@ -2051,7 +1898,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       return false;
     }
     const bucket = tabStore.get(projectId);
-    if (!bucket || !bucket.some(tab => tab.id === sessionId)) {
+    if (!bucket || sessionIndex.get(sessionId)?.projectId !== projectId) {
       return false;
     }
     setActiveTab(projectId, sessionId);
@@ -2125,6 +1972,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     retainProjectConnections,
     releaseProjectConnections,
     replayBufferedMessages,
+    prepareViewport,
     saveSerializedSnapshot,
     getSerializedSnapshot,
     getLatestServerSnapshot,

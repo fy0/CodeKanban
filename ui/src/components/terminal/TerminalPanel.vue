@@ -66,40 +66,33 @@
         </button>
       </div>
       <!-- 桌面端：标签页切换 -->
-      <div
-        v-else-if="tabs.length || emptyTabs.length"
-        ref="tabsContainerRef"
-        class="tabs-container"
-      >
-        <n-tabs
-          v-model:value="activeId"
-          type="card"
-          :closable="true"
-          size="small"
-          :theme-overrides="tabsThemeOverrides"
+      <div v-else-if="tabs.length || emptyTabs.length" class="tabs-container">
+        <VirtualSessionTabs
+          ref="virtualTabsRef"
+          :items="visibleTabs"
+          :active-id="activeId"
+          :close-label="t('common.close')"
+          :tab-props="createTabProps"
+          :is-locked="isEmptyTabItem"
+          @select="activeId = $event"
           @close="handleClose"
+          @reorder="handleTabDragEnd"
         >
-          <n-tab-pane
-            v-for="tab in visibleTabs"
-            :key="tab.id"
-            :name="tab.id"
-            :tab-props="createTabProps(tab)"
-          >
-            <template #tab>
+          <template #default="{ item }">
+            <template
+              v-for="tab in [isEmptyTabItem(item) ? item : resolveDisplayTab(item)]"
+              :key="tab.id"
+            >
               <!-- 空标签的简化显示 -->
               <span v-if="isEmptyTabItem(tab)" class="tab-label">
-                <span class="tab-title" :style="tabTitleStyle">
+                <span class="tab-title">
                   {{ tab.title }}
                 </span>
               </span>
               <!-- 正常终端标签的完整显示 -->
               <span v-else class="tab-label" :title="getTabTooltip(tab)">
-                <span
-                  v-if="!hideStatusDots"
-                  class="status-dot"
-                  :class="(tab as TerminalTabState).clientStatus"
-                />
-                <span class="tab-title" :style="tabTitleStyle">
+                <span class="status-dot" :class="(tab as TerminalTabState).clientStatus" />
+                <span class="tab-title">
                   {{ tab.title }}
                 </span>
                 <span
@@ -124,10 +117,8 @@
                 </span>
               </span>
             </template>
-          </n-tab-pane>
-        </n-tabs>
-        <!-- 激活标签指示器 -->
-        <div class="active-tab-indicator" :style="activeTabIndicatorStyle"></div>
+          </template>
+        </VirtualSessionTabs>
       </div>
       <div v-else class="empty-tabs-placeholder">
         <span class="empty-tabs-text">{{ t('terminal.emptyGuideTitle') }}</span>
@@ -398,11 +389,14 @@
         </div>
       </div>
       <!-- 正常终端视图：只渲染非空标签 -->
-      <TerminalViewport
-        v-for="tab in visibleTabs.filter(t => !isEmptyTabItem(t))"
-        v-show="tab.id === activeId"
-        :key="tab.id"
-        :tab="tab as TerminalTabState"
+      <TerminalViewportPool
+        :project-id="projectId"
+        :tabs="tabs"
+        :active-id="activeId"
+        :is-active="shouldPollSessionSnapshots && expanded"
+        :history-replay-enabled="
+          developerConfigStore.loaded && developerConfigState.enableTerminalScrollback
+        "
         :emitter="emitter"
         :send="send"
         :should-auto-focus="shouldAutoFocusTerminal"
@@ -430,7 +424,6 @@ import {
   onMounted,
   reactive,
   ref,
-  shallowRef,
   toRef,
   watch,
 } from 'vue';
@@ -463,7 +456,9 @@ import {
   SparklesOutline,
   AlbumsOutline,
 } from '@vicons/ionicons5';
-import TerminalViewport from './TerminalViewport.vue';
+import TerminalViewportPool from './TerminalViewportPool.vue';
+import { resolveTerminalTabMove } from './terminalTabOrder';
+import VirtualSessionTabs from '@/components/web-session/VirtualSessionTabs.vue';
 import AISessionHistoryDialog from './AISessionHistoryDialog.vue';
 import {
   useTerminalClient,
@@ -487,7 +482,6 @@ import {
   TERMINAL_SNAPSHOT_INTERVAL_OPTIONS,
   formatTerminalSnapshotInterval,
 } from '@/constants/terminalRenderMode';
-import Sortable, { type SortableEvent } from 'sortablejs';
 import { useLocale } from '@/composables/useLocale';
 import type {
   EditorPreference,
@@ -497,10 +491,6 @@ import type {
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
 import { buildWebSessionClearedWorkspaceRouteQuery } from '@/utils/webSessionRoute';
-import {
-  calculateCardTabIndicatorStyle,
-  hiddenCardTabIndicatorStyle,
-} from '@/utils/cardTabIndicator';
 import { getErrorMessage } from '@/utils/errorHandler';
 
 const props = defineProps<{
@@ -948,11 +938,6 @@ const createTerminalOptionsWithHeader = computed<DropdownOption[]>(() => {
 });
 
 const DUPLICATE_SUFFIX = computed(() => t('terminal.duplicateSuffix'));
-const MAX_TAB_TITLE_WIDTH = 160;
-const TAB_LABEL_EXTRA_SPACE = 40;
-const TABS_CONTAINER_STATIC_OFFSET = 320;
-const TABS_CONTAINER_MIN_OFFSET = 200;
-const SHARED_WIDTH_HIDE_THRESHOLD = 1000;
 
 const {
   tabs,
@@ -1004,34 +989,9 @@ const defaultEditorLabel = computed(
   () => EDITOR_LABEL_MAP[defaultEditorPreference.value] ?? t('worktree.editor')
 );
 
-// Tabs 主题覆盖 - 用于控制标签背景色
-const tabsThemeOverrides = computed(() => {
-  const theme = activeTheme.value;
-  const tabBg = theme.terminalTabBg || theme.bodyColor;
-  const tabActiveBg = theme.terminalTabActiveBg || theme.surfaceColor;
-
-  return {
-    tabColor: tabBg,
-    tabColorSegment: tabActiveBg,
-  };
-});
-
 const terminalLimit = computed(() => Math.max(maxTerminalsPerProject.value || 1, 1));
 const isTerminalLimitReached = computed(() => tabs.value.length >= terminalLimit.value);
-
-const tabsContainerRef = ref<HTMLElement | null>(null);
-const tabsContainerWidth = ref(0);
-const tabTitleMaxWidth = ref(MAX_TAB_TITLE_WIDTH);
-const hideStatusDots = ref(false);
-const tabTitleStyle = computed(() => ({
-  maxWidth: `${tabTitleMaxWidth.value}px`,
-}));
-const tabDragSortable = shallowRef<Sortable | null>(null);
-const refreshTabSortable = useDebounceFn(() => {
-  nextTick(() => {
-    setupTabSorting();
-  });
-}, 100);
+const virtualTabsRef = ref<{ scrollToActive: () => void } | null>(null);
 
 const worktreeBranchMap = computed(() => {
   const map = new Map<string, string>();
@@ -1146,14 +1106,12 @@ function resolveDisplayTab(tab: TerminalTabState): TerminalTabState {
   };
 }
 
-const displayTabs = computed(() => tabs.value.map(resolveDisplayTab));
-
 const visibleTabs = computed<CombinedTab[]>(() => {
   let realTabs: TerminalTabState[];
   if (branchFilter.value === 'all') {
-    realTabs = displayTabs.value;
+    realTabs = tabs.value;
   } else {
-    realTabs = displayTabs.value.filter(tab => tab.worktreeId === branchFilter.value);
+    realTabs = tabs.value.filter(tab => tab.worktreeId === branchFilter.value);
   }
   // 将空标签和真实标签合并，空标签放在最后
   return [...realTabs, ...emptyTabs.value];
@@ -1162,7 +1120,7 @@ const visibleTabs = computed<CombinedTab[]>(() => {
 // 移动端下拉选择终端的选项
 const mobileTabOptions = computed<DropdownOption[]>(() => {
   return visibleTabs.value.map(tab => ({
-    label: tab.title,
+    label: isEmptyTabItem(tab) ? tab.title : resolveDisplayTab(tab).title,
     key: tab.id,
   }));
 });
@@ -1170,7 +1128,10 @@ const mobileTabOptions = computed<DropdownOption[]>(() => {
 // 当前激活的终端标题
 const activeTabTitle = computed(() => {
   const tab = visibleTabs.value.find(t => t.id === activeId.value);
-  return tab?.title || t('terminal.emptyGuideTitle');
+  return (
+    (tab && (isEmptyTabItem(tab) ? tab.title : resolveDisplayTab(tab).title)) ||
+    t('terminal.emptyGuideTitle')
+  );
 });
 
 // 移动端下拉选中处理
@@ -1222,18 +1183,6 @@ function handleBranchFilterSelect(value: string) {
   saveCurrentBranchFilter(props.projectId, value);
 }
 
-// 激活标签指示器的位置和宽度
-const activeTabIndicatorStyle = ref(hiddenCardTabIndicatorStyle());
-
-// 更新激活标签指示器的位置
-function updateActiveTabIndicator() {
-  nextTick(() => {
-    activeTabIndicatorStyle.value = activeId.value
-      ? calculateCardTabIndicatorStyle(tabsContainerRef.value)
-      : hiddenCardTabIndicatorStyle();
-  });
-}
-
 // 本地激活的空终端 ID
 const localActiveEmptyTabId = ref<string>('');
 
@@ -1271,9 +1220,10 @@ function resolveEditorPath(tab: TerminalTabState | null | undefined): string {
   return tab.workingDir?.trim() ?? '';
 }
 
-const activeTerminalTab = computed(
-  () => displayTabs.value.find(tab => tab.id === activeId.value) ?? null
-);
+const activeTerminalTab = computed(() => {
+  const tab = tabs.value.find(tab => tab.id === activeId.value);
+  return tab ? resolveDisplayTab(tab) : null;
+});
 const activeEditorPath = computed(() => resolveEditorPath(activeTerminalTab.value));
 const canOpenEditor = computed(() => Boolean(activeEditorPath.value));
 
@@ -1308,53 +1258,9 @@ function ensureActiveTabMatchesFilter() {
   }
 }
 
-function recalcTabTitleWidth(explicitWidth?: number) {
-  if (typeof explicitWidth === 'number') {
-    tabsContainerWidth.value = explicitWidth;
-  }
-  const containerWidth =
-    typeof explicitWidth === 'number' ? explicitWidth : tabsContainerWidth.value;
-  if (!containerWidth) {
-    tabTitleMaxWidth.value = MAX_TAB_TITLE_WIDTH;
-    return;
-  }
-  const tabCount = Math.max(visibleTabs.value.length, 1);
-  let activeOffset = TABS_CONTAINER_STATIC_OFFSET;
-  if (containerWidth - activeOffset < SHARED_WIDTH_HIDE_THRESHOLD) {
-    activeOffset = TABS_CONTAINER_MIN_OFFSET;
-  }
-  const availableWidth = Math.max(containerWidth - activeOffset, 0);
-  hideStatusDots.value = availableWidth < SHARED_WIDTH_HIDE_THRESHOLD;
-  const rawWidth = availableWidth / tabCount - TAB_LABEL_EXTRA_SPACE;
-  const constrainedWidth = Math.min(MAX_TAB_TITLE_WIDTH, Math.max(0, rawWidth));
-  tabTitleMaxWidth.value = Math.round(constrainedWidth);
-}
-
-useResizeObserver(tabsContainerRef, entries => {
-  const entry = entries[0];
-  if (!entry) {
-    return;
-  }
-  const width = entry.contentRect.width;
-  if (width !== tabsContainerWidth.value) {
-    recalcTabTitleWidth(width);
-    updateActiveTabIndicator();
-  }
-});
-
+// Only membership and branch changes can invalidate the selected tab.
 watch(
-  () => visibleTabs.value.length,
-  () => {
-    nextTick(() => {
-      recalcTabTitleWidth();
-      updateActiveTabIndicator();
-    });
-    refreshTabSortable();
-  }
-);
-
-watch(
-  tabs,
+  () => tabs.value.map(tab => [tab.id, tab.worktreeId]),
   () => {
     if (!tabs.value.length) {
       lastActiveBeforeFilter.value = '';
@@ -1365,38 +1271,6 @@ watch(
     } else {
       ensureActiveTabMatchesFilter();
     }
-    nextTick(() => {
-      updateActiveTabIndicator();
-    });
-  },
-  { deep: true }
-);
-
-watch(
-  () => expanded.value,
-  value => {
-    if (value) {
-      nextTick(() => {
-        recalcTabTitleWidth();
-        updateActiveTabIndicator();
-      });
-      refreshTabSortable();
-    } else {
-      destroyTabSorting();
-    }
-  }
-);
-
-watch(
-  () => tabsContainerRef.value,
-  element => {
-    if (element) {
-      refreshTabSortable();
-      setupTabScrollListener();
-    } else {
-      destroyTabSorting();
-      cleanupTabScrollListener();
-    }
   }
 );
 
@@ -1405,11 +1279,6 @@ watch(branchFilter, (next, prev) => {
     lastActiveBeforeFilter.value = activeId.value;
   }
   ensureActiveTabMatchesFilter();
-  nextTick(() => {
-    recalcTabTitleWidth();
-    updateActiveTabIndicator();
-  });
-  refreshTabSortable();
 });
 
 // 项目切换时恢复对应的分支过滤器设置
@@ -1443,43 +1312,11 @@ watch(
   }
 );
 
-nextTick(() => {
-  recalcTabTitleWidth();
-});
-
-// 监听标签滚动以更新指示器位置
-let tabScrollContainer: HTMLElement | null = null;
-
-function setupTabScrollListener() {
-  nextTick(() => {
-    const container = tabsContainerRef.value;
-    if (!container) return;
-    // NaiveUI 使用 .v-x-scroll 作为滚动容器
-    const scrollContainer = container.querySelector('.v-x-scroll') as HTMLElement | null;
-    if (scrollContainer) {
-      tabScrollContainer = scrollContainer;
-      scrollContainer.addEventListener('scroll', updateActiveTabIndicator);
-    }
-  });
-}
-
-function cleanupTabScrollListener() {
-  if (tabScrollContainer) {
-    tabScrollContainer.removeEventListener('scroll', updateActiveTabIndicator);
-    tabScrollContainer = null;
-  }
-}
-
 onMounted(() => {
-  refreshTabSortable();
-  updateActiveTabIndicator();
-  setupTabScrollListener();
   void ensureDeveloperConfigLoaded();
 });
 
 onBeforeUnmount(() => {
-  destroyTabSorting();
-  cleanupTabScrollListener();
   sessionSnapshotStore.releaseScope(terminalSessionSnapshotScopeId);
 });
 
@@ -1523,67 +1360,18 @@ if (typeof window !== 'undefined') {
   }
 }
 
-function setupTabSorting() {
-  const container = tabsContainerRef.value;
-  if (!container || visibleTabs.value.length <= 1) {
-    destroyTabSorting();
-    return;
-  }
-  const wrapper = container.querySelector('.n-tabs-wrapper') as HTMLElement | null;
-  if (!wrapper) {
-    destroyTabSorting();
-    return;
-  }
-  if (tabDragSortable.value) {
-    if (tabDragSortable.value.el === wrapper) {
-      tabDragSortable.value.option('disabled', visibleTabs.value.length <= 1);
-      return;
-    }
-    destroyTabSorting();
-  }
-  tabDragSortable.value = Sortable.create(wrapper, {
-    animation: 150,
-    direction: 'horizontal',
-    draggable: '.n-tabs-tab-wrapper',
-    handle: '.n-tabs-tab',
-    filter: '.n-tabs-tab__close',
-    preventOnFilter: false,
-    ghostClass: 'terminal-tab-ghost',
-    chosenClass: 'terminal-tab-chosen',
-    dragClass: 'terminal-tab-dragging',
-    onEnd: handleTabDragEnd,
-  });
-  tabDragSortable.value.option('disabled', visibleTabs.value.length <= 1);
-}
-
-function destroyTabSorting() {
-  if (tabDragSortable.value) {
-    tabDragSortable.value.destroy();
-    tabDragSortable.value = null;
-  }
-}
-
-function handleTabDragEnd(event: SortableEvent) {
-  const fromIndex = event.oldDraggableIndex ?? event.oldIndex ?? -1;
-  const toIndex = event.newDraggableIndex ?? event.newIndex ?? -1;
-  if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
-    return;
-  }
-  const visible = visibleTabs.value;
-  const fromTab = visible[fromIndex];
-  const toTab = visible[toIndex];
-  if (!fromTab || !toTab) {
-    return;
-  }
-  const absoluteFromIndex = tabs.value.findIndex(tab => tab.id === fromTab.id);
-  const absoluteToIndex = tabs.value.findIndex(tab => tab.id === toTab.id);
-  if (absoluteFromIndex === -1 || absoluteToIndex === -1) {
-    return;
-  }
-  reorderTabsInStore(absoluteFromIndex, absoluteToIndex);
+function handleTabDragEnd(event: { oldIndex: number; newIndex: number }) {
+  const move = resolveTerminalTabMove(
+    tabs.value,
+    visibleTabs.value,
+    event.oldIndex,
+    event.newIndex
+  );
+  if (!move) return;
+  reorderTabsInStore(move.fromIndex, move.toIndex);
   nextTick(() => {
     scheduleResizeAll();
-    updateActiveTabIndicator();
+    virtualTabsRef.value?.scrollToActive();
   });
 }
 
@@ -1640,8 +1428,7 @@ watch(
       return;
     }
 
-    // Update active tab indicator
-    updateActiveTabIndicator();
+    virtualTabsRef.value?.scrollToActive();
 
     // 通知终端已激活（用于首次访问时滚动到底部）
     nextTick(() => {
@@ -2809,21 +2596,6 @@ defineExpose({
   width: 100%;
 }
 
-/* 激活标签指示器 */
-.active-tab-indicator {
-  position: absolute;
-  bottom: 8px;
-  left: 0;
-  height: 2px;
-  background-color: var(--app-accent, var(--n-primary-color));
-  border-radius: 1px;
-  transition:
-    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.3s ease;
-  z-index: 2;
-}
-
 .tabs-container :deep(.n-tabs-tab) {
   cursor: grab;
   user-select: none;
@@ -2913,6 +2685,9 @@ defineExpose({
 }
 
 .tab-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2920,6 +2695,8 @@ defineExpose({
 }
 
 .tab-title {
+  flex: 1;
+  min-width: 0;
   display: inline-block;
   max-width: min(160px, 20vw);
   white-space: nowrap;
@@ -2992,18 +2769,6 @@ defineExpose({
     var(--app-error, var(--n-color-error, #f04438))
   );
   box-shadow: 0 0 0 1px rgba(240, 68, 56, 0.25);
-}
-
-:global(.terminal-tab-ghost) {
-  opacity: 0.4;
-}
-
-:global(.terminal-tab-chosen .n-tabs-tab) {
-  box-shadow: 0 0 0 1px var(--app-focus-ring, var(--n-color-primary));
-}
-
-:global(.terminal-tab-dragging .n-tabs-tab) {
-  cursor: grabbing !important;
 }
 
 /* 折叠/展开按钮样式 */

@@ -407,66 +407,56 @@
               </button>
             </div>
 
-            <div v-else-if="sessions.length > 0" ref="tabsContainerRef" class="tabs-container">
-              <n-tabs
-                :value="activeTabSessionId"
-                type="card"
-                closable
-                size="small"
-                :theme-overrides="tabsThemeOverrides"
-                @update:value="handleSessionSelect"
-                @close="handleArchiveSession"
-              >
-                <n-tab-pane
-                  v-for="session in sessions"
-                  :key="session.id"
-                  :name="session.id"
-                  display-directive="show:lazy"
-                  :tab-props="createTabProps(session)"
-                >
-                  <template #tab>
-                    <span class="tab-label" :title="session.title">
-                      <n-icon
-                        v-if="shouldShowSessionWorkflowPlanBadge(session)"
-                        class="tab-workflow-plan-flag"
-                        :class="{ 'is-scheduled': hasScheduledPlanExecution(session) }"
-                        size="12"
-                        aria-hidden="true"
-                      >
-                        <FlagIcon />
-                      </n-icon>
-                      <span
-                        v-if="shouldShowSessionStatusDot(session)"
-                        class="status-dot"
-                        :class="getSessionStatusDotClass(session)"
-                      ></span>
-                      <span class="tab-title" :style="tabTitleStyle">{{ session.title }}</span>
-                      <span
-                        v-if="isSessionArchiving(session.id)"
-                        class="tab-action-spinner"
-                        aria-hidden="true"
-                      ></span>
-                      <span
-                        class="ai-status-pill"
-                        :class="[
-                          `state-${getSessionPillStateClass(session)}`,
-                          getSessionPillSizeClass(),
-                        ]"
-                        :title="getSessionStatusTooltip(session)"
-                      >
-                        <span
-                          class="ai-status-icon"
-                          v-html="getSessionAssistantIcon(session)"
-                        ></span>
-                        <span class="ai-status-text">{{ getSessionStatusLabel(session) }}</span>
-                        <span class="ai-status-emoji">{{ getSessionStatusEmoji(session) }}</span>
-                      </span>
-                    </span>
-                  </template>
-                </n-tab-pane>
-              </n-tabs>
-              <div class="active-tab-indicator" :style="activeTabIndicatorStyle"></div>
-            </div>
+            <VirtualSessionTabs
+              v-else-if="sessions.length > 0"
+              ref="virtualTabsRef"
+              class="tabs-container"
+              :items="sessions"
+              :active-id="activeTabSessionId"
+              :close-label="t('common.close')"
+              :tab-props="createTabProps"
+              :is-locked="isArchivedPreviewSession"
+              @select="handleSessionSelect"
+              @close="handleArchiveSession"
+              @reorder="handleTabDragEnd"
+            >
+              <template #default="{ item: session }">
+                <span class="tab-label" :title="session.title">
+                  <n-icon
+                    v-if="shouldShowSessionWorkflowPlanBadge(session)"
+                    class="tab-workflow-plan-flag"
+                    :class="{ 'is-scheduled': hasScheduledPlanExecution(session) }"
+                    size="12"
+                    aria-hidden="true"
+                  >
+                    <FlagIcon />
+                  </n-icon>
+                  <span
+                    v-if="shouldShowSessionStatusDot(session)"
+                    class="status-dot"
+                    :class="getSessionStatusDotClass(session)"
+                  ></span>
+                  <span class="tab-title">{{ session.title }}</span>
+                  <span
+                    v-if="isSessionArchiving(session.id)"
+                    class="tab-action-spinner"
+                    aria-hidden="true"
+                  ></span>
+                  <span
+                    class="ai-status-pill"
+                    :class="[
+                      `state-${getSessionPillStateClass(session)}`,
+                      getSessionPillSizeClass(),
+                    ]"
+                    :title="getSessionStatusTooltip(session)"
+                  >
+                    <span class="ai-status-icon" v-html="getSessionAssistantIcon(session)"></span>
+                    <span class="ai-status-text">{{ getSessionStatusLabel(session) }}</span>
+                    <span class="ai-status-emoji">{{ getSessionStatusEmoji(session) }}</span>
+                  </span>
+                </span>
+              </template>
+            </VirtualSessionTabs>
 
             <div v-else-if="!archivedPreviewSession" class="empty-tabs-label">
               {{ emptyStateTitle }}
@@ -3634,6 +3624,7 @@ import WebSessionContextWindowSelect from './WebSessionContextWindowSelect.vue';
 import { contextWindowPending } from './webSessionContextWindow';
 import {
   type Component,
+  type ComputedRef,
   type CSSProperties,
   type VNode,
   computed,
@@ -3699,7 +3690,7 @@ import {
   TrashOutline,
   WarningOutline,
 } from '@vicons/ionicons5';
-import Sortable, { type SortableEvent } from 'sortablejs';
+import VirtualSessionTabs from './VirtualSessionTabs.vue';
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
 import { useMobileKeyboard } from '@/composables/useMobileKeyboard';
@@ -3733,11 +3724,6 @@ import type {
   WebSessionReasoningEffort,
   WebSessionSummary,
 } from '@/types/models';
-import {
-  calculateCardTabIndicatorStyle,
-  ensureActiveCardTabVisible,
-  hiddenCardTabIndicatorStyle,
-} from '@/utils/cardTabIndicator';
 import {
   isWebSessionActivityDisplayToolKind,
   resolveWebSessionActivityDisplayMode,
@@ -4083,11 +4069,6 @@ import {
 } from '@/utils/webSessionRoute';
 import { selectMostRecentWebSession } from '@/utils/webSessionRecency';
 
-const MAX_TAB_TITLE_WIDTH = 160;
-const TAB_LABEL_EXTRA_SPACE = 40;
-const TABS_CONTAINER_STATIC_OFFSET = 220;
-const TABS_CONTAINER_MIN_OFFSET = 140;
-const SHARED_WIDTH_HIDE_THRESHOLD = 860;
 const WEB_SESSION_CATCH_UP_DEBOUNCE_MS = 150;
 const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
 const WEB_SESSION_TIMELINE_POSITION_DEBOUNCE_MS = 180;
@@ -4345,7 +4326,7 @@ const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query
 const routeWorkspaceTab = computed(() => inferWorkspaceRouteTab(route.query));
 const webSessionDevMode = computed(() => isWebSessionDevMode(route.query));
 
-const tabsContainerRef = ref<HTMLElement | null>(null);
+const virtualTabsRef = ref<{ scrollToActive: () => void } | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const timelineListRef = ref<HTMLDivElement | null>(null);
 const pendingUserInputCardRef = ref<HTMLDivElement | null>(null);
@@ -4448,9 +4429,6 @@ const scheduledExitPlanMode = ref(false);
 const scheduledScheduleKind = ref<ScheduledScheduleKind>('at_time');
 const scheduledSendPresetOptions = ref<ScheduledSendPresetOption[]>([]);
 const scheduledSendSubmitting = ref(false);
-const activeTabIndicatorStyle = ref(hiddenCardTabIndicatorStyle());
-const tabsContainerWidth = ref(0);
-const tabTitleMaxWidth = ref(MAX_TAB_TITLE_WIDTH);
 const isComposerDragOver = ref(false);
 const isMobileComposerCollapsed = useStorage(MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY, false);
 const isMobileComposerSettingsExpanded = ref(false);
@@ -4536,7 +4514,6 @@ const pendingHistoryAnchor = ref<{
   previousHeight: number;
   previousTop: number;
 } | null>(null);
-const tabDragSortable = shallowRef<Sortable | null>(null);
 const timelinePositionStorage = resolveTimelinePositionStorage();
 let timelinePositionState = loadWebSessionTimelinePositionState(timelinePositionStorage);
 let timelinePositionRestoreGeneration = 0;
@@ -4620,13 +4597,9 @@ const activeArchivedPreviewId = ref('');
 const archivedPreviewSession = ref<ArchivedPreviewSessionTab | null>(null);
 const tabOrderIds = ref<string[]>([]);
 const tabMruIds = ref<string[]>([]);
+const sessionDisplayStates = new WeakMap<SessionTab, ComputedRef<WebSessionDisplayState>>();
 
-const realSessions = computed<SessionTab[]>(() =>
-  webSessionStore.getSessions(props.projectId).map(session => ({
-    ...session,
-    isDraft: false as const,
-  }))
-);
+const realSessions = computed<SessionTab[]>(() => webSessionStore.getSessions(props.projectId));
 const nonArchivedVisibleSessions = computed<SessionTab[]>(() => [
   ...realSessions.value,
   ...draftSessions.value,
@@ -9680,15 +9653,6 @@ async function handlePiTreeCreated(event: {
   }
 }
 
-const tabsThemeOverrides = computed(() => {
-  const theme = activeTheme.value;
-  const tabBg = theme.terminalTabBg || theme.bodyColor;
-  const tabActiveBg = theme.terminalTabActiveBg || theme.surfaceColor;
-  return {
-    tabColor: tabBg,
-    tabColorSegment: tabActiveBg,
-  };
-});
 const approvalColors = computed(() => {
   const theme = activeTheme.value;
   const isDarkTheme = isDarkHex(theme.bodyColor || '#ffffff');
@@ -9756,9 +9720,6 @@ const webSessionStyleVars = computed(
       '--web-session-plan-approval-glow': planApprovalColors.value.glow,
     }) as CSSProperties
 );
-const tabTitleStyle = computed(() => ({
-  maxWidth: `${tabTitleMaxWidth.value}px`,
-}));
 const timelineContentVersion = computed(() =>
   visibleBlocks.value
     .map(block => {
@@ -12851,29 +12812,8 @@ const selectedPermissionLevel = computed<'default' | 'elevated' | 'yolo'>({
   },
 });
 
-const refreshTabSortable = useDebounceFn(() => {
-  nextTick(() => {
-    setupTabSorting();
-  });
-}, 100);
-
-let tabScrollContainer: HTMLElement | null = null;
-
 function refreshTabHeaderLayout() {
-  if (isMobile.value) {
-    cleanupTabScrollListener();
-    destroyTabSorting();
-    activeTabIndicatorStyle.value = hiddenCardTabIndicatorStyle();
-    return;
-  }
-
-  nextTick(() => {
-    recalcTabTitleWidth();
-    setupTabScrollListener();
-    refreshTabSortable();
-    updateActiveTabIndicator();
-    syncActiveTabIntoView();
-  });
+  syncActiveTabIntoView();
 }
 
 function setWorkflowMode(mode: 'default' | 'plan') {
@@ -14272,7 +14212,7 @@ async function handleStartDraftSession(forceAgent?: WebSessionAgent) {
     expandedTools.value = {};
     autoFollowBottom.value = true;
     scrollToBottom(true);
-    updateActiveTabIndicator();
+
     syncActiveTabIntoView();
     focusComposer();
     if (decision.shouldNotifyExistingDraft) {
@@ -14293,7 +14233,7 @@ async function handleStartDraftSession(forceAgent?: WebSessionAgent) {
   expandedTools.value = {};
   autoFollowBottom.value = true;
   scrollToBottom(true);
-  updateActiveTabIndicator();
+
   syncActiveTabIntoView();
   focusComposer();
 }
@@ -17287,72 +17227,9 @@ function ensureTimelineHistoryFilled() {
   });
 }
 
-function recalcTabTitleWidth(explicitWidth?: number) {
-  if (typeof explicitWidth === 'number') {
-    tabsContainerWidth.value = explicitWidth;
-  }
-  const containerWidth =
-    typeof explicitWidth === 'number' ? explicitWidth : tabsContainerWidth.value;
-  if (!containerWidth) {
-    tabTitleMaxWidth.value = MAX_TAB_TITLE_WIDTH;
-    return;
-  }
-  const sessionCount = Math.max(sessions.value.length, 1);
-  let activeOffset = TABS_CONTAINER_STATIC_OFFSET;
-  if (containerWidth - activeOffset < SHARED_WIDTH_HIDE_THRESHOLD) {
-    activeOffset = TABS_CONTAINER_MIN_OFFSET;
-  }
-  const availableWidth = Math.max(containerWidth - activeOffset, 0);
-  const rawWidth = availableWidth / sessionCount - TAB_LABEL_EXTRA_SPACE;
-  tabTitleMaxWidth.value = Math.round(Math.min(MAX_TAB_TITLE_WIDTH, Math.max(56, rawWidth)));
-}
-
-function updateActiveTabIndicator() {
-  nextTick(() => {
-    activeTabIndicatorStyle.value =
-      !isMobile.value && activeTabSessionId.value
-        ? calculateCardTabIndicatorStyle(tabsContainerRef.value)
-        : hiddenCardTabIndicatorStyle();
-  });
-}
-
 function syncActiveTabIntoView() {
-  if (isMobile.value || !activeTabSessionId.value) {
-    return;
-  }
-
-  nextTick(() => {
-    if (isMobile.value || !activeTabSessionId.value) {
-      return;
-    }
-    if (ensureActiveCardTabVisible(tabsContainerRef.value)) {
-      updateActiveTabIndicator();
-    }
-  });
-}
-
-function setupTabScrollListener() {
-  cleanupTabScrollListener();
-  nextTick(() => {
-    if (isMobile.value) {
-      return;
-    }
-    const container = tabsContainerRef.value;
-    if (!container) {
-      return;
-    }
-    const scrollContainer = container.querySelector('.v-x-scroll') as HTMLElement | null;
-    if (scrollContainer) {
-      tabScrollContainer = scrollContainer;
-      scrollContainer.addEventListener('scroll', updateActiveTabIndicator);
-    }
-  });
-}
-
-function cleanupTabScrollListener() {
-  if (tabScrollContainer) {
-    tabScrollContainer.removeEventListener('scroll', updateActiveTabIndicator);
-    tabScrollContainer = null;
+  if (!isMobile.value) {
+    nextTick(() => virtualTabsRef.value?.scrollToActive());
   }
 }
 
@@ -17382,6 +17259,7 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
     onContextmenu: (event: MouseEvent) => handleTabContextMenu(event, session),
   };
   const classes: string[] = [];
+  const tone = getSessionTabTone(session);
 
   if (isSessionArchiving(session.id)) {
     classes.push('is-archiving');
@@ -17390,21 +17268,21 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
     classes.push('is-tab-drag-locked');
   }
 
-  if (usesSessionPlanApprovalTone(session)) {
+  if (tone === 'plan_approval') {
     classes.push('has-unviewed-plan-approval');
     if (isActive && hideHeaderBorder) {
       props.style = {
         borderBottom: 'none',
       };
     }
-  } else if (usesSessionApprovalTone(session)) {
+  } else if (tone === 'approval') {
     classes.push('has-unviewed-approval');
     if (isActive && hideHeaderBorder) {
       props.style = {
         borderBottom: 'none',
       };
     }
-  } else if (usesSessionCompletionTone(session)) {
+  } else if (tone === 'completion') {
     classes.push('has-unviewed-completion');
     if (isActive && hideHeaderBorder) {
       props.style = {
@@ -17432,18 +17310,21 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
 }
 
 function getSessionDisplayState(session: SessionTab): WebSessionDisplayState {
-  return resolveWebSessionDisplayState({
-    isDraft: isDraftSession(session),
-    hasUnread: hasSessionUnread(session),
-    status: session.status,
-    syncState: session.syncState,
-    livePhase: isDraftSession(session) ? null : webSessionStore.getLiveState(session.id).phase,
-    assistantState: session.assistantState,
-  });
-}
-
-function getSessionLabelState(session: (typeof sessions.value)[number]) {
-  return getSessionDisplayState(session).assistantStateClass;
+  let state = sessionDisplayStates.get(session);
+  if (!state) {
+    state = computed(() =>
+      resolveWebSessionDisplayState({
+        isDraft: isDraftSession(session),
+        hasUnread: hasSessionUnread(session),
+        status: session.status,
+        syncState: session.syncState,
+        livePhase: isDraftSession(session) ? null : webSessionStore.getLiveState(session.id).phase,
+        assistantState: session.assistantState,
+      })
+    );
+    sessionDisplayStates.set(session, state);
+  }
+  return state.value;
 }
 
 function getSessionVisualInput(session: (typeof sessions.value)[number]) {
@@ -17611,14 +17492,7 @@ function buildSidebarSessionRow(
 }
 
 function getSessionPillSizeClass() {
-  const width = tabTitleMaxWidth.value;
-  if (width < 60) {
-    return 'pill-size-icon-only';
-  }
-  if (width < 90) {
-    return 'pill-size-icon-emoji';
-  }
-  return 'pill-size-full';
+  return 'pill-size-icon-emoji';
 }
 
 function shouldShowSessionStatusDot(session: (typeof sessions.value)[number]) {
@@ -17632,18 +17506,6 @@ function getSessionStatusDotClass(session: (typeof sessions.value)[number]) {
 function getSessionTabTone(session: (typeof sessions.value)[number]) {
   const visualInput = getSessionVisualInput(session);
   return visualInput ? getWebSessionTabTone(visualInput) : 'default';
-}
-
-function usesSessionApprovalTone(session: (typeof sessions.value)[number]) {
-  return getSessionTabTone(session) === 'approval';
-}
-
-function usesSessionPlanApprovalTone(session: (typeof sessions.value)[number]) {
-  return getSessionTabTone(session) === 'plan_approval';
-}
-
-function usesSessionCompletionTone(session: (typeof sessions.value)[number]) {
-  return getSessionTabTone(session) === 'completion';
 }
 
 function handleTabContextMenu(event: MouseEvent, session: (typeof sessions.value)[number]) {
@@ -17785,53 +17647,9 @@ function handleMobileTabSessionSelect(session: SessionTab) {
   void performMobileSessionSelection(session);
 }
 
-function setupTabSorting() {
-  if (isMobile.value) {
-    destroyTabSorting();
-    return;
-  }
-  const container = tabsContainerRef.value;
-  if (!container || sessions.value.length <= 1) {
-    destroyTabSorting();
-    return;
-  }
-  const wrapper = container.querySelector('.n-tabs-wrapper') as HTMLElement | null;
-  if (!wrapper) {
-    destroyTabSorting();
-    return;
-  }
-  if (tabDragSortable.value) {
-    if (tabDragSortable.value.el === wrapper) {
-      tabDragSortable.value.option('disabled', sessions.value.length <= 1);
-      return;
-    }
-    destroyTabSorting();
-  }
-  tabDragSortable.value = Sortable.create(wrapper, {
-    animation: 150,
-    direction: 'horizontal',
-    draggable: '.n-tabs-tab-wrapper',
-    handle: '.n-tabs-tab:not(.is-tab-drag-locked)',
-    filter: '.n-tabs-tab__close',
-    preventOnFilter: false,
-    ghostClass: 'web-session-tab-ghost',
-    chosenClass: 'web-session-tab-chosen',
-    dragClass: 'web-session-tab-dragging',
-    onEnd: handleTabDragEnd,
-  });
-  tabDragSortable.value.option('disabled', sessions.value.length <= 1);
-}
-
-function destroyTabSorting() {
-  if (tabDragSortable.value) {
-    tabDragSortable.value.destroy();
-    tabDragSortable.value = null;
-  }
-}
-
-function handleTabDragEnd(event: SortableEvent) {
-  const fromIndex = event.oldDraggableIndex ?? event.oldIndex ?? -1;
-  const toIndex = event.newDraggableIndex ?? event.newIndex ?? -1;
+function handleTabDragEnd(event: { oldIndex: number; newIndex: number }) {
+  const fromIndex = event.oldIndex;
+  const toIndex = event.newIndex;
   if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
     return;
   }
@@ -17850,14 +17668,12 @@ function handleTabDragEnd(event: SortableEvent) {
   if (isArchivedPreviewSession(movingSession)) {
     replaceTabNavigationState(previousOrderIds, previousMruIds);
     nextTick(() => {
-      updateActiveTabIndicator();
       syncActiveTabIntoView();
     });
     return;
   }
   if (isDraftSession(movingSession)) {
     nextTick(() => {
-      updateActiveTabIndicator();
       syncActiveTabIntoView();
     });
     return;
@@ -17875,7 +17691,6 @@ function handleTabDragEnd(event: SortableEvent) {
       message.error(error instanceof Error ? error.message : t('common.error'));
     });
   nextTick(() => {
-    updateActiveTabIndicator();
     syncActiveTabIntoView();
   });
 }
@@ -18279,7 +18094,7 @@ watch(
     }
     expandedTools.value = {};
     beginTimelinePositionRestore(projectId, sessionId);
-    updateActiveTabIndicator();
+
     syncActiveTabIntoView();
     if (!isDraftSession(session)) {
       markSessionViewed(session.id);
@@ -18432,47 +18247,11 @@ watch(
 );
 
 watch(
-  () =>
-    sessions.value
-      .map(
-        session =>
-          `${session.id}:${session.orderIndex}:${session.status}:${session.hasUnread}:${getSessionLabelState(session)}:${getSessionPillStateClass(session)}`
-      )
-      .join('|'),
-  () => {
-    nextTick(() => {
-      recalcTabTitleWidth();
-      updateActiveTabIndicator();
-      setupTabScrollListener();
-      syncActiveTabIntoView();
-      if (isMobile.value) {
-        destroyTabSorting();
-      } else {
-        refreshTabSortable();
-      }
-    });
-  },
-  { immediate: true }
-);
-
-watch(
   () => isMobile.value,
-  mobile => {
-    if (mobile) {
-      closeMobileSessionSelector();
-      cleanupTabScrollListener();
-      destroyTabSorting();
-      activeTabIndicatorStyle.value = hiddenCardTabIndicatorStyle();
-      return;
-    }
-    nextTick(() => {
-      setupTabScrollListener();
-      refreshTabSortable();
-      updateActiveTabIndicator();
-      syncActiveTabIntoView();
-    });
-  },
-  { immediate: true }
+  () => {
+    closeMobileSessionSelector();
+    syncActiveTabIntoView();
+  }
 );
 
 watch(timelineContentVersion, async () => {
@@ -18657,19 +18436,6 @@ watch(
   }
 );
 
-useResizeObserver(tabsContainerRef, entries => {
-  const entry = entries[0];
-  if (!entry) {
-    return;
-  }
-  const width = entry.contentRect.width;
-  if (width !== tabsContainerWidth.value) {
-    recalcTabTitleWidth(width);
-    updateActiveTabIndicator();
-    syncActiveTabIntoView();
-  }
-});
-
 onMounted(() => {
   liveStateClockTimer = window.setInterval(() => {
     liveStateClockMs.value = Date.now();
@@ -18690,9 +18456,6 @@ onMounted(() => {
     document.addEventListener('visibilitychange', handleWebSessionDocumentVisibilityChange);
   }
   nextTick(() => {
-    recalcTabTitleWidth();
-    setupTabScrollListener();
-    updateActiveTabIndicator();
     syncActiveTabIntoView();
     if (currentSession.value) {
       beginTimelinePositionRestore(props.projectId, currentSession.value.id);
@@ -18749,8 +18512,7 @@ onBeforeUnmount(() => {
   sendQuickActionLongPress.pointerCancel();
   stopWebSessionCatchUp('unmount');
   resetComposerDragState();
-  cleanupTabScrollListener();
-  destroyTabSorting();
+
   window.removeEventListener('focus', handleWebSessionWindowFocus);
   window.removeEventListener('pageshow', handleWebSessionWindowPageShow);
   window.removeEventListener('pagehide', handleTimelinePositionPageHide);

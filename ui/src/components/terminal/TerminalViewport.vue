@@ -57,6 +57,7 @@ const props = defineProps<{
   send: (sessionId: string, payload: TerminalClientPayload) => void;
   shouldAutoFocus?: boolean;
   isMobile?: boolean;
+  historyReplayEnabled?: boolean;
 }>();
 
 // 移动端使用较小的字体
@@ -421,8 +422,9 @@ function isRestoreBlockingRefresh() {
 }
 
 function enqueueTerminalTask(label: string, task: () => Promise<void> | void) {
+  const generation = streamGeneration;
   const run = terminalTaskQueue.then(async () => {
-    if (isDisposed || !terminal) {
+    if (isDisposed || !terminal || generation !== streamGeneration) {
       return;
     }
 
@@ -475,6 +477,7 @@ function flushDeferredViewportRefresh() {
 // 内存中记录已经访问过的终端（刷新后清空）
 // 用于检测刷新后首次切换到终端时滚动到底部
 const visitedTerminals = new Set<string>();
+let streamGeneration = 0;
 
 // 监听终端主题变化，动态更新终端主题
 watch(activeTerminalTheme, newTheme => {
@@ -493,6 +496,10 @@ watch(
       previousValue?.[2] === 'snapshot' ||
       (previousValue?.[2] == null &&
         (previousValue?.[0] === 'snapshot' || previousValue?.[1] === 'mirror'));
+    if (previousValue && nextIsSnapshot !== previousWasSnapshot) {
+      streamGeneration += 1;
+      clearPendingTerminalMessages();
+    }
     if (nextIsSnapshot) {
       return;
     }
@@ -507,7 +514,7 @@ watch(
     terminalCatchUpSnapshotAttempts = 0;
 
     if (previousWasSnapshot && terminal) {
-      terminal.reset();
+      void enqueueTerminalTask('switch-live-reset', () => terminal?.reset());
       scheduleInitialViewportRepair('switch-live');
     }
   },
@@ -624,21 +631,6 @@ function parseSnapshotCapturedAt(snapshot: TerminalRemoteSnapshot | null) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function shouldPreferFrontendSnapshot(
-  frontendSnapshot: TerminalSerializedSnapshot | null,
-  serverSnapshot: TerminalRemoteSnapshot | null
-) {
-  if (!frontendSnapshot) {
-    return false;
-  }
-  const serverCapturedAt = parseSnapshotCapturedAt(serverSnapshot);
-  if (!serverCapturedAt) {
-    return true;
-  }
-  // Keep a small tolerance for client/server clock skew.
-  return frontendSnapshot.updatedAt + 1000 >= serverCapturedAt;
-}
-
 async function restoreServerSnapshotIfAvailable() {
   if (!isSnapshotRenderMode() || !terminal || !pendingServerSnapshot) {
     return false;
@@ -695,16 +687,8 @@ async function restoreFrontendSnapshotIfAvailable() {
 }
 
 async function restorePreferredSnapshotIfAvailable(): Promise<TerminalRestoreSource> {
-  const useFrontendSnapshot = shouldPreferFrontendSnapshot(
-    pendingFrontendSnapshot,
-    pendingServerSnapshot
-  );
-
-  if (useFrontendSnapshot && (await restoreFrontendSnapshotIfAvailable())) {
-    pendingServerSnapshot = null;
-    return 'frontend';
-  }
-
+  // The store keeps the latest full server frame even while a renderer is evicted.
+  // A local serialization timestamp may be newer while its displayed content is older.
   if (await restoreServerSnapshotIfAvailable()) {
     pendingFrontendSnapshot = null;
     return 'server';
@@ -718,7 +702,13 @@ async function restorePreferredSnapshotIfAvailable(): Promise<TerminalRestoreSou
 }
 
 function persistFrontendSnapshot() {
-  if (!isSnapshotRenderMode() || !terminal || !serializeAddon) {
+  if (
+    !isSnapshotRenderMode() ||
+    !terminal ||
+    !serializeAddon ||
+    !initialViewportReady ||
+    initialRestorePromise
+  ) {
     return;
   }
 
@@ -813,10 +803,11 @@ async function flushPendingTerminalMessages(reason: string) {
 
   setRestorePhase('replaying', reason);
   const buffered = pendingTerminalMessages.splice(0, pendingTerminalMessages.length);
+  const generation = streamGeneration;
   updateLiveBufferedCount();
 
   for (const message of buffered) {
-    if (isDisposed || !terminal) {
+    if (isDisposed || !terminal || generation !== streamGeneration) {
       break;
     }
     await applyTerminalMessage(message, `${reason}-replay`);
@@ -1014,6 +1005,13 @@ function handleMessage(payload: ServerMessage) {
   }
 
   if (payload.type === 'ready') {
+    if (!isSnapshotRenderMode() && props.historyReplayEnabled) {
+      // A reconnect replays the full server history, including output already
+      // displayed by cached viewports. Reset once before consuming that replay.
+      streamGeneration += 1;
+      clearPendingTerminalMessages();
+      void enqueueTerminalTask('live-replay-reset', () => terminal?.reset());
+    }
     // The mount-time request can run before the websocket reaches OPEN. Retry
     // once the server confirms the connection so Unix terminals receive the
     // initial redraw/snapshot request reliably.
@@ -1732,6 +1730,7 @@ onMounted(() => {
 
   // Replay any buffered messages that were received while this component was unmounted
   // This ensures no data is lost when switching between projects
+  if (props.historyReplayEnabled) terminalStore.prepareViewport(props.tab.id);
   replayBufferedMessagesResult = terminalStore.replayBufferedMessages(props.tab.id);
   updateReplayDebugState(replayBufferedMessagesResult);
   logRestoreTrace('mount-replayed-buffered-messages', replayBufferedMessagesResult ?? {});

@@ -347,6 +347,8 @@
   align-items: center;
   gap: 6px;
   max-width: 100%;
+  flex: 1;
+  min-width: 0;
 }
 
 .tab-title {
@@ -355,6 +357,8 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
 
 .tab-action-spinner {

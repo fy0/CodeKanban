@@ -2269,6 +2269,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   >();
   const completedTransitionVersionBySession = new Map<string, number>();
   const currentSessionProjectById = new Map<string, string>();
+  const currentSessionsById = reactive(new Map<string, WebSessionSummary>());
   const runtimeProjectionCacheBySession = new Map<string, RuntimeProjectionCacheEntry>();
   const eventIndexBySession = new Map<string, Map<string, number>>();
   const emptySessionBlocks: WebSessionBlock[] = [];
@@ -2348,13 +2349,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
   function replaceProjectSessions(projectId: string, sessions: WebSessionSummary[]) {
     for (const session of sessions) tokenSpeedState.apply(session.id, session.tokenSpeed);
     const previous = sessionsByProject.value[projectId] ?? [];
+    const nextIds = new Set(sessions.map(session => session.id));
     previous.forEach(session => {
-      if (currentSessionProjectById.get(session.id) === projectId) {
+      if (currentSessionProjectById.get(session.id) === projectId && !nextIds.has(session.id)) {
         currentSessionProjectById.delete(session.id);
+        currentSessionsById.delete(session.id);
       }
     });
     sessions.forEach(session => {
       currentSessionProjectById.set(session.id, projectId);
+      currentSessionsById.set(session.id, session);
     });
     sessionsByProject.value = {
       ...sessionsByProject.value,
@@ -2415,30 +2419,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function getActiveSession(projectId: string) {
     const activeId = getActiveSessionId(projectId);
-    return getSessions(projectId).find(item => item.id === activeId) ?? null;
+    const session = currentSessionsById.get(activeId);
+    return session?.projectId === projectId ? session : null;
   }
 
   function findSessionById(sessionId: string) {
-    const indexedProjectId = currentSessionProjectById.get(sessionId);
-    if (indexedProjectId) {
-      const indexedSession = getSessions(indexedProjectId).find(item => item.id === sessionId);
-      if (indexedSession) {
-        return indexedSession;
-      }
-      currentSessionProjectById.delete(sessionId);
-    }
-    for (const [projectId, sessions] of Object.entries(sessionsByProject.value)) {
-      const matched = sessions.find(item => item.id === sessionId);
-      if (matched) {
-        currentSessionProjectById.set(sessionId, projectId);
-        return matched;
-      }
-    }
-    const archived = archivedSessionsById.value[sessionId];
-    if (archived) {
-      return archived;
-    }
-    return null;
+    return currentSessionsById.get(sessionId) ?? archivedSessionsById.value[sessionId] ?? null;
   }
 
   function getLatestEventSeq(sessionId: string) {
