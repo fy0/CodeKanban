@@ -1,4 +1,6 @@
 .question-card {
+  -webkit-user-select: text;
+  user-select: text;
   min-width: 0;
   padding: 16px 10px 10px;
   border: 1px solid color-mix(in srgb, var(--app-border-color, #d1d5db) 55%, transparent);
@@ -95,6 +97,10 @@ button:focus-visible {
 .question-card-option:hover:enabled,
 .question-card-custom:focus-within {
   background: var(--app-surface-sunken, #f3f3f3);
+}
+.question-card-option {
+  -webkit-user-select: text;
+  user-select: text;
 }
 .question-card-number {
   display: grid;

@@ -1,4 +1,6 @@
 .user-input-question {
+  -webkit-user-select: text;
+  user-select: text;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -55,6 +57,8 @@
 
 .user-input-option :deep(.n-radio),
 .user-input-option :deep(.n-checkbox) {
+  -webkit-user-select: text;
+  user-select: text;
   align-items: center;
   width: 100%;
   min-width: 0;
@@ -68,6 +72,8 @@
 
 .user-input-option :deep(.n-radio__label),
 .user-input-option :deep(.n-checkbox__label) {
+  -webkit-user-select: text;
+  user-select: text;
   display: flex;
   align-items: center;
   flex: 1;

@@ -76,6 +76,7 @@
           type="button"
           :aria-pressed="selections[currentQuestion.id]?.includes(option.label) ?? false"
           :disabled="disabled || submitting"
+          @click.capture="preventClickAfterTextSelection"
           @click="selectAnswer(currentQuestion.id, [option.label])"
         >
           <span class="question-card-number">{{ index + 1 }}</span>
@@ -135,6 +136,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { NInput } from 'naive-ui';
+import { preventClickAfterTextSelection } from '@/utils/textSelection';
 
 import { useWebSessionStore, type WebSessionBlock } from '@/stores/webSession';
 

@@ -26,12 +26,13 @@
           'is-selected': selection.includes(option.label),
           'is-disabled': disabled,
         }"
+        @click.capture="preventClickAfterTextSelection"
       >
         <n-checkbox :value="option.label">
           <span class="user-input-number" aria-hidden="true">{{
             selection.includes(option.label) ? '✓' : index + 1
           }}</span>
-          <span class="user-input-option-copy">
+          <span class="user-input-option-copy" @mousedown.stop>
             <span class="user-input-option-label">{{ option.label }}</span>
             <span v-if="option.description" class="user-input-option-description">{{
               option.description
@@ -55,10 +56,11 @@
           'is-selected': selection.includes(option.label),
           'is-disabled': disabled,
         }"
+        @click.capture="preventClickAfterTextSelection"
       >
         <n-radio :value="option.label">
           <span class="user-input-number" aria-hidden="true">{{ index + 1 }}</span>
-          <span class="user-input-option-copy">
+          <span class="user-input-option-copy" @mousedown.stop>
             <span class="user-input-option-label">{{ option.label }}</span>
             <span v-if="option.description" class="user-input-option-description">{{
               option.description
@@ -87,6 +89,7 @@
 
 <script setup lang="ts">
 import { NCheckbox, NCheckboxGroup, NInput, NRadio, NRadioGroup } from 'naive-ui';
+import { preventClickAfterTextSelection } from '@/utils/textSelection';
 
 import type { WebSessionUserInputQuestion } from '@/stores/webSession';
 
