@@ -289,7 +289,7 @@ defineExpose({ scrollToActive });
 }
 .virtual-tab-track {
   position: relative;
-  height: 36px;
+  height: 32px;
 }
 .virtual-tab-wrapper {
   position: absolute;
