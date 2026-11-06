@@ -35,6 +35,17 @@ function question(id: string, action?: string, sourceThreadId?: string): WebSess
   };
 }
 
+function userMessage(overrides: Partial<WebSessionBlock> = {}): WebSessionBlock {
+  return {
+    ...question('reply'),
+    kind: 'user',
+    itemType: 'user_message',
+    text: 'Continue with the suggested option',
+    detail: undefined,
+    ...overrides,
+  };
+}
+
 describe('pending async question navigation', () => {
   it('keeps unanswered questions in timeline order and removes submitted answers', () => {
     const first = question('first');
@@ -61,6 +72,41 @@ describe('pending async question navigation', () => {
         session
       )
     ).toEqual([]);
+  });
+
+  it('stops reminding about old questions after a normal reply and keeps new questions', () => {
+    const oldQuestion = question('old');
+    const newQuestion = question('new');
+    const blocks = [oldQuestion, userMessage(), newQuestion];
+
+    expect(getPendingWebSessionAsyncUserInputs(blocks, session)).toEqual([newQuestion]);
+    expect(oldQuestion.detail?.action).toBeUndefined();
+  });
+
+  it.each(['sending', 'failed'] as const)('keeps reminders when a reply is %s', deliveryState => {
+    const pending = question('pending');
+    expect(
+      getPendingWebSessionAsyncUserInputs([pending, userMessage({ deliveryState })], session)
+    ).toEqual([pending]);
+  });
+
+  it('stops reminding once an outgoing reply is accepted', () => {
+    expect(
+      getPendingWebSessionAsyncUserInputs(
+        [question('pending'), userMessage({ deliveryState: 'accepted' })],
+        session
+      )
+    ).toEqual([]);
+  });
+
+  it('keeps root reminders when a sub-agent receives a message', () => {
+    const pending = question('pending', undefined, session.nativeSessionId);
+    expect(
+      getPendingWebSessionAsyncUserInputs(
+        [pending, userMessage({ sourceThreadId: 'child-thread' })],
+        session
+      )
+    ).toEqual([pending]);
   });
 
   it.each([

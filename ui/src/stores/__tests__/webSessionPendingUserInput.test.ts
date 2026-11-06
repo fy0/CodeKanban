@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WebSessionSummary } from '@/types/models';
 import { useWebSessionStore } from '@/stores/webSession';
+import { getPendingWebSessionAsyncUserInputs } from '@/components/web-session/webSessionAsyncUserInput';
 
 const { listMock, syncMock, snapshotMock } = vi.hoisted(() => ({
   listMock: vi.fn(),
@@ -275,6 +276,54 @@ describe('webSession pending user input', () => {
     expect(store.getPendingApproval(session.id)).toBeNull();
     expect(store.getLiveState(session.id).running).toBe(true);
     expect(store.getLiveState(session.id).phase).not.toBe('waiting_input');
+  });
+
+  it('isolates async question reminders while switching between conversations', async () => {
+    const store = useWebSessionStore();
+    const withQuestion = makeSession({ assistantState: 'working' });
+    const withoutQuestion = makeSession({ id: 'session-2', nativeSessionId: 'native-2' });
+    const sessions = [withQuestion, withoutQuestion];
+    listMock.mockResolvedValue(sessions);
+    syncMock.mockImplementation(async (_projectId: string, sessionId: string) => ({
+      revision: '4',
+      session: { ...sessions.find(session => session.id === sessionId), revision: '4' },
+    }));
+    snapshotMock.mockImplementation(async (_projectId: string, sessionId: string) => ({
+      revision: '4',
+      session: { ...sessions.find(session => session.id === sessionId), revision: '4' },
+      history: {
+        items:
+          sessionId === withQuestion.id
+            ? [
+                {
+                  id: 'async-question',
+                  oi: 1,
+                  kd: 'assistant',
+                  tp: 'agent_message',
+                  sthid: withQuestion.nativeSessionId,
+                  dn: true,
+                  dt: {
+                    type: 'async_user_input_request',
+                    questions: [{ id: '0', question: 'Which deployment?', options: [] }],
+                  },
+                },
+              ]
+            : [],
+        hasMore: false,
+        total: sessionId === withQuestion.id ? 1 : 0,
+      },
+    }));
+    await store.loadSessions(withQuestion.projectId);
+    await store.syncSession(withQuestion.projectId, withQuestion.id);
+    await store.syncSession(withoutQuestion.projectId, withoutQuestion.id);
+
+    for (const session of [withQuestion, withoutQuestion, withQuestion]) {
+      store.setActiveSession(session.projectId, session.id);
+      const activeId = store.getActiveSessionId(session.projectId);
+      expect(
+        getPendingWebSessionAsyncUserInputs(store.getTimelineBlocks(activeId), session)
+      ).toHaveLength(session.id === withQuestion.id ? 1 : 0);
+    }
   });
 
   it('renders submitted user input answers from legacy payloads', async () => {
