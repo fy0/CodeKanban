@@ -10,7 +10,7 @@ import (
 type WebSessionItemTable struct {
 	model_base.StringPKBaseModel
 
-	WebSessionID   string  `gorm:"type:text;not null;index:idx_web_session_item_order,priority:1;index:idx_web_session_item_source,priority:1;index:idx_web_session_item_run,priority:1;index:idx_web_session_item_group,priority:1;index:idx_web_session_item_event,priority:1;index" json:"webSessionId"`
+	WebSessionID   string  `gorm:"type:text;not null;index:idx_web_session_item_order,priority:1;index:idx_web_session_item_source,priority:1;index:idx_web_session_item_run,priority:1;index:idx_web_session_item_group,priority:1;index:idx_web_session_item_event,priority:1;index:idx_web_session_item_search,priority:1;index" json:"webSessionId"`
 	WebTurnID      *string `gorm:"type:text;index" json:"webTurnId"`
 	SourceThreadID *string `gorm:"type:text;index:idx_web_session_item_source,priority:2;index:idx_web_session_item_group,priority:3;index" json:"sourceThreadId"`
 	SourceTurnID   *string `gorm:"type:text;index" json:"sourceTurnId"`
@@ -22,7 +22,7 @@ type WebSessionItemTable struct {
 	RunDurationMs  *int64  `gorm:"type:integer" json:"runDurationMs"`
 	RunOutcome     string  `gorm:"type:text" json:"runOutcome"`
 
-	ItemKind string `gorm:"type:text;not null;index" json:"itemKind"`
+	ItemKind string `gorm:"type:text;not null;index;index:idx_web_session_item_search,priority:2" json:"itemKind"`
 	ItemType string `gorm:"type:text;not null;index" json:"itemType"`
 	Role     string `gorm:"type:text" json:"role"`
 	Status   string `gorm:"type:text" json:"status"`
