@@ -95,6 +95,66 @@ try {
     await page.wait(menuVisible);
     await delay(250);
   }
+  async function verifySearchDismissal(
+    agent,
+    query,
+    { composing = false, blurOnly = false, lateCompositionEnd = false } = {},
+  ) {
+    await openMenu();
+    await page.click(searchInput);
+    if (composing) {
+      await page.evaluate(
+        `document.querySelector(${JSON.stringify(searchInput)}).dispatchEvent(new CompositionEvent('compositionstart', {bubbles:true}))`,
+      );
+    }
+    await page.command("Input.insertText", { text: query });
+    await page.command("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: 700,
+      y: 300,
+    });
+    await delay(450);
+    assert.equal(
+      await page.evaluate(`Boolean(${menuVisible})`),
+      true,
+      "The search must stay open while typing even if the pointer leaves",
+    );
+    if (blurOnly) {
+      // No outside click or new pointer-leave event to trigger another close.
+      await page.evaluate(
+        `document.querySelector(${JSON.stringify(searchInput)}).blur()`,
+      );
+    } else {
+      await page.click("[contenteditable=true]");
+    }
+    if (lateCompositionEnd) {
+      await page.evaluate(
+        `document.querySelector(${JSON.stringify(searchInput)}).dispatchEvent(new CompositionEvent('compositionend', {bubbles:true}))`,
+      );
+      await delay(50);
+    }
+    assert.equal(
+      await page.evaluate(
+        `document.activeElement === document.querySelector(${JSON.stringify(searchInput)})`,
+      ),
+      false,
+      "Ending composition after blur must not steal focus back to the search",
+    );
+    await page.wait(`!(${menuVisible})`, 2500);
+    await openMenu();
+    assert.equal(
+      await page.evaluate(
+        `document.querySelector(${JSON.stringify(searchInput)}).value`,
+      ),
+      "",
+      "Dismissal must clear the previous query before reopening",
+    );
+    await page.click("[contenteditable=true]");
+    await page.wait(`!(${menuVisible})`, 2500);
+    const name = `${agent}: ${composing ? "unfinished IME" : "search"} / ${blurOnly ? "blur without pointer movement" : "outside click"}${lateCompositionEnd ? " / delayed compositionend" : ""}`;
+    passed.push(name);
+    console.log("PASS", name);
+  }
   async function selectOption(
     agent,
     label,
@@ -112,21 +172,24 @@ try {
         `document.querySelector(${JSON.stringify(searchInput)}).dispatchEvent(new CompositionEvent('compositionstart', {bubbles:true}))`,
       );
     }
-    const point = await page.evaluate(`(() => {
+    const optionPoint = () => page.evaluate(`(() => {
       const option = [...document.querySelectorAll('.web-session-model-select-menu .n-base-select-option')].find(e =>
         e.innerText.replace(/[^a-z0-9]/gi, '').toLowerCase().includes(${JSON.stringify(normalize(label))}) &&
         (!${recent} || e.dataset.modelRecent === 'true')
       );
       if (!option) throw Error('Missing option: ' + ${JSON.stringify(label)});
-      option.scrollIntoView({block:'nearest'});
+      option.scrollIntoView({block:'nearest', behavior:'instant'});
       const r = option.getBoundingClientRect();
       return {x:r.x+40,y:r.y+r.height/2};
     })()`);
+    let point = await optionPoint();
     await page.command("Input.dispatchMouseEvent", {
       type: "mouseMoved",
       ...point,
     });
     await delay(150);
+    // Opening the catalog can still scroll to the current/recent model after hover.
+    point = await optionPoint();
     await page.command("Input.dispatchMouseEvent", {
       type: "mousePressed",
       button: "left",
@@ -273,6 +336,13 @@ try {
       await page.wait(`!(${menuVisible})`, 2500);
       passed.push(`${agent}: composition protection and Escape dismissal`);
       console.log("PASS", passed.at(-1));
+      await verifySearchDismissal(agent, labels[1], { blurOnly: true });
+      await verifySearchDismissal(agent, labels[1], { composing: true });
+      await verifySearchDismissal(agent, labels[1], {
+        composing: true,
+        blurOnly: true,
+        lateCompositionEnd: true,
+      });
     }
     await openMenu();
     await page.click("[contenteditable=true]");

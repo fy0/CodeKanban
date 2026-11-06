@@ -12032,8 +12032,10 @@ function handleModelSearchFocus() {
 }
 
 function handleModelSearchBlur() {
-  if (!modelSearchComposing.value) {
-    modelSearchFocused.value = false;
+  // Some IMEs never send compositionend after blur. Always release the close guard.
+  resetModelSearchInteraction();
+  if (showModelSelector.value && !modelMenuHovered.value) {
+    handleComposerSelectorPointerLeave('model');
   }
 }
 
@@ -12045,8 +12047,7 @@ function handleModelSearchCompositionStart() {
 
 function handleModelSearchCompositionEnd() {
   modelSearchComposing.value = false;
-  modelSearchFocused.value = true;
-  refocusModelSearch();
+  // A delayed compositionend must not pull focus back after the user has left.
 }
 
 function handleModelSearchEscape(event: KeyboardEvent) {
