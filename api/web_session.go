@@ -1003,18 +1003,21 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				Query           string   `json:"query"`
 				IncludeArchived bool     `json:"includeArchived"`
 				IncludeBody     *bool    `json:"includeBody,omitempty"`
+				MessagesOnly    *bool    `json:"messagesOnly,omitempty"`
 				Cursor          string   `json:"cursor,omitempty"`
 				ScanLimit       int      `json:"scanLimit,omitempty"`
 			}
 		},
 	) (*h.ItemResponse[websession.SessionSearchChunkResult], error) {
 		includeBody := input.Body.IncludeBody == nil || *input.Body.IncludeBody
+		messagesOnly := input.Body.MessagesOnly == nil || *input.Body.MessagesOnly
 		item, err := c.manager.SearchSessionsChunk(
 			ctx,
 			input.Body.ProjectIDs,
 			input.Body.Query,
 			input.Body.IncludeArchived,
 			includeBody,
+			messagesOnly,
 			input.Body.Cursor,
 			input.Body.ScanLimit,
 		)

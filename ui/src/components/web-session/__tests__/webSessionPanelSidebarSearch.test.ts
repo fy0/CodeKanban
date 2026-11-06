@@ -102,6 +102,7 @@ function createHarness(scope: WebSessionSidebarScope = 'all') {
     sidebarSearchQuery: ref(''),
     sidebarSearchArchived: ref(false),
     sidebarSearchBody: ref(true),
+    sidebarSearchMessagesOnly: ref(true),
     webSessionApi: { search },
   };
   const initialize = new Function(
@@ -190,7 +191,7 @@ describe('WebSessionPanel sidebar search across session switches', () => {
     expect(harness.sidebarSearchState.value).toBe(result);
   });
 
-  it.each(['query', 'body', 'archived', 'projects', 'current project'] as const)(
+  it.each(['query', 'body', 'messages only', 'archived', 'projects', 'current project'] as const)(
     'restarts for a changed %s and discards the old response',
     async change => {
       const harness = createHarness(change === 'current project' ? 'current' : 'all');
@@ -198,6 +199,7 @@ describe('WebSessionPanel sidebar search across session switches', () => {
       const previous = harness.requests[0]!;
       if (change === 'query') harness.sidebarSearchQuery.value = 'another address';
       if (change === 'body') harness.sidebarSearchBody.value = false;
+      if (change === 'messages only') harness.sidebarSearchMessagesOnly.value = false;
       if (change === 'archived') harness.sidebarSearchArchived.value = true;
       if (change === 'projects') harness.projectStore.projects.push({ id: 'project-4' });
       if (change === 'current project') harness.props.projectId = 'project-2';
@@ -206,6 +208,7 @@ describe('WebSessionPanel sidebar search across session switches', () => {
       await vi.advanceTimersByTimeAsync(300);
       expect(harness.search).toHaveBeenCalledTimes(2);
       expect(harness.requests[1]!.data.cursor).toBe('');
+      expect(harness.requests[1]!.data.messagesOnly).toBe(change !== 'messages only');
       if (change === 'current project') {
         expect(harness.requests[1]!.data.projectIds).toEqual(['project-2']);
       }

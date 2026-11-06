@@ -671,6 +671,8 @@ export default {
     sidebarSearchPlaceholder: '搜索会话标题或内容',
     sidebarSearchFilter: '搜索筛选',
     sidebarSearchBody: '搜索正文',
+    sidebarSearchMessagesOnly: '仅搜索用户和助手对话',
+    sidebarSearchMessagesOnlyHint: '跳过工具调用、思考和系统消息；取消勾选可恢复原来的正文搜索范围',
     sidebarSearchArchived: '搜索归档会话',
     sidebarSearchNoResults: '没有匹配的会话',
     sidebarSearchFailed: '会话搜索失败',

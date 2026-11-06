@@ -3513,6 +3513,7 @@
           :search-query="sidebarSearchQuery"
           :search-archived="sidebarSearchArchived"
           :search-body="sidebarSearchBody"
+          :search-messages-only="sidebarSearchMessagesOnly"
           :search-progress-visible="sidebarSearchProgressVisible"
           :search-progress-percentage="sidebarSearchProgressPercentage"
           :empty="sidebarIsEmpty"
@@ -3528,6 +3529,7 @@
           @update:search-query="sidebarSearchQuery = $event"
           @update:search-archived="sidebarSearchArchived = $event"
           @update:search-body="sidebarSearchBody = $event"
+          @update:search-messages-only="sidebarSearchMessagesOnly = $event"
           @toggle-group="toggleSessionGroup"
           @select-session="handleSidebarVirtualSessionSelect"
           @session-action="handleSidebarSessionActionSelect"
@@ -4084,6 +4086,7 @@ const TAB_VISIT_MRU_STORAGE_KEY = 'workspace-web-session-tab-visit-mru-v1';
 const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY = 'workspace-web-session-sidebar-search-archived';
 const SIDEBAR_SEARCH_BODY_STORAGE_KEY = 'workspace-web-session-sidebar-search-body';
+const SIDEBAR_SEARCH_MESSAGES_ONLY_STORAGE_KEY = 'workspace-web-session-sidebar-search-messages-only';
 const CYBER_POLICY_DISMISSALS_STORAGE_KEY = 'workspace-web-session-cyber-policy-dismissals';
 const SIDEBAR_SEARCH_SCAN_LIMIT = 50;
 const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
@@ -4543,6 +4546,7 @@ const persistedSidebarScope = useStorage<string>(SIDEBAR_SCOPE_STORAGE_KEY, 'all
 const sidebarSearchQuery = ref('');
 const sidebarSearchArchived = useStorage<boolean>(SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY, false);
 const sidebarSearchBody = useStorage<boolean>(SIDEBAR_SEARCH_BODY_STORAGE_KEY, true);
+const sidebarSearchMessagesOnly = useStorage<boolean>(SIDEBAR_SEARCH_MESSAGES_ONLY_STORAGE_KEY, true);
 const sidebarSearchState = ref<SidebarSearchState>(createSidebarSearchState());
 const activeSidebarTotal = ref(0);
 const activeSidebarKnownCount = ref(0);
@@ -11200,6 +11204,7 @@ async function loadSidebarSearch() {
   const scopeKey = sidebarSearchScopeKey.value;
   const includeArchived = sidebarSearchArchived.value;
   const includeBody = sidebarSearchBody.value;
+  const messagesOnly = sidebarSearchMessagesOnly.value;
   const requestVersion = ++sidebarSearchRequestVersion;
   const abortController = new AbortController();
   sidebarSearchAbortController = abortController;
@@ -11217,6 +11222,7 @@ async function loadSidebarSearch() {
           query,
           includeArchived,
           includeBody,
+          messagesOnly,
           cursor,
           scanLimit: SIDEBAR_SEARCH_SCAN_LIMIT,
         },
@@ -11227,7 +11233,8 @@ async function loadSidebarSearch() {
         query !== normalizedSidebarSearchQuery.value ||
         scopeKey !== sidebarSearchScopeKey.value ||
         includeArchived !== sidebarSearchArchived.value ||
-        includeBody !== sidebarSearchBody.value
+        includeBody !== sidebarSearchBody.value ||
+        messagesOnly !== sidebarSearchMessagesOnly.value
       ) {
         return;
       }
@@ -18032,7 +18039,13 @@ watch(
 );
 
 watch(
-  [normalizedSidebarSearchQuery, sidebarSearchArchived, sidebarSearchBody, sidebarSearchScopeKey],
+  [
+    normalizedSidebarSearchQuery,
+    sidebarSearchArchived,
+    sidebarSearchBody,
+    sidebarSearchMessagesOnly,
+    sidebarSearchScopeKey,
+  ],
   () => {
     const searchActive = normalizedSidebarSearchQuery.value.length > 0;
     clearSidebarSearchState(searchActive);

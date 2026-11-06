@@ -1464,6 +1464,7 @@ export class CodeKanbanClient {
     query,
     includeArchived = false,
     includeBody = true,
+    messagesOnly = true,
     cursor = "",
     scanLimit = 50,
   }) {
@@ -1474,6 +1475,7 @@ export class CodeKanbanClient {
         query: ensureString(query, "query"),
         includeArchived: includeArchived === true,
         includeBody: includeBody !== false,
+        messagesOnly: messagesOnly !== false,
         cursor: typeof cursor === "string" ? cursor : "",
         scanLimit: Number.isFinite(scanLimit)
           ? Math.max(1, Math.min(100, Math.trunc(scanLimit)))

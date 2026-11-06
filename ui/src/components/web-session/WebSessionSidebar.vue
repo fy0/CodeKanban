@@ -73,10 +73,10 @@
               secondary
               size="small"
               class="session-sidebar-filter-button"
-              :class="{ 'is-active': searchArchived || !searchBody }"
+              :class="{ 'is-active': searchArchived || !searchBody || !searchMessagesOnly }"
               :title="t('webSession.sidebarSearchFilter')"
               :aria-label="t('webSession.sidebarSearchFilter')"
-              :aria-pressed="searchArchived || !searchBody"
+              :aria-pressed="searchArchived || !searchBody || !searchMessagesOnly"
             >
               <template #icon>
                 <n-icon size="16"><FunnelOutline /></n-icon>
@@ -86,6 +86,14 @@
           <div class="session-sidebar-filter-popover">
             <n-checkbox :checked="searchBody" @update:checked="emit('update:search-body', $event)">
               {{ t('webSession.sidebarSearchBody') }}
+            </n-checkbox>
+            <n-checkbox
+              :checked="searchMessagesOnly"
+              :disabled="!searchBody"
+              :title="t('webSession.sidebarSearchMessagesOnlyHint')"
+              @update:checked="emit('update:search-messages-only', $event)"
+            >
+              {{ t('webSession.sidebarSearchMessagesOnly') }}
             </n-checkbox>
             <n-checkbox
               :checked="searchArchived"
@@ -213,6 +221,7 @@ defineProps<{
   searchQuery: string;
   searchArchived: boolean;
   searchBody: boolean;
+  searchMessagesOnly: boolean;
   searchProgressVisible: boolean;
   searchProgressPercentage: number;
   empty: boolean;
@@ -231,6 +240,7 @@ const emit = defineEmits<{
   (event: 'update:search-query', query: string): void;
   (event: 'update:search-archived', archived: boolean): void;
   (event: 'update:search-body', includeBody: boolean): void;
+  (event: 'update:search-messages-only', messagesOnly: boolean): void;
   (event: 'toggle-group', groupKey: string): void;
   (event: 'select-session', item: WebSessionSidebarVirtualItem<CrossProjectSessionItem>): void;
   (event: 'session-action', key: string | number, item: CrossProjectSessionItem): void;

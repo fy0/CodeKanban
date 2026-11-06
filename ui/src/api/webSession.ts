@@ -1030,6 +1030,7 @@ export const webSessionApi = {
       query: string;
       includeArchived?: boolean;
       includeBody?: boolean;
+      messagesOnly?: boolean;
       cursor?: string;
       scanLimit?: number;
     },
@@ -1040,6 +1041,7 @@ export const webSessionApi = {
       query: data.query.trim(),
       includeArchived: data.includeArchived === true,
       includeBody: data.includeBody !== false,
+      messagesOnly: data.messagesOnly !== false,
       cursor: data.cursor || undefined,
       scanLimit: data.scanLimit ?? 50,
     });

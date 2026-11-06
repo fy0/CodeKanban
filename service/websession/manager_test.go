@@ -3475,7 +3475,7 @@ func TestManagerSearchSessionsChunkFindsSyncedBodyProgressively(t *testing.T) {
 		row := &tables.WebSessionItemTable{
 			WebSessionID: session.ID,
 			OrderIndex:   int64(order + 1),
-			ItemKind:     "message",
+			ItemKind:     "assistant",
 			ItemType:     "agent_message",
 			Text:         "Needle stored in synchronized body text",
 		}
@@ -3495,6 +3495,7 @@ func TestManagerSearchSessionsChunkFindsSyncedBodyProgressively(t *testing.T) {
 		[]string{"", project.ID, project.ID},
 		"  NEEDLE  ",
 		false,
+		true,
 		true,
 		"",
 		2,
@@ -3521,6 +3522,7 @@ func TestManagerSearchSessionsChunkFindsSyncedBodyProgressively(t *testing.T) {
 		"needle",
 		false,
 		true,
+		true,
 		pageOne.NextCursor,
 		2,
 	)
@@ -3546,6 +3548,7 @@ func TestManagerSearchSessionsChunkFindsSyncedBodyProgressively(t *testing.T) {
 		"needle",
 		true,
 		true,
+		true,
 		"",
 		10,
 	)
@@ -3565,6 +3568,7 @@ func TestManagerSearchSessionsChunkFindsSyncedBodyProgressively(t *testing.T) {
 		"needle",
 		true,
 		false,
+		true,
 		"",
 		10,
 	)
@@ -3586,6 +3590,7 @@ func TestManagerSearchSessionsChunkFindsSyncedBodyProgressively(t *testing.T) {
 		[]string{project.ID},
 		"needle",
 		false,
+		true,
 		true,
 		"not-a-valid-cursor",
 		2,

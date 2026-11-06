@@ -241,6 +241,7 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
         query: 'needle',
         includeArchived: true,
         includeBody: true,
+        messagesOnly: true,
         cursor: 'cursor-1',
         scanLimit: 50,
       });

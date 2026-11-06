@@ -693,6 +693,9 @@ export default {
     sidebarSearchPlaceholder: 'Search session titles or content',
     sidebarSearchFilter: 'Search filters',
     sidebarSearchBody: 'Search message content',
+    sidebarSearchMessagesOnly: 'Only user and assistant messages',
+    sidebarSearchMessagesOnlyHint:
+      'Skip tool calls, reasoning and system messages. Uncheck to restore the original content search scope.',
     sidebarSearchArchived: 'Search archived sessions',
     sidebarSearchNoResults: 'No matching sessions',
     sidebarSearchFailed: 'Failed to search sessions',

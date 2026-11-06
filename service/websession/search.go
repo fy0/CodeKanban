@@ -79,6 +79,7 @@ func (m *Manager) SearchSessionsChunk(
 	searchQuery string,
 	includeArchived bool,
 	includeBody bool,
+	messagesOnly bool,
 	cursorValue string,
 	scanLimit int,
 ) (SessionSearchChunkResult, error) {
@@ -186,10 +187,15 @@ func (m *Manager) SearchSessionsChunk(
 		var rows []struct {
 			WebSessionID string
 		}
-		if err := db.WithContext(ctx).
+		bodyQuery := db.WithContext(ctx).
 			Model(&tables.WebSessionItemTable{}).
 			Select("web_session_id").
-			Where("web_session_id IN ?", bodyCandidateIDs).
+			Where("web_session_id IN ?", bodyCandidateIDs)
+		if messagesOnly {
+			// Reasoning and tool output are separate tool items, not ordinary replies.
+			bodyQuery = bodyQuery.Where("item_kind IN ?", []string{"user", "assistant"})
+		}
+		if err := bodyQuery.
 			Where("instr(lower(coalesce(text, '')), ?) > 0", searchQuery).
 			Group("web_session_id").
 			Scan(&rows).Error; err != nil {
