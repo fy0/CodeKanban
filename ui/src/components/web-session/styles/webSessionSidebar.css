@@ -195,26 +195,12 @@
   flex: 1;
   min-height: 0;
   height: 100%;
-  overflow-y: auto;
-  padding: 0 0 10px;
+  width: calc(100% + 6px);
+  overflow: hidden;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--n-text-color-3) 45%, transparent) transparent;
-}
-
-.session-sidebar-list::-webkit-scrollbar {
-  width: 8px;
-}
-
-.session-sidebar-list::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--n-text-color-3) 42%, transparent);
-}
-
-.session-sidebar-list::-webkit-scrollbar-track {
-  background: transparent;
 }
 
 .session-sidebar-virtual-row {
@@ -224,7 +210,9 @@
 }
 
 .session-sidebar-virtual-section {
+  appearance: none;
   box-sizing: border-box;
+  width: 100%;
   height: var(--session-sidebar-section-height);
   min-height: var(--session-sidebar-section-height);
   display: flex;
@@ -232,10 +220,29 @@
   justify-content: space-between;
   gap: 6px;
   padding: 0 2px 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-family: inherit;
   font-size: var(--session-sidebar-title-font-size, 12px);
   font-weight: 600;
   color: var(--n-text-color-2);
   letter-spacing: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-sidebar-virtual-section:disabled {
+  cursor: default;
+}
+
+.session-sidebar-virtual-section:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--n-text-color-3) 12%, transparent);
+}
+
+.session-sidebar-virtual-section:focus-visible {
+  outline: 2px solid var(--n-primary-color);
+  outline-offset: -2px;
 }
 
 .session-sidebar-virtual-section.is-separated {
@@ -285,34 +292,12 @@
 }
 
 .session-sidebar-section-toggle {
-  appearance: none;
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
+  width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-}
-
-.session-sidebar-section-toggle {
-  width: 22px;
-  height: 22px;
-}
-
-.session-sidebar-section-toggle:hover {
-  background: color-mix(in srgb, var(--n-text-color-3) 12%, transparent);
-  color: var(--n-text-color-2);
-}
-
-.session-sidebar-section-toggle:focus-visible {
-  outline: 2px solid var(--n-primary-color);
-  outline-offset: 1px;
 }
 
 .session-sidebar-section-empty {

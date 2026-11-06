@@ -80,17 +80,25 @@
 }
 
 .mobile-session-drawer-date-group {
+  appearance: none;
   box-sizing: border-box;
+  width: 100%;
   min-height: 34px;
   padding: 5px 4px 1px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: var(--n-text-color-3);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  font-family: inherit;
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
+  text-align: left;
+  cursor: pointer;
 }
 
 .mobile-session-drawer-date-group-label {
@@ -426,27 +434,20 @@
 }
 
 .mobile-session-drawer-date-group-toggle {
-  appearance: none;
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
 }
 
-.mobile-session-drawer-date-group-toggle:hover {
+.mobile-session-drawer-date-group:hover {
   background: color-mix(in srgb, var(--n-text-color-3) 12%, transparent);
   color: var(--n-text-color-2);
 }
 
-.mobile-session-drawer-date-group-toggle:focus-visible {
+.mobile-session-drawer-date-group:focus-visible {
   outline: 2px solid var(--n-primary-color);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }

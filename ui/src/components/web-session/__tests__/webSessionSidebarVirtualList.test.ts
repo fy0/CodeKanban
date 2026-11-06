@@ -175,6 +175,10 @@ describe('webSession sidebar virtual list', () => {
     const entries = [
       makeEntry('today', false, new Date(2026, 6, 16, 0, 0, 0).getTime()),
       makeEntry('yesterday', false, new Date(2026, 6, 15, 23, 59, 59).getTime()),
+      makeEntry('yesterday-start', false, new Date(2026, 6, 15, 0, 0, 0).getTime()),
+      makeEntry('day-before-yesterday', false, new Date(2026, 6, 14, 23, 59, 59).getTime()),
+      makeEntry('day-before-yesterday-start', false, new Date(2026, 6, 14, 0, 0, 0).getTime()),
+      makeEntry('three-days-ago', false, new Date(2026, 6, 13, 23, 59, 59).getTime()),
       makeEntry('within-seven-days', false, new Date(2026, 6, 10, 0, 0, 0).getTime()),
       makeEntry('older-than-seven-days', false, new Date(2026, 6, 9, 23, 59, 59).getTime()),
       makeEntry('missing-time'),
@@ -186,6 +190,7 @@ describe('webSession sidebar virtual list', () => {
       labels: {
         today: 'Today',
         yesterday: 'Yesterday',
+        dayBeforeYesterday: 'Day Before Yesterday',
         lastSevenDays: 'Within 7 Days',
         earlier: 'Earlier',
       },
@@ -194,8 +199,9 @@ describe('webSession sidebar virtual list', () => {
 
     expect(groups.map(group => [group.key, group.entries.map(entry => entry.source.id)])).toEqual([
       ['today', ['today']],
-      ['yesterday', ['yesterday']],
-      ['last-seven-days', ['within-seven-days']],
+      ['yesterday', ['yesterday', 'yesterday-start']],
+      ['day-before-yesterday', ['day-before-yesterday', 'day-before-yesterday-start']],
+      ['last-seven-days', ['three-days-ago', 'within-seven-days']],
       ['earlier', ['older-than-seven-days', 'missing-time']],
     ]);
   });

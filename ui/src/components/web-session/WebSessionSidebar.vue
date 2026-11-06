@@ -124,35 +124,38 @@
         class="session-sidebar-list"
         :items="items"
         :item-size="WEB_SESSION_SIDEBAR_VIRTUAL_ITEM_SIZE"
+        :padding-bottom="10"
+        items-style="box-sizing: border-box; padding-right: 8px;"
+        :scrollbar-props="{ themeOverrides: { railInsetVerticalRight: '2px 0 2px auto' } }"
         item-resizable
         key-field="key"
         @scroll="handleScroll"
       >
         <template #default="{ item }">
-          <div
+          <button
             v-if="item.type === 'section'"
+            type="button"
             class="session-sidebar-virtual-section"
             :class="{ 'is-separated': item.separated }"
+            :disabled="searchActive"
+            :title="searchActive ? undefined : sessionGroupToggleLabel(item.label, item.collapsed)"
+            :aria-label="
+              searchActive ? undefined : sessionGroupToggleLabel(item.label, item.collapsed)
+            "
+            :aria-expanded="searchActive ? undefined : !item.collapsed"
+            @click="emit('toggle-group', item.sectionKey)"
           >
             <span class="session-sidebar-section-label">
               <span>{{ item.label }}</span>
               <span>({{ item.count }})</span>
             </span>
-            <button
-              v-if="!searchActive"
-              type="button"
-              class="session-sidebar-section-toggle"
-              :title="sessionGroupToggleLabel(item.label, item.collapsed)"
-              :aria-label="sessionGroupToggleLabel(item.label, item.collapsed)"
-              :aria-expanded="!item.collapsed"
-              @click.stop="emit('toggle-group', item.sectionKey)"
-            >
+            <span v-if="!searchActive" class="session-sidebar-section-toggle">
               <n-icon size="13" aria-hidden="true">
                 <ChevronForwardOutline v-if="item.collapsed" />
                 <ChevronDownOutline v-else />
               </n-icon>
-            </button>
-          </div>
+            </span>
+          </button>
           <div v-else-if="item.type === 'empty'" class="session-sidebar-virtual-row">
             <div class="session-sidebar-section-empty">{{ item.label }}</div>
           </div>
@@ -240,8 +243,8 @@ const { t } = useLocale();
 
 function sessionGroupToggleLabel(label: string, collapsed: boolean) {
   return collapsed
-    ? t('webSession.sessionGroupExpand', { label })
-    : t('webSession.sessionGroupCollapse', { label });
+    ? t('webSession.expandSessionGroup', { group: label })
+    : t('webSession.collapseSessionGroup', { group: label });
 }
 
 function handleScroll(event: Event) {

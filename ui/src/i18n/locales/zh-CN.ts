@@ -704,6 +704,7 @@ export default {
     currentSessionsEmpty: '暂无当前会话',
     sessionGroupToday: '今天',
     sessionGroupYesterday: '昨天',
+    sessionGroupDayBeforeYesterday: '前天',
     sessionGroupLastSevenDays: '七天内',
     sessionGroupEarlier: '更早',
     sessionGroupArchived: '归档',

@@ -726,6 +726,7 @@ export default {
     currentSessionsEmpty: 'No current sessions',
     sessionGroupToday: 'Today',
     sessionGroupYesterday: 'Yesterday',
+    sessionGroupDayBeforeYesterday: 'Day Before Yesterday',
     sessionGroupLastSevenDays: 'Within 7 Days',
     sessionGroupEarlier: 'Earlier',
     sessionGroupArchived: 'Archived',

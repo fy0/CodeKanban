@@ -4113,7 +4113,7 @@ const emit = defineEmits<{
 }>();
 
 const liveStateClockMs = ref(Date.now());
-const collapsedSessionGroupKeys = ref<ReadonlySet<string>>(new Set());
+const collapsedSessionGroupKeys = ref<ReadonlySet<string>>(new Set(['earlier']));
 let liveStateClockTimer: number | null = null;
 const sidebarCalendarDayStartMs = computed(() => {
   const date = new Date(liveStateClockMs.value);
@@ -9022,6 +9022,7 @@ const mobileCurrentSessionGroups = computed(() =>
     labels: {
       today: t('webSession.sessionGroupToday'),
       yesterday: t('webSession.sessionGroupYesterday'),
+      dayBeforeYesterday: t('webSession.sessionGroupDayBeforeYesterday'),
       lastSevenDays: t('webSession.sessionGroupLastSevenDays'),
       earlier: t('webSession.sessionGroupEarlier'),
     },
@@ -11365,6 +11366,7 @@ const currentSidebarSections = computed(() =>
     labels: {
       today: t('webSession.sessionGroupToday'),
       yesterday: t('webSession.sessionGroupYesterday'),
+      dayBeforeYesterday: t('webSession.sessionGroupDayBeforeYesterday'),
       lastSevenDays: t('webSession.sessionGroupLastSevenDays'),
       earlier: t('webSession.sessionGroupEarlier'),
     },

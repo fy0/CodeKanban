@@ -47,25 +47,26 @@
           key-field="key"
         >
           <template #default="{ item }">
-            <div v-if="item.kind === 'date-group'" class="mobile-session-drawer-date-group">
+            <button
+              v-if="item.kind === 'date-group'"
+              type="button"
+              class="mobile-session-drawer-date-group"
+              :title="sessionGroupToggleLabel(item.label, item.collapsed)"
+              :aria-label="sessionGroupToggleLabel(item.label, item.collapsed)"
+              :aria-expanded="!item.collapsed"
+              @click="emit('toggle-group', item.groupKey)"
+            >
               <span class="mobile-session-drawer-date-group-label">
                 <span>{{ item.label }}</span>
                 <span class="mobile-session-drawer-date-group-count">{{ item.count }}</span>
               </span>
-              <button
-                type="button"
-                class="mobile-session-drawer-date-group-toggle"
-                :title="sessionGroupToggleLabel(item.label, item.collapsed)"
-                :aria-label="sessionGroupToggleLabel(item.label, item.collapsed)"
-                :aria-expanded="!item.collapsed"
-                @click.stop="emit('toggle-group', item.groupKey)"
-              >
+              <span class="mobile-session-drawer-date-group-toggle">
                 <n-icon size="14" aria-hidden="true">
                   <ChevronForwardOutline v-if="item.collapsed" />
                   <ChevronDownOutline v-else />
                 </n-icon>
-              </button>
-            </div>
+              </span>
+            </button>
             <div v-else-if="item.kind === 'session'" class="mobile-session-drawer-item-shell">
               <button
                 type="button"

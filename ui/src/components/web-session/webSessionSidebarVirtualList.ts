@@ -39,6 +39,7 @@ export type WebSessionSidebarSection<T> = {
 export type WebSessionSidebarDateGroupLabels = {
   today: string;
   yesterday: string;
+  dayBeforeYesterday: string;
   lastSevenDays: string;
   earlier: string;
 };
@@ -147,11 +148,13 @@ export function groupWebSessionItemsByDate<T>({
   const groups: WebSessionDateGroup<T>[] = [
     { key: 'today', label: labels.today, items: [] },
     { key: 'yesterday', label: labels.yesterday, items: [] },
+    { key: 'day-before-yesterday', label: labels.dayBeforeYesterday, items: [] },
     { key: 'last-seven-days', label: labels.lastSevenDays, items: [] },
     { key: 'earlier', label: labels.earlier, items: [] },
   ];
   const todayStart = startOfLocalDay(now);
   const yesterdayStart = startOfLocalDay(now, 1);
+  const dayBeforeYesterdayStart = startOfLocalDay(now, 2);
   const lastSevenDaysStart = startOfLocalDay(now, 6);
 
   items.forEach(item => {
@@ -160,10 +163,12 @@ export function groupWebSessionItemsByDate<T>({
       groups[0].items.push(item);
     } else if (timestamp >= yesterdayStart) {
       groups[1].items.push(item);
-    } else if (timestamp >= lastSevenDaysStart) {
+    } else if (timestamp >= dayBeforeYesterdayStart) {
       groups[2].items.push(item);
-    } else {
+    } else if (timestamp >= lastSevenDaysStart) {
       groups[3].items.push(item);
+    } else {
+      groups[4].items.push(item);
     }
   });
 
