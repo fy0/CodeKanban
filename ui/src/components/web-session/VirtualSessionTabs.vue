@@ -14,15 +14,15 @@
         >
           <div
             class="n-tabs-wrapper virtual-tab-track"
-            :style="{ width: `${items.length * SESSION_TAB_WIDTH}px` }"
+            :style="{ width: `${items.length * tabWidth}px` }"
           >
             <div
               v-for="entry in visibleItems"
               :key="entry.item.id"
               class="n-tabs-tab-wrapper virtual-tab-wrapper"
               :style="{
-                width: `${SESSION_TAB_WIDTH}px`,
-                transform: `translateX(${entry.index * SESSION_TAB_WIDTH}px)`,
+                width: `${tabWidth}px`,
+                transform: `translateX(${entry.index * tabWidth}px)`,
               }"
             >
               <div
@@ -77,10 +77,10 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch, type HTMLAttributes } from 'vue';
 import { useResizeObserver } from '@vueuse/core';
 import {
-  SESSION_TAB_WIDTH,
   getSessionTabDropIndex,
   getSessionTabRange,
   getSessionTabScrollLeft,
+  getSessionTabWidth,
 } from './virtualSessionTabs';
 
 const props = defineProps<{
@@ -102,8 +102,10 @@ const draggedId = ref('');
 let dragX = 0;
 let dragFrame: number | null = null;
 const activeIndex = computed(() => props.items.findIndex(item => item.id === props.activeId));
+// Clamp once per viewport/count change; large lists keep a stable width without measuring tabs.
+const tabWidth = computed(() => getSessionTabWidth(props.items.length, viewportWidth.value));
 const range = computed(() =>
-  getSessionTabRange(props.items.length, scrollLeft.value, viewportWidth.value)
+  getSessionTabRange(props.items.length, scrollLeft.value, viewportWidth.value, tabWidth.value)
 );
 const visibleItems = computed(() => {
   const entries = props.items
@@ -125,10 +127,15 @@ function readScroll() {
 function scrollToActive() {
   const element = viewport.value;
   if (!element || !element.clientWidth || activeIndex.value < 0 || draggedId.value) return;
-  element.scrollLeft = getSessionTabScrollLeft(
+  const nextScrollLeft = getSessionTabScrollLeft(
     activeIndex.value,
     element.scrollLeft,
-    element.clientWidth
+    element.clientWidth,
+    tabWidth.value
+  );
+  element.scrollLeft = Math.min(
+    Math.max(0, props.items.length * tabWidth.value - element.clientWidth),
+    nextScrollLeft
   );
   readScroll();
 }
@@ -136,7 +143,6 @@ function scrollToActive() {
 useResizeObserver(viewport, ([entry]) => {
   if (!entry) return;
   viewportWidth.value = entry.contentRect.width;
-  scrollToActive();
 });
 watch(
   [() => props.activeId, () => props.items.map(item => item.id).join('\0')],
@@ -146,6 +152,7 @@ watch(
   },
   { flush: 'post' }
 );
+watch(viewportWidth, scrollToActive, { flush: 'post' });
 
 function handleWheel(event: WheelEvent) {
   if (event.ctrlKey || event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
@@ -247,7 +254,8 @@ function handleDrop(event: DragEvent) {
   const newIndex = getSessionTabDropIndex(
     oldIndex,
     element.scrollLeft + event.clientX - element.getBoundingClientRect().left,
-    props.items.length
+    props.items.length,
+    tabWidth.value
   );
   stopDrag();
   if (oldIndex >= 0 && oldIndex !== newIndex) emit('reorder', { oldIndex, newIndex });
@@ -271,8 +279,13 @@ defineExpose({ scrollToActive });
 .virtual-tab-viewport {
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   overscroll-behavior-x: contain;
+}
+.virtual-tab-viewport::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 .virtual-tab-track {
   position: relative;
