@@ -12215,7 +12215,7 @@ const devinModelOptionGroups = computed(() =>
   resolveDevinModelOptionGroups(
     runtimeConfig.value?.devinModels ?? [],
     devinFrequentModelValues.value,
-    currentSession.value?.model ?? draftModel.value,
+    selectedModel.value,
     {
       recent: t('webSession.recentlyUsedModels'),
       recommended: t('webSession.recommendedModels'),
@@ -12224,10 +12224,7 @@ const devinModelOptionGroups = computed(() =>
   )
 );
 const devinSpecialModelOptions = computed(() =>
-  resolveDevinSpecialModelOptions(
-    runtimeConfig.value?.devinModels ?? [],
-    currentSession.value?.model ?? draftModel.value
-  )
+  resolveDevinSpecialModelOptions(runtimeConfig.value?.devinModels ?? [], selectedModel.value)
 );
 const fusionModelConfigs = computed(() =>
   resolveDevinFusionModelConfigs(runtimeConfig.value?.devinModels ?? [])
@@ -12405,7 +12402,9 @@ const customModelOptions = computed(() => {
 });
 
 const modelOptions = computed(() => {
-  const activeModel = currentSession.value?.model ?? draftModel.value;
+  // Session summaries change during streaming. Depend on the model value so
+  // unchanged options do not make NSelect scroll back to the selected model.
+  const activeModel = selectedModel.value;
   if (selectedAgent.value === 'claude') {
     const ccrOptions =
       effectiveComposerClaudeRuntime() === 'ccr'
