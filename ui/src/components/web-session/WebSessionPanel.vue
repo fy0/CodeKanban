@@ -2073,47 +2073,18 @@
             <div
               v-if="isMobile"
               class="composer-mobile-toolbar"
-              :class="{
-                'is-collapsed': isMobileComposerCollapsed,
-                'is-settings-expanded': isMobileComposerSettingsExpanded,
-              }"
+              :class="{ 'is-collapsed': isMobileComposerCollapsed }"
             >
-              <div
-                class="composer-mobile-summary"
-                :class="{ 'is-expanded': isMobileComposerSettingsExpanded }"
+              <button
+                type="button"
+                class="composer-icon-btn composer-icon-btn-mobile composer-mobile-settings-toggle"
+                :aria-expanded="isMobileComposerSettingsExpanded"
+                :title="mobileComposerSettingsToggleLabel"
+                :aria-label="mobileComposerSettingsToggleLabel"
+                @click="toggleMobileComposerSettingsExpanded"
               >
-                <button
-                  type="button"
-                  class="composer-mobile-toggle"
-                  :class="{ 'is-compact': isMobileComposerSettingsExpanded }"
-                  :aria-expanded="isMobileComposerSettingsExpanded"
-                  :title="mobileComposerSettingsToggleLabel"
-                  :aria-label="mobileComposerSettingsToggleLabel"
-                  @click="toggleMobileComposerSettingsExpanded"
-                >
-                  <span
-                    v-if="!isMobileComposerSettingsExpanded"
-                    class="composer-mobile-toggle-copy"
-                  >
-                    <span class="composer-mobile-toggle-chips">
-                      <span
-                        v-for="token in mobileComposerSummaryTokens"
-                        :key="token.key"
-                        class="composer-mobile-toggle-chip"
-                      >
-                        {{ token.label }}
-                      </span>
-                    </span>
-                  </span>
-                  <n-icon
-                    v-if="!isMobileComposerCollapsed"
-                    class="composer-mobile-toggle-arrow"
-                    :class="{ 'is-open': isMobileComposerSettingsExpanded }"
-                  >
-                    <ChevronDownOutline />
-                  </n-icon>
-                </button>
-              </div>
+                <n-icon size="18"><SettingsOutline /></n-icon>
+              </button>
 
               <div
                 v-if="isMobileComposerCollapsed && mobileComposerPendingSummary.length > 0"
@@ -2129,29 +2100,31 @@
                 </span>
               </div>
 
-              <WebSessionTokenSpeed v-if="isMobileComposerCollapsed" :speed="currentTokenSpeed" />
-              <WebSessionPromptCache
-                v-if="isMobileComposerCollapsed"
-                :session="currentSession"
-                :now="liveStateClockMs"
-                :speed="currentTokenSpeed"
-              />
-              <button
-                v-if="isMobileComposerCollapsed && contextUsageIndicator"
-                type="button"
-                class="composer-context-pill composer-context-pill-mobile"
-                :class="`state-${contextUsageIndicator.state}`"
-                :aria-label="contextUsageIndicator.title"
-                aria-haspopup="dialog"
-                :aria-expanded="showContextUsagePopover"
-                @click="handleContextUsagePopoverVisibilityChange(true)"
-              >
-                {{ contextUsageIndicator.label }}
-              </button>
+              <div class="composer-mobile-status">
+                <WebSessionTokenSpeed :speed="currentTokenSpeed" />
+                <WebSessionPromptCache
+                  :session="currentSession"
+                  :now="liveStateClockMs"
+                  :speed="currentTokenSpeed"
+                />
+                <button
+                  v-if="contextUsageIndicator"
+                  type="button"
+                  class="composer-context-pill composer-context-pill-mobile"
+                  :class="`state-${contextUsageIndicator.state}`"
+                  :title="contextUsageIndicator.title"
+                  :aria-label="`${contextUsageIndicator.title}: ${contextUsageIndicator.label}`"
+                  aria-haspopup="dialog"
+                  :aria-expanded="showContextUsagePopover"
+                  @click="handleContextUsagePopoverVisibilityChange(true)"
+                >
+                  {{ contextUsageIndicator.label }}
+                </button>
+              </div>
 
               <button
                 type="button"
-                class="composer-mobile-panel-toggle"
+                class="composer-icon-btn composer-icon-btn-mobile composer-mobile-panel-toggle"
                 :class="{ 'is-collapsed': isMobileComposerCollapsed }"
                 :aria-expanded="!isMobileComposerCollapsed"
                 :title="mobileComposerPanelToggleLabel"
@@ -3202,7 +3175,7 @@
                   </n-popover>
                   <button
                     type="button"
-                    class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
+                    class="composer-icon-btn composer-icon-btn-mobile"
                     :title="t('webSession.skills')"
                     :aria-label="t('webSession.skills')"
                     :disabled="!isComposerTargetReady"
@@ -3215,7 +3188,7 @@
                   </button>
                   <button
                     type="button"
-                    class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
+                    class="composer-icon-btn composer-icon-btn-mobile"
                     :title="t('webSession.attachImage')"
                     :aria-label="t('webSession.attachImage')"
                     :disabled="!isComposerTargetReady"
@@ -3357,8 +3330,9 @@
                 </div>
 
                 <div class="composer-footer-right">
-                  <WebSessionTokenSpeed :speed="currentTokenSpeed" />
+                  <WebSessionTokenSpeed v-if="!isMobile" :speed="currentTokenSpeed" />
                   <WebSessionPromptCache
+                    v-if="!isMobile"
                     :session="currentSession"
                     :now="liveStateClockMs"
                     :speed="currentTokenSpeed"
@@ -3394,29 +3368,23 @@
                     </template>
                     <ContextUsageContent />
                   </n-popover>
-                  <button
-                    v-if="contextUsageIndicator && isMobile"
-                    type="button"
-                    class="composer-context-pill composer-context-pill-mobile"
-                    :class="`state-${contextUsageIndicator.state}`"
-                    :aria-label="contextUsageIndicator.title"
-                    aria-haspopup="dialog"
-                    :aria-expanded="showContextUsagePopover"
-                    @click="handleContextUsagePopoverVisibilityChange(true)"
-                  >
-                    {{ contextUsageIndicator.label }}
-                  </button>
                   <n-button
                     v-if="isRunActive"
                     secondary
                     type="warning"
                     class="composer-stop-btn"
+                    :title="isMobile ? t('webSession.stop') : undefined"
+                    :aria-label="isMobile ? t('webSession.stop') : undefined"
                     @click="handleAbortCurrent"
                   >
-                    {{ t('webSession.stop') }}
+                    <template v-if="isMobile" #icon>
+                      <n-icon><StopCircleOutline /></n-icon>
+                    </template>
+                    <template v-if="!isMobile">{{ t('webSession.stop') }}</template>
                   </n-button>
                   <template v-if="isRunActive">
                     <n-button
+                      v-if="!isMobile"
                       secondary
                       class="composer-queue-btn"
                       :loading="isSubmittingQueuedMessage"
@@ -3429,7 +3397,11 @@
                       <n-button
                         type="primary"
                         class="composer-send-btn"
-                        :loading="isSubmittingRedirectedMessage"
+                        :title="isMobile ? sendButtonLabel : undefined"
+                        :aria-label="isMobile ? sendButtonLabel : undefined"
+                        :loading="
+                          isSubmittingRedirectedMessage || (isMobile && isSubmittingQueuedMessage)
+                        "
                         :disabled="!canStageDuringRun"
                         @pointerdown="handlePrimarySendPointerDown"
                         @pointermove="handlePrimarySendPointerMove"
@@ -3437,7 +3409,10 @@
                         @pointercancel="handlePrimarySendPointerCancel"
                         @click="handlePrimarySendButtonClick"
                       >
-                        {{ t('webSession.preinputRedirect') }}
+                        <template v-if="isMobile" #icon>
+                          <n-icon><PaperPlaneOutline /></n-icon>
+                        </template>
+                        <template v-if="!isMobile">{{ sendButtonLabel }}</template>
                       </n-button>
                       <button
                         type="button"
@@ -3470,6 +3445,8 @@
                             'composer-send-btn',
                             { 'is-confirm-armed': isSendConflictConfirmationArmed },
                           ]"
+                          :title="isMobile ? sendButtonLabel : undefined"
+                          :aria-label="isMobile ? sendButtonLabel : undefined"
                           :loading="isSubmittingMessage && !isSubmittingPlanExecution"
                           :disabled="!canSend"
                           @pointerdown="handlePrimarySendPointerDown"
@@ -3478,11 +3455,13 @@
                           @pointercancel="handlePrimarySendPointerCancel"
                           @click="handlePrimarySendButtonClick"
                         >
-                          {{
-                            isSendConflictConfirmationArmed
-                              ? t('webSession.sendEmphatic')
-                              : t('webSession.send')
-                          }}
+                          <template v-if="isMobile" #icon>
+                            <n-icon>
+                              <AlertCircleOutline v-if="isSendConflictConfirmationArmed" />
+                              <PaperPlaneOutline v-else />
+                            </n-icon>
+                          </template>
+                          <template v-if="!isMobile">{{ sendButtonLabel }}</template>
                         </n-button>
                         <button
                           type="button"
@@ -3701,6 +3680,7 @@ import {
   GitBranchOutline,
   GridOutline,
   ImageOutline,
+  PaperPlaneOutline,
   RefreshCircleOutline,
   RefreshOutline,
   ReloadOutline,
@@ -7692,13 +7672,21 @@ const canStageDuringRun = computed(
 const canOpenSendQuickActions = computed(() =>
   isRunActive.value ? canStageDuringRun.value : canSend.value
 );
+const sendButtonLabel = computed(() => {
+  if (isRunActive.value) {
+    return t('webSession.preinputRedirect');
+  }
+  return isSendConflictConfirmationArmed.value
+    ? t('webSession.sendEmphatic')
+    : t('webSession.send');
+});
 const sendQuickActionOptions = computed<DropdownOption[]>(() => {
   const options: DropdownOption[] = [];
   if (isRunActive.value) {
     options.push(
       {
         key: 'redirect',
-        label: t('webSession.preinputRedirect'),
+        label: sendButtonLabel.value,
       },
       {
         key: 'queue',
@@ -7708,9 +7696,7 @@ const sendQuickActionOptions = computed<DropdownOption[]>(() => {
   } else {
     options.push({
       key: 'send',
-      label: isSendConflictConfirmationArmed.value
-        ? t('webSession.sendEmphatic')
-        : t('webSession.send'),
+      label: sendButtonLabel.value,
     });
   }
   options.push({
@@ -7926,14 +7912,6 @@ const selectedAgentLabel = computed(
   () =>
     agentOptions.find(option => option.value === selectedAgent.value)?.label ?? selectedAgent.value
 );
-const selectedModelLabel = computed(
-  () => getKnownModelLabel(selectedModel.value) || t('common.default')
-);
-const selectedWorkflowModeLabel = computed(() =>
-  selectedWorkflowMode.value === 'plan'
-    ? t('webSession.workflowPlan')
-    : t('webSession.workflowDefault')
-);
 const mobileComposerPanelToggleLabel = computed(() =>
   isMobileComposerCollapsed.value
     ? t('webSession.composerPanelExpand')
@@ -7944,11 +7922,6 @@ const mobileComposerSettingsToggleLabel = computed(() =>
     ? t('webSession.composerSettingsCollapse')
     : t('webSession.composerSettingsExpand')
 );
-const mobileComposerSummaryTokens = computed(() => [
-  { key: 'agent', label: selectedAgentLabel.value },
-  { key: 'model', label: selectedModelLabel.value },
-  { key: 'workflow', label: selectedWorkflowModeLabel.value },
-]);
 const mobileComposerPendingSummary = computed(() => {
   return buildWebSessionMobilePendingSummary(pendingInputs.value, scheduledInputs.value).map(
     item => ({

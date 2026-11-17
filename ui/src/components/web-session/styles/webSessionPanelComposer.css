@@ -11,24 +11,9 @@
 }
 
 .composer.is-mobile {
+  --composer-mobile-button-size: 36px;
+  --composer-mobile-control-gap: 12px;
   padding: 6px 8px;
-}
-
-.composer.is-mobile .composer-mobile-summary {
-  margin-bottom: 0;
-}
-
-.composer.is-mobile .composer-mobile-toggle {
-  padding: 5px 7px;
-}
-
-.composer.is-mobile .composer-footer.is-mobile {
-  margin-top: 2px;
-}
-
-.composer.is-mobile .composer-icon-btn-mobile {
-  width: 36px;
-  height: 36px;
 }
 
 .composer.is-mobile-focused {
@@ -45,7 +30,7 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--composer-mobile-control-gap);
   margin-bottom: 2px;
 }
 
@@ -54,27 +39,16 @@
   flex-wrap: wrap;
 }
 
-.composer-mobile-toolbar.is-collapsed .composer-mobile-toggle {
-  box-sizing: border-box;
-  align-self: flex-start;
-  width: auto;
-  max-width: 100%;
-  border-color: transparent;
-  background: transparent;
-}
-
 .composer-mobile-toolbar.is-collapsed .composer-mobile-pending-summary {
   order: 1;
   flex: 1 0 100%;
 }
 
-.composer-mobile-toolbar.is-settings-expanded {
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  z-index: 2;
-  width: auto;
-  margin-bottom: 0;
+.composer-mobile-status {
+  display: flex;
+  align-items: center;
+  gap: var(--composer-mobile-control-gap);
+  margin-left: auto;
 }
 
 .composer-mobile-pending-summary {
@@ -120,55 +94,6 @@
   color: var(--app-warning, #b45309);
 }
 
-.composer-mobile-panel-toggle {
-  box-sizing: border-box;
-  width: 36px;
-  min-width: 36px;
-  height: 34px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 72%, var(--n-primary-color) 28%);
-  border-radius: 8px;
-  background: var(--app-surface-color, #fff);
-  color: var(--n-text-color-2);
-  padding: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 0.96;
-  transition:
-    opacity 0.18s ease,
-    color 0.18s ease,
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    transform 0.18s ease;
-}
-
-.composer-mobile-panel-toggle.is-collapsed {
-  border-color: color-mix(in srgb, var(--n-primary-color) 48%, var(--n-border-color));
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 84%, var(--n-primary-color) 16%);
-  color: var(--n-primary-color);
-}
-
-.composer-mobile-panel-toggle:hover,
-.composer-mobile-panel-toggle:focus-visible,
-.composer-mobile-panel-toggle:active {
-  opacity: 1;
-  color: var(--n-primary-color);
-  border-color: color-mix(in srgb, var(--n-primary-color) 58%, var(--n-border-color));
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 86%, var(--n-primary-color) 14%);
-}
-
-.composer-mobile-panel-toggle:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--n-primary-color) 58%, transparent);
-  outline-offset: 2px;
-}
-
-.composer-mobile-panel-toggle:active {
-  transform: translateY(1px);
-}
-
 .composer-mobile-panel-toggle-arrow {
   flex-shrink: 0;
   font-size: 17px;
@@ -177,92 +102,6 @@
 }
 
 .composer-mobile-panel-toggle-arrow.is-collapsed {
-  transform: rotate(180deg);
-}
-
-.composer-mobile-summary {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 0;
-}
-
-.composer-mobile-summary.is-expanded {
-  flex: 0 0 36px;
-  width: 36px;
-}
-
-.composer-mobile-toggle {
-  width: 100%;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 84%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%);
-  color: inherit;
-  padding: 6px 8px;
-  appearance: none;
-  -webkit-appearance: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.composer-mobile-toggle.is-compact {
-  box-sizing: border-box;
-  width: 36px;
-  min-width: 36px;
-  height: 34px;
-  padding: 0;
-  border-radius: 8px;
-  justify-content: center;
-  gap: 0;
-}
-
-.composer-mobile-toggle-copy {
-  flex: 1;
-  min-width: 0;
-}
-
-.composer-mobile-toggle-chips {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.composer-mobile-toggle-chips::-webkit-scrollbar {
-  display: none;
-}
-
-.composer-mobile-toggle-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  max-width: min(42vw, 160px);
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
-  color: var(--n-text-color-2);
-  font-size: 11px;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 0 0 auto;
-}
-
-.composer-mobile-toggle-arrow {
-  flex-shrink: 0;
-  margin-top: 0;
-  transition: transform 0.2s ease;
-}
-
-.composer-mobile-toggle-arrow.is-open {
   transform: rotate(180deg);
 }
 
@@ -1194,6 +1033,7 @@
 }
 
 .composer-footer {
+  --composer-action-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1202,9 +1042,11 @@
 }
 
 .composer-footer.is-mobile {
-  margin-top: 4px;
-  justify-content: space-between;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
+  gap: var(--composer-mobile-control-gap);
+  margin-top: 2px;
 }
 
 .composer-footer-left,
@@ -1212,6 +1054,16 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.composer-footer.is-mobile :is(.composer-footer-left, .composer-footer-right) {
+  width: auto;
+  flex-wrap: nowrap;
+  gap: var(--composer-mobile-control-gap);
+}
+
+.composer-footer.is-mobile .composer-footer-right {
+  margin-left: auto;
 }
 
 .composer-context-pill {
@@ -1249,7 +1101,7 @@
   flex: 0 0 auto;
   justify-content: center;
   min-width: 44px;
-  min-height: 34px;
+  min-height: var(--composer-mobile-button-size);
 }
 
 .composer-context-pill:focus-visible {
@@ -1484,12 +1336,7 @@
 }
 
 .composer-footer-left-mobile {
-  margin-left: 0;
-  margin-right: auto;
-  width: auto;
-  justify-content: flex-start;
-  align-self: flex-start;
-  gap: 6px;
+  margin: 0;
 }
 
 .composer-icon-btn {
@@ -1519,25 +1366,18 @@
 }
 
 .composer-icon-btn-mobile {
-  width: 40px;
-  height: 40px;
-  border-radius: 999px;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  color: var(--n-text-color-3);
-}
-
-.composer-icon-btn-mobile-secondary {
-  margin-left: 0;
+  width: var(--composer-mobile-button-size);
+  height: var(--composer-mobile-button-size);
+  border-radius: 8px;
 }
 
 .skill-browser-modal :deep(.n-card__content) {
   padding: 0;
 }
 
-.composer-icon-btn-mobile:hover,
-.composer-icon-btn-mobile:active {
+.composer-icon-btn-mobile:active,
+.composer-mobile-settings-toggle[aria-expanded='true'],
+.composer-mobile-panel-toggle.is-collapsed {
   background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
   color: var(--n-primary-color);
 }
@@ -1581,17 +1421,30 @@
   min-width: 76px;
 }
 
+.composer-footer.is-mobile :is(.composer-stop-btn, .composer-send-btn, .composer-send-menu-btn) {
+  width: var(--composer-mobile-button-size);
+  min-width: var(--composer-mobile-button-size);
+  height: var(--composer-mobile-button-size);
+  padding: 0;
+}
+
+.composer-footer.is-mobile .composer-send-btn {
+  width: calc(var(--composer-mobile-button-size) * 1.5);
+}
+
+.composer-footer.is-mobile .composer-stop-btn {
+  border-radius: var(--composer-action-radius);
+}
+
 .composer-send-action-group {
   display: inline-flex;
   align-items: stretch;
-  border-radius: 6px;
+  border-radius: var(--composer-action-radius);
   overflow: hidden;
 }
 
 .composer-send-action-group :deep(.n-button) {
-  border-radius: 6px 0 0 6px;
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
+  border-radius: var(--composer-action-radius) 0 0 var(--composer-action-radius);
 }
 
 .composer-send-btn.is-confirm-armed {
@@ -1606,7 +1459,7 @@
   width: 30px;
   border: none;
   border-left: 1px solid color-mix(in srgb, var(--app-accent-contrast, #fff) 30%, transparent);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--composer-action-radius) var(--composer-action-radius) 0;
   background: var(--app-accent, var(--n-primary-color));
   color: var(--app-accent-contrast, var(--n-button-text-color, #fff));
   cursor: pointer;

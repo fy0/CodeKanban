@@ -32,26 +32,6 @@
     justify-content: flex-end;
   }
 
-  .composer-footer.is-mobile {
-    flex-direction: row;
-    align-items: flex-end;
-  }
-
-  .composer-footer.is-mobile .composer-footer-left-mobile {
-    width: auto;
-    flex: 0 0 auto;
-    justify-content: flex-start;
-    align-self: auto;
-  }
-
-  .composer-footer.is-mobile .composer-footer-right {
-    width: auto;
-    min-width: 0;
-    flex: 1 1 auto;
-    margin-left: auto;
-    justify-content: flex-end;
-  }
-
   .composer-config-row {
     flex-wrap: wrap;
   }
@@ -145,20 +125,6 @@
     padding: 8px;
   }
 
-  .composer-mobile-summary {
-    margin-bottom: 0;
-  }
-
-  .composer-mobile-toggle {
-    padding: 5px 7px;
-  }
-
-  .composer-mobile-panel-toggle-title,
-  .composer-mobile-panel-toggle-description,
-  .composer-mobile-toggle-chip {
-    font-size: 10px;
-  }
-
   .composer-config.is-mobile {
     margin-bottom: 4px;
   }
@@ -233,6 +199,10 @@
 }
 
 @media (max-width: 359px) {
+  .composer.is-mobile {
+    --composer-mobile-control-gap: 8px;
+  }
+
   .composer.is-mobile-settings-expanded .composer-config.is-mobile .composer-mode-row {
     grid-column: 1 / -1;
     grid-row: 2;
