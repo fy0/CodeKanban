@@ -2586,6 +2586,7 @@ defineExpose({
 
 .tabs-container {
   flex: 1 1 auto;
+  align-self: flex-end;
   min-width: 0;
   overflow: hidden;
   padding-right: 8px;
@@ -2695,7 +2696,7 @@ defineExpose({
 }
 
 .tab-title {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   display: inline-block;
   max-width: min(160px, 20vw);
