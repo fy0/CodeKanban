@@ -29,6 +29,8 @@ import { resolveMarkdownImageSrc } from '@/utils/webSessionImages';
 
 type HljsLanguageModule = Parameters<typeof hljs.registerLanguage>[1];
 export interface RenderMarkdownOptions {
+  /** Resolve relative image references against the chat session's working directory. */
+  imageWorkingDirectory?: string;
   disableCodeHighlight?: boolean;
   enableCodeBlockCopy?: boolean;
   codeBlockCopyLabel?: string;
@@ -326,7 +328,7 @@ function createMarkdownRenderer(options: RenderMarkdownOptions = {}) {
       image(token) {
         return Renderer.prototype.image.call(this, {
           ...token,
-          href: resolveMarkdownImageSrc(token.href),
+          href: resolveMarkdownImageSrc(token.href, { cwd: options.imageWorkingDirectory }),
         });
       },
       link(token) {
@@ -351,6 +353,7 @@ const markdownRendererCache = new Map<string, Marked>();
 
 function getMarkdownRenderer(options: RenderMarkdownOptions = {}) {
   const key = JSON.stringify({
+    imageWorkingDirectory: options.imageWorkingDirectory || '',
     disableCodeHighlight: !!options.disableCodeHighlight,
     enableCodeBlockCopy: !!options.enableCodeBlockCopy,
     codeBlockCopyLabel: options.codeBlockCopyLabel || '',
@@ -370,6 +373,7 @@ function getMarkdownRenderer(options: RenderMarkdownOptions = {}) {
 
 function markdownOptionsVariantKey(options: RenderMarkdownOptions = {}) {
   return JSON.stringify({
+    imageWorkingDirectory: options.imageWorkingDirectory || '',
     disableCodeHighlight: !!options.disableCodeHighlight,
     enableCodeBlockCopy: !!options.enableCodeBlockCopy,
     codeBlockCopyLabel: options.codeBlockCopyLabel || '',

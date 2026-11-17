@@ -129,6 +129,34 @@ describe('renderMarkdown', () => {
   });
 
   it.each([
+    ['output/mobile-composer-rounded-stop.png', 'output/mobile-composer-rounded-stop.png'],
+    ['./output/preview.png', './output/preview.png'],
+    ['../output/preview.png', '../output/preview.png'],
+    [String.raw`output\preview.png`, 'output/preview.png'],
+    ['output/圆角%20截图%231.png', 'output/圆角 截图#1.png'],
+  ])('resolves a relative chat image against the session directory: %s', (source, path) => {
+    const markdown = `停止按钮保留**橙色**。\n![圆角统一后的移动端聊天框](${source})`;
+    for (const cwd of ['D:/codes/2025/codekanban', '/workspace/codekanban']) {
+      const options = { imageWorkingDirectory: cwd };
+      const html = renderMarkdown(markdown, options);
+      const src = /<img src="([^"]+)"/.exec(html)?.[1];
+      expect(src).toBeDefined();
+      const url = new URL(src!.replace(/&amp;/g, '&'), 'http://localhost');
+
+      expect(url.pathname).toBe('/api/v1/web-sessions/image-view');
+      expect(url.searchParams.get('path')).toBe(path);
+      expect(url.searchParams.get('cwd')).toBe(cwd);
+      expect(html).toContain('alt="圆角统一后的移动端聊天框"');
+      expect(html).toContain('<strong>橙色</strong>');
+      expect(
+        renderStreamingMarkdownBlocks(`relative-image:${source}`, markdown, options)
+          .map(block => block.html)
+          .join('')
+      ).toBe(html);
+    }
+  });
+
+  it.each([
     'https://example.com/preview.png',
     '//example.com/preview.png',
     '/images/preview.png',
@@ -137,6 +165,18 @@ describe('renderMarkdown', () => {
     'data:image/png;base64,aGVsbG8=',
   ])('preserves web and relative image sources: %s', source => {
     expect(renderMarkdown(`![preview](${source})`)).toContain(`src="${source}"`);
+  });
+
+  it.each([
+    'https://example.com/preview.png',
+    '//example.com/preview.png',
+    '/images/preview.png',
+    '/api/v1/web-sessions/attachments/preview.png',
+    'data:image/png;base64,aGVsbG8=',
+  ])('preserves web image sources with a session directory: %s', source => {
+    expect(
+      renderMarkdown(`![preview](${source})`, { imageWorkingDirectory: 'D:/project' })
+    ).toContain(`src="${source}"`);
   });
 
   it('keeps image syntax inside code as literal text', () => {
@@ -247,6 +287,22 @@ describe('renderMarkdown rendering cache', () => {
     expect(renderMarkdown(body)).toBe(plain);
   });
 
+  it('keeps relative image previews apart per session directory', () => {
+    const body = '![preview](output/preview.png)';
+    const firstOptions = { imageWorkingDirectory: 'D:/project-one' };
+    const secondOptions = { imageWorkingDirectory: 'D:/project-two' };
+    const plain = renderMarkdown(body);
+    const first = renderMarkdown(body, firstOptions);
+    const second = renderMarkdown(body, secondOptions);
+
+    expect(first).not.toBe(plain);
+    expect(second).not.toBe(first);
+    expect(first).toContain('cwd=D%3A%2Fproject-one');
+    expect(second).toContain('cwd=D%3A%2Fproject-two');
+    expect(renderMarkdown(body, firstOptions)).toBe(first);
+    expect(renderMarkdown(body)).toBe(plain);
+  });
+
   it('drops Magic Context markers before parsing', () => {
     const html = renderMarkdown('§12§ thinking about §13§ the parser');
 
@@ -330,6 +386,20 @@ describe('renderStreamingMarkdownBlocks', () => {
 
     expect(b[0].html).toBe(a[0].html);
     expect(b[0]).not.toBe(a[0]);
+  });
+
+  it('re-renders relative image blocks when the session directory changes', () => {
+    const body = '![preview](output/preview.png)';
+    const first = renderStreamingMarkdownBlocks('image-directory', body, {
+      imageWorkingDirectory: 'D:/project-one',
+    });
+    const second = renderStreamingMarkdownBlocks('image-directory', body, {
+      imageWorkingDirectory: 'D:/project-two',
+    });
+
+    expect(second[0]).not.toBe(first[0]);
+    expect(first[0].html).toContain('cwd=D%3A%2Fproject-one');
+    expect(second[0].html).toContain('cwd=D%3A%2Fproject-two');
   });
 
   it('drops state for an empty body and recovers afterwards', () => {

@@ -4210,6 +4210,7 @@ const { locale, t } = useLocale();
 const { copyText } = useAppClipboard();
 const { isMobile } = useResponsive();
 const timelineMarkdownRenderOptions = computed(() => ({
+  imageWorkingDirectory: currentRealSession.value?.cwd,
   repairMalformedOuterFence: true,
   enableCodeBlockCopy: true,
   codeBlockCopyLabel: 'copy',
@@ -4218,6 +4219,7 @@ const timelineMarkdownRenderOptions = computed(() => ({
 }));
 const streamingTimelineMarkdownRenderOptions = computed(() => ({
   ...STREAMING_MARKDOWN_RENDER_OPTIONS,
+  imageWorkingDirectory: currentRealSession.value?.cwd,
   enableCodeBlockCopy: true,
   codeBlockCopyLabel: 'copy',
   enableLinkCopy: true,

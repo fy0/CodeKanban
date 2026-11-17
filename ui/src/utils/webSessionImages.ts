@@ -193,8 +193,9 @@ export function buildImageViewPreviewUrl(
   return baseUrl ? new URL(requestPath, baseUrl).toString() : requestPath;
 }
 
-export function resolveMarkdownImageSrc(source: string) {
+export function resolveMarkdownImageSrc(source: string, options: { cwd?: string } = {}) {
   let path = source.trim();
+  let cwd: string | undefined;
   if (/^file:/i.test(path)) {
     try {
       const url = new URL(path);
@@ -206,8 +207,12 @@ export function resolveMarkdownImageSrc(source: string) {
       return source;
     }
   } else if (!/^\/?[a-z]:[\\/]/i.test(path)) {
-    // Root-relative web URLs and relative image URLs keep their browser semantics.
-    return source;
+    cwd = options.cwd?.trim();
+    // Only chat images with a working directory resolve relative filesystem paths.
+    // Web URLs, attachment endpoints and data URLs keep their browser semantics.
+    if (!cwd || !path || /^(?:[\\/]|[a-z][a-z\d+.-]*:|[?#])/i.test(path)) {
+      return source;
+    }
   }
 
   path = path.replace(/\\/g, '/').replace(/^\/([a-z]:\/)/i, '$1');
@@ -216,5 +221,5 @@ export function resolveMarkdownImageSrc(source: string) {
   } catch {
     // A literal percent sign is valid in a filesystem path.
   }
-  return buildImageViewPreviewUrl(path);
+  return buildImageViewPreviewUrl(path, { cwd });
 }
