@@ -78,6 +78,7 @@ func (s *tokenSpeedState) observeCodexTokenSpeed(method string, payload map[stri
 				return
 			}
 		}
+		sample.observeFirstToken(now)
 		sample.weights[channel] += estimateOutputTokens(text)
 		sample.codexOutputAt = now
 	case "item/completed":

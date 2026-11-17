@@ -1083,6 +1083,9 @@ export default {
     tokenSpeedMethod:
       'Average = total output tokens ÷ total generation time. Completed requests are calibrated with actual usage, including reported hidden reasoning; before that, visible content is estimated. ≈ includes estimates. Time is measured from local events, excluding tools and idle gaps; this is not server-side decoding speed. Recent averages use completed generations; run and session averages include the active generation.',
     tokenSpeedHistory: 'Recent generations',
+    tokenSpeedFirstToken: 'First token',
+    tokenSpeedFirstTokenHint:
+      'Time from generation start to the first output chunk (including reasoning). -- means unavailable.',
     tokenSpeedOldToNew: 'Trend: oldest to newest',
     tokenSpeedTrend: 'Speed trend for the last 20 generations',
     tokenSpeedNoHistory:

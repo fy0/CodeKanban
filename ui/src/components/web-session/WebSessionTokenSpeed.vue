@@ -1,19 +1,7 @@
 <template>
-  <n-popover trigger="hover" placement="top-end" :show-arrow="false" :keep-alive-on-hover="true">
-    <template #trigger>
-      <button
-        type="button"
-        class="token-speed"
-        :style="themeStyle"
-        :aria-label="`${t('webSession.tokenSpeedDetails')}: ${metricLabel} ${label}`"
-      >
-        <Transition name="token-speed-update">
-          <span :key="label" class="token-speed-value">{{ label }}</span>
-        </Transition>
-      </button>
-    </template>
-    <div class="token-speed-details" :style="themeStyle">
-      <strong>{{ t('webSession.tokenSpeedDetails') }}</strong>
+  <DefineSpeedDetails>
+    <div class="token-speed-details" :class="{ 'is-mobile': isMobile }" :style="themeStyle">
+      <strong v-if="!isMobile">{{ t('webSession.tokenSpeedDetails') }}</strong>
       <div class="token-speed-metrics">
         <button
           v-for="metric in metrics"
@@ -69,9 +57,18 @@
               <time :datetime="record.endedAt" :title="formatTime(record.endedAt, true)">{{
                 formatTime(record.endedAt)
               }}</time>
-              <small class="token-speed-model" :title="record.model || record.agent">{{
-                record.model || record.agent || '—'
-              }}</small>
+              <div class="token-speed-record-meta">
+                <small class="token-speed-model" :title="record.model || record.agent">{{
+                  record.model || record.agent || '—'
+                }}</small>
+                <small
+                  class="token-speed-first-token"
+                  :title="t('webSession.tokenSpeedFirstTokenHint')"
+                  >{{ t('webSession.tokenSpeedFirstToken') }}
+                  {{ record.firstTokenMs == null ? '--' : (record.firstTokenMs / 1000).toFixed(1) }}
+                  s</small
+                >
+              </div>
             </div>
             <div class="token-speed-record-info token-speed-record-value">
               <strong>{{ formatTokenSpeed(record) }}</strong>
@@ -86,13 +83,50 @@
       </template>
       <p v-else class="token-speed-note">{{ t('webSession.tokenSpeedNoHistory') }}</p>
     </div>
+  </DefineSpeedDetails>
+  <n-popover
+    trigger="hover"
+    placement="top-end"
+    :show-arrow="false"
+    :keep-alive-on-hover="true"
+    :disabled="isMobile"
+  >
+    <template #trigger>
+      <button
+        type="button"
+        class="token-speed"
+        :style="themeStyle"
+        :aria-label="`${t('webSession.tokenSpeedDetails')}: ${metricLabel} ${label}`"
+        :aria-haspopup="isMobile ? 'dialog' : undefined"
+        :aria-expanded="isMobile ? showMobileDetails : undefined"
+        @click="showMobileDetails = isMobile"
+      >
+        <Transition name="token-speed-update">
+          <span :key="label" class="token-speed-value">{{ label }}</span>
+        </Transition>
+      </button>
+    </template>
+    <SpeedDetails v-if="!isMobile" />
   </n-popover>
+  <n-modal
+    v-if="isMobile"
+    v-model:show="showMobileDetails"
+    preset="card"
+    class="token-speed-modal"
+    :title="t('webSession.tokenSpeedDetails')"
+    :style="{ width: 'min(480px, calc(100vw - 24px))' }"
+    :content-style="{ maxHeight: 'calc(100dvh - 160px)', overflowY: 'auto' }"
+  >
+    <SpeedDetails />
+  </n-modal>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { NPopover, useThemeVars } from 'naive-ui';
+import { computed, ref, watch } from 'vue';
+import { createReusableTemplate } from '@vueuse/core';
+import { NModal, NPopover, useThemeVars } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
+import { useResponsive } from '@/composables/useResponsive';
 import type { WebSessionTokenSpeed } from '@/types/models';
 import {
   formatTokenSpeed,
@@ -102,6 +136,12 @@ import {
 
 const props = defineProps<{ speed?: WebSessionTokenSpeed | null }>();
 const { t, locale } = useI18n();
+const { isMobile } = useResponsive();
+const [DefineSpeedDetails, SpeedDetails] = createReusableTemplate();
+const showMobileDetails = ref(false);
+watch(isMobile, mobile => {
+  if (!mobile) showMobileDetails.value = false;
+});
 const themeVars = useThemeVars();
 const themeStyle = computed(() => ({
   '--token-speed-accent': themeVars.value.primaryColor,
@@ -193,6 +233,15 @@ function formatTime(value: string, full = false) {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.token-speed-details.is-mobile {
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+}
+.token-speed-details.is-mobile .token-speed-history {
+  max-height: none;
+  overflow: visible;
+}
 .token-speed-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -265,6 +314,16 @@ small {
 .token-speed-model {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-speed-record-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.token-speed-first-token {
+  flex-shrink: 0;
   white-space: nowrap;
 }
 .token-speed-record-value {

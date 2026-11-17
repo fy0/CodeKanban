@@ -14,6 +14,7 @@ type WebSessionTokenSpeedTable struct {
 	EndedAt      time.Time `gorm:"index:idx_web_session_token_speed_recent,priority:2"`
 	OutputTokens float64
 	DurationMs   int64
+	FirstTokenMs *int64
 	Estimated    bool
 	Version      uint64
 }

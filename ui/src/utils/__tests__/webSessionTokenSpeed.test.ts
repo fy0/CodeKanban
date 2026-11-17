@@ -65,6 +65,7 @@ describe('token speed telemetry', () => {
       outputTokens: 200,
       durationMs: 4000,
       tokensPerSecond: 50,
+      firstTokenMs: 1250,
       estimated: false,
     };
     const payload = {
@@ -80,6 +81,16 @@ describe('token speed telemetry', () => {
     expect(state.get('s1')?.history).toEqual([record]);
     expect(state.get('s1')?.stats?.session).toEqual(summary);
     expect(selectTokenSpeedMetric(state.get('s1'), 'recent5').value?.tokensPerSecond).toBe(50);
+    for (const firstTokenMs of [null, -1, NaN, Infinity, '1250']) {
+      expect(
+        normalizeTokenSpeed({ ...payload, history: [{ ...record, firstTokenMs }] })?.history?.[0]
+          ?.firstTokenMs
+      ).toBeNull();
+    }
+    expect(
+      normalizeTokenSpeed({ ...payload, history: [{ ...record, firstTokenMs: 0 }] })?.history?.[0]
+        ?.firstTokenMs
+    ).toBe(0);
   });
 
   it('filters invalid history and summary fields without losing legacy telemetry', () => {

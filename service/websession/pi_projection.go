@@ -381,6 +381,7 @@ func (m *Manager) ensurePiAssistantMessage(dispatch *piRuntimeRun) error {
 	m.updateTokenSpeed(dispatch.session.ID, dispatch.run.runID, func(s *tokenSpeedState, _ time.Time) {
 		if cur := s.current(); cur != nil {
 			cur.completeBoundary = false
+			cur.startObserved = false
 		}
 	}, false)
 	return nil

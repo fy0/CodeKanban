@@ -65,6 +65,9 @@ function normalizeHistoryRecord(value: unknown): WebSessionTokenSpeedRecord | nu
     model: typeof record.model === 'string' ? record.model : '',
     startedAt: record.startedAt,
     endedAt: record.endedAt,
+    ...('firstTokenMs' in record
+      ? { firstTokenMs: nonNegativeNumber(record.firstTokenMs) ? record.firstTokenMs : null }
+      : {}),
     outputTokens: record.outputTokens,
     durationMs: record.durationMs,
     tokensPerSecond: record.tokensPerSecond,

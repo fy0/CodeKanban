@@ -43,6 +43,9 @@ func TestCodexTokenSpeedCommandTimeAndUsageOrdering(t *testing.T) {
 			if got.Generating || len(got.History) != 1 || !got.History[0].EndedAt.Equal(start.Add(2*time.Second)) {
 				t.Fatalf("command execution extended the generation: %+v", got)
 			}
+			if latency := got.History[0].FirstTokenMs; latency == nil || *latency != 1000 {
+				t.Fatalf("first token latency = %v, want 1000 ms", latency)
+			}
 
 			send(35, "item/reasoning/textDelta", `{"itemId":"r2","delta":""}`)
 			send(40, "item/started", `{"item":{"type":"reasoning","id":"r2"}}`)

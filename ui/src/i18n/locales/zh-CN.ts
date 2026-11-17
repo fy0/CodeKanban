@@ -1040,6 +1040,8 @@ export default {
     tokenSpeedMethod:
       '均速 = 总输出 token ÷ 总生成耗时。完成后按实际用量校准，包含接口计入的隐藏推理；此前按可见内容估算，≈ 表示含估算。耗时按本地事件计时，排除工具执行和空闲，不代表服务端纯解码速度。最近均速仅统计已完成的生成，本轮及会话均速包含正在生成的片段。',
     tokenSpeedHistory: '最近生成记录',
+    tokenSpeedFirstToken: '首字',
+    tokenSpeedFirstTokenHint: '从生成开始到首个输出片段（含推理）的耗时，无数据时显示 --。',
     tokenSpeedOldToNew: '趋势：从旧到新',
     tokenSpeedTrend: '最近 20 次生成速度趋势',
     tokenSpeedNoHistory: '生成完成后会自动保存记录，刷新或重启后仍可查看。',

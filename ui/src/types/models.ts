@@ -383,6 +383,7 @@ export interface WebSessionTokenSpeedRecord {
   endedAt: string;
   outputTokens: number;
   durationMs: number;
+  firstTokenMs?: number | null;
   tokensPerSecond: number;
   estimated: boolean;
 }

@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils';
 import { createI18n } from 'vue-i18n';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
 import WebSessionTokenSpeed from '../WebSessionTokenSpeed.vue';
 import en from '@/i18n/locales/en-US';
+import zh from '@/i18n/locales/zh-CN';
 import type { WebSessionTokenSpeed as TokenSpeed } from '@/types/models';
 
 vi.mock('naive-ui', async () => {
@@ -11,9 +13,17 @@ vi.mock('naive-ui', async () => {
   return {
     NPopover: defineComponent({
       name: 'NPopover',
-      props: ['trigger', 'placement', 'showArrow', 'keepAliveOnHover'],
-      setup(_, { slots }) {
-        return () => h('div', [slots.trigger?.(), slots.default?.()]);
+      props: ['trigger', 'placement', 'showArrow', 'keepAliveOnHover', 'disabled'],
+      setup(props, { slots }) {
+        return () => h('div', [slots.trigger?.(), !props.disabled && slots.default?.()]);
+      },
+    }),
+    NModal: defineComponent({
+      name: 'NModal',
+      props: ['show', 'preset', 'title', 'contentStyle'],
+      emits: ['update:show'],
+      setup(props, { slots }) {
+        return () => (props.show ? h('div', { role: 'dialog' }, slots.default?.()) : null);
       },
     }),
     useThemeVars: () =>
@@ -58,22 +68,73 @@ function makeSpeed(): TokenSpeed {
       endedAt: '2026-10-19T00:00:04Z',
       outputTokens: 200,
       durationMs: 4000,
+      firstTokenMs: sampleId === 1 ? 1250 : null,
       tokensPerSecond: 50,
       estimated: false,
     })),
   };
 }
 
-function render(speed?: TokenSpeed) {
+function render(speed?: TokenSpeed, locale = 'en-US') {
   return mount(WebSessionTokenSpeed, {
     props: { speed },
     global: {
-      plugins: [createI18n({ legacy: false, locale: 'en-US', messages: { 'en-US': en } })],
+      plugins: [createI18n({ legacy: false, locale, messages: { 'en-US': en, 'zh-CN': zh } })],
     },
   });
 }
 
 describe('WebSessionTokenSpeed', () => {
+  const originalWidth = window.innerWidth;
+  afterEach(() => {
+    window.innerWidth = originalWidth;
+    window.dispatchEvent(new Event('resize'));
+  });
+
+  it('opens a dialog on mobile and preserves the selected metric when it closes', async () => {
+    window.innerWidth = 390;
+    const wrapper = render(makeSpeed(), 'zh-CN');
+    expect(wrapper.getComponent({ name: 'NPopover' }).props('disabled')).toBe(true);
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(wrapper.get('.token-speed').attributes('aria-haspopup')).toBe('dialog');
+    await wrapper.get('.token-speed').trigger('click');
+    expect(wrapper.get('.token-speed').attributes('aria-expanded')).toBe('true');
+    expect(wrapper.get('[role="dialog"]').findAll('.token-speed-record')).toHaveLength(2);
+    const sessionButton = wrapper
+      .findAll('.token-speed-metric')
+      .find(button => button.text().includes('会话均速'))!;
+    await sessionButton.trigger('click');
+    expect(wrapper.get('.token-speed').text()).toBe('40 t/s');
+    wrapper.getComponent({ name: 'NModal' }).vm.$emit('update:show', false);
+    await nextTick();
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    await wrapper.get('.token-speed').trigger('click');
+    expect(wrapper.find('.token-speed-metric.selected').text()).toContain('会话均速');
+    window.innerWidth = 1280;
+    window.dispatchEvent(new Event('resize'));
+    await nextTick();
+    expect(wrapper.findComponent({ name: 'NModal' }).exists()).toBe(false);
+    expect(wrapper.getComponent({ name: 'NPopover' }).props('disabled')).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows first token latency beside the model in seconds with one decimal', async () => {
+    const speed = makeSpeed();
+    const wrapper = render(speed, 'zh-CN');
+    const records = wrapper.findAll('.token-speed-record');
+    expect(records[0]!.get('.token-speed-record-meta').text()).toContain('test-model');
+    expect(records[0]!.get('.token-speed-first-token').text()).toBe('首字 1.3 s');
+    expect(records[1]!.get('.token-speed-first-token').text()).toBe('首字 -- s');
+    await wrapper.setProps({
+      speed: {
+        ...speed,
+        history: speed.history!.map(record => ({ ...record, firstTokenMs: 0 })),
+      },
+    });
+    expect(wrapper.get('.token-speed-first-token').text()).toBe('首字 0.0 s');
+    wrapper.unmount();
+  });
+
   it('defaults to the recent average, switches dimensions and keeps history on a new run', async () => {
     const speed = makeSpeed();
     const wrapper = render(speed);

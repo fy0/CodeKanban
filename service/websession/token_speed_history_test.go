@@ -125,6 +125,9 @@ func TestTokenSpeedHistorySurvivesRunsRestartAndModelChange(t *testing.T) {
 	if len(restored.History) != 2 || restored.History[0].Model != "second-model" || restored.History[1].Model != "first-model" {
 		t.Fatalf("restored history = %#v", restored.History)
 	}
+	if latency := restored.History[1].FirstTokenMs; latency == nil || *latency != 1000 || restored.History[0].FirstTokenMs != nil {
+		t.Fatalf("restored first token latency = %v, want 1000 ms and nil for unobserved output", latency)
+	}
 	var count int64
 	if err := model.GetDB().Model(&tables.WebSessionTokenSpeedTable{}).Where("web_session_id = ?", session.ID).Count(&count).Error; err != nil || count != 2 {
 		t.Fatalf("durable sample count=%d err=%v", count, err)

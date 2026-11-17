@@ -29,6 +29,8 @@ type tokenSpeedSample struct {
 	key                   string
 	started               time.Time
 	ended                 time.Time
+	startObserved         bool
+	firstTokenMs          *int64
 	weights               map[string]float64
 	output                *int64
 	reportedOutput        *int64
@@ -110,7 +112,7 @@ func (s *tokenSpeedState) begin(key string, now time.Time, complete bool) *token
 		}
 	}
 	s.serial++
-	cur := &tokenSpeedSample{id: strconv.FormatUint(s.serial, 10), key: key, started: now, weights: make(map[string]float64), completeBoundary: complete}
+	cur := &tokenSpeedSample{id: strconv.FormatUint(s.serial, 10), key: key, started: now, startObserved: complete, weights: make(map[string]float64), completeBoundary: complete}
 	s.samples = append(s.samples, cur)
 	if len(s.samples) > 32 {
 		s.samples = s.samples[len(s.samples)-32:]
@@ -127,8 +129,18 @@ func (s *tokenSpeedState) delta(key, channel, text string, now time.Time) {
 		cur = s.begin(key, now, false)
 	}
 	if cur != nil && cur.ended.IsZero() {
+		cur.observeFirstToken(now)
 		cur.weights[channel] += estimateOutputTokens(text)
 	}
+}
+
+func (s *tokenSpeedSample) observeFirstToken(now time.Time) {
+	// Without a start boundary, the first delta cannot establish a latency.
+	if !s.startObserved || s.firstTokenMs != nil || !s.ended.IsZero() || now.Before(s.started) {
+		return
+	}
+	elapsed := now.Sub(s.started).Milliseconds()
+	s.firstTokenMs = &elapsed
 }
 
 func (s *tokenSpeedState) finish(key string, output *int64, now time.Time, complete bool) {

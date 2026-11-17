@@ -39,6 +39,47 @@ func TestTokenSpeedSamplingAndCalibration(t *testing.T) {
 	assertTokenSpeed(t, s.snapshot("epoch"), 1, true)
 }
 
+func TestTokenSpeedFirstTokenLatency(t *testing.T) {
+	start := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	delayed, immediate := int64(1250), int64(0)
+	for _, tc := range []struct {
+		name          string
+		observedStart bool
+		withDelta     bool
+		firstDelta    time.Duration
+		want          *int64
+	}{
+		{name: "first nonempty chunk", observedStart: true, withDelta: true, firstDelta: 1250 * time.Millisecond, want: &delayed},
+		{name: "immediate first chunk", observedStart: true, withDelta: true, want: &immediate},
+		{name: "missing start boundary", withDelta: true, firstDelta: time.Second},
+		{name: "usage without streamed output", observedStart: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &tokenSpeedState{runID: "run"}
+			s.begin("request", start, tc.observedStart)
+			s.delta("request", "text", "", start.Add(100*time.Millisecond))
+			if tc.withDelta {
+				s.delta("request", "reasoning", "thinking", start.Add(tc.firstDelta))
+				s.delta("request", "text", "answer", start.Add(2*time.Second))
+			}
+			output := int64(80)
+			s.finish("request", &output, start.Add(3*time.Second), true)
+			// Later usage calibration and cleanup must preserve the first chunk.
+			output = 100
+			s.finish("request", &output, start.Add(time.Minute), true)
+			s.finish("request", nil, start.Add(time.Minute), false)
+			got := s.snapshot("epoch").History[0].FirstTokenMs
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("unknown latency = %d, want nil", *got)
+				}
+			} else if got == nil || *got != *tc.want {
+				t.Fatalf("latency = %v, want %d ms", got, *tc.want)
+			}
+		})
+	}
+}
+
 func TestTokenSpeedShortMissingAndInterruptedSamples(t *testing.T) {
 	start := time.Now()
 	for _, duration := range []time.Duration{0, -time.Second, 499 * time.Millisecond} {
