@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1049,7 +1050,13 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			return nil, huma.Error404NotFound("session not found")
 		}
 
-		item, err := c.manager.GetCommandExecutionGroup(ctx, input.SessionID, input.GroupID)
+		// Fiber leaves path parameters escaped. Devin tool IDs include '#' and
+		// other reserved characters, so decode once before looking up the group.
+		groupID, err := url.PathUnescape(input.GroupID)
+		if err != nil {
+			return nil, huma.Error400BadRequest("invalid tool group ID")
+		}
+		item, err := c.manager.GetCommandExecutionGroup(ctx, input.SessionID, groupID)
 		if err != nil {
 			if errors.Is(err, websession.ErrCommandExecutionGroupNotFound) {
 				return nil, huma.Error404NotFound("tool group not found")
