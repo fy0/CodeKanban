@@ -79,6 +79,8 @@ describe('Codex model picker', () => {
     expect(groups[1]?.children.map(option => option.value)).toEqual([
       'gpt-6.1-sol',
       'gpt-5.5',
+      'gpt-6.2-astra',
+      'gpt-6.2-sol',
       'gpt-5.4-mini',
     ]);
     const values = groups.flatMap(group => group.children.map(option => option.value));
@@ -96,7 +98,7 @@ describe('Codex model picker', () => {
       model: 'gpt-6.1-sol',
       reasoningEffort: 'ultra',
     });
-    expect(groups[1]?.children.map(option => option.value)).toEqual(['gpt-6.1-sol']);
+    expect(groups[1]?.children.map(option => option.value)).toEqual(['gpt-6.1-sol', 'gpt-6.2-sol']);
     expect(groups[1]?.children[0]?.accentLabel).toBeUndefined();
     expect(resolveCodexModelOptionGroups({ models, query: 'mini ultra' })).toEqual([]);
   });

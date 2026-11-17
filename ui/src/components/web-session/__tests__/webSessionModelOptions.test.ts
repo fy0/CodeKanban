@@ -52,6 +52,11 @@ function codexModel(model: string, displayName = model) {
   };
 }
 
+const codexBuiltinAdditions = ['gpt-6.2-astra', 'gpt-6.2-sol'].map(model =>
+  resolveCodexModelOption(model)
+);
+const codexBuiltinAdditionValues = codexBuiltinAdditions.map(option => option.value);
+
 describe('webSessionModelOptions', () => {
   it('opens the shared model search catalog directly and keeps searches when entering the menu', () => {
     expect(panelSource).toContain('<template v-if="hasModelSearch" #header>');
@@ -358,7 +363,7 @@ describe('webSessionModelOptions', () => {
       })
     ).toBe('fusion-a');
   });
-  it('replaces local models with the runtime catalog while retaining compact labels', () => {
+  it('uses the runtime catalog with built-in additions while retaining compact labels', () => {
     const options = resolveCodexModelOptions([
       codexModel('gpt-6.1-sol', 'GPT-6.1 Sol'),
       codexModel('gpt-5.4-pro'),
@@ -369,11 +374,12 @@ describe('webSessionModelOptions', () => {
       { label: '6.1S', value: 'gpt-6.1-sol', menuLabel: 'GPT-6.1 Sol' },
       { label: '5.4Pro', value: 'gpt-5.4-pro', menuLabel: 'GPT-5.4 Pro' },
       { label: 'Future Model', value: 'future-model', menuLabel: 'Future Model' },
+      ...codexBuiltinAdditions,
     ]);
     expect(options.some(option => option.value === 'gpt-5.6-sol')).toBe(false);
   });
 
-  it('normalizes runtime entries and removes duplicates without adding local models', () => {
+  it('normalizes runtime entries and removes duplicates while retaining built-in additions', () => {
     expect(
       resolveCodexModelOptions([
         codexModel(' '),
@@ -384,6 +390,7 @@ describe('webSessionModelOptions', () => {
     ).toEqual([
       { label: '6.1S', value: 'gpt-6.1-sol', menuLabel: 'Custom display name' },
       { label: 'custom-model', value: 'custom-model', menuLabel: 'custom-model' },
+      ...codexBuiltinAdditions,
     ]);
   });
 
@@ -392,8 +399,11 @@ describe('webSessionModelOptions', () => {
     model => {
       expect(resolveCodexModelOptions([{ ...codexModel(model), hidden: false }])).toEqual([
         resolveCodexModelOption(model),
+        ...codexBuiltinAdditions,
       ]);
-      expect(resolveCodexModelOptions([{ ...codexModel(model), hidden: true }])).toEqual([]);
+      expect(resolveCodexModelOptions([{ ...codexModel(model), hidden: true }])).toEqual(
+        codexBuiltinAdditions
+      );
     }
   );
 
@@ -401,7 +411,10 @@ describe('webSessionModelOptions', () => {
     const catalog = [codexModel('gpt-6.1-sol')];
     for (const current of ['gpt-daybreak-blue-latest', 'retired-model', 'codex-auto-review']) {
       const menu = resolveCodexModelMenuOptions(catalog, [], current);
-      expect(menu.primary.map(option => option.value)).toEqual(['gpt-6.1-sol']);
+      expect(menu.primary.map(option => option.value)).toEqual([
+        'gpt-6.1-sol',
+        ...codexBuiltinAdditionValues,
+      ]);
       expect(menu.additional).toEqual([]);
     }
   });
@@ -412,7 +425,10 @@ describe('webSessionModelOptions', () => {
       { ...codexModel('codex-auto-review'), hidden: false },
     ];
     const menu = resolveCodexModelMenuOptions(catalog, ['codex-auto-review'], 'codex-auto-review');
-    expect(menu.primary.map(option => option.value)).toEqual(['gpt-6.1-sol']);
+    expect(menu.primary.map(option => option.value)).toEqual([
+      'gpt-6.1-sol',
+      ...codexBuiltinAdditionValues,
+    ]);
     expect(menu.additional).toEqual([]);
   });
 
@@ -428,6 +444,7 @@ describe('webSessionModelOptions', () => {
     );
     expect(menu.primary.map(option => option.value)).toEqual([
       'gpt-6.1-sol',
+      ...codexBuiltinAdditionValues,
       'custom-provider-model',
     ]);
   });
@@ -438,7 +455,11 @@ describe('webSessionModelOptions', () => {
       [],
       'gpt-5.4-pro'
     );
-    expect(menu.primary.map(option => option.value)).toEqual(['gpt-6.1-sol', 'gpt-5.4-pro']);
+    expect(menu.primary.map(option => option.value)).toEqual([
+      'gpt-6.1-sol',
+      ...codexBuiltinAdditionValues,
+      'gpt-5.4-pro',
+    ]);
     expect(menu.additional).toEqual([]);
   });
 
@@ -466,7 +487,11 @@ describe('webSessionModelOptions', () => {
       codexModel('gpt-5.4-pro'),
       codexModel('gpt-6.1-sol'),
     ]);
-    expect(menu.primary.map(option => option.value)).toEqual(['gpt-7-sol', 'gpt-6.1-sol']);
+    expect(menu.primary.map(option => option.value)).toEqual([
+      'gpt-7-sol',
+      'gpt-6.1-sol',
+      ...codexBuiltinAdditionValues,
+    ]);
     expect(menu.additional.map(option => option.value)).toEqual(['gpt-5.4-pro']);
     expect(resolveCodexModelMenuOptions([codexModel('gpt-7-sol')]).additional).toEqual([]);
   });
@@ -491,6 +516,8 @@ describe('webSessionModelOptions', () => {
       'gpt-6-astra',
       'gpt-6.1-terra',
       'gpt-6.1-sol',
+      'gpt-6.2-astra',
+      'gpt-6.2-sol',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.label)).toEqual([
       '5.5',
@@ -502,6 +529,8 @@ describe('webSessionModelOptions', () => {
       '6A',
       '6.1T',
       '6.1S',
+      '6.2A',
+      '6.2S',
     ]);
     expect(CODEX_PRIMARY_MODEL_OPTIONS.map(option => option.menuLabel)).toEqual([
       'GPT-5.5',
@@ -513,6 +542,8 @@ describe('webSessionModelOptions', () => {
       'GPT-6 Astra',
       'GPT-6.1 Terra',
       'GPT-6.1 Sol',
+      'GPT-6.2 Astra',
+      'GPT-6.2 Sol',
     ]);
   });
 

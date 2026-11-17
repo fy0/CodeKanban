@@ -787,6 +787,11 @@ export function resolveDefaultClaudeRuntime(
     : 'claude';
 }
 
+const CODEX_BUILTIN_MODEL_ADDITIONS: WebSessionModelOption[] = [
+  { label: '6.2A', value: 'gpt-6.2-astra', menuLabel: 'GPT-6.2 Astra' },
+  { label: '6.2S', value: 'gpt-6.2-sol', menuLabel: 'GPT-6.2 Sol' },
+];
+
 export const CODEX_PRIMARY_MODEL_OPTIONS: WebSessionModelOption[] = [
   { label: '5.5', value: 'gpt-5.5', menuLabel: 'GPT-5.5' },
   { label: '5.6L', value: 'gpt-5.6-luna', menuLabel: 'GPT-5.6 Luna' },
@@ -797,6 +802,7 @@ export const CODEX_PRIMARY_MODEL_OPTIONS: WebSessionModelOption[] = [
   { label: '6A', value: 'gpt-6-astra', menuLabel: 'GPT-6 Astra' },
   { label: '6.1T', value: 'gpt-6.1-terra', menuLabel: 'GPT-6.1 Terra' },
   { label: '6.1S', value: 'gpt-6.1-sol', menuLabel: 'GPT-6.1 Sol' },
+  ...CODEX_BUILTIN_MODEL_ADDITIONS,
 ];
 
 export const CODEX_ADDITIONAL_MODEL_OPTIONS: WebSessionModelOption[] = [
@@ -824,8 +830,8 @@ const CODEX_MODEL_SUFFIX_LABELS: Record<string, string> = {
   pro: 'Pro',
 };
 
-// Local templates supply presentation and an offline fallback. A populated
-// runtime catalog is authoritative about which models are available.
+// Local templates supply presentation and an offline fallback. Explicit additions
+// also cover models missing from Codex's bundled catalog.
 export function resolveCodexModelOption(model: string, displayName = ''): WebSessionModelOption {
   const value = model.trim();
   const normalizedModel = value.toLowerCase();
@@ -859,6 +865,12 @@ export function resolveCodexModelOptions(
     }
     seen.add(key);
     options.push(resolveCodexModelOption(value, model.displayName));
+  }
+  // Keep manually added models available until Codex's bundled catalog catches up.
+  for (const option of CODEX_BUILTIN_MODEL_ADDITIONS) {
+    if (!models.some(model => model.model.trim().toLowerCase() === option.value)) {
+      options.push({ ...option });
+    }
   }
   return hasCatalog ? options : CODEX_MODEL_OPTIONS.map(option => ({ ...option }));
 }
@@ -906,6 +918,8 @@ export function resolveCodexModelMenuOptions(
 }
 
 const CODEX_REASONING_EFFORT_FALLBACKS: Record<string, WebSessionReasoningEffort[]> = {
+  'gpt-6.2-astra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  'gpt-6.2-sol': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   'gpt-6.1-terra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   'gpt-6.1-sol': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
