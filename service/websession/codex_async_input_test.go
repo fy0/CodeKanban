@@ -218,3 +218,115 @@ func TestCodexAsyncInputReplyStartsIdleSession(t *testing.T) {
 		t.Fatal("accepted reply in an archived session")
 	}
 }
+
+func TestCodexAsyncInputIgnorePersistsWithoutSending(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Ignored questions", 1000)
+	if err := model.GetDB().Model(session).Update("backend", string(SessionBackendCodexAppServer)).Error; err != nil {
+		t.Fatal(err)
+	}
+	config := Config{DataDir: t.TempDir()}
+	manager, err := NewManager(config, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := manager.appendHistoryItem(ctx, session.ID, codexAsyncInputHistoryItem(asyncQuestionTestItem(), time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := &captureWSConn{}
+	commandClient := &client{conn: conn, logger: zap.NewNop()}
+	payload, err := json.Marshal(map[string]any{"iid": item.ID, "action": "ignored"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := manager.handleCodexAsyncInputCommand(ctx, commandClient, wireCommandFrame{
+			Version: protocolVersion, Kind: wireKindCommand, RequestID: "ignore", SessionID: session.ID,
+			Operation: "async_user_input", Payload: payload,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(conn.frames) != 2 || conn.frames[0].Kind != "ack" || conn.frames[1].Kind != "ack" {
+		t.Fatalf("expected idempotent ignore acknowledgements: %#v", conn.frames)
+	}
+	events, err := manager.store.readEvents(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != "async_user_input_ignored" || len(userMessageTexts(events)) != 0 || manager.hasActiveRun(session.ID) {
+		t.Fatalf("ignore must only persist its status without messaging the assistant: %#v", events)
+	}
+	reloaded, err := NewManager(config, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := reloaded.loadHistoryWindow(ctx, session.ID, 80, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Items) != 1 || history.Items[0].Detail == nil || history.Items[0].Detail.Action != "ignored" || len(history.Items[0].Detail.Answers) != 0 {
+		t.Fatalf("ignored status must survive reload without fabricated answers: %#v", history.Items)
+	}
+	if merged := mergeReconciledHistoryItem(history.Items[0], item); merged.Detail.Action != "ignored" {
+		t.Fatal("deep sync reopened an ignored question")
+	}
+	// A later copy of the native message must also preserve its ignored status.
+	native := asyncQuestionTestItem()
+	native["mid"] = native["id"]
+	updated, err := reloaded.applyEventToHistoryCache(ctx, session.ID, Event{
+		ID: "repeat-message", Type: "txt_end", Timestamp: time.Now(), Payload: native,
+	})
+	if err != nil || updated == nil || updated.Detail == nil || updated.Detail.Action != "ignored" {
+		t.Fatalf("native message reopened an ignored question: %#v, %v", updated, err)
+	}
+}
+
+func TestCodexAsyncInputIgnoreRejectsInvalidQuestions(t *testing.T) {
+	for _, testCase := range []string{"other-session", "sub-agent", "archived", "regular-message"} {
+		t.Run(testCase, func(t *testing.T) {
+			cleanup := initTestDB(t)
+			defer cleanup()
+			ctx := context.Background()
+			project := seedProject(t)
+			session := seedWebSession(t, project.ID, "Questions", 1000)
+			if err := model.GetDB().Model(session).Updates(map[string]any{
+				"backend": string(SessionBackendCodexAppServer), "native_session_id": "root-thread",
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+			if err != nil {
+				t.Fatal(err)
+			}
+			question := codexAsyncInputHistoryItem(asyncQuestionTestItem(), time.Now())
+			targetSessionID := session.ID
+			switch testCase {
+			case "other-session":
+				targetSessionID = seedWebSession(t, project.ID, "Other session", 2000).ID
+				if err := model.GetDB().Model(&tables.WebSessionTable{}).Where("id = ?", targetSessionID).Update("backend", string(SessionBackendCodexAppServer)).Error; err != nil {
+					t.Fatal(err)
+				}
+			case "sub-agent":
+				question.SourceThreadID = ptr("child-thread")
+			case "archived":
+				if err := model.GetDB().Model(session).Update("archived_at", time.Now()).Error; err != nil {
+					t.Fatal(err)
+				}
+			case "regular-message":
+				question.Detail = nil
+			}
+			item, err := manager.appendHistoryItem(ctx, session.ID, question)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.resolveCodexAsyncInput(ctx, targetSessionID, item.ID, nil, "ignored"); err == nil {
+				t.Fatal("accepted ignore for an invalid question")
+			}
+		})
+	}
+}

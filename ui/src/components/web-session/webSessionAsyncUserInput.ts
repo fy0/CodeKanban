@@ -27,6 +27,7 @@ export function getPendingWebSessionAsyncUserInputs(
     } else if (
       block.detail?.type === 'async_user_input_request' &&
       block.detail.action !== 'submitted' &&
+      block.detail.action !== 'ignored' &&
       block.detail.questions?.length
     ) {
       pending.push(block);

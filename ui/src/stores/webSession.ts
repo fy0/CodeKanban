@@ -7919,6 +7919,23 @@ export const useWebSessionStore = defineStore('web-session', () => {
     );
   }
 
+  async function ignoreAsyncUserInput(sessionId: string, itemId: string) {
+    await runRuntimeMutationCommand(
+      sessionId,
+      'async_user_input',
+      { iid: itemId, action: 'ignored' },
+      {
+        label: 'ignore_async_user_input',
+        predicate: () =>
+          buildBlocks(sessionId).some(
+            block =>
+              block.id === itemId &&
+              (block.detail?.action === 'ignored' || block.detail?.action === 'submitted')
+          ),
+      }
+    );
+  }
+
   async function answerUserInput(
     sessionId: string,
     itemId: string,
@@ -8600,6 +8617,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     rejectSession,
     answerUserInput,
     answerAsyncUserInput,
+    ignoreAsyncUserInput,
     loadMoreHistory,
     trimInactiveSessionEvents,
     updateModel,

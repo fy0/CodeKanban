@@ -74,6 +74,21 @@ describe('pending async question navigation', () => {
     ).toEqual([]);
   });
 
+  it('removes only ignored questions from the reminder and keeps new questions', () => {
+    const first = question('first');
+    const ignored = question('ignored', 'ignored');
+    const next = question('next');
+    expect(getPendingWebSessionAsyncUserInputs([first, ignored, next], session)).toEqual([
+      first,
+      next,
+    ]);
+
+    first.detail!.action = 'ignored';
+    expect(getPendingWebSessionAsyncUserInputs([first, ignored, next], session)).toEqual([next]);
+    next.detail!.action = 'ignored';
+    expect(getPendingWebSessionAsyncUserInputs([first, ignored, next], session)).toEqual([]);
+  });
+
   it('stops reminding about old questions after a normal reply and keeps new questions', () => {
     const oldQuestion = question('old');
     const newQuestion = question('new');

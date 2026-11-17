@@ -7,8 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSessionAsyncUserInput from '../WebSessionAsyncUserInput.vue';
 import type { WebSessionBlock } from '@/stores/webSession';
 
-const { answer, savedDrafts } = vi.hoisted(() => ({
+const { answer, ignore, savedDrafts } = vi.hoisted(() => ({
   answer: vi.fn(),
+  ignore: vi.fn(),
   savedDrafts: new Map<
     string,
     { selections: Record<string, string[]>; drafts: Record<string, string> }
@@ -18,6 +19,7 @@ const { answer, savedDrafts } = vi.hoisted(() => ({
 vi.mock('@/stores/webSession', () => ({
   useWebSessionStore: () => ({
     answerAsyncUserInput: answer,
+    ignoreAsyncUserInput: ignore,
     getPendingUserInputDraft: (key: string) => savedDrafts.get(key) ?? null,
     setPendingUserInputDraft: (
       key: string,
@@ -85,6 +87,9 @@ function render(item = makeItem(), disabled = false) {
                 asyncInputNext: 'Next',
                 asyncInputPrevious: 'Previous',
                 asyncInputLater: 'Not now',
+                asyncInputIgnore: 'Ignore',
+                asyncInputIgnoring: 'Ignoring',
+                asyncInputIgnored: 'Ignored',
                 asyncInputResume: 'Continue',
                 asyncInputSubmitting: 'Submitting',
                 asyncInputProgress: 'Question {current} of {total}',
@@ -103,6 +108,7 @@ function render(item = makeItem(), disabled = false) {
 describe('WebSessionAsyncUserInput', () => {
   beforeEach(() => {
     answer.mockReset();
+    ignore.mockReset();
     savedDrafts.clear();
   });
 
@@ -202,6 +208,59 @@ describe('WebSessionAsyncUserInput', () => {
     wrapper.unmount();
   });
 
+  it('ignores a question without submitting answers and restores its ignored status', async () => {
+    ignore.mockResolvedValue(undefined);
+    const item = makeItem();
+    const wrapper = render(item);
+    await wrapper.find('textarea').setValue('Unsent draft');
+    await wrapper.find('.question-card-ignore').trigger('click');
+    await flushPromises();
+    expect(ignore).toHaveBeenCalledExactlyOnceWith('session-1', item.id);
+    expect(answer).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('Ignored');
+    expect(wrapper.find('form').exists()).toBe(false);
+    expect(savedDrafts.size).toBe(0);
+    wrapper.unmount();
+
+    item.detail!.action = 'ignored';
+    const restored = render(item);
+    expect(restored.text()).toContain('Ignored');
+    expect(restored.text()).toContain('Which deployment?');
+    expect(restored.find('form').exists()).toBe(false);
+    restored.unmount();
+  });
+
+  it('blocks duplicate actions while ignoring and retains the draft if ignoring fails', async () => {
+    let rejectIgnore!: (reason: Error) => void;
+    ignore.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectIgnore = reject;
+        })
+    );
+    const wrapper = render();
+    await wrapper.find('textarea').setValue('Keep this draft');
+    await wrapper.find('.question-card-ignore').trigger('click');
+    await wrapper.find('.question-card-ignore').trigger('click');
+    await wrapper.find('form').trigger('submit');
+    expect(ignore).toHaveBeenCalledTimes(1);
+    expect(answer).not.toHaveBeenCalled();
+    expect(wrapper.find('.question-card-progress').text()).toBe('1 / 2');
+    expect(wrapper.find('.question-card-close').attributes('disabled')).toBeDefined();
+
+    rejectIgnore(new Error('Disconnected'));
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').text()).toBe('Disconnected');
+    expect(wrapper.find<HTMLTextAreaElement>('textarea').element.value).toBe('Keep this draft');
+    expect(savedDrafts.size).toBe(1);
+    ignore.mockResolvedValueOnce(undefined);
+    await wrapper.find('.question-card-ignore').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('Ignored');
+    expect(ignore).toHaveBeenCalledTimes(2);
+    wrapper.unmount();
+  });
+
   it('reveals a deferred question and preserves its draft and question index', async () => {
     const wrapper = render();
     await wrapper.find('form').trigger('submit');
@@ -220,6 +279,9 @@ describe('WebSessionAsyncUserInput', () => {
     const wrapper = render(makeItem(), true);
     await wrapper.find('form').trigger('submit');
     expect(answer).not.toHaveBeenCalled();
+    expect(wrapper.find('.question-card-ignore').attributes('disabled')).toBeDefined();
+    await wrapper.find('.question-card-ignore').trigger('click');
+    expect(ignore).not.toHaveBeenCalled();
     expect(
       wrapper.findAll<HTMLTextAreaElement>('textarea').every(input => input.element.disabled)
     ).toBe(true);

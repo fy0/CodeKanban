@@ -3,7 +3,7 @@
     ref="cardRef"
     class="question-card"
     tabindex="-1"
-    :class="{ 'is-collapsed': collapsed, 'is-submitted': submitted }"
+    :class="{ 'is-collapsed': collapsed || ignored, 'is-submitted': submitted }"
     :aria-label="t('webSession.asyncInputTitle')"
   >
     <template v-if="submitted">
@@ -16,6 +16,12 @@
         <span>{{ answer.values.join('\n') }}</span>
       </div>
     </template>
+    <div v-else-if="ignored" class="question-card-heading">
+      <span>{{ questions[0]?.question || t('webSession.asyncInputTitle') }}</span>
+      <span class="question-card-status question-card-ignored">{{
+        t('webSession.asyncInputIgnored')
+      }}</span>
+    </div>
     <div v-else-if="collapsed" class="question-card-heading">
       <span>{{ t('webSession.asyncInputTitle') }}</span>
       <button class="question-card-later" type="button" @click="collapsed = false">
@@ -31,7 +37,7 @@
               type="button"
               class="question-card-icon"
               :aria-label="t('webSession.asyncInputPrevious')"
-              :disabled="questionIndex === 0 || submitting"
+              :disabled="questionIndex === 0 || busy"
               @click="changeQuestion(questionIndex - 1)"
             >
               ‹
@@ -50,7 +56,7 @@
               type="button"
               class="question-card-icon"
               :aria-label="t('webSession.asyncInputNext')"
-              :disabled="questionIndex === questions.length - 1 || submitting"
+              :disabled="questionIndex === questions.length - 1 || busy"
               @click="changeQuestion(questionIndex + 1)"
             >
               ›
@@ -60,7 +66,7 @@
             type="button"
             class="question-card-icon question-card-close"
             :aria-label="t('webSession.asyncInputLater')"
-            :disabled="submitting"
+            :disabled="busy"
             @click="collapsed = true"
           >
             ×
@@ -75,7 +81,7 @@
           :class="{ 'is-selected': selections[currentQuestion.id]?.includes(option.label) }"
           type="button"
           :aria-pressed="selections[currentQuestion.id]?.includes(option.label) ?? false"
-          :disabled="disabled || submitting"
+          :disabled="disabled || busy"
           @click.capture="preventClickAfterTextSelection"
           @click="selectAnswer(currentQuestion.id, [option.label])"
         >
@@ -94,7 +100,7 @@
             type="textarea"
             :autosize="{ minRows: 1, maxRows: 5 }"
             :bordered="false"
-            :disabled="disabled || submitting"
+            :disabled="disabled || busy"
             :placeholder="t('webSession.asyncInputPlaceholder')"
             :input-props="{ 'aria-label': t('webSession.asyncInputPlaceholder') }"
             @update:value="writeAnswer(currentQuestion.id, $event)"
@@ -105,9 +111,17 @@
       <div class="question-card-footer">
         <span class="question-card-hint">{{ t('webSession.asyncInputWorkingHint') }}</span>
         <button
+          class="question-card-ignore"
+          type="button"
+          :disabled="disabled || busy"
+          @click="ignore"
+        >
+          {{ t(ignoring ? 'webSession.asyncInputIgnoring' : 'webSession.asyncInputIgnore') }}
+        </button>
+        <button
           class="question-card-later"
           type="button"
-          :disabled="submitting"
+          :disabled="busy"
           @click="collapsed = true"
         >
           {{ t('webSession.asyncInputLater') }}
@@ -115,9 +129,7 @@
         <button
           class="question-card-submit"
           type="submit"
-          :disabled="
-            disabled || submitting || (questionIndex === questions.length - 1 && !canSubmit)
-          "
+          :disabled="disabled || busy || (questionIndex === questions.length - 1 && !canSubmit)"
         >
           {{
             submitting
@@ -147,7 +159,10 @@ const cardRef = ref<HTMLElement | null>(null);
 const selections = ref<Record<string, string[]>>({});
 const drafts = ref<Record<string, string>>({});
 const submitting = ref(false);
+const ignoring = ref(false);
+const busy = computed(() => submitting.value || ignoring.value);
 const accepted = ref(false);
+const acceptedIgnore = ref(false);
 const error = ref('');
 const collapsed = ref(false);
 const questionIndex = ref(0);
@@ -155,6 +170,7 @@ const questions = computed(() => props.item.detail?.questions ?? []);
 const currentQuestion = computed(() => questions.value[questionIndex.value]);
 const storageKey = computed(() => JSON.stringify(['async', props.sessionId, props.item.id]));
 const submitted = computed(() => accepted.value || props.item.detail?.action === 'submitted');
+const ignored = computed(() => acceptedIgnore.value || props.item.detail?.action === 'ignored');
 const answers = computed(() =>
   Object.fromEntries(
     questions.value.map(question => {
@@ -190,6 +206,7 @@ watch(
     );
     drafts.value = { ...saved?.drafts };
     accepted.value = false;
+    acceptedIgnore.value = false;
     collapsed.value = false;
     questionIndex.value = 0;
     error.value = '';
@@ -200,7 +217,7 @@ watch(
 watch(
   [selections, drafts],
   () => {
-    if (!submitted.value) {
+    if (!submitted.value && !ignored.value) {
       store.setPendingUserInputDraft(storageKey.value, {
         selections: selections.value,
         drafts: drafts.value,
@@ -211,8 +228,7 @@ watch(
 );
 
 function changeQuestion(index: number) {
-  if (!submitting.value)
-    questionIndex.value = Math.max(0, Math.min(index, questions.value.length - 1));
+  if (!busy.value) questionIndex.value = Math.max(0, Math.min(index, questions.value.length - 1));
 }
 
 function selectAnswer(id: string, value: string[]) {
@@ -234,7 +250,7 @@ async function reveal() {
 defineExpose({ reveal });
 
 async function submit() {
-  if (props.disabled || submitting.value || submitted.value) return;
+  if (props.disabled || busy.value || submitted.value || ignored.value) return;
   if (questionIndex.value < questions.value.length - 1) {
     changeQuestion(questionIndex.value + 1);
     return;
@@ -250,6 +266,21 @@ async function submit() {
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
     submitting.value = false;
+  }
+}
+
+async function ignore() {
+  if (props.disabled || busy.value || submitted.value || ignored.value) return;
+  ignoring.value = true;
+  error.value = '';
+  try {
+    await store.ignoreAsyncUserInput(props.sessionId, props.item.id);
+    acceptedIgnore.value = true;
+    store.clearPendingUserInputDraft(storageKey.value);
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    ignoring.value = false;
   }
 }
 </script>

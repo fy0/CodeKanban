@@ -83,17 +83,25 @@ func (m *Manager) handleCodexAsyncInputCommand(ctx context.Context, client *clie
 	var payload struct {
 		ItemID  string              `json:"iid"`
 		Answers map[string][]string `json:"ans"`
+		Action  string              `json:"action"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid async input payload", false))
 	}
-	if err := m.respondToCodexAsyncInput(ctx, frame.SessionID, payload.ItemID, payload.Answers); err != nil {
+	if payload.Action != "" && payload.Action != "submitted" && payload.Action != "ignored" {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid async input action", false))
+	}
+	if err := m.resolveCodexAsyncInput(ctx, frame.SessionID, payload.ItemID, payload.Answers, firstNonEmpty(payload.Action, "submitted")); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
 	return m.sendMutationAck(ctx, client, frame, nil)
 }
 
 func (m *Manager) respondToCodexAsyncInput(ctx context.Context, sessionID, itemID string, answers map[string][]string) error {
+	return m.resolveCodexAsyncInput(ctx, sessionID, itemID, answers, "submitted")
+}
+
+func (m *Manager) resolveCodexAsyncInput(ctx context.Context, sessionID, itemID string, answers map[string][]string, action string) error {
 	// Keep duplicate submissions serialized without holding the dispatch lock:
 	// the regular send/steer path takes that lock itself.
 	lock := &m.asyncUserInputLocks[sessionRevisionLockIndex(sessionID)]
@@ -106,9 +114,6 @@ func (m *Manager) respondToCodexAsyncInput(ctx context.Context, sessionID, itemI
 	if record.ArchivedAt != nil || !isCodexSteerSession(record) {
 		return fmt.Errorf("async questions require an active Codex session")
 	}
-	if err := m.ensureSessionMessagingAuthorized(ctx, record); err != nil {
-		return err
-	}
 	item, err := m.findHistoryItemByID(ctx, sessionID, strings.TrimSpace(itemID))
 	if err != nil {
 		return err
@@ -119,8 +124,22 @@ func (m *Manager) respondToCodexAsyncInput(ctx context.Context, sessionID, itemI
 	if item.SourceThreadID != nil && record.NativeSessionID != nil && *item.SourceThreadID != *record.NativeSessionID {
 		return fmt.Errorf("cannot answer a sub-agent question from the parent thread")
 	}
-	if item.Detail.Action == "submitted" {
+	if item.Detail.Action == "submitted" || (action == "ignored" && item.Detail.Action == "ignored") {
 		return nil
+	}
+	threadID := ""
+	if item.SourceThreadID != nil {
+		threadID = *item.SourceThreadID
+	}
+	if action == "ignored" {
+		_, err = m.appendAndBroadcast(ctx, sessionID, record, Event{
+			ID: utils.NewID(), Type: "async_user_input_ignored", ThreadID: threadID, Timestamp: time.Now(),
+			Payload: map[string]any{"iid": item.ID},
+		})
+		return err
+	}
+	if err := m.ensureSessionMessagingAuthorized(ctx, record); err != nil {
+		return err
 	}
 	text, normalized, err := formatCodexAsyncInputAnswers(item.Detail.Questions, answers)
 	if err != nil {
@@ -128,10 +147,6 @@ func (m *Manager) respondToCodexAsyncInput(ctx context.Context, sessionID, itemI
 	}
 	if _, err := m.sendMessageWithModeResult(ctx, sessionID, text, nil, PendingInputModeRedirect, "async-answer:"+item.ID); err != nil {
 		return err
-	}
-	threadID := ""
-	if item.SourceThreadID != nil {
-		threadID = *item.SourceThreadID
 	}
 	_, err = m.appendAndBroadcast(ctx, sessionID, record, Event{
 		ID: utils.NewID(), Type: "async_user_input_res", ThreadID: threadID, Timestamp: time.Now(),

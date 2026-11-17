@@ -161,6 +161,7 @@ button:focus-visible {
   color: var(--n-text-color-2, #888);
   font-size: 11px;
 }
+.question-card-ignore,
 .question-card-later,
 .question-card-submit {
   flex-shrink: 0;
@@ -171,6 +172,7 @@ button:focus-visible {
   font-size: 11px;
   line-height: 1.5;
 }
+.question-card-ignore:hover:enabled,
 .question-card-later:hover:enabled {
   background: var(--app-surface-sunken, #f3f3f3);
 }
@@ -197,6 +199,10 @@ button:focus-visible {
 .question-card-status {
   color: var(--app-success, #15803d);
   font-size: 12px;
+}
+.question-card-ignored {
+  flex-shrink: 0;
+  color: var(--n-text-color-2, #737373);
 }
 .question-card-answer {
   display: flex;
@@ -229,8 +235,12 @@ button:focus-visible {
   .question-card-hint {
     flex-basis: 100%;
   }
+  .question-card-ignore,
   .question-card-later {
     margin-left: auto;
+  }
+  .question-card-ignore + .question-card-later {
+    margin-left: 0;
   }
 }
 

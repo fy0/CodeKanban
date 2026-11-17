@@ -434,7 +434,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			return nil, err
 		}
 		return &item, nil
-	case "async_user_input_res":
+	case "async_user_input_res", "async_user_input_ignored":
 		var row tables.WebSessionItemTable
 		if err := db.WithContext(ctx).Where("web_session_id = ? AND id = ?", sessionID, stringValue(payload["iid"])).First(&row).Error; err != nil {
 			return nil, err
@@ -445,6 +445,12 @@ func (m *Manager) applyEventToHistoryCacheDB(
 		}
 		item, err := upsertEventItem(event.ThreadID, sourceKey, func(next *HistoryItem) {
 			if next.Detail != nil && next.Detail.Type == codexAsyncInputDetailType {
+				if event.Type == "async_user_input_ignored" {
+					if next.Detail.Action != "submitted" {
+						next.Detail.Action = "ignored"
+					}
+					return
+				}
 				var answers map[string][]string
 				decodeJSONText(mustJSONText(payload["ans"]), &answers)
 				next.Detail.Answers = nil
