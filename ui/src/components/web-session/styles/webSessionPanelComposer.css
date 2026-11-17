@@ -1434,6 +1434,10 @@
   padding-top: 2px;
 }
 
+.context-usage-stat--wide {
+  grid-column: 1 / -1;
+}
+
 .context-usage-total-value {
   color: var(--n-text-color-1);
   font-size: 14px;

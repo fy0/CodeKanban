@@ -139,6 +139,7 @@ type wireSess struct {
 	SyncError                         *string         `json:"se,omitempty"`
 	Usage                             wireUsage       `json:"usa"`
 	LatestTurnUsage                   *wireCtxEst     `json:"ltu,omitempty"`
+	LatestTokenCountUpdatedAt         *int64          `json:"ltca,omitempty"`
 	ContextEstimate                   wireCtxEst      `json:"cea"`
 	ContextEstimateMode               string          `json:"cem"`
 	LastContextCompactionAt           *int64          `json:"lcca,omitempty"`
@@ -552,6 +553,11 @@ func mapWireSession(session SessionSummary) *wireSess {
 		value := session.LastContextCompactionAt.UnixMilli()
 		lastContextCompactionAt = &value
 	}
+	var latestTokenCountUpdatedAt *int64
+	if session.LatestTokenCountUpdatedAt != nil {
+		value := session.LatestTokenCountUpdatedAt.UnixMilli()
+		latestTokenCountUpdatedAt = &value
+	}
 	wireSession := &wireSess{
 		ID:                                session.ID,
 		Revision:                          session.Revision,
@@ -621,15 +627,16 @@ func mapWireSession(session SessionSummary) *wireSess {
 			OutputTokens:      session.ContextEstimate.OutputTokens,
 			UsedTokens:        session.ContextEstimate.UsedTokens,
 		},
-		ContextEstimateMode:     string(session.ContextEstimateMode),
-		LastContextCompactionAt: lastContextCompactionAt,
-		Cost:                    session.Usage.Cost,
-		ContextWindowTokens:     session.ContextWindowTokens,
-		ContextWindowSource:     string(session.ContextWindowSource),
-		Goal:                    mapWireGoal(session.Goal),
-		WorkTiming:              mapWireWorkTiming(session.WorkTiming),
-		TokenSpeed:              session.TokenSpeed,
-		DevinQuota:              mapWireDevinQuota(session.DevinQuota),
+		ContextEstimateMode:       string(session.ContextEstimateMode),
+		LatestTokenCountUpdatedAt: latestTokenCountUpdatedAt,
+		LastContextCompactionAt:   lastContextCompactionAt,
+		Cost:                      session.Usage.Cost,
+		ContextWindowTokens:       session.ContextWindowTokens,
+		ContextWindowSource:       string(session.ContextWindowSource),
+		Goal:                      mapWireGoal(session.Goal),
+		WorkTiming:                mapWireWorkTiming(session.WorkTiming),
+		TokenSpeed:                session.TokenSpeed,
+		DevinQuota:                mapWireDevinQuota(session.DevinQuota),
 	}
 	if session.LatestTurnUsage.InputTokens > 0 ||
 		session.LatestTurnUsage.CachedInputTokens > 0 ||

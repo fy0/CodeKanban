@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
@@ -164,4 +165,27 @@ func TestTokenSpeedHistoryRejectsDelayedPersistence(t *testing.T) {
 	restarted.ensureTokenSpeedState(session.ID)
 	restored = restarted.tokenSpeedSnapshot(session.ID)
 	assertTokenSpeedSummary(t, restored.Stats.Session, 0, 0, 0, true)
+}
+
+func TestTokenSpeedCacheHistoryPersistsCalibration(t *testing.T) {
+	m, session := newTextDeltaTestManager(t)
+	session.Agent = "codex"
+	m.observeTokenSpeedLifecycle(*session, Event{Type: "run_st", RunID: "cache-run"})
+	m.updateTokenSpeed(session.ID, "cache-run", func(s *tokenSpeedState, now time.Time) {
+		s.begin("request", now.Add(-time.Second), true)
+		s.finishCodexSample(s.current(), decodeRawObject(json.RawMessage(`{"outputTokens":80,"inputTokens":2000,"cachedInputTokens":1800}`)), now)
+	}, true)
+	before := m.tokenSpeedSnapshot(session.ID)
+	m.updateTokenSpeed(session.ID, "cache-run", func(s *tokenSpeedState, now time.Time) {
+		s.finishCodexSample(s.current(), decodeRawObject(json.RawMessage(`{"outputTokens":80,"cachedInputTokens":0}`)), now)
+	}, true)
+	if *before.History[0].CachedInputTokens != 1800 {
+		t.Fatal("calibration mutated a published cache observation")
+	}
+	restarted := &Manager{store: m.store}
+	restarted.ensureTokenSpeedState(session.ID)
+	record := restarted.tokenSpeedSnapshot(session.ID).History[0]
+	if record.InputTokens == nil || *record.InputTokens != 2000 || record.CachedInputTokens == nil || *record.CachedInputTokens != 0 {
+		t.Fatalf("cache correction did not survive restart: %+v", record)
+	}
 }

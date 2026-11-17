@@ -384,6 +384,8 @@ export interface WebSessionTokenSpeedRecord {
   outputTokens: number;
   durationMs: number;
   firstTokenMs?: number | null;
+  inputTokens?: number | null;
+  cachedInputTokens?: number | null;
   tokensPerSecond: number;
   estimated: boolean;
 }
@@ -634,6 +636,7 @@ export interface WebSessionSummary {
   usage: WebSessionUsage;
   devinQuota?: WebSessionDevinQuota | null;
   latestTurnUsage?: WebSessionContextEstimate | null;
+  latestTokenCountUpdatedAt?: string | null;
   contextEstimate: WebSessionContextEstimate;
   contextEstimateMode: WebSessionContextEstimateMode;
   lastContextCompactionAt?: string | null;

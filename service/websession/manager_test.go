@@ -9597,6 +9597,14 @@ func TestHandleCodexAppServerUsageUsesLatestSnapshotForContextEstimate(t *testin
 		t.Fatalf("GetSession returned error: %v", err)
 	}
 	summary := manager.mapSessionSummary(record)
+	if summary.LatestTokenCountUpdatedAt == nil || record.LatestTokenCountUpdatedAt == nil ||
+		!summary.LatestTokenCountUpdatedAt.Equal(*record.LatestTokenCountUpdatedAt) {
+		t.Fatal("summary must preserve the latest request observation time")
+	}
+	if wire := mapWireSession(summary); wire.LatestTokenCountUpdatedAt == nil ||
+		*wire.LatestTokenCountUpdatedAt != record.LatestTokenCountUpdatedAt.UnixMilli() {
+		t.Fatal("wire summary must preserve the request observation in milliseconds")
+	}
 	if summary.ContextEstimateMode != ContextEstimateModeLatestTokenCount {
 		t.Fatalf("expected context estimate mode %q, got %q", ContextEstimateModeLatestTokenCount, summary.ContextEstimateMode)
 	}
@@ -9658,6 +9666,9 @@ func TestHandleCodexAppServerUsageClearsLatestSnapshotWhenMissingLast(t *testing
 		t.Fatalf("GetSession returned error: %v", err)
 	}
 	summary := manager.mapSessionSummary(record)
+	if summary.LatestTokenCountUpdatedAt != nil || mapWireSession(summary).LatestTokenCountUpdatedAt != nil {
+		t.Fatal("missing request usage must clear the cache observation from summaries")
+	}
 	if record.LatestTokenCountUpdatedAt != nil ||
 		record.LatestTokenCountInputTokens != 0 ||
 		record.LatestTokenCountCachedInputTokens != 0 ||

@@ -180,6 +180,17 @@
               </span>
               <span class="context-usage-total-value">{{ devinQuota.weekly }}%</span>
             </div>
+            <div
+              v-if="devinQuota.fetchedAt !== null"
+              class="context-usage-stat context-usage-stat--wide"
+            >
+              <span class="context-usage-stat__label">
+                {{ t('webSession.contextUsageDevinCacheUpdatedAt') }}
+              </span>
+              <span class="context-usage-total-value">{{
+                formatDateTime(devinQuota.fetchedAt)
+              }}</span>
+            </div>
           </template>
         </div>
 
@@ -2119,6 +2130,12 @@
               </div>
 
               <WebSessionTokenSpeed v-if="isMobileComposerCollapsed" :speed="currentTokenSpeed" />
+              <WebSessionPromptCache
+                v-if="isMobileComposerCollapsed"
+                :session="currentSession"
+                :now="liveStateClockMs"
+                :speed="currentTokenSpeed"
+              />
               <button
                 v-if="isMobileComposerCollapsed && contextUsageIndicator"
                 type="button"
@@ -3341,6 +3358,11 @@
 
                 <div class="composer-footer-right">
                   <WebSessionTokenSpeed :speed="currentTokenSpeed" />
+                  <WebSessionPromptCache
+                    :session="currentSession"
+                    :now="liveStateClockMs"
+                    :speed="currentTokenSpeed"
+                  />
                   <n-dropdown
                     trigger="manual"
                     placement="top-end"
@@ -3976,6 +3998,7 @@ import {
   formatWebSessionTimestamp,
 } from '@/components/web-session/webSessionTimeFormat';
 import WebSessionTokenSpeed from '@/components/web-session/WebSessionTokenSpeed.vue';
+import WebSessionPromptCache from '@/components/web-session/WebSessionPromptCache.vue';
 import {
   formatElapsedDuration,
   resolveWebSessionLiveTimeCopy,
@@ -4086,7 +4109,8 @@ const TAB_VISIT_MRU_STORAGE_KEY = 'workspace-web-session-tab-visit-mru-v1';
 const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY = 'workspace-web-session-sidebar-search-archived';
 const SIDEBAR_SEARCH_BODY_STORAGE_KEY = 'workspace-web-session-sidebar-search-body';
-const SIDEBAR_SEARCH_MESSAGES_ONLY_STORAGE_KEY = 'workspace-web-session-sidebar-search-messages-only';
+const SIDEBAR_SEARCH_MESSAGES_ONLY_STORAGE_KEY =
+  'workspace-web-session-sidebar-search-messages-only';
 const CYBER_POLICY_DISMISSALS_STORAGE_KEY = 'workspace-web-session-cyber-policy-dismissals';
 const SIDEBAR_SEARCH_SCAN_LIMIT = 50;
 const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
@@ -4546,7 +4570,10 @@ const persistedSidebarScope = useStorage<string>(SIDEBAR_SCOPE_STORAGE_KEY, 'all
 const sidebarSearchQuery = ref('');
 const sidebarSearchArchived = useStorage<boolean>(SIDEBAR_SEARCH_ARCHIVED_STORAGE_KEY, false);
 const sidebarSearchBody = useStorage<boolean>(SIDEBAR_SEARCH_BODY_STORAGE_KEY, true);
-const sidebarSearchMessagesOnly = useStorage<boolean>(SIDEBAR_SEARCH_MESSAGES_ONLY_STORAGE_KEY, true);
+const sidebarSearchMessagesOnly = useStorage<boolean>(
+  SIDEBAR_SEARCH_MESSAGES_ONLY_STORAGE_KEY,
+  true
+);
 const sidebarSearchState = ref<SidebarSearchState>(createSidebarSearchState());
 const activeSidebarTotal = ref(0);
 const activeSidebarKnownCount = ref(0);
@@ -6081,6 +6108,7 @@ const devinQuota = computed(() => {
   const acu = Math.max(0, Number(session.usage.acuCost || 0));
   const credit = Math.max(0, Number(session.usage.creditCost || 0));
   const account = session.devinQuota ?? null;
+  const fetchedAt = Number(account?.fetchedAtUnix ?? 0) * 1000;
   if (acu <= 0 && credit <= 0 && !account) {
     return null;
   }
@@ -6092,6 +6120,7 @@ const devinQuota = computed(() => {
     weekly: account
       ? Math.max(0, Math.min(100, Number(account.weeklyRemainingPercent || 0)))
       : null,
+    fetchedAt: Number.isFinite(fetchedAt) && fetchedAt > 0 ? fetchedAt : null,
   };
 });
 

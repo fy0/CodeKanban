@@ -185,6 +185,7 @@ function toWireSession(session: WebSessionSummary) {
       usd: session.contextEstimate.usedTokens,
     },
     cem: session.contextEstimateMode,
+    ltca: session.latestTokenCountUpdatedAt ? toMillis(session.latestTokenCountUpdatedAt) : null,
     lcca: session.lastContextCompactionAt ? toMillis(session.lastContextCompactionAt) : null,
     cost: session.usage.cost,
     cwt: session.contextWindowTokens,
@@ -506,6 +507,46 @@ describe('webSession loading behavior', () => {
     await store.deleteSession(session.projectId, session.id);
 
     await expect(request).resolves.toBeNull();
+  });
+
+  it('preserves prompt cache observations through HTTP and websocket summaries', async () => {
+    const store = useWebSessionStore();
+    const observedAt = '2026-11-17T15:00:00.000Z';
+    const session = makeSession({
+      id: 'session-prompt-cache',
+      revision: '2',
+      latestTokenCountUpdatedAt: observedAt,
+      contextEstimateMode: 'latest_token_count',
+      contextEstimate: {
+        inputTokens: 20_000,
+        cachedInputTokens: 18_000,
+        outputTokens: 100,
+        usedTokens: 20_100,
+      },
+    });
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    expect(store.getSessions(session.projectId)[0]?.latestTokenCountUpdatedAt).toBe(observedAt);
+
+    await store.openEventStream();
+    const updated = {
+      ...session,
+      revision: '3',
+      latestTokenCountUpdatedAt: '2026-11-17T15:05:00.000Z',
+    };
+    findSocket('/api/v1/web-sessions/events')?.dispatch({
+      v: 1,
+      k: 'evt',
+      op: 'session',
+      sid: session.id,
+      rev: '3',
+      ts: Date.now(),
+      s: toWireSession(updated),
+    });
+    expect(store.getSessions(session.projectId)[0]).toMatchObject({
+      latestTokenCountUpdatedAt: updated.latestTokenCountUpdatedAt,
+      contextEstimate: session.contextEstimate,
+    });
   });
 
   it('tracks Codex app-server runtime across snapshots and websocket events', async () => {

@@ -134,6 +134,7 @@ type WireSession = {
     out?: number;
     usd?: number;
   };
+  ltca?: number | null;
   cem?: 'cumulative_total' | 'since_compaction' | 'latest_turn_delta' | 'latest_token_count';
   lcca?: number | null;
   cost?: number;
@@ -3363,6 +3364,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
               Math.max(0, Number(session.ltu.in ?? 0) + Number(session.ltu.out ?? 0)),
           }
         : null,
+      latestTokenCountUpdatedAt: session.ltca ? new Date(session.ltca).toISOString() : null,
       contextEstimate: {
         inputTokens: session.cea?.in ?? session.usa?.in ?? 0,
         cachedInputTokens: session.cea?.cin ?? session.usa?.cin ?? 0,

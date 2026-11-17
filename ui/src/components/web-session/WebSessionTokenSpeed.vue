@@ -54,9 +54,29 @@
             class="token-speed-record"
           >
             <div class="token-speed-record-info">
-              <time :datetime="record.endedAt" :title="formatTime(record.endedAt, true)">{{
-                formatTime(record.endedAt)
-              }}</time>
+              <div class="token-speed-record-time">
+                <time :datetime="record.endedAt" :title="formatTime(record.endedAt, true)">{{
+                  formatTime(record.endedAt)
+                }}</time>
+                <span
+                  v-if="cacheMarker(record)"
+                  class="token-speed-cache-marker"
+                  :class="`cache-${cacheMarker(record)!.event}`"
+                  :title="cacheMarker(record)!.hint"
+                  :aria-label="cacheMarker(record)!.hint"
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path
+                      v-if="cacheMarker(record)!.event === 'refreshed'"
+                      d="M13 6a5 5 0 1 0 0 4M13 2v4H9"
+                    />
+                    <path v-else d="M8 3v6m0 3v.1" />
+                  </svg>
+                  <span v-if="cacheMarker(record)!.event === 'refreshed'"
+                    >{{ cacheMarker(record)!.percent }}%</span
+                  >
+                </span>
+              </div>
               <div class="token-speed-record-meta">
                 <small class="token-speed-model" :title="record.model || record.agent">{{
                   record.model || record.agent || '—'
@@ -127,7 +147,8 @@ import { createReusableTemplate } from '@vueuse/core';
 import { NModal, NPopover, useThemeVars } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
 import { useResponsive } from '@/composables/useResponsive';
-import type { WebSessionTokenSpeed } from '@/types/models';
+import type { WebSessionTokenSpeed, WebSessionTokenSpeedRecord } from '@/types/models';
+import { promptCacheRecordEvent } from './webSessionPromptCache';
 import {
   formatTokenSpeed,
   selectTokenSpeedMetric,
@@ -148,12 +169,47 @@ const themeStyle = computed(() => ({
   '--token-speed-secondary': themeVars.value.textColor2,
   '--token-speed-muted': themeVars.value.textColor3,
   '--token-speed-divider': themeVars.value.dividerColor,
+  '--token-speed-warning': themeVars.value.warningColor,
 }));
 const selectedMetric = ref<TokenSpeedMetric>('recent5');
 const selected = computed(() => selectTokenSpeedMetric(props.speed, selectedMetric.value));
 const label = computed(() => formatTokenSpeed(selected.value.value));
 const metricLabel = computed(() => t(`webSession.tokenSpeedMetric_${selected.value.metric}`));
 const history = computed(() => props.speed?.history ?? []);
+const cacheMarkers = computed(
+  () =>
+    new Map(
+      history.value.map((record, index) => {
+        const event = promptCacheRecordEvent(record, history.value[index + 1]);
+        const cached = Math.min(record.inputTokens ?? 0, record.cachedInputTokens ?? 0);
+        const percent = Math.round((cached / (record.inputTokens || 1)) * 100);
+        const detail = t(
+          event === 'refreshed'
+            ? 'webSession.promptCacheRecordHit'
+            : 'webSession.promptCacheRecordMiss',
+          {
+            cached: cached.toLocaleString(locale.value),
+            input: record.inputTokens?.toLocaleString(locale.value),
+          }
+        );
+        const label =
+          event === 'refreshed'
+            ? t('webSession.promptCacheRefreshed', { percent })
+            : t(
+                event === 'interrupted'
+                  ? 'webSession.promptCacheInterrupted'
+                  : 'webSession.promptCacheMiss'
+              );
+        return [
+          `${record.runId}:${record.sampleId}`,
+          event ? { event, percent, hint: `${label}. ${detail}` } : null,
+        ];
+      })
+    )
+);
+function cacheMarker(record: WebSessionTokenSpeedRecord) {
+  return cacheMarkers.value.get(`${record.runId}:${record.sampleId}`);
+}
 const metrics = computed(() =>
   (['latest', 'currentRun', 'recent5', 'recent20', 'session'] as const).map(key => ({
     key,
@@ -310,6 +366,32 @@ small {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+.token-speed-record-time {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.token-speed-cache-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--token-speed-accent);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.token-speed-cache-marker svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.token-speed-cache-marker.cache-miss,
+.token-speed-cache-marker.cache-interrupted {
+  color: var(--token-speed-warning);
 }
 .token-speed-model {
   overflow: hidden;

@@ -358,6 +358,7 @@ type SessionSummary struct {
 	Usage                             Usage                      `json:"usage"`
 	DevinQuota                        *DevinQuotaStatus          `json:"devinQuota,omitempty"`
 	LatestTurnUsage                   ContextEstimate            `json:"latestTurnUsage"`
+	LatestTokenCountUpdatedAt         *time.Time                 `json:"latestTokenCountUpdatedAt,omitempty"`
 	ContextEstimate                   ContextEstimate            `json:"contextEstimate"`
 	ContextEstimateMode               ContextEstimateMode        `json:"contextEstimateMode"`
 	LastContextCompactionAt           *time.Time                 `json:"lastContextCompactionAt,omitempty"`

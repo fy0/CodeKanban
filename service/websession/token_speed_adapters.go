@@ -2,6 +2,7 @@ package websession
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -147,6 +148,10 @@ func (s *tokenSpeedState) observeCodexTokenSpeed(method string, payload map[stri
 		if output, ok := codexInt64Field(usage, "outputTokens", "output_tokens"); ok {
 			if sample == nil || !sample.usageClaimed {
 				s.codexPendingOutput += output
+				if sample != nil {
+					total := s.codexTotal + s.codexPendingOutput
+					sample.codexUsageTotal = &total
+				}
 			}
 			if sample != nil {
 				// Per-response usage is authoritative, including a correction
@@ -172,6 +177,18 @@ func (s *tokenSpeedState) observeCodexTokenSpeed(method string, payload map[stri
 		s.codexPendingOutput -= claimed
 		delta -= claimed
 		if delta == 0 {
+			// Enrich the exact raw response consumed by this cumulative report.
+			// A delayed report must never attach cache usage to a newer request.
+			if hasLast {
+				for _, sample := range s.samples {
+					if sample.codexUsageTotal != nil && *sample.codexUsageTotal == total.OutputTokens &&
+						sample.output != nil && *sample.output == last.OutputTokens {
+						sample.observeCodexCacheUsage(decodeRawObject(usage["last"]))
+						s.recordSample(sample)
+						break
+					}
+				}
+			}
 			return
 		}
 		var pending []*tokenSpeedSample
@@ -218,6 +235,7 @@ func (s *tokenSpeedState) finishCodexSample(sample *tokenSpeedSample, usage map[
 	if sample == nil {
 		return
 	}
+	sample.observeCodexCacheUsage(usage)
 	reasoning, _ := codexInt64Field(usage, "reasoningOutputTokens", "reasoning_output_tokens")
 	if reasoning > 0 && !sample.reasoningObserved {
 		sample.completeBoundary = false
@@ -228,6 +246,33 @@ func (s *tokenSpeedState) finishCodexSample(sample *tokenSpeedSample, usage map[
 	if ok {
 		s.finishSample(sample, &output, codexGenerationEnd(sample, now), true)
 	}
+}
+
+func (sample *tokenSpeedSample) observeCodexCacheUsage(usage map[string]any) {
+	// Absence (including null) is unknown, not an observed cache miss. Keep
+	// pointers immutable so already published snapshots cannot change later.
+	assign := func(target **int64, keys ...string) {
+		for _, key := range keys {
+			raw, exists := usage[key]
+			if !exists || raw == nil {
+				continue
+			}
+			if _, ok := raw.(float64); !ok {
+				continue
+			}
+			value := numberValue(raw)
+			if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) || value >= math.MaxInt64 || math.Trunc(value) != value {
+				continue
+			}
+			count := int64(value)
+			if *target == nil || **target != count {
+				*target = &count
+			}
+			return
+		}
+	}
+	assign(&sample.inputTokens, "inputTokens", "input_tokens")
+	assign(&sample.cachedInputTokens, "cachedInputTokens", "cached_input_tokens")
 }
 
 func codexGenerationEnd(sample *tokenSpeedSample, now time.Time) time.Time {

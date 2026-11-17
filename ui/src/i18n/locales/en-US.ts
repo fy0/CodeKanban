@@ -1064,6 +1064,31 @@ export default {
     contextUsageDevinCredits: 'Devin quota (credits)',
     contextUsageDevinDailyQuota: 'Daily quota remaining',
     contextUsageDevinWeeklyQuota: 'Weekly quota remaining',
+    contextUsageDevinCacheUpdatedAt: 'Quota cache updated at',
+    promptCacheRemaining: 'Cache ≈{time}',
+    promptCacheDetails: 'Prompt Cache',
+    promptCacheWindowRemaining: 'Estimated retention remaining',
+    promptCacheHit: 'Latest request hit',
+    promptCacheRefreshed: '{percent}% hit · estimated window refreshed',
+    promptCacheMiss: 'Cache miss',
+    promptCacheInterrupted: 'Cache hit interrupted',
+    promptCacheMissHint:
+      'This request missed the cache. Prefix changes, routing, or eviction may cause a miss; the new window is still an estimate.',
+    promptCacheRecordMiss: 'Cached 0 / {input} tokens; estimated window restarted.',
+    promptCacheRecordHit: 'Cached {cached} / {input} tokens; estimated window refreshed.',
+    promptCacheUnconfirmed: 'Cache unconfirmed',
+    promptCacheUnknown: 'Cache --',
+    promptCacheLastHit: 'Latest request cache hit rate',
+    promptCacheTokens: 'Cached / input tokens',
+    promptCacheObservedAt: 'Latest request',
+    promptCachePendingHint:
+      'Waiting for current request usage; estimates restart after compaction.',
+    promptCacheUnknownHint:
+      'Retention for this model is unknown, so expiry cannot be estimated. Hit counts are from the latest request.',
+    promptCacheSmallHint:
+      'The latest input is below 1,024 tokens, so no retention estimate is shown.',
+    promptCacheEstimateHint:
+      'The ring estimates remaining time in the default 30-minute window and refreshes after each request. Actual retention and expiry are not reported; hits may continue after the countdown ends.',
     contextUsageCurrentMarker: 'Current',
     contextUsageWindowMarker: 'Limit',
     contextUsageShowExact: 'Show exact value',

@@ -68,6 +68,16 @@ function normalizeHistoryRecord(value: unknown): WebSessionTokenSpeedRecord | nu
     ...('firstTokenMs' in record
       ? { firstTokenMs: nonNegativeNumber(record.firstTokenMs) ? record.firstTokenMs : null }
       : {}),
+    ...('inputTokens' in record
+      ? { inputTokens: nonNegativeNumber(record.inputTokens) ? record.inputTokens : null }
+      : {}),
+    ...('cachedInputTokens' in record
+      ? {
+          cachedInputTokens: nonNegativeNumber(record.cachedInputTokens)
+            ? record.cachedInputTokens
+            : null,
+        }
+      : {}),
     outputTokens: record.outputTokens,
     durationMs: record.durationMs,
     tokensPerSecond: record.tokensPerSecond,

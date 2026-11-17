@@ -31,6 +31,9 @@ type tokenSpeedSample struct {
 	ended                 time.Time
 	startObserved         bool
 	firstTokenMs          *int64
+	inputTokens           *int64
+	cachedInputTokens     *int64
+	codexUsageTotal       *int64
 	weights               map[string]float64
 	output                *int64
 	reportedOutput        *int64

@@ -7,6 +7,73 @@ import (
 	"time"
 )
 
+func TestCodexTokenSpeedCacheUsageAttribution(t *testing.T) {
+	for _, order := range []string{"response-first", "thread-first", "cache-in-thread-only"} {
+		t.Run(order, func(t *testing.T) {
+			start := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+			s := &tokenSpeedState{runID: "run", agent: "codex"}
+			send := func(seconds int, method, payload string) { codexSpeedEvent(t, s, start, seconds, method, payload) }
+			send(0, "item/started", `{"item":{"type":"agentMessage","id":"first"}}`)
+			send(2, "item/agentMessage/delta", `{"itemId":"first","delta":"answer"}`)
+			send(2, "item/started", `{"item":{"type":"commandExecution","id":"cmd"}}`)
+			response := `{"responseId":"response-1","usage":{"outputTokens":80,"inputTokens":2000,"cachedInputTokens":1800}}`
+			thread := `{"tokenUsage":{"total":{"outputTokens":80},"last":{"outputTokens":80,"inputTokens":2000,"cachedInputTokens":1800}}}`
+			if order == "thread-first" {
+				send(3, "thread/tokenUsage/updated", thread)
+				send(3, "rawResponse/completed", response)
+			} else {
+				if order == "cache-in-thread-only" {
+					response = `{"responseId":"response-1","usage":{"outputTokens":80}}`
+				}
+				send(3, "rawResponse/completed", response)
+				// Start another request before the delayed usage report arrives.
+				send(4, "item/started", `{"item":{"type":"agentMessage","id":"second"}}`)
+				send(5, "item/agentMessage/delta", `{"itemId":"second","delta":"next"}`)
+				send(5, "thread/tokenUsage/updated", thread)
+			}
+			got := s.snapshot("epoch")
+			if len(got.History) != 1 || got.History[0].InputTokens == nil || *got.History[0].InputTokens != 2000 ||
+				got.History[0].CachedInputTokens == nil || *got.History[0].CachedInputTokens != 1800 {
+				t.Fatalf("cache usage missing or misattributed: %+v", got.History)
+			}
+			if order != "thread-first" && s.current().cachedInputTokens != nil {
+				t.Fatal("delayed cache usage attached to next generation")
+			}
+			// Duplicate reports must not replace the durable record or mutate snapshots.
+			before := s.history[0].CachedInputTokens
+			send(6, "thread/tokenUsage/updated", thread)
+			if s.history[0].CachedInputTokens != before {
+				t.Fatal("duplicate cache report replaced unchanged usage")
+			}
+		})
+	}
+}
+
+func TestCodexTokenSpeedCacheUsageUnknownAndMiss(t *testing.T) {
+	for _, usage := range []string{
+		`{"output_tokens":80,"input_tokens":2000}`,
+		`{"output_tokens":80,"input_tokens":2000,"cached_input_tokens":null}`,
+		`{"output_tokens":80,"input_tokens":2000,"cached_input_tokens":"unknown"}`,
+		`{"output_tokens":80,"input_tokens":2000,"cached_input_tokens":-1}`,
+		`{"output_tokens":80,"input_tokens":2000,"cached_input_tokens":0}`,
+	} {
+		t.Run(usage, func(t *testing.T) {
+			start := time.Now()
+			s := &tokenSpeedState{runID: "run"}
+			s.begin("request", start, true)
+			s.finishCodexSample(s.current(), decodeRawObject(json.RawMessage(usage)), start.Add(time.Second))
+			got := s.snapshot("e").History[0]
+			if strings.Contains(usage, `"cached_input_tokens":0`) {
+				if got.CachedInputTokens == nil || *got.CachedInputTokens != 0 {
+					t.Fatal("observed miss was lost")
+				}
+			} else if got.CachedInputTokens != nil {
+				t.Fatal("unknown usage became a cache miss")
+			}
+		})
+	}
+}
+
 func codexSpeedEvent(t *testing.T, s *tokenSpeedState, start time.Time, seconds int, method, payload string) {
 	t.Helper()
 	now := start.Add(time.Duration(seconds) * time.Second)

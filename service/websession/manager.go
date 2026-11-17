@@ -7463,10 +7463,11 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 			AcuCost:           record.TotalAcuCost,
 			CreditCost:        record.TotalCreditCost,
 		},
-		LatestTurnUsage:         latestTurnUsage,
-		ContextEstimate:         contextEstimate,
-		ContextEstimateMode:     contextEstimateMode,
-		LastContextCompactionAt: record.LastContextCompactionAt,
+		LatestTurnUsage:           latestTurnUsage,
+		LatestTokenCountUpdatedAt: record.LatestTokenCountUpdatedAt,
+		ContextEstimate:           contextEstimate,
+		ContextEstimateMode:       contextEstimateMode,
+		LastContextCompactionAt:   record.LastContextCompactionAt,
 		ContextWindowTokens: func() *int64 {
 			if record.SessionContextWindowTokens <= 0 {
 				return nil

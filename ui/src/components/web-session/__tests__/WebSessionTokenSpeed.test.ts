@@ -85,6 +85,24 @@ function render(speed?: TokenSpeed, locale = 'en-US') {
 }
 
 describe('WebSessionTokenSpeed', () => {
+  it('marks observed cache refreshes and interruptions inline, leaving unknown records unmarked', () => {
+    const speed = makeSpeed();
+    speed.history = [
+      { ...speed.history![0]!, sampleId: '3', inputTokens: 20_000, cachedInputTokens: 0 },
+      { ...speed.history![0]!, sampleId: '2', inputTokens: 20_000, cachedInputTokens: 18_000 },
+      { ...speed.history![1]!, sampleId: '1' },
+    ];
+    const wrapper = render(speed, 'zh-CN');
+    const rows = wrapper.findAll('.token-speed-record');
+    expect(rows[0]!.get('.token-speed-cache-marker').classes()).toContain('cache-interrupted');
+    expect(rows[0]!.get('.token-speed-cache-marker').attributes('title')).toContain('命中中断');
+    expect(rows[1]!.get('.token-speed-cache-marker').text()).toBe('90%');
+    expect(rows[1]!.get('.token-speed-cache-marker').attributes('title')).toContain(
+      '18,000 / 20,000'
+    );
+    expect(rows[2]!.find('.token-speed-cache-marker').exists()).toBe(false);
+    wrapper.unmount();
+  });
   const originalWidth = window.innerWidth;
   afterEach(() => {
     window.innerWidth = originalWidth;

@@ -66,6 +66,8 @@ describe('token speed telemetry', () => {
       durationMs: 4000,
       tokensPerSecond: 50,
       firstTokenMs: 1250,
+      inputTokens: 2000,
+      cachedInputTokens: 0,
       estimated: false,
     };
     const payload = {
@@ -74,6 +76,12 @@ describe('token speed telemetry', () => {
       history: [record],
     };
     expect(normalizeTokenSpeed(payload)).toEqual(payload);
+    for (const invalid of [null, -1, NaN, Infinity, '0']) {
+      expect(
+        normalizeTokenSpeed({ ...payload, history: [{ ...record, cachedInputTokens: invalid }] })
+          ?.history?.[0]?.cachedInputTokens
+      ).toBeNull();
+    }
     const state = new WebSessionTokenSpeedState();
     state.apply('s1', payload);
     state.apply('s1', { ...payload, ...sample(0, 'process-2'), tokensPerSecond: null });

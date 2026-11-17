@@ -31,17 +31,19 @@ type TokenSpeedStats struct {
 }
 
 type TokenSpeedRecord struct {
-	RunID           string    `json:"runId"`
-	SampleID        string    `json:"sampleId"`
-	Agent           string    `json:"agent"`
-	Model           string    `json:"model"`
-	StartedAt       time.Time `json:"startedAt"`
-	EndedAt         time.Time `json:"endedAt"`
-	OutputTokens    float64   `json:"outputTokens"`
-	DurationMs      int64     `json:"durationMs"`
-	FirstTokenMs    *int64    `json:"firstTokenMs"`
-	TokensPerSecond float64   `json:"tokensPerSecond"`
-	Estimated       bool      `json:"estimated"`
+	RunID             string    `json:"runId"`
+	SampleID          string    `json:"sampleId"`
+	Agent             string    `json:"agent"`
+	Model             string    `json:"model"`
+	StartedAt         time.Time `json:"startedAt"`
+	EndedAt           time.Time `json:"endedAt"`
+	OutputTokens      float64   `json:"outputTokens"`
+	DurationMs        int64     `json:"durationMs"`
+	FirstTokenMs      *int64    `json:"firstTokenMs"`
+	InputTokens       *int64    `json:"inputTokens,omitempty"`
+	CachedInputTokens *int64    `json:"cachedInputTokens,omitempty"`
+	TokensPerSecond   float64   `json:"tokensPerSecond"`
+	Estimated         bool      `json:"estimated"`
 }
 
 type tokenSpeedAccumulator struct {
@@ -88,7 +90,8 @@ func (s *tokenSpeedState) measure(sample *tokenSpeedSample, end time.Time) *Toke
 	}
 	return &TokenSpeedRecord{RunID: s.runID, SampleID: sample.id, Agent: s.agent, Model: s.model,
 		StartedAt: sample.started, EndedAt: end, OutputTokens: tokens, DurationMs: durationMs,
-		FirstTokenMs: sample.firstTokenMs, TokensPerSecond: tokens * 1000 / float64(durationMs), Estimated: estimated}
+		FirstTokenMs: sample.firstTokenMs, InputTokens: sample.inputTokens, CachedInputTokens: sample.cachedInputTokens,
+		TokensPerSecond: tokens * 1000 / float64(durationMs), Estimated: estimated}
 }
 
 func (s *tokenSpeedState) recordSample(sample *tokenSpeedSample) {
@@ -121,7 +124,8 @@ func (s *tokenSpeedState) recordSample(sample *tokenSpeedSample) {
 	}
 	s.pendingRecords[record.RunID+":"+record.SampleID] = tables.WebSessionTokenSpeedTable{RunID: record.RunID, SampleID: record.SampleID,
 		Agent: record.Agent, Model: record.Model, StartedAt: record.StartedAt, EndedAt: record.EndedAt,
-		OutputTokens: record.OutputTokens, DurationMs: record.DurationMs, FirstTokenMs: record.FirstTokenMs, Estimated: record.Estimated, Version: s.version + 1}
+		OutputTokens: record.OutputTokens, DurationMs: record.DurationMs, FirstTokenMs: record.FirstTokenMs,
+		InputTokens: record.InputTokens, CachedInputTokens: record.CachedInputTokens, Estimated: record.Estimated, Version: s.version + 1}
 	for i, previous := range s.history {
 		if previous.RunID == record.RunID && previous.SampleID == record.SampleID {
 			s.history = append(s.history[:i], s.history[i+1:]...)
@@ -201,7 +205,8 @@ func (m *Manager) newTokenSpeedState(sessionID string) *tokenSpeedState {
 	for _, row := range rows {
 		s.history = append(s.history, TokenSpeedRecord{RunID: row.RunID, SampleID: row.SampleID, Agent: row.Agent, Model: row.Model,
 			StartedAt: row.StartedAt, EndedAt: row.EndedAt, OutputTokens: row.OutputTokens, DurationMs: row.DurationMs,
-			FirstTokenMs: row.FirstTokenMs, TokensPerSecond: row.OutputTokens * 1000 / float64(row.DurationMs), Estimated: row.Estimated})
+			FirstTokenMs: row.FirstTokenMs, InputTokens: row.InputTokens, CachedInputTokens: row.CachedInputTokens,
+			TokensPerSecond: row.OutputTokens * 1000 / float64(row.DurationMs), Estimated: row.Estimated})
 	}
 	return s
 }
@@ -233,7 +238,7 @@ func (m *Manager) persistTokenSpeedRecords(sessionID string, rows []tables.WebSe
 		return
 	}
 	if err := db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "web_session_id"}, {Name: "run_id"}, {Name: "sample_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"output_tokens", "first_token_ms", "estimated", "version"}),
+		DoUpdates: clause.AssignmentColumns([]string{"output_tokens", "first_token_ms", "input_tokens", "cached_input_tokens", "estimated", "version"}),
 		Where:     clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: "web_session_token_speeds.version < excluded.version"}}}}).Create(&rows).Error; err != nil {
 		m.logTokenSpeedStorageError(sessionID, err)
 		m.tokenSpeedMu.Lock()
