@@ -6,8 +6,11 @@ import (
 
 	"code-kanban/model/tables"
 	"code-kanban/utils"
+
 	"go.uber.org/zap"
 )
+
+const slowModelMigrationThreshold = 500 * time.Millisecond
 
 func GetAllModels() []any {
 	return []any{
@@ -35,52 +38,68 @@ func DBMigrate(autoMigrate bool) {
 	}
 
 	logger := utils.Logger()
+	migrationStartedAt := time.Now()
 	logger.Info("database migration started")
 
+	cleanupStartedAt := time.Now()
 	dropRemovedKanbanArtifacts(logger)
+	logger.Info("database migration legacy cleanup finished",
+		zap.Duration("duration", time.Since(cleanupStartedAt)),
+	)
 
-	for _, model := range GetAllModels() {
-		if err := db.AutoMigrate(model); err != nil {
+	schemaStartedAt := time.Now()
+	models := GetAllModels()
+	for _, model := range models {
+		modelStartedAt := time.Now()
+		err := db.AutoMigrate(model)
+		duration := time.Since(modelStartedAt)
+		modelName := reflect.TypeOf(model).String()
+		if err != nil {
 			logger.Error("database migration failed",
 				zap.Error(err),
-				zap.String("model", reflect.TypeOf(model).String()),
+				zap.String("model", modelName),
+				zap.Duration("duration", duration),
 			)
 			panic(err)
 		}
+		level := zap.DebugLevel
+		if duration >= slowModelMigrationThreshold {
+			level = zap.InfoLevel
+		}
+		logger.Log(level, "database model migration finished",
+			zap.String("model", modelName),
+			zap.Duration("duration", duration),
+		)
 	}
+	logger.Info("database schema migration finished",
+		zap.Int("modelCount", len(models)),
+		zap.Duration("duration", time.Since(schemaStartedAt)),
+	)
 
+	runMigrationBackfill(logger, "web_session_item_command_group_ids", backfillWebSessionItemCommandGroupIDs)
+	runMigrationBackfill(logger, "web_session_sub_agent_active", backfillWebSessionSubAgentActive)
+	runMigrationBackfill(logger, "scheduled_input_context_window_snapshots", backfillScheduledInputContextWindowSnapshots)
+
+	logger.Info("database migration finished", zap.Duration("duration", time.Since(migrationStartedAt)))
+}
+
+func runMigrationBackfill(logger *zap.Logger, step string, backfill func() (int64, error)) {
 	backfillStartedAt := time.Now()
-	backfilledRows, err := backfillWebSessionItemCommandGroupIDs()
+	backfilledRows, err := backfill()
+	duration := time.Since(backfillStartedAt)
 	if err != nil {
-		logger.Error("web session command group id backfill failed", zap.Error(err))
+		logger.Error("database migration backfill failed",
+			zap.String("step", step),
+			zap.Duration("duration", duration),
+			zap.Error(err),
+		)
 		panic(err)
 	}
-	if backfilledRows > 0 {
-		logger.Info("web session command group ids backfilled",
-			zap.Int64("rowCount", backfilledRows),
-			zap.Duration("duration", time.Since(backfillStartedAt)),
-		)
-	}
-
-	if backfilledRows, err := backfillWebSessionSubAgentActive(); err != nil {
-		logger.Error("web session sub-agent active state backfill failed", zap.Error(err))
-		panic(err)
-	} else if backfilledRows > 0 {
-		logger.Info("web session sub-agent active states backfilled",
-			zap.Int64("rowCount", backfilledRows),
-		)
-	}
-
-	if backfilledRows, err := backfillScheduledInputContextWindowSnapshots(); err != nil {
-		logger.Error("scheduled input context window snapshots backfill failed", zap.Error(err))
-		panic(err)
-	} else if backfilledRows > 0 {
-		logger.Info("scheduled input context window snapshots backfilled",
-			zap.Int64("rowCount", backfilledRows),
-		)
-	}
-
-	logger.Info("database migration finished")
+	logger.Info("database migration backfill finished",
+		zap.String("step", step),
+		zap.Int64("rowCount", backfilledRows),
+		zap.Duration("duration", duration),
+	)
 }
 
 func backfillWebSessionSubAgentActive() (int64, error) {
@@ -149,26 +168,37 @@ func dropRemovedKanbanArtifacts(logger *zap.Logger) {
 		if !db.Migrator().HasTable(tableName) {
 			continue
 		}
+		dropStartedAt := time.Now()
 		if err := db.Migrator().DropTable(tableName); err != nil {
 			logger.Error("removed kanban table cleanup failed",
 				zap.Error(err),
 				zap.String("table", tableName),
+				zap.Duration("duration", time.Since(dropStartedAt)),
 			)
 			panic(err)
 		}
-		logger.Info("removed kanban table", zap.String("table", tableName))
+		logger.Info("removed kanban table",
+			zap.String("table", tableName),
+			zap.Duration("duration", time.Since(dropStartedAt)),
+		)
 	}
 
 	legacyRestoreTable := &tables.TerminalRestoreSessionTable{}
 	if db.Migrator().HasTable(legacyRestoreTable) && db.Migrator().HasColumn(legacyRestoreTable, "task_id") {
+		dropStartedAt := time.Now()
 		if err := db.Migrator().DropColumn(legacyRestoreTable, "task_id"); err != nil {
 			logger.Error("removed kanban column cleanup failed",
 				zap.Error(err),
 				zap.String("table", legacyRestoreTable.TableName()),
 				zap.String("column", "task_id"),
+				zap.Duration("duration", time.Since(dropStartedAt)),
 			)
 			panic(err)
 		}
-		logger.Info("removed kanban column", zap.String("table", legacyRestoreTable.TableName()), zap.String("column", "task_id"))
+		logger.Info("removed kanban column",
+			zap.String("table", legacyRestoreTable.TableName()),
+			zap.String("column", "task_id"),
+			zap.Duration("duration", time.Since(dropStartedAt)),
+		)
 	}
 }
