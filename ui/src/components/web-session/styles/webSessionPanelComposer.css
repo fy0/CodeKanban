@@ -44,9 +44,14 @@
   flex: 1 0 100%;
 }
 
-.composer-mobile-status {
+.composer-status {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.composer-mobile-status {
   gap: var(--composer-mobile-control-gap);
   margin-left: auto;
 }
@@ -1069,14 +1074,18 @@
 .composer-context-pill {
   display: inline-flex;
   align-items: center;
-  padding: 4px 10px;
+  justify-content: flex-start;
+  padding: 4px 6px 4px 2px;
   border-radius: 999px;
   border: none;
   background: color-mix(in srgb, var(--app-surface-color, #fff) 88%, transparent);
   color: var(--n-text-color-2);
   font-size: 11px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
   letter-spacing: 0;
+  text-align: start;
   white-space: nowrap;
   cursor: pointer;
   appearance: none;
@@ -1099,7 +1108,6 @@
 
 .composer-context-pill-mobile {
   flex: 0 0 auto;
-  justify-content: center;
   min-width: 44px;
   min-height: var(--composer-mobile-button-size);
 }

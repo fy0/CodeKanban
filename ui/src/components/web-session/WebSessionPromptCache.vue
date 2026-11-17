@@ -238,8 +238,9 @@ function openDetails() {
   outline-offset: 2px;
 }
 .prompt-cache-ring-graphic {
-  width: 28px;
-  height: 28px;
+  display: block;
+  width: 24px;
+  height: 24px;
   overflow: visible;
 }
 .prompt-cache-track,

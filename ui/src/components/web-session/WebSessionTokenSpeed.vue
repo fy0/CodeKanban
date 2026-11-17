@@ -241,6 +241,7 @@ function formatTime(value: string, full = false) {
 .token-speed {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   flex: 0 0 auto;
   color: var(--token-speed-secondary);
   background: transparent;
@@ -248,6 +249,8 @@ function formatTime(value: string, full = false) {
   border-radius: 4px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: end;
   white-space: nowrap;
   padding: 4px 2px;
   cursor: pointer;
@@ -370,19 +373,27 @@ small {
 .token-speed-record-time {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  line-height: 16px;
+}
+.token-speed-record-time time {
+  text-align: end;
+  white-space: nowrap;
 }
 .token-speed-cache-marker {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 2px;
   color: var(--token-speed-accent);
   font-size: 10px;
+  text-align: start;
   white-space: nowrap;
 }
 .token-speed-cache-marker svg {
-  width: 12px;
-  height: 12px;
+  flex: none;
+  width: 11px;
+  height: 11px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.5;

@@ -2100,7 +2100,7 @@
                 </span>
               </div>
 
-              <div class="composer-mobile-status">
+              <div class="composer-status composer-mobile-status">
                 <WebSessionTokenSpeed :speed="currentTokenSpeed" />
                 <WebSessionPromptCache
                   :session="currentSession"
@@ -3330,13 +3330,35 @@
                 </div>
 
                 <div class="composer-footer-right">
-                  <WebSessionTokenSpeed v-if="!isMobile" :speed="currentTokenSpeed" />
-                  <WebSessionPromptCache
-                    v-if="!isMobile"
-                    :session="currentSession"
-                    :now="liveStateClockMs"
-                    :speed="currentTokenSpeed"
-                  />
+                  <div v-if="!isMobile" class="composer-status">
+                    <WebSessionTokenSpeed :speed="currentTokenSpeed" />
+                    <WebSessionPromptCache
+                      :session="currentSession"
+                      :now="liveStateClockMs"
+                      :speed="currentTokenSpeed"
+                    />
+                    <n-popover
+                      v-if="contextUsageIndicator"
+                      v-model:show="showContextUsagePopover"
+                      trigger="hover"
+                      placement="top-end"
+                      :show-arrow="false"
+                      :keep-alive-on-hover="true"
+                      @update:show="handleContextUsagePopoverVisibilityChange"
+                    >
+                      <template #trigger>
+                        <button
+                          type="button"
+                          class="composer-context-pill"
+                          :class="`state-${contextUsageIndicator.state}`"
+                          :aria-label="contextUsageIndicator.title"
+                        >
+                          {{ contextUsageIndicator.label }}
+                        </button>
+                      </template>
+                      <ContextUsageContent />
+                    </n-popover>
+                  </div>
                   <n-dropdown
                     trigger="manual"
                     placement="top-end"
@@ -3347,27 +3369,6 @@
                     @select="handleSendQuickActionSelect"
                     @clickoutside="closeSendQuickActions"
                   />
-                  <n-popover
-                    v-if="contextUsageIndicator && !isMobile"
-                    v-model:show="showContextUsagePopover"
-                    trigger="hover"
-                    placement="top-end"
-                    :show-arrow="false"
-                    :keep-alive-on-hover="true"
-                    @update:show="handleContextUsagePopoverVisibilityChange"
-                  >
-                    <template #trigger>
-                      <button
-                        type="button"
-                        class="composer-context-pill"
-                        :class="`state-${contextUsageIndicator.state}`"
-                        :aria-label="contextUsageIndicator.title"
-                      >
-                        {{ contextUsageIndicator.label }}
-                      </button>
-                    </template>
-                    <ContextUsageContent />
-                  </n-popover>
                   <n-button
                     v-if="isRunActive"
                     secondary
