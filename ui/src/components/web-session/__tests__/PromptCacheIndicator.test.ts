@@ -98,8 +98,7 @@ describe('WebSessionPromptCache', () => {
     expect(wrapper.emitted('renewalAction')).toBeUndefined();
     expect(wrapper.get('.prompt-cache-renewal').text()).toContain('自动续期已关闭');
     expect(wrapper.find('.prompt-cache-renewal-badge').exists()).toBe(false);
-    const checkbox = wrapper.get('input[type="checkbox"]');
-    expect(checkbox.attributes('disabled')).toBeUndefined();
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
     const action = wrapper.get('.prompt-cache-renewal-action');
     await action.trigger('click');
     for (const remaining of [1, 2, 3]) {
@@ -117,15 +116,11 @@ describe('WebSessionPromptCache', () => {
     await action.trigger('click');
     expect(wrapper.emitted('renewalAction')).toEqual(Array.from({ length: 5 }, () => ['cycle']));
     await wrapper.setProps({ renewal: { availability: 'ready', remaining: 0, infinite: false } });
-    expect(checkbox.element.checked).toBe(false);
-    await checkbox.setValue(true);
-    await wrapper.setProps({ renewal: { availability: 'ready', remaining: 1, infinite: false } });
-    await checkbox.setValue(false);
-    expect(wrapper.emitted('renewalAction')?.slice(5)).toEqual([['cycle'], ['off']]);
+    expect(action.text()).toBe('续期');
     await wrapper.setProps({
       renewal: { availability: 'unsupported', remaining: 0, infinite: false },
     });
-    expect(checkbox.attributes('disabled')).toBeDefined();
+    expect(wrapper.find('.prompt-cache-renewal-action').exists()).toBe(false);
     expect(wrapper.get('.prompt-cache-renewal').text()).toContain('当前 Codex 不支持缓存续期');
     await wrapper.setProps({
       renewal: {

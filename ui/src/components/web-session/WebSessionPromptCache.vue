@@ -59,24 +59,15 @@
       <p class="prompt-cache-note">{{ hint }}</p>
       <div v-if="renewal && renewal.availability !== 'disabled'" class="prompt-cache-renewal">
         <div class="prompt-cache-renewal-controls" :aria-busy="renewalUpdating || undefined">
-          <label
-            class="prompt-cache-renewal-checkbox"
-            :title="renewal.availability !== 'ready' ? renewalStatus : undefined"
-          >
-            <input
-              type="checkbox"
-              :checked="renewalIntentChecked ?? renewalActive"
-              :disabled="renewal.availability !== 'ready'"
-              :aria-describedby="`${detailsId}-renewal-status`"
-              @change="toggleRenewal"
-            />
+          <span :title="renewal.availability !== 'ready' ? renewalStatus : undefined">
             {{ t('webSession.promptCacheRenewalLabel') }}
-          </label>
+          </span>
           <button
             v-if="renewal.availability === 'ready'"
             type="button"
             class="prompt-cache-renewal-action"
             :aria-label="t(renewalActionLabel)"
+            :aria-describedby="`${detailsId}-renewal-status`"
             :title="t(renewalActionLabel)"
             @click="emit('renewalAction', 'cycle')"
           >
@@ -220,7 +211,6 @@ const showMobileDetails = ref(false);
 const ring = ref<HTMLButtonElement>();
 const detailsId = useId();
 const renewalActive = computed(() => Boolean(props.renewal?.infinite || props.renewal?.remaining));
-const renewalIntentChecked = ref<boolean>();
 const renewalStatus = computed(() => {
   const renewal = props.renewal;
   if (!renewal || renewal.availability === 'disabled') return '';
@@ -371,18 +361,10 @@ watch(
   () => showPopover.value || showMobileDetails.value,
   open => emit('renewalDetails', open)
 );
-watch([() => props.renewal, () => props.renewalUpdating], ([, updating]) => {
-  if (!updating) renewalIntentChecked.value = undefined;
-});
 onBeforeUnmount(() => {
   clearTimeout(animationTimer);
   if (showPopover.value || showMobileDetails.value) emit('renewalDetails', false);
 });
-function toggleRenewal(event: Event) {
-  if (!(event.target instanceof HTMLInputElement)) return;
-  renewalIntentChecked.value = event.target.checked;
-  emit('renewalAction', event.target.checked ? 'cycle' : 'off');
-}
 function closeOnFocusExit(event: FocusEvent) {
   const next = event.relatedTarget;
   if (next instanceof HTMLElement && document.getElementById(detailsId)?.contains(next)) return;
@@ -396,12 +378,12 @@ function dismissDesktopDetails(event: KeyboardEvent) {
 }
 function focusRenewalControls(event: KeyboardEvent) {
   if (event.shiftKey || isMobile.value || !showPopover.value) return;
-  const checkbox = document
+  const action = document
     .getElementById(detailsId)
-    ?.querySelector<HTMLInputElement>('input:not(:disabled)');
-  if (checkbox) {
+    ?.querySelector<HTMLButtonElement>('.prompt-cache-renewal-action');
+  if (action) {
     event.preventDefault();
-    checkbox.focus();
+    action.focus();
   }
 }
 function openDetails() {
@@ -460,13 +442,10 @@ function openDetails() {
   padding-top: 10px;
   border-top: 1px solid var(--cache-divider);
 }
-.prompt-cache-renewal-checkbox,
 .prompt-cache-renewal-controls {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-.prompt-cache-renewal-controls {
   justify-content: space-between;
   font-size: 12px;
 }
