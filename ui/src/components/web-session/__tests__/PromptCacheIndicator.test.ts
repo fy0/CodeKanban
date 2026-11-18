@@ -28,6 +28,7 @@ vi.mock('naive-ui', async () => {
       computed(() => ({
         successColor: '#18a058',
         warningColor: '#a60',
+        errorColor: '#d03050',
         textColor3: '#777',
         dividerColor: '#ddd',
       })),
@@ -108,7 +109,7 @@ describe('WebSessionPromptCache', () => {
     wrapper.unmount();
   });
 
-  it('animates a new request and observed interruption once, retaining the observed miss across reloads', async () => {
+  it('animates new requests and retains a complete rebuild across reloads', async () => {
     vi.useFakeTimers();
     const wrapper = render();
     const next = {
@@ -128,11 +129,11 @@ describe('WebSessionPromptCache', () => {
       endedAt: new Date(observedAt + 180_000).toISOString(),
     };
     await wrapper.setProps({ now: observedAt + 180_000, speed: speed([miss, next, record]) });
-    expect(wrapper.get('.prompt-cache-ring').classes()).toContain('is-interrupted');
-    expect(wrapper.get('.prompt-cache-status').text()).toBe('命中中断');
+    expect(wrapper.get('.prompt-cache-ring').classes()).toContain('state-rebuilt');
+    expect(wrapper.get('.prompt-cache-status').text()).toBe('缓存重铸 0%');
     await wrapper.setProps({ session: { ...session, id: 'other' } });
     expect(wrapper.find('.is-interrupted').exists()).toBe(false);
-    expect(wrapper.get('.prompt-cache-status').text()).toBe('命中中断');
+    expect(wrapper.get('.prompt-cache-status').text()).toBe('缓存重铸 0%');
     wrapper.unmount();
   });
 
@@ -147,6 +148,28 @@ describe('WebSessionPromptCache', () => {
     await wrapper.setProps({ session: { ...session, id: 'other' } });
     await nextTick();
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+  it('uses separate ring states for rebuilds and suspected rebuilds', async () => {
+    const wrapper = render();
+    const partial = {
+      ...record,
+      sampleId: '2',
+      cachedInputTokens: 1000,
+      endedAt: new Date(observedAt + 120_000).toISOString(),
+    };
+    await wrapper.setProps({ now: observedAt + 120_000, speed: speed([partial, record]) });
+    expect(wrapper.get('.prompt-cache-ring').classes()).toContain('state-rebuilt');
+    expect(wrapper.get('.prompt-cache-status').text()).toBe('缓存重铸 5%');
+    expect(wrapper.get('.prompt-cache-stats').text()).toContain('1,000 / 20,000');
+    expect(wrapper.get('.prompt-cache-decrease-note').text()).toContain('18,000 降至 1,000');
+    expect(wrapper.get('.prompt-cache-alert').attributes('d')).toContain('a8');
+    await wrapper.setProps({ session: { ...session, id: 'reloaded' } });
+    expect(wrapper.get('.prompt-cache-status').text()).toBe('缓存重铸 5%');
+    await wrapper.setProps({ speed: speed([{ ...partial, cachedInputTokens: 17_000 }, record]) });
+    expect(wrapper.get('.prompt-cache-ring').classes()).toContain('state-suspected');
+    expect(wrapper.get('.prompt-cache-status').text()).toBe('疑似重铸 85%');
+    expect(wrapper.get('.prompt-cache-decrease-note').text()).toContain('18,000 降至 17,000');
     wrapper.unmount();
   });
 });

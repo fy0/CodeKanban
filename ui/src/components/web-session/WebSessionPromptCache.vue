@@ -31,7 +31,18 @@
           <dd>{{ new Date(cache.observedAt).toLocaleString(locale) }}</dd>
         </div>
       </dl>
-      <p v-if="isMiss" class="prompt-cache-miss-note">{{ t('webSession.promptCacheMissHint') }}</p>
+      <p v-if="isDecreased" class="prompt-cache-decrease-note" :class="`state-${state}`">
+        {{
+          t('webSession.promptCacheDecreaseHint', {
+            previous: cache.previousCachedTokens?.toLocaleString(locale),
+            cached: cache.cachedTokens.toLocaleString(locale),
+            decrease: decreasePercent,
+          })
+        }}
+      </p>
+      <p v-else-if="isMiss" class="prompt-cache-miss-note">
+        {{ t('webSession.promptCacheMissHint') }}
+      </p>
       <p class="prompt-cache-note">{{ hint }}</p>
     </div>
   </DefineCacheDetails>
@@ -77,7 +88,17 @@
             :stroke-dasharray="`${cache.remainingRatio * 100} 100`"
             transform="rotate(-90 16 16)"
           />
-          <path v-if="!isMiss" class="prompt-cache-glyph" d="m17.5 9-6 8h4l-1 6 6-8h-4z" />
+          <path
+            v-if="cache.event === 'rebuilt'"
+            class="prompt-cache-alert"
+            d="M23 13a8 8 0 1 0 0 7m0-13v6h-6"
+          />
+          <path
+            v-else-if="cache.event === 'suspected'"
+            class="prompt-cache-alert"
+            d="M12 12a4 4 0 1 1 6.4 3.2C16.8 16.3 16 17 16 19m0 4v.1"
+          />
+          <path v-else-if="!isMiss" class="prompt-cache-glyph" d="m17.5 9-6 8h4l-1 6 6-8h-4z" />
           <path v-else class="prompt-cache-alert" d="M16 11v6m0 3v.1" />
         </svg>
       </button>
@@ -122,10 +143,19 @@ const showMobileDetails = ref(false);
 const cache = computed(() =>
   estimateWebSessionPromptCache(props.session, props.now, props.speed?.history)
 );
-const isMiss = computed(
-  () => cache.value?.event === 'miss' || cache.value?.event === 'interrupted'
+const isMiss = computed(() => cache.value?.event === 'miss');
+const isDecreased = computed(
+  () => cache.value?.event === 'rebuilt' || cache.value?.event === 'suspected'
 );
-const state = computed(() => (isMiss.value ? 'miss' : (cache.value?.state ?? 'unknown')));
+const decreasePercent = computed(() => {
+  const previous = cache.value?.previousCachedTokens;
+  if (!previous) return null;
+  const decrease = ((previous - cache.value!.cachedTokens) / previous) * 100;
+  return decrease < 1 ? '<1' : Math.round(decrease);
+});
+const state = computed(() =>
+  isMiss.value ? 'miss' : isDecreased.value ? cache.value!.event : (cache.value?.state ?? 'unknown')
+);
 const countdownLabel = computed(() =>
   cache.value?.remainingMs != null && cache.value.remainingMs > 0
     ? t('webSession.promptCacheRemaining', {
@@ -139,8 +169,11 @@ const countdownLabel = computed(() =>
 );
 const statusLabel = computed(() => {
   const event = cache.value?.event;
-  if (event === 'interrupted') return t('webSession.promptCacheInterrupted');
   if (event === 'miss') return t('webSession.promptCacheMiss');
+  if (event === 'rebuilt')
+    return t('webSession.promptCacheRebuilt', { percent: cache.value?.hitPercent });
+  if (event === 'suspected')
+    return t('webSession.promptCacheSuspected', { percent: cache.value?.hitPercent });
   if (cache.value?.state === 'elapsed') return t('webSession.promptCacheUnconfirmed');
   if (cache.value?.hitPercent) return t('webSession.promptCacheHit');
   return t('webSession.promptCacheUnknown');
@@ -155,6 +188,7 @@ const themeVars = useThemeVars();
 const themeStyle = computed(() => ({
   '--cache-accent': themeVars.value.successColor,
   '--cache-warning': themeVars.value.warningColor,
+  '--cache-error': themeVars.value.errorColor,
   '--cache-muted': themeVars.value.textColor3,
   '--cache-divider': themeVars.value.dividerColor,
 }));
@@ -173,7 +207,7 @@ watch(
     }
     const current = next.cache;
     const old = previous.cache;
-    const newlyObservedMiss = current?.event && current.event !== 'refreshed' && !old?.event;
+    const newlyObservedMiss = current?.event && current.event !== 'hit' && !old?.event;
     if (
       !current?.observationKey ||
       !old?.observationKey ||
@@ -192,7 +226,7 @@ watch(
       !newlyObservedMiss
     )
       return;
-    animation.value = isMiss.value ? 'miss' : 'refresh';
+    animation.value = isMiss.value || current.event === 'suspected' ? 'miss' : 'refresh';
     animationVersion.value++;
     clearTimeout(animationTimer);
     animationTimer = setTimeout(() => {
@@ -230,8 +264,12 @@ function openDetails() {
   color: var(--cache-accent);
 }
 .prompt-cache-ring.state-ending,
+.prompt-cache-ring.state-suspected,
 .prompt-cache-ring.state-miss {
   color: var(--cache-warning);
+}
+.prompt-cache-ring.state-rebuilt {
+  color: var(--cache-error);
 }
 .prompt-cache-ring:focus-visible {
   outline: 2px solid currentColor;
@@ -318,8 +356,13 @@ function openDetails() {
   color: var(--cache-accent);
 }
 .prompt-cache-status.state-miss,
+.prompt-cache-status.state-suspected,
 .prompt-cache-status.state-ending {
   color: var(--cache-warning);
+}
+.prompt-cache-status.state-rebuilt,
+.prompt-cache-decrease-note.state-rebuilt {
+  color: var(--cache-error);
 }
 .prompt-cache-countdown {
   display: flex;
@@ -357,7 +400,8 @@ function openDetails() {
   border-top: 1px solid var(--cache-divider);
   line-height: 1.6;
 }
-.prompt-cache-miss-note {
+.prompt-cache-miss-note,
+.prompt-cache-decrease-note {
   margin: 12px 0 0;
   color: var(--cache-warning);
   line-height: 1.6;

@@ -1068,8 +1068,15 @@ export default {
     promptCacheRemaining: 'Cache ≈{time}',
     promptCacheDetails: 'Prompt Cache',
     promptCacheWindowRemaining: 'Estimated retention remaining',
-    promptCacheHit: 'Latest request hit',
-    promptCacheRefreshed: '{percent}% hit · estimated window refreshed',
+    promptCacheHit: 'Cache reused',
+    promptCacheRebuilt: 'Cache rebuilt {percent}%',
+    promptCacheSuspected: 'Possible rebuild {percent}%',
+    promptCacheDecreaseHint:
+      'Cached tokens decreased from {previous} to {cached}, a {decrease}% drop. Inferred from usage; context compaction or prefix changes can also reduce reuse.',
+    promptCacheRecordLabel_hit: 'Reused',
+    promptCacheRecordLabel_rebuilt: 'Rebuilt',
+    promptCacheRecordLabel_suspected: 'Possible rebuild',
+    promptCacheRecordLabel_miss: 'Miss',
     promptCacheMiss: 'Cache miss',
     promptCacheInterrupted: 'Cache hit interrupted',
     promptCacheMissHint:

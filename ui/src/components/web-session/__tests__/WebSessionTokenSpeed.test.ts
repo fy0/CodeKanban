@@ -32,6 +32,8 @@ vi.mock('naive-ui', async () => {
         textColor2: '#333',
         textColor3: '#777',
         dividerColor: '#ddd',
+        warningColor: '#a60',
+        errorColor: '#d03050',
       })),
   };
 });
@@ -85,7 +87,7 @@ function render(speed?: TokenSpeed, locale = 'en-US') {
 }
 
 describe('WebSessionTokenSpeed', () => {
-  it('marks observed cache refreshes and interruptions inline, leaving unknown records unmarked', () => {
+  it('marks cache reuse and complete rebuilds inline, leaving unknown records unmarked', () => {
     const speed = makeSpeed();
     speed.history = [
       { ...speed.history![0]!, sampleId: '3', inputTokens: 20_000, cachedInputTokens: 0 },
@@ -94,15 +96,53 @@ describe('WebSessionTokenSpeed', () => {
     ];
     const wrapper = render(speed, 'zh-CN');
     const rows = wrapper.findAll('.token-speed-record');
-    expect(rows[0]!.get('.token-speed-cache-marker').classes()).toContain('cache-interrupted');
-    expect(rows[0]!.get('.token-speed-cache-marker').attributes('title')).toContain('命中中断');
-    expect(rows[1]!.get('.token-speed-cache-marker').text()).toBe('90%');
+    expect(rows[0]!.get('.token-speed-cache-marker').classes()).toContain('cache-rebuilt');
+    expect(rows[0]!.get('.token-speed-cache-marker').text()).toBe('重铸 0%');
+    expect(rows[1]!.get('.token-speed-cache-marker').text()).toBe('继承 90%');
     expect(rows[1]!.get('.token-speed-cache-marker').attributes('title')).toContain(
       '18,000 / 20,000'
     );
     expect(rows[2]!.find('.token-speed-cache-marker').exists()).toBe(false);
     wrapper.unmount();
   });
+  it.each(['zh-CN', 'en-US'])(
+    'distinguishes inherited cache, a small drop, and a large drop in %s',
+    locale => {
+      const speed = makeSpeed();
+      speed.history = [5, 6, 95, 99].map((percent, index) => ({
+        ...speed.history![0]!,
+        sampleId: String(index),
+        inputTokens: 20_000,
+        cachedInputTokens: 200 * percent,
+      }));
+      const wrapper = render(speed, locale);
+      const markers = wrapper.findAll('.token-speed-cache-marker');
+      const events = ['suspected', 'rebuilt', 'suspected', 'hit'];
+      const labels =
+        locale === 'zh-CN'
+          ? ['疑似重铸', '重铸', '疑似重铸', '继承']
+          : ['Possible rebuild', 'Rebuilt', 'Possible rebuild', 'Reused'];
+      for (const [index, percent] of [5, 6, 95, 99].entries()) {
+        const marker = markers[index]!;
+        expect(marker.classes()).toContain(`cache-${events[index]}`);
+        expect(marker.text()).toBe(`${labels[index]} ${percent}%`);
+        expect(marker.attributes('aria-label')).toBe(marker.attributes('title'));
+        expect(marker.attributes('title')).toContain(
+          `${(200 * percent).toLocaleString(locale)} / 20,000`
+        );
+      }
+      expect(markers[1]!.attributes('title')).toContain('19,000');
+      expect(markers[1]!.attributes('title')).toContain('1,200');
+      expect(markers[1]!.attributes('title')).toContain('94%');
+      expect(markers[0]!.get('path').attributes('d')).not.toBe(
+        markers[1]!.get('path').attributes('d')
+      );
+      expect(markers[1]!.get('path').attributes('d')).not.toBe(
+        markers[3]!.get('path').attributes('d')
+      );
+      wrapper.unmount();
+    }
+  );
   const originalWidth = window.innerWidth;
   afterEach(() => {
     window.innerWidth = originalWidth;

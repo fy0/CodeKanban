@@ -67,14 +67,20 @@
                 >
                   <svg viewBox="0 0 16 16" aria-hidden="true">
                     <path
-                      v-if="cacheMarker(record)!.event === 'refreshed'"
+                      v-if="cacheMarker(record)!.event === 'rebuilt'"
                       d="M13 6a5 5 0 1 0 0 4M13 2v4H9"
+                    />
+                    <path
+                      v-else-if="cacheMarker(record)!.event === 'hit'"
+                      d="M3 8h10m-4-4 4 4-4 4"
+                    />
+                    <path
+                      v-else-if="cacheMarker(record)!.event === 'suspected'"
+                      d="M5.5 5.5a2.5 2.5 0 1 1 4 2c-1 .7-1.5 1-1.5 2.5m0 3v.1"
                     />
                     <path v-else d="M8 3v6m0 3v.1" />
                   </svg>
-                  <span v-if="cacheMarker(record)!.event === 'refreshed'"
-                    >{{ cacheMarker(record)!.percent }}%</span
-                  >
+                  <span>{{ cacheMarker(record)!.label }} {{ cacheMarker(record)!.percent }}%</span>
                 </span>
               </div>
               <div class="token-speed-record-meta">
@@ -170,6 +176,7 @@ const themeStyle = computed(() => ({
   '--token-speed-muted': themeVars.value.textColor3,
   '--token-speed-divider': themeVars.value.dividerColor,
   '--token-speed-warning': themeVars.value.warningColor,
+  '--token-speed-error': themeVars.value.errorColor,
 }));
 const selectedMetric = ref<TokenSpeedMetric>('recent5');
 const selected = computed(() => selectTokenSpeedMetric(props.speed, selectedMetric.value));
@@ -180,29 +187,37 @@ const cacheMarkers = computed(
   () =>
     new Map(
       history.value.map((record, index) => {
-        const event = promptCacheRecordEvent(record, history.value[index + 1]);
+        const previous = history.value[index + 1];
+        const event = promptCacheRecordEvent(record, previous);
+        if (!event) return [`${record.runId}:${record.sampleId}`, null];
         const cached = Math.min(record.inputTokens ?? 0, record.cachedInputTokens ?? 0);
         const percent = Math.round((cached / (record.inputTokens || 1)) * 100);
         const detail = t(
-          event === 'refreshed'
-            ? 'webSession.promptCacheRecordHit'
-            : 'webSession.promptCacheRecordMiss',
+          cached > 0 ? 'webSession.promptCacheRecordHit' : 'webSession.promptCacheRecordMiss',
           {
             cached: cached.toLocaleString(locale.value),
             input: record.inputTokens?.toLocaleString(locale.value),
           }
         );
-        const label =
-          event === 'refreshed'
-            ? t('webSession.promptCacheRefreshed', { percent })
-            : t(
-                event === 'interrupted'
-                  ? 'webSession.promptCacheInterrupted'
-                  : 'webSession.promptCacheMiss'
-              );
+        const label = t(`webSession.promptCacheRecordLabel_${event}`);
+        let hint = `${label} ${percent}%. ${detail}`;
+        if (event === 'rebuilt' || event === 'suspected') {
+          const previousCached = Math.min(previous!.inputTokens!, previous!.cachedInputTokens!);
+          const decrease = ((previousCached - cached) / previousCached) * 100;
+          hint += ` ${t('webSession.promptCacheDecreaseHint', {
+            previous: previousCached.toLocaleString(locale.value),
+            cached: cached.toLocaleString(locale.value),
+            decrease: decrease < 1 ? '<1' : Math.round(decrease),
+          })}`;
+        }
         return [
           `${record.runId}:${record.sampleId}`,
-          event ? { event, percent, hint: `${label}. ${detail}` } : null,
+          {
+            event,
+            percent,
+            label,
+            hint,
+          },
         ];
       })
     )
@@ -372,6 +387,7 @@ small {
 }
 .token-speed-record-time {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   line-height: 16px;
@@ -401,8 +417,17 @@ small {
   stroke-linejoin: round;
 }
 .token-speed-cache-marker.cache-miss,
-.token-speed-cache-marker.cache-interrupted {
+.token-speed-cache-marker.cache-suspected {
   color: var(--token-speed-warning);
+}
+.token-speed-cache-marker.cache-suspected {
+  border-bottom: 1px dashed currentColor;
+}
+.token-speed-cache-marker.cache-rebuilt {
+  color: var(--token-speed-error);
+  background: color-mix(in srgb, var(--token-speed-error) 10%, transparent);
+  border-radius: 3px;
+  padding: 0 3px;
 }
 .token-speed-model {
   overflow: hidden;

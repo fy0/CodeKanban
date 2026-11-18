@@ -15,12 +15,9 @@ export type PromptCacheSession = Pick<
   | 'lastContextCompactionAt'
 >;
 
-export function promptCacheRecordEvent(
-  record: WebSessionTokenSpeedRecord,
-  previous?: WebSessionTokenSpeedRecord
-) {
+function promptCacheRecordUsage(record?: WebSessionTokenSpeedRecord) {
   if (
-    record.agent !== 'codex' ||
+    record?.agent !== 'codex' ||
     record.inputTokens == null ||
     !Number.isFinite(record.inputTokens) ||
     record.inputTokens < 1024 ||
@@ -29,12 +26,27 @@ export function promptCacheRecordEvent(
     record.cachedInputTokens < 0
   )
     return null;
-  if (record.cachedInputTokens > 0) return 'refreshed' as const;
-  return previous?.agent === 'codex' &&
-    previous.model === record.model &&
-    (previous.cachedInputTokens ?? 0) > 0
-    ? ('interrupted' as const)
-    : ('miss' as const);
+  return {
+    inputTokens: record.inputTokens,
+    cachedTokens: Math.min(record.inputTokens, record.cachedInputTokens),
+  };
+}
+
+export function promptCacheRecordEvent(
+  record: WebSessionTokenSpeedRecord,
+  previous?: WebSessionTokenSpeedRecord
+) {
+  const usage = promptCacheRecordUsage(record);
+  if (!usage) return null;
+  const previousUsage = previous?.model === record.model ? promptCacheRecordUsage(previous) : null;
+  if (previousUsage && usage.cachedTokens < previousUsage.cachedTokens) {
+    // Compare absolute reuse, since a larger input alone can lower the hit rate.
+    // These labels are inferred from usage; Codex does not report cache resets.
+    return usage.cachedTokens <= previousUsage.cachedTokens / 2
+      ? ('rebuilt' as const)
+      : ('suspected' as const);
+  }
+  return usage.cachedTokens > 0 ? ('hit' as const) : ('miss' as const);
 }
 
 export function estimateWebSessionPromptCache(
@@ -90,6 +102,10 @@ export function estimateWebSessionPromptCache(
   return {
     observationKey: hasObservation ? observationKey : '',
     event,
+    previousCachedTokens:
+      event === 'rebuilt' || event === 'suspected'
+        ? promptCacheRecordUsage(history[1])!.cachedTokens
+        : null,
     observedAt: hasObservation ? timestamp : null,
     inputTokens,
     cachedTokens,
