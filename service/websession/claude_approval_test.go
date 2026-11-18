@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"code-kanban/model"
+
 	"go.uber.org/zap"
 )
 
@@ -47,6 +48,9 @@ func TestClaudeDeferredPlanApprovalPermissionTransition(t *testing.T) {
 			record, err = manager.GetSession(context.Background(), session.ID)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if record.Status != string(StatusDone) {
+				t.Fatalf("expected Claude resume to complete, got status %q: %s", record.Status, pointerString(record.LastError))
 			}
 			wantWorkflow := WorkflowModePlan
 			if action == "approve" {

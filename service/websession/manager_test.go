@@ -7753,6 +7753,7 @@ func TestSendMessageWithModeRedirectSteersActiveCodexTurn(t *testing.T) {
 		t.Fatalf("unexpected steer input: %#v", steerRequest)
 	}
 
+	waitForUserMessageCount(t, manager, created.ID, 2)
 	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 1 ||
 		pending[0].Text != "queued" || pending[0].Mode != PendingInputModeQueue {
 		t.Fatalf("expected only the queued message to remain pending, got %#v", pending)
@@ -10199,20 +10200,10 @@ func writeFakeClaudeDeferredCLI(t *testing.T) string {
 
 	if runtime.GOOS == "windows" {
 		dir := t.TempDir()
-		stateFile := filepath.Join(dir, "claude-deferred-state.txt")
 		psPath := filepath.Join(dir, "fake-claude-deferred.ps1")
 		cmdPath := filepath.Join(dir, "fake-claude-deferred.cmd")
-		psStateFile := strings.ReplaceAll(stateFile, "'", "''")
-		script := `$stateFile = '` + psStateFile + `'
-	[Console]::In.ReadLine() | Out-Null
-$count = 0
-if (Test-Path -LiteralPath $stateFile) {
-  $raw = Get-Content -LiteralPath $stateFile -Raw
-  [int]::TryParse(($raw.Trim()), [ref]$count) | Out-Null
-}
-$count += 1
-Set-Content -LiteralPath $stateFile -Value $count -NoNewline
-if ($count -eq 1) {
+		script := `if ($args -notcontains '--resume') {
+  [Console]::In.ReadLine() | Out-Null
   Write-Output '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
   Write-Output '{"type":"assistant","uuid":"assistant_tool","message":{"type":"message","role":"assistant","id":"assistant_tool_msg","content":[{"type":"tool_use","id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}],"stop_reason":"tool_use"}}'
   Write-Output '{"type":"result","session_id":"claude-session-test","stop_reason":"tool_deferred","deferred_tool_use":{"id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}}'
@@ -10225,7 +10216,7 @@ Write-Output '{"type":"result","session_id":"claude-session-test","stop_reason":
 		if err := os.WriteFile(psPath, []byte(script), 0o644); err != nil {
 			t.Fatalf("write fake claude deferred ps1 failed: %v", err)
 		}
-		cmd := "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-claude-deferred.ps1\"\r\nexit /b %ERRORLEVEL%\r\n"
+		cmd := "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-claude-deferred.ps1\" %*\r\nexit /b %ERRORLEVEL%\r\n"
 		if err := os.WriteFile(cmdPath, []byte(cmd), 0o755); err != nil {
 			t.Fatalf("write fake claude deferred cmd failed: %v", err)
 		}
@@ -10234,21 +10225,20 @@ Write-Output '{"type":"result","session_id":"claude-session-test","stop_reason":
 
 	path := filepath.Join(t.TempDir(), "fake-claude-deferred.sh")
 	script := `#!/bin/sh
-state_file="` + filepath.Join(t.TempDir(), "claude-deferred-state.txt") + `"
-count=0
-if [ -f "$state_file" ]; then
-  count=$(cat "$state_file")
-fi
-count=$((count + 1))
-printf '%s' "$count" >"$state_file"
-if [ "$count" -eq 1 ]; then
-	  IFS= read -r _ || true
+resuming=false
+for argument in "$@"; do
+  if [ "$argument" = --resume ]; then
+    resuming=true
+    break
+  fi
+done
+if [ "$resuming" = false ]; then
+  IFS= read -r _ || true
   printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
   printf '%s\n' '{"type":"assistant","uuid":"assistant_tool","message":{"type":"message","role":"assistant","id":"assistant_tool_msg","content":[{"type":"tool_use","id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}],"stop_reason":"tool_use"}}'
   printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"tool_deferred","deferred_tool_use":{"id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}}'
   exit 0
 fi
-	IFS= read -r _ || true
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
 printf '%s\n' '{"type":"assistant","uuid":"assistant_done","message":{"type":"message","role":"assistant","id":"assistant_done_msg","content":[{"type":"text","text":"continuing after the answer"}],"stop_reason":"end_turn"}}'
 printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"end_turn"}'
@@ -10840,7 +10830,6 @@ function writePersistentTurnCount(value) {
 let awaiting = null;
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 let startedTurns = 0;
-let steered = false;
 let steerAttempts = 0;
 rl.on('line', line => {
   if (!line.trim()) {
@@ -11204,7 +11193,6 @@ rl.on('line', line => {
       mode === 'step_redirect_turn_alias' ||
       mode === 'step_redirect_turn_mismatch'
     ) {
-      steered = true;
       emitCommandExecutionCompleted('cmd_step_2', 'step-2');
       send({
         method: 'item/started',
@@ -11562,25 +11550,6 @@ rl.on('line', line => {
             turnId,
           },
         });
-        setTimeout(() => {
-          if (steered) return;
-          emitCommandExecutionCompleted('cmd_step_2', 'step-2');
-          setTimeout(() => {
-            if (steered) return;
-            send({
-              method: 'item/started',
-              params: {
-                item: {
-                  type: 'commandExecution',
-                  id: 'cmd_step_3',
-                  command: 'step-3',
-                },
-                threadId,
-                turnId,
-              },
-            });
-          }, 80);
-        }, 80);
         return;
       }
       finishTurn('continued');
