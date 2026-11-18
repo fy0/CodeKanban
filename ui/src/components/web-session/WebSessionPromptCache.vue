@@ -1,4 +1,10 @@
 <template>
+  <DefineRenewalIndicator>
+    <svg v-if="renewal?.infinite" class="prompt-cache-renewal-loop" viewBox="0 0 16 16">
+      <path d="M13 5.5a5.5 5.5 0 1 0 .2 4.5M13 2.5v3.4H9.6" />
+    </svg>
+    <template v-else>{{ renewal?.remaining }}</template>
+  </DefineRenewalIndicator>
   <DefineCacheDetails>
     <div
       v-if="cache"
@@ -52,30 +58,34 @@
       </p>
       <p class="prompt-cache-note">{{ hint }}</p>
       <div v-if="renewal && renewal.availability !== 'disabled'" class="prompt-cache-renewal">
-        <label class="prompt-cache-renewal-checkbox">
-          <input
-            type="checkbox"
-            :checked="renewalActive"
-            :disabled="renewal.availability !== 'ready' || renewalUpdating"
-            :aria-describedby="`${detailsId}-renewal-note`"
-            @change="toggleRenewal"
-          />
-          {{ t('webSession.promptCacheRenewalLabel') }}
-        </label>
-        <p :id="`${detailsId}-renewal-note`" class="prompt-cache-note">
-          {{ t('webSession.promptCacheRenewalHint') }}
-        </p>
-        <div class="prompt-cache-renewal-controls">
-          <span role="status">{{ renewalStatus }}</span>
+        <div class="prompt-cache-renewal-controls" :aria-busy="renewalUpdating || undefined">
+          <label
+            class="prompt-cache-renewal-checkbox"
+            :title="renewal.availability !== 'ready' ? renewalStatus : undefined"
+          >
+            <input
+              type="checkbox"
+              :checked="renewalIntentChecked ?? renewalActive"
+              :disabled="renewal.availability !== 'ready'"
+              :aria-describedby="`${detailsId}-renewal-status`"
+              @change="toggleRenewal"
+            />
+            {{ t('webSession.promptCacheRenewalLabel') }}
+          </label>
           <button
-            v-if="renewalActive"
+            v-if="renewal.availability === 'ready'"
             type="button"
             class="prompt-cache-renewal-action"
-            :disabled="renewalUpdating"
+            :aria-label="t(renewalActionLabel)"
+            :title="t(renewalActionLabel)"
             @click="emit('renewalAction', 'cycle')"
           >
-            {{ t(renewalActionLabel) }}
+            <span v-if="renewalActive" aria-hidden="true"><RenewalIndicator /></span>
+            <template v-else>{{ t('webSession.promptCacheRenewalQueue') }}</template>
           </button>
+          <span :id="`${detailsId}-renewal-status`" class="sr-only" role="status">
+            {{ renewalStatus }}
+          </span>
         </div>
         <p
           v-if="renewal.lastError && renewal.availability !== 'unsupported'"
@@ -158,10 +168,7 @@
           <path v-else class="prompt-cache-alert" d="M16 11v6m0 3v.1" />
         </svg>
         <span v-if="renewalActive" class="prompt-cache-renewal-badge" aria-hidden="true">
-          <svg v-if="renewal?.infinite" class="prompt-cache-renewal-loop" viewBox="0 0 16 16">
-            <path d="M13 5.5a5.5 5.5 0 1 0 .2 4.5M13 2.5v3.4H9.6" />
-          </svg>
-          <template v-else>{{ renewal?.remaining }}</template>
+          <RenewalIndicator />
         </span>
       </button>
     </template>
@@ -207,11 +214,13 @@ const emit = defineEmits<{
 const { t, locale } = useI18n();
 const { isMobile } = useResponsive();
 const [DefineCacheDetails, CacheDetails] = createReusableTemplate();
+const [DefineRenewalIndicator, RenewalIndicator] = createReusableTemplate();
 const showPopover = ref(false);
 const showMobileDetails = ref(false);
 const ring = ref<HTMLButtonElement>();
 const detailsId = useId();
 const renewalActive = computed(() => Boolean(props.renewal?.infinite || props.renewal?.remaining));
+const renewalIntentChecked = ref<boolean>();
 const renewalStatus = computed(() => {
   const renewal = props.renewal;
   if (!renewal || renewal.availability === 'disabled') return '';
@@ -233,7 +242,9 @@ const renewalError = computed(() =>
 const renewalActionLabel = computed(() => {
   if (props.renewal?.infinite) return 'webSession.promptCacheRenewalStop';
   if (props.renewal?.remaining === 3) return 'webSession.promptCacheRenewalMakeInfinite';
-  return 'webSession.promptCacheRenewalAdd';
+  return renewalActive.value
+    ? 'webSession.promptCacheRenewalAdd'
+    : 'webSession.promptCacheRenewalQueue';
 });
 const cache = computed(() =>
   estimateWebSessionPromptCache(props.session, props.now, props.speed?.history)
@@ -360,14 +371,17 @@ watch(
   () => showPopover.value || showMobileDetails.value,
   open => emit('renewalDetails', open)
 );
+watch([() => props.renewal, () => props.renewalUpdating], ([, updating]) => {
+  if (!updating) renewalIntentChecked.value = undefined;
+});
 onBeforeUnmount(() => {
   clearTimeout(animationTimer);
   if (showPopover.value || showMobileDetails.value) emit('renewalDetails', false);
 });
 function toggleRenewal(event: Event) {
   if (!(event.target instanceof HTMLInputElement)) return;
+  renewalIntentChecked.value = event.target.checked;
   emit('renewalAction', event.target.checked ? 'cycle' : 'off');
-  event.target.checked = renewalActive.value;
 }
 function closeOnFocusExit(event: FocusEvent) {
   const next = event.relatedTarget;
@@ -453,17 +467,27 @@ function openDetails() {
   gap: 6px;
 }
 .prompt-cache-renewal-controls {
-  flex-wrap: wrap;
   justify-content: space-between;
-  margin-top: 6px;
   font-size: 12px;
 }
 .prompt-cache-renewal-action {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  min-width: 28px;
+  min-height: 26px;
   border: 1px solid var(--cache-divider);
   border-radius: 4px;
   padding: 2px 6px;
   background: transparent;
   color: inherit;
+}
+.prompt-cache-renewal-action span {
+  display: grid;
+  place-items: center;
+}
+.prompt-cache-renewal-action .prompt-cache-renewal-loop {
+  width: 14px;
 }
 .prompt-cache-renewal-error {
   color: var(--cache-error);

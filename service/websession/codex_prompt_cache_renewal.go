@@ -34,6 +34,7 @@ type promptCacheRenewal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wake   chan struct{}
+	done   chan struct{}
 	client *codexAppServerClient
 	parent tables.WebSessionTable
 	scope  codexTurnScope
@@ -92,6 +93,12 @@ func (m *Manager) preparePromptCacheRenewal(ctx context.Context, session tables.
 		scope.threadID == "" || scope.turnID == "" || session.ArchivedAt != nil {
 		return nil
 	}
+	observedSession, err := m.GetSession(ctx, session.ID)
+	now := time.Now()
+	observedAt := now
+	if err == nil {
+		observedAt = promptCacheObservationTime(observedSession, now)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.promptCacheUnsupported != "" {
@@ -105,16 +112,30 @@ func (m *Manager) preparePromptCacheRenewal(ctx context.Context, session tables.
 	if m.promptCacheRenewals == nil {
 		m.promptCacheRenewals = make(map[string]*promptCacheRenewal)
 	}
-	config := utils.NormalizeWebSessionPromptCacheRenewalConfig(m.cfg.PromptCacheRenewal)
-	renewalCtx, cancel := context.WithCancel(ctx)
-	now := time.Now()
-	interval := time.Duration(config.IntervalSeconds) * time.Second
-	renewal := &promptCacheRenewal{
-		ctx: renewalCtx, cancel: cancel, client: client, parent: session, scope: scope, config: config,
-		wake: make(chan struct{}, 1), nextAt: now.Add(interval), idleUntil: now.Add(min(interval+time.Minute, promptCacheIdleRetention)),
-	}
+	renewal := newPromptCacheRenewal(ctx, session, scope, m.cfg.PromptCacheRenewal, now, observedAt)
+	renewal.client = client
 	m.promptCacheRenewals[session.ID] = renewal
 	return renewal
+}
+
+func promptCacheObservationTime(session tables.WebSessionTable, now time.Time) time.Time {
+	for _, observedAt := range []*time.Time{session.LatestTokenCountUpdatedAt, session.LatestTurnUsageUpdatedAt} {
+		if observedAt != nil && !observedAt.IsZero() && !observedAt.After(now) &&
+			(session.LastContextCompactionAt == nil || !observedAt.Before(*session.LastContextCompactionAt)) {
+			return *observedAt
+		}
+	}
+	return now
+}
+
+func newPromptCacheRenewal(ctx context.Context, session tables.WebSessionTable, scope codexTurnScope, config utils.WebSessionPromptCacheRenewalConfig, now, observedAt time.Time) *promptCacheRenewal {
+	config = utils.NormalizeWebSessionPromptCacheRenewalConfig(config)
+	renewalCtx, cancel := context.WithCancel(ctx)
+	interval := time.Duration(config.IntervalSeconds) * time.Second
+	return &promptCacheRenewal{
+		ctx: renewalCtx, cancel: cancel, parent: session, scope: scope, config: config,
+		wake: make(chan struct{}, 1), nextAt: observedAt.Add(interval), idleUntil: now.Add(min(interval+time.Minute, promptCacheIdleRetention)),
+	}
 }
 
 func (m *Manager) PromptCacheRenewal(ctx context.Context, session tables.WebSessionTable, action string) PromptCacheRenewalState {
@@ -125,6 +146,7 @@ func (m *Manager) PromptCacheRenewal(ctx context.Context, session tables.WebSess
 	m.mu.RLock()
 	unsupported := m.promptCacheUnsupported
 	renewal := m.promptCacheRenewals[session.ID]
+	canResume := m.canResumePromptCacheParent(session)
 	state.LastError = m.promptCacheFailures[session.ID]
 	m.mu.RUnlock()
 	if unsupported != "" {
@@ -135,15 +157,36 @@ func (m *Manager) PromptCacheRenewal(ctx context.Context, session tables.WebSess
 		return state
 	}
 	state.Availability = "unavailable"
-	if renewal == nil || renewal.ctx.Err() != nil || session.ArchivedAt != nil {
+	if session.ArchivedAt != nil || (action == "cycle" && m.ensureSessionMessagingAuthorized(ctx, session) != nil) {
 		return state
 	}
-	if action == "cycle" && m.ensureSessionMessagingAuthorized(ctx, session) != nil {
+	if renewal == nil && canResume {
+		state.Availability = "ready"
+		if action != "cycle" {
+			return state
+		}
+		var started bool
+		renewal, started = m.preparePersistedPromptCacheRenewal(session)
+		if started {
+			go m.resumePromptCacheRenewal(renewal)
+			state.Remaining = 1
+			state.LastError = ""
+			return state
+		}
+		state.Availability = "unavailable"
+	}
+	if renewal == nil {
 		return state
 	}
 	renewal.mu.Lock()
 	defer renewal.mu.Unlock()
-	if !renewal.ready {
+	if renewal.ctx.Err() != nil {
+		if canResume {
+			state.Availability = "ready"
+		}
+		return state
+	}
+	if !renewal.ready && renewal.done == nil {
 		state.Availability = "checking"
 		return state
 	}
@@ -151,6 +194,9 @@ func (m *Manager) PromptCacheRenewal(ctx context.Context, session tables.WebSess
 	renewal.updateMode(action)
 	state.Remaining = renewal.remaining
 	state.Infinite = renewal.infinite
+	if renewal.done != nil && !renewal.ready && action != "" && state.Remaining == 0 && !state.Infinite {
+		renewal.stop()
+	}
 	return state
 }
 
@@ -184,9 +230,10 @@ func (renewal *promptCacheRenewal) preempt() {
 	renewal.stop()
 	renewal.mu.Lock()
 	sampling := renewal.attemptCancel != nil
+	client := renewal.client
 	renewal.mu.Unlock()
-	if sampling && renewal.client.cmd != nil && renewal.client.cmd.Process != nil {
-		go killCmdTree(renewal.client.cmd)
+	if sampling && client != nil {
+		go killCmdTree(client.cmd)
 	}
 }
 
@@ -202,9 +249,25 @@ func (m *Manager) stopPromptCacheRenewal(sessionID string) {
 
 func (m *Manager) StopAllPromptCacheRenewals() {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	var detached []<-chan struct{}
 	for _, renewal := range m.promptCacheRenewals {
 		renewal.stop()
+		if renewal.done != nil {
+			detached = append(detached, renewal.done)
+		}
+	}
+	m.mu.RUnlock()
+	if len(detached) == 0 {
+		return
+	}
+	timer := time.NewTimer(codexRunDrainWaitTimeout)
+	defer timer.Stop()
+	for _, done := range detached {
+		select {
+		case <-done:
+		case <-timer.C:
+			return
+		}
 	}
 }
 
@@ -236,6 +299,11 @@ func (m *Manager) runPromptCacheRenewal(renewal *promptCacheRenewal) {
 	for renewal.ctx.Err() == nil {
 		renewal.mu.Lock()
 		queued := renewal.infinite || renewal.remaining > 0
+		if !queued && renewal.done != nil {
+			renewal.stop()
+			renewal.mu.Unlock()
+			return
+		}
 		deadline := renewal.idleUntil
 		if queued {
 			deadline = renewal.nextAt
@@ -245,6 +313,10 @@ func (m *Manager) runPromptCacheRenewal(renewal *promptCacheRenewal) {
 			timer := time.NewTimer(time.Until(deadline))
 			select {
 			case <-renewal.ctx.Done():
+			case <-renewal.client.closed:
+				timer.Stop()
+				m.recordPromptCacheFailure(renewal, "connection_closed")
+				return
 			case <-renewal.wake:
 			case <-timer.C:
 			}
@@ -305,14 +377,14 @@ func readPromptCacheRoot(ctx context.Context, renewal *promptCacheRenewal, requi
 }
 
 func (renewal *promptCacheRenewal) finishAttempt(generation uint64, category string, now time.Time) {
+	if generation != renewal.generation {
+		return
+	}
 	interval := renewal.config.IntervalSeconds
 	if category != "" && category != "sample_cancelled" {
 		interval = max(interval, renewal.config.FailureBackoffSeconds)
 	}
 	renewal.nextAt = now.Add(time.Duration(interval) * time.Second)
-	if generation != renewal.generation {
-		return
-	}
 	if renewal.remaining > 0 {
 		renewal.remaining--
 	}

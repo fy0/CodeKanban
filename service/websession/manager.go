@@ -7095,19 +7095,27 @@ func (m *Manager) waitForCodexRunDrain(ctx context.Context, sessionID string) er
 		if renewal != nil {
 			renewal.preempt()
 		}
-		if run == nil {
+		var done <-chan struct{}
+		if run != nil {
+			done = run.done
+		} else if renewal != nil {
+			done = renewal.done
+		}
+		if done == nil {
 			return nil
 		}
 
 		select {
-		case <-run.done:
+		case <-done:
 			// The drain entry is removed immediately before the done channel is
 			// closed. Re-check it to cover that handoff window.
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timer.C:
-			m.terminateCodexAppServerRun(run, false)
-			m.broadcastCodexAppServerRuntime(sessionID)
+			if run != nil {
+				m.terminateCodexAppServerRun(run, false)
+				m.broadcastCodexAppServerRuntime(sessionID)
+			}
 			return ErrCodexRunDrainTimeout
 		}
 	}

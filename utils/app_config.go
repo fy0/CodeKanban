@@ -99,8 +99,8 @@ type WebSessionPromptCacheRenewalConfig struct {
 }
 
 func NormalizeWebSessionPromptCacheRenewalConfig(config WebSessionPromptCacheRenewalConfig) WebSessionPromptCacheRenewalConfig {
-	if config.IntervalSeconds <= 0 {
-		config.IntervalSeconds = 240
+	if config.IntervalSeconds <= 0 || config.IntervalSeconds == 240 {
+		config.IntervalSeconds = 25 * 60
 	}
 	if config.SampleTimeoutSeconds <= 0 {
 		config.SampleTimeoutSeconds = 30

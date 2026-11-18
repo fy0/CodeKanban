@@ -226,6 +226,92 @@ func TestPromptCacheRuntimeRenewal(t *testing.T) {
 	}
 }
 
+func TestPromptCacheResumesPersistedParentOnlyOnExplicitAction(t *testing.T) {
+	defer initTestDB(t)()
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "prompt_cache_success")
+	config := Config{DataDir: t.TempDir(), CodexPath: codexPath}
+	firstManager, err := NewManager(config, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstManager.StopAllPromptCacheRenewals()
+	ctx := context.Background()
+	session, err := firstManager.CreateSession(ctx, CreateParams{ProjectID: project.ID, Agent: AgentCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstManager.SendMessage(ctx, session.ID, "complete a regular turn", nil); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionToSettle(t, firstManager, session.ID)
+	waitForSessionStatus(t, firstManager, session.ID, StatusDone)
+	parent, err := firstManager.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitPromptCacheCondition(t, func() bool {
+		return firstManager.PromptCacheRenewal(ctx, parent, "").Availability == "ready"
+	})
+	for range 4 {
+		firstManager.PromptCacheRenewal(ctx, parent, "cycle")
+	}
+	if !firstManager.PromptCacheRenewal(ctx, parent, "").Infinite {
+		t.Fatal("expected infinite mode before shutdown")
+	}
+	firstManager.StopAllPromptCacheRenewals()
+	if err := firstManager.waitForCodexRunDrain(ctx, session.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := NewManager(config, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.StopAllPromptCacheRenewals()
+	if state := manager.PromptCacheRenewal(ctx, parent, ""); state.Availability != "ready" || state.Remaining != 0 || state.Infinite {
+		t.Fatalf("opening the panel after restart must show an available but off control: %#v", state)
+	}
+	manager.mu.RLock()
+	started := manager.promptCacheRenewals[session.ID] != nil
+	manager.mu.RUnlock()
+	if started {
+		t.Fatal("opening the panel started a worker")
+	}
+	if state := manager.PromptCacheRenewal(ctx, parent, "cycle"); state.Availability != "ready" || state.Remaining != 1 || state.Infinite {
+		t.Fatalf("first click must immediately enqueue one renewal: %#v", state)
+	}
+	manager.mu.RLock()
+	renewal := manager.promptCacheRenewals[session.ID]
+	manager.mu.RUnlock()
+	if renewal == nil || renewal.done == nil {
+		t.Fatal("first click did not start a renewal worker for the existing thread")
+	}
+	renewal.mu.Lock()
+	renewal.nextAt = time.Now()
+	renewal.mu.Unlock()
+	select {
+	case renewal.wake <- struct{}{}:
+	default:
+	}
+	select {
+	case <-renewal.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("finite renewal did not finish and release its connection")
+	}
+	if state := manager.PromptCacheRenewal(ctx, parent, ""); state.Availability != "ready" || state.Remaining != 0 || state.Infinite || state.LastError != "" {
+		t.Fatalf("finite renewal must automatically go back to off: %#v", state)
+	}
+	frames := promptCacheSampleFrames(t, codexPath+".state.samples")
+	if len(frames) == 0 {
+		t.Fatal("no sample request was sent")
+	}
+	params := decodeRawObject(frames[len(frames)-1].Params)
+	if params["expectedTurnId"] != "turn_test" || params["threadId"] != "thread_test" {
+		t.Fatalf("expected a renewal of the persisted turn, got: %#v", params)
+	}
+}
+
 func awaitPromptCacheCondition(t *testing.T, condition func() bool) {
 	t.Helper()
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {

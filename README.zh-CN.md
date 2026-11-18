@@ -118,13 +118,17 @@ go build -ldflags="-s -w" -trimpath -o CodeKanban
 ### Prompt cache 自动续期（实验性）
 
 功能默认可用，无需全局开关；只在用户为会话勾选后排队续期。管理员可通过开发者配置接口调整
-`webSessionPromptCacheRenewal` 的可选参数：`intervalSeconds`（默认 240 秒）、`sampleTimeoutSeconds`（默认 30 秒）、
-`failureBackoffSeconds`（默认 480 秒）和 `showUnsupported`（默认关闭，隐藏不支持的选项）。
+`webSessionPromptCacheRenewal` 的可选参数：`intervalSeconds`（默认 1500 秒，旧版默认值 240 秒按新默认值处理）、
+`sampleTimeoutSeconds`（默认 30 秒）、`failureBackoffSeconds`（默认 480 秒，失败后等待时间取它与续期间隔中的较大值）
+和 `showUnsupported`（默认关闭，隐藏不支持的选项）。
 
-支持时，完成一次持久化主会话 turn 后可从缓存圆环面板勾选续期。勾选排队一次；
-面板按钮可增加至三次，再切换到无限模式或停止。取消勾选会取消队列与正在等待的 sample。
-新用户消息使旧 turn 的续期计划失效；重启不会恢复计划。未启用续期时，完成后的连接最多保留
-5 分钟供手动开启，不会为续期启动另一个常驻进程。续期可能产生额外模型调用和费用。
+开启后，默认在最近一次普通请求的缓存观测时间过去 25 分钟时首次尝试，已过触发点则尽快尝试。
+队列里还有任务时，每次续期成功完成后重新计时，默认再等 25 分钟。面板的 30 分钟只用于估算实际缓存寿命。
+
+对已完成普通请求的持久化主会话，点击缓存圆环面板内的续期按钮可循环选择 1、2、3 次、无限和关闭；
+也可勾选来排队一次，取消勾选会清空队列并中断进行中的 sample。有限次数用完会回到关闭。
+新用户消息使旧 turn 的续期计划失效；重启不会恢复计划。原连接已关闭时，只在用户主动开启续期后重新加载
+原会话；打开面板不会建立连接或触发续期。续期可能产生额外模型调用和费用。
 它只调用原生 `thread/sample`，不会以普通消息、fork、旁路对话或其他接口代替。
 
 在服务日志中按 `parent_thread_id` 和 `expected_turn_id` 查找 `Codex prompt cache sample`。

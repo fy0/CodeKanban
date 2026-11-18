@@ -99,24 +99,29 @@ describe('WebSessionPromptCache', () => {
     expect(wrapper.get('.prompt-cache-renewal').text()).toContain('自动续期已关闭');
     expect(wrapper.find('.prompt-cache-renewal-badge').exists()).toBe(false);
     const checkbox = wrapper.get('input[type="checkbox"]');
-    await checkbox.setValue(true);
-    expect(wrapper.emitted('renewalAction')).toEqual([['cycle']]);
+    expect(checkbox.attributes('disabled')).toBeUndefined();
+    const action = wrapper.get('.prompt-cache-renewal-action');
+    await action.trigger('click');
     for (const remaining of [1, 2, 3]) {
       await wrapper.setProps({ renewal: { availability: 'ready', remaining, infinite: false } });
+      expect(action.text()).toBe(String(remaining));
       expect(wrapper.get('.prompt-cache-renewal-badge').text()).toBe(String(remaining));
-      await wrapper.get('.prompt-cache-renewal-action').trigger('click');
+      await action.trigger('click');
     }
-    expect(wrapper.emitted('renewalAction')).toEqual([['cycle'], ['cycle'], ['cycle'], ['cycle']]);
     await wrapper.setProps({ renewal: { availability: 'ready', remaining: 0, infinite: true } });
-    expect(wrapper.find('.prompt-cache-renewal-loop').exists()).toBe(true);
+    expect(action.find('.prompt-cache-renewal-loop').exists()).toBe(true);
     expect(wrapper.get('.prompt-cache-ring').attributes('aria-label')).toContain(
       '无限续期正在运行'
     );
     expect(wrapper.get('.prompt-cache-stats').text()).toContain('90%');
-    await wrapper.get('.prompt-cache-renewal-action').trigger('click');
-    expect(wrapper.emitted('renewalAction')?.at(-1)).toEqual(['cycle']);
+    await action.trigger('click');
+    expect(wrapper.emitted('renewalAction')).toEqual(Array.from({ length: 5 }, () => ['cycle']));
+    await wrapper.setProps({ renewal: { availability: 'ready', remaining: 0, infinite: false } });
+    expect(checkbox.element.checked).toBe(false);
+    await checkbox.setValue(true);
+    await wrapper.setProps({ renewal: { availability: 'ready', remaining: 1, infinite: false } });
     await checkbox.setValue(false);
-    expect(wrapper.emitted('renewalAction')?.at(-1)).toEqual(['off']);
+    expect(wrapper.emitted('renewalAction')?.slice(5)).toEqual([['cycle'], ['off']]);
     await wrapper.setProps({
       renewal: { availability: 'unsupported', remaining: 0, infinite: false },
     });

@@ -10905,6 +10905,10 @@ rl.on('line', line => {
   }
 
   if (mode.startsWith('prompt_cache_')) {
+    if (message.method === 'thread/turns/list') {
+      send({ id: message.id, result: { data: [{ id: turnId, status: 'completed' }] } });
+      return;
+    }
     if (message.method === 'thread/read') {
       send({ id: message.id, result: { thread: { id: activeThreadId, path: rolloutPath, ephemeral: false, status: { type: 'idle' } } } });
       return;

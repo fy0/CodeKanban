@@ -3,6 +3,8 @@ import { useIntervalFn } from '@vueuse/core';
 import { webSessionApi, type PromptCacheRenewalState } from '@/api/webSession';
 import type { WebSessionSummary } from '@/types/models';
 
+type RenewalAction = 'cycle' | 'off';
+
 export function usePromptCacheRenewal(session: Ref<WebSessionSummary | null>) {
   const state = ref<PromptCacheRenewalState>();
   const updating = ref(false);
@@ -13,26 +15,54 @@ export function usePromptCacheRenewal(session: Ref<WebSessionSummary | null>) {
   });
   let latestRequest = 0;
   let fetching = false;
+  let pendingActions: RenewalAction[] = [];
 
-  async function refresh(action?: 'cycle' | 'off') {
+  async function refresh() {
     const value = session.value;
     const key = sessionKey.value;
-    if (!value || !key || updating.value || (!action && fetching)) return;
+    if (!value || !key || updating.value || fetching) return;
     const request = ++latestRequest;
-    if (action) updating.value = true;
     fetching = true;
     try {
-      const response = await webSessionApi.promptCacheRenewal(value.projectId, value.id, action);
+      const response = await webSessionApi.promptCacheRenewal(value.projectId, value.id);
       if (request === latestRequest && key === sessionKey.value) state.value = response;
     } catch {
-      if (action && request === latestRequest && state.value) {
-        state.value = { ...state.value, lastError: 'connection_closed' };
+      return;
+    } finally {
+      if (request === latestRequest) fetching = false;
+    }
+  }
+
+  async function setMode(action: RenewalAction) {
+    const value = session.value;
+    const key = sessionKey.value;
+    if (!value || !key) return;
+    const actions = pendingActions;
+    if (action === 'off') actions.length = 0;
+    actions.push(action);
+    if (updating.value) return;
+    updating.value = true;
+    fetching = false;
+    const request = ++latestRequest;
+    const isCurrent = () => request === latestRequest && key === sessionKey.value;
+    try {
+      while (actions.length && isCurrent()) {
+        const nextAction = actions.shift()!;
+        try {
+          const response = await webSessionApi.promptCacheRenewal(
+            value.projectId,
+            value.id,
+            nextAction
+          );
+          if (isCurrent()) state.value = response;
+        } catch {
+          if (isCurrent() && state.value) {
+            state.value = { ...state.value, lastError: 'connection_closed' };
+          }
+        }
       }
     } finally {
-      if (request === latestRequest) {
-        fetching = false;
-        updating.value = false;
-      }
+      if (request === latestRequest) updating.value = false;
     }
   }
 
@@ -42,6 +72,7 @@ export function usePromptCacheRenewal(session: Ref<WebSessionSummary | null>) {
     () => {
       latestRequest++;
       fetching = false;
+      pendingActions = [];
       updating.value = false;
       state.value = undefined;
       void refresh();
@@ -66,5 +97,5 @@ export function usePromptCacheRenewal(session: Ref<WebSessionSummary | null>) {
     if (open) void refresh();
   }
 
-  return { state, updating, setDetailsOpen, setMode: (action: 'cycle' | 'off') => refresh(action) };
+  return { state, updating, setDetailsOpen, setMode };
 }
