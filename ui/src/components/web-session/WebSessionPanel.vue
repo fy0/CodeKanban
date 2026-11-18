@@ -463,7 +463,9 @@
                   >
                     <span class="ai-status-icon" v-html="getSessionAssistantIcon(session)"></span>
                     <span class="ai-status-text">{{ getSessionStatusLabel(session) }}</span>
-                    <span class="ai-status-emoji">{{ getSessionStatusEmoji(session) }}</span>
+                    <span v-if="getSessionStatusEmoji(session)" class="ai-status-emoji">
+                      {{ getSessionStatusEmoji(session) }}
+                    </span>
                   </span>
                 </span>
               </template>
