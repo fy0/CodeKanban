@@ -24,7 +24,7 @@ func TestClaudeDeferredPlanApprovalPermissionTransition(t *testing.T) {
 			}).Error; err != nil {
 				t.Fatal(err)
 			}
-			manager, err := NewManager(Config{DataDir: t.TempDir(), ClaudePath: writeFakeClaudeDeferredCLI(t)}, zap.NewNop())
+			manager, err := NewManager(Config{DataDir: t.TempDir(), ClaudePath: fakeClaudeDeferredExecutable(t)}, zap.NewNop())
 			if err != nil {
 				t.Fatal(err)
 			}

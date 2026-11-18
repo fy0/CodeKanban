@@ -1,6 +1,7 @@
 package websession
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -10195,58 +10197,39 @@ cat >/dev/null
 	return path
 }
 
-func writeFakeClaudeDeferredCLI(t *testing.T) string {
+func fakeClaudeDeferredExecutable(t *testing.T) string {
 	t.Helper()
 
-	if runtime.GOOS == "windows" {
-		dir := t.TempDir()
-		psPath := filepath.Join(dir, "fake-claude-deferred.ps1")
-		cmdPath := filepath.Join(dir, "fake-claude-deferred.cmd")
-		script := `if ($args -notcontains '--resume') {
-  [Console]::In.ReadLine() | Out-Null
-  Write-Output '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
-  Write-Output '{"type":"assistant","uuid":"assistant_tool","message":{"type":"message","role":"assistant","id":"assistant_tool_msg","content":[{"type":"tool_use","id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}],"stop_reason":"tool_use"}}'
-  Write-Output '{"type":"result","session_id":"claude-session-test","stop_reason":"tool_deferred","deferred_tool_use":{"id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}}'
-  exit 0
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve fake Claude executable: %v", err)
+	}
+	t.Setenv("CODEKANBAN_FAKE_CLAUDE_DEFERRED", "1")
+	return path
 }
-Write-Output '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
-Write-Output '{"type":"assistant","uuid":"assistant_done","message":{"type":"message","role":"assistant","id":"assistant_done_msg","content":[{"type":"text","text":"continuing after the answer"}],"stop_reason":"end_turn"}}'
-Write-Output '{"type":"result","session_id":"claude-session-test","stop_reason":"end_turn"}'
-`
-		if err := os.WriteFile(psPath, []byte(script), 0o644); err != nil {
-			t.Fatalf("write fake claude deferred ps1 failed: %v", err)
-		}
-		cmd := "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-claude-deferred.ps1\" %*\r\nexit /b %ERRORLEVEL%\r\n"
-		if err := os.WriteFile(cmdPath, []byte(cmd), 0o755); err != nil {
-			t.Fatalf("write fake claude deferred cmd failed: %v", err)
-		}
-		return cmdPath
+
+func TestMain(tests *testing.M) {
+	args := os.Args[1:]
+	if os.Getenv("CODEKANBAN_FAKE_CLAUDE_DEFERRED") != "1" || !slices.Contains(args, "--output-format") {
+		os.Exit(tests.Run())
 	}
 
-	path := filepath.Join(t.TempDir(), "fake-claude-deferred.sh")
-	script := `#!/bin/sh
-resuming=false
-for argument in "$@"; do
-  if [ "$argument" = --resume ]; then
-    resuming=true
-    break
-  fi
-done
-if [ "$resuming" = false ]; then
-  IFS= read -r _ || true
-  printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
-  printf '%s\n' '{"type":"assistant","uuid":"assistant_tool","message":{"type":"message","role":"assistant","id":"assistant_tool_msg","content":[{"type":"tool_use","id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}],"stop_reason":"tool_use"}}'
-  printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"tool_deferred","deferred_tool_use":{"id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}}'
-  exit 0
-fi
-printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
-printf '%s\n' '{"type":"assistant","uuid":"assistant_done","message":{"type":"message","role":"assistant","id":"assistant_done_msg","content":[{"type":"text","text":"continuing after the answer"}],"stop_reason":"end_turn"}}'
-printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"end_turn"}'
-`
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake claude deferred cli failed: %v", err)
+	const initEvent = `{"type":"system","subtype":"init","session_id":"claude-session-test"}`
+	if slices.Contains(args, "--resume") {
+		fmt.Println(initEvent)
+		fmt.Println(`{"type":"assistant","uuid":"assistant_done","message":{"type":"message","role":"assistant","id":"assistant_done_msg","content":[{"type":"text","text":"continuing after the answer"}],"stop_reason":"end_turn"}}`)
+		fmt.Println(`{"type":"result","session_id":"claude-session-test","stop_reason":"end_turn"}`)
+		os.Exit(0)
 	}
-	return path
+
+	if _, err := bufio.NewReader(os.Stdin).ReadString('\n'); err != nil {
+		fmt.Fprintln(os.Stderr, "read fake Claude prompt:", err)
+		os.Exit(1)
+	}
+	fmt.Println(initEvent)
+	fmt.Println(`{"type":"assistant","uuid":"assistant_tool","message":{"type":"message","role":"assistant","id":"assistant_tool_msg","content":[{"type":"tool_use","id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}],"stop_reason":"tool_use"}}`)
+	fmt.Println(`{"type":"result","session_id":"claude-session-test","stop_reason":"tool_deferred","deferred_tool_use":{"id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}}`)
+	os.Exit(0)
 }
 
 func writeFakeCodexAppServerCLI(t *testing.T, mode string) string {

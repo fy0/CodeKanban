@@ -885,7 +885,7 @@ func TestRespondToUserInputClaudeResumesAfterDeferredTool(t *testing.T) {
 	project := seedProject(t)
 	manager, err := NewManager(Config{
 		DataDir:    t.TempDir(),
-		ClaudePath: writeFakeClaudeDeferredCLI(t),
+		ClaudePath: fakeClaudeDeferredExecutable(t),
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
