@@ -123,6 +123,20 @@ func backfillWebSessionItemCommandGroupIDs() (int64, error) {
 		return 0, ErrDBNotInitialized
 	}
 
+	var hasUnbackfilledRows int64
+	if err := db.Raw(`
+		SELECT EXISTS(
+			SELECT 1
+			FROM web_session_items
+			WHERE command_group_id IS NULL
+		)
+	`).Scan(&hasUnbackfilledRows).Error; err != nil {
+		return 0, err
+	}
+	if hasUnbackfilledRows == 0 {
+		return 0, nil
+	}
+
 	result := db.Exec(`
 		UPDATE web_session_items
 		SET command_group_id = CASE
