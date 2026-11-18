@@ -940,6 +940,38 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	const promptCacheRenewalRoute = "/projects/{projectId}/web-sessions/{sessionId}/prompt-cache-renewal"
+	promptCacheRenewalResponse := func(ctx context.Context, projectID, sessionID, action string) (*h.ItemResponse[websession.PromptCacheRenewalState], error) {
+		session, err := c.manager.GetSession(ctx, sessionID)
+		if err != nil || session.ProjectID != projectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		resp := h.NewItemResponse(c.manager.PromptCacheRenewal(ctx, session, action))
+		resp.Status = http.StatusOK
+		return resp, nil
+	}
+	huma.Get(group, promptCacheRenewalRoute, func(ctx context.Context, input *struct {
+		ProjectID string `path:"projectId"`
+		SessionID string `path:"sessionId"`
+	}) (*h.ItemResponse[websession.PromptCacheRenewalState], error) {
+		return promptCacheRenewalResponse(ctx, input.ProjectID, input.SessionID, "")
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-prompt-cache-renewal-status"
+		op.Tags = []string{webSessionTag}
+	})
+	huma.Post(group, promptCacheRenewalRoute, func(ctx context.Context, input *struct {
+		ProjectID string `path:"projectId"`
+		SessionID string `path:"sessionId"`
+		Body      struct {
+			Action string `json:"action" enum:"cycle,off"`
+		}
+	}) (*h.ItemResponse[websession.PromptCacheRenewalState], error) {
+		return promptCacheRenewalResponse(ctx, input.ProjectID, input.SessionID, input.Body.Action)
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-prompt-cache-renewal-set"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/sync", func(
 		ctx context.Context,
 		input *struct {

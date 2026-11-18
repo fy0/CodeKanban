@@ -90,6 +90,51 @@ afterEach(() => {
 });
 
 describe('WebSessionPromptCache', () => {
+  it('keeps cache status separate from renewal modes and never queues on open', async () => {
+    const wrapper = render();
+    expect(wrapper.find('.prompt-cache-renewal').exists()).toBe(false);
+    await wrapper.setProps({ renewal: { availability: 'ready', remaining: 0, infinite: false } });
+    await wrapper.get('.prompt-cache-ring').trigger('click');
+    expect(wrapper.emitted('renewalAction')).toBeUndefined();
+    expect(wrapper.get('.prompt-cache-renewal').text()).toContain('自动续期已关闭');
+    expect(wrapper.find('.prompt-cache-renewal-badge').exists()).toBe(false);
+    const checkbox = wrapper.get('input[type="checkbox"]');
+    await checkbox.setValue(true);
+    expect(wrapper.emitted('renewalAction')).toEqual([['cycle']]);
+    for (const remaining of [1, 2, 3]) {
+      await wrapper.setProps({ renewal: { availability: 'ready', remaining, infinite: false } });
+      expect(wrapper.get('.prompt-cache-renewal-badge').text()).toBe(String(remaining));
+      await wrapper.get('.prompt-cache-renewal-action').trigger('click');
+    }
+    expect(wrapper.emitted('renewalAction')).toEqual([['cycle'], ['cycle'], ['cycle'], ['cycle']]);
+    await wrapper.setProps({ renewal: { availability: 'ready', remaining: 0, infinite: true } });
+    expect(wrapper.find('.prompt-cache-renewal-loop').exists()).toBe(true);
+    expect(wrapper.get('.prompt-cache-ring').attributes('aria-label')).toContain(
+      '无限续期正在运行'
+    );
+    expect(wrapper.get('.prompt-cache-stats').text()).toContain('90%');
+    await wrapper.get('.prompt-cache-renewal-action').trigger('click');
+    expect(wrapper.emitted('renewalAction')?.at(-1)).toEqual(['cycle']);
+    await checkbox.setValue(false);
+    expect(wrapper.emitted('renewalAction')?.at(-1)).toEqual(['off']);
+    await wrapper.setProps({
+      renewal: { availability: 'unsupported', remaining: 0, infinite: false },
+    });
+    expect(checkbox.attributes('disabled')).toBeDefined();
+    expect(wrapper.get('.prompt-cache-renewal').text()).toContain('当前 Codex 不支持缓存续期');
+    await wrapper.setProps({
+      renewal: {
+        availability: 'ready',
+        remaining: 0,
+        infinite: false,
+        lastError: 'sample_timeout',
+      },
+    });
+    expect(wrapper.find('.prompt-cache-renewal-badge').exists()).toBe(false);
+    expect(wrapper.get('.prompt-cache-renewal-error').text()).toContain('最近一次续期失败');
+    wrapper.unmount();
+  });
+
   it('provides its own ring and details with a countdown, without animating hydration or clock ticks', async () => {
     const wrapper = render();
     expect(wrapper.get('.prompt-cache-ring').attributes('aria-label')).toContain('≈29:00');

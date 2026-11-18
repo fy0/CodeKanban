@@ -127,6 +127,7 @@ type Config struct {
 	DefaultCodexSyncMode        func() SyncMode
 	AutoRetryDefaultsConfig     func() utils.WebSessionAutoRetryDefaultsConfig
 	ActiveCallTimeoutConfig     func() utils.WebSessionActiveCallTimeoutConfig
+	PromptCacheRenewal          utils.WebSessionPromptCacheRenewalConfig
 	TerminalShell               func() utils.TerminalShellConfig
 }
 
@@ -151,6 +152,9 @@ type Manager struct {
 	runs map[string]*activeRun
 	// Codex can report turn completion before its app-server releases the thread writer.
 	codexRunDrains              map[string]*activeRun
+	promptCacheRenewals         map[string]*promptCacheRenewal
+	promptCacheFailures         map[string]string
+	promptCacheUnsupported      string
 	codexTerminationRequests    map[string]codexTerminationRequest
 	clients                     map[*client]struct{}
 	autoRetryTimers             map[string]*time.Timer
@@ -2936,6 +2940,7 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 	if record.ArchivedAt != nil {
 		return m.mapSessionSummary(record), nil
 	}
+	m.stopPromptCacheRenewal(record.ID)
 
 	hadActiveRun := m.hasActiveRun(sessionID)
 	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
@@ -3017,6 +3022,7 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 		return err
 	}
 	sessionID = record.ID
+	m.stopPromptCacheRenewal(sessionID)
 	m.cancelAutoRetryTimer(sessionID)
 	m.clearPendingInputs(sessionID)
 	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
@@ -3337,6 +3343,7 @@ func (m *Manager) AbortSession(sessionID string) error {
 
 func (m *Manager) AbortSessionForUser(sessionID string) error {
 	normalizedSessionID := strings.TrimSpace(sessionID)
+	m.stopPromptCacheRenewal(normalizedSessionID)
 	now := time.Now()
 
 	if err := m.AbortSession(normalizedSessionID); err != nil {
@@ -7083,7 +7090,11 @@ func (m *Manager) waitForCodexRunDrain(ctx context.Context, sessionID string) er
 	for {
 		m.mu.RLock()
 		run := m.codexRunDrains[sessionID]
+		renewal := m.promptCacheRenewals[sessionID]
 		m.mu.RUnlock()
+		if renewal != nil {
+			renewal.preempt()
+		}
 		if run == nil {
 			return nil
 		}

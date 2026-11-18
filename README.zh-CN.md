@@ -115,6 +115,25 @@ go build -ldflags="-s -w" -trimpath -o CodeKanban
 - 前端：`ui/dist/` → `static/` (移动到此目录后，构建后端会自动存入可执行文件，实现单文件启动)
 - 后端：`CodeKanban.exe`（Windows）或 `CodeKanban`（Linux/macOS）
 
+### Prompt cache 自动续期（实验性）
+
+默认关闭。管理员可从现有 `GET /api/v1/system/developer-config` 读取设置，
+在返回的 `item` 中设置 `webSessionPromptCacheRenewal.enabled: true`，再将更新后的
+`item` 作为 `POST /api/v1/system/developer-config/update` 的请求体提交并重启服务。
+可选参数为 `intervalSeconds`（默认 240 秒）、`sampleTimeoutSeconds`（默认 30 秒）、
+`failureBackoffSeconds`（默认 480 秒）和 `showUnsupported`（默认关闭，隐藏不支持的选项）。
+
+支持时，完成一次持久化主会话 turn 后可从缓存圆环面板勾选续期。勾选排队一次；
+面板按钮可增加至三次，再切换到无限模式或停止。取消勾选会取消队列与正在等待的 sample。
+新用户消息使旧 turn 的续期计划失效；重启不会恢复计划。未启用续期时，完成后的连接最多保留
+5 分钟供手动开启，不会为续期启动另一个常驻进程。续期可能产生额外模型调用和费用。
+它只调用原生 `thread/sample`，不会以普通消息、fork、旁路对话或其他接口代替。
+
+在服务日志中按 `parent_thread_id` 和 `expected_turn_id` 查找 `Codex prompt cache sample`。
+`success` 只代表 RPC 成功；`cached_input_tokens > 0` 才表明这次 sample 有缓存命中，
+`0` 是未命中，`null` 是未报告。可在相近空闲时长下，对比启用与未启用时下一次正常请求的命中量；
+sample 本身命中不保证下一次用户请求仍然命中。
+
 ### 访问应用
 
 **开发环境**：

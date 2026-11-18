@@ -1,6 +1,15 @@
 <template>
   <DefineCacheDetails>
-    <div v-if="cache" class="prompt-cache-details" :style="themeStyle">
+    <div
+      v-if="cache"
+      :id="detailsId"
+      :role="isMobile ? undefined : 'dialog'"
+      :aria-label="t('webSession.promptCacheDetails')"
+      class="prompt-cache-details"
+      :style="themeStyle"
+      @focusout="closeOnFocusExit"
+      @keydown.esc="dismissDesktopDetails"
+    >
       <div class="prompt-cache-heading">
         <strong v-if="!isMobile">{{ t('webSession.promptCacheDetails') }}</strong>
         <span class="prompt-cache-status" :class="`state-${state}`">{{ statusLabel }}</span>
@@ -42,6 +51,40 @@
         {{ t('webSession.promptCacheMissHint') }}
       </p>
       <p class="prompt-cache-note">{{ hint }}</p>
+      <div v-if="renewal && renewal.availability !== 'disabled'" class="prompt-cache-renewal">
+        <label class="prompt-cache-renewal-checkbox">
+          <input
+            type="checkbox"
+            :checked="renewalActive"
+            :disabled="renewal.availability !== 'ready' || renewalUpdating"
+            :aria-describedby="`${detailsId}-renewal-note`"
+            @change="toggleRenewal"
+          />
+          {{ t('webSession.promptCacheRenewalLabel') }}
+        </label>
+        <p :id="`${detailsId}-renewal-note`" class="prompt-cache-note">
+          {{ t('webSession.promptCacheRenewalHint') }}
+        </p>
+        <div class="prompt-cache-renewal-controls">
+          <span role="status">{{ renewalStatus }}</span>
+          <button
+            v-if="renewalActive"
+            type="button"
+            class="prompt-cache-renewal-action"
+            :disabled="renewalUpdating"
+            @click="emit('renewalAction', 'cycle')"
+          >
+            {{ t(renewalActionLabel) }}
+          </button>
+        </div>
+        <p
+          v-if="renewal.lastError && renewal.availability !== 'unsupported'"
+          role="status"
+          class="prompt-cache-renewal-error"
+        >
+          {{ t('webSession.promptCacheRenewalFailed', { category: renewal.lastError }) }}
+        </p>
+      </div>
     </div>
   </DefineCacheDetails>
   <n-popover
@@ -55,6 +98,7 @@
   >
     <template #trigger>
       <button
+        ref="ring"
         type="button"
         class="prompt-cache-ring"
         :class="[
@@ -66,12 +110,22 @@
           },
         ]"
         :style="themeStyle"
-        :aria-label="`${t('webSession.promptCacheDetails')}: ${statusLabel} · ${countdownLabel}`"
-        :aria-haspopup="isMobile ? 'dialog' : 'true'"
+        :aria-label="
+          [
+            `${t('webSession.promptCacheDetails')}: ${statusLabel}`,
+            countdownLabel,
+            renewalStatus,
+            renewalError,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        "
+        aria-haspopup="dialog"
         :aria-expanded="isMobile ? showMobileDetails : showPopover"
         @click="openDetails"
         @focus="showPopover = !isMobile"
-        @blur="showPopover = false"
+        @blur="closeOnFocusExit"
+        @keydown.tab="focusRenewalControls"
         @keydown.esc="showPopover = false"
       >
         <svg
@@ -103,6 +157,12 @@
           <path v-else-if="!isMiss" class="prompt-cache-glyph" d="m17.5 9-6 8h4l-1 6 6-8h-4z" />
           <path v-else class="prompt-cache-alert" d="M16 11v6m0 3v.1" />
         </svg>
+        <span v-if="renewalActive" class="prompt-cache-renewal-badge" aria-hidden="true">
+          <svg v-if="renewal?.infinite" class="prompt-cache-renewal-loop" viewBox="0 0 16 16">
+            <path d="M13 5.5a5.5 5.5 0 1 0 .2 4.5M13 2.5v3.4H9.6" />
+          </svg>
+          <template v-else>{{ renewal?.remaining }}</template>
+        </span>
       </button>
     </template>
     <CacheDetails v-if="!isMobile" />
@@ -120,12 +180,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { createReusableTemplate } from '@vueuse/core';
 import { NModal, NPopover, useThemeVars } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
 import { useResponsive } from '@/composables/useResponsive';
 import type { WebSessionTokenSpeed } from '@/types/models';
+import type { PromptCacheRenewalState } from '@/api/webSession';
 import {
   estimateWebSessionPromptCache,
   formatPromptCacheCountdown,
@@ -136,12 +197,44 @@ const props = defineProps<{
   session: (PromptCacheSession & { id: string }) | null;
   now: number;
   speed?: WebSessionTokenSpeed | null;
+  renewal?: PromptCacheRenewalState;
+  renewalUpdating?: boolean;
+}>();
+const emit = defineEmits<{
+  renewalDetails: [open: boolean];
+  renewalAction: [action: 'cycle' | 'off'];
 }>();
 const { t, locale } = useI18n();
 const { isMobile } = useResponsive();
 const [DefineCacheDetails, CacheDetails] = createReusableTemplate();
 const showPopover = ref(false);
 const showMobileDetails = ref(false);
+const ring = ref<HTMLButtonElement>();
+const detailsId = useId();
+const renewalActive = computed(() => Boolean(props.renewal?.infinite || props.renewal?.remaining));
+const renewalStatus = computed(() => {
+  const renewal = props.renewal;
+  if (!renewal || renewal.availability === 'disabled') return '';
+  if (renewal.availability === 'unsupported') return t('webSession.promptCacheRenewalUnsupported');
+  if (renewal.availability === 'unavailable') return t('webSession.promptCacheRenewalUnavailable');
+  if (renewal.availability === 'checking') return t('webSession.promptCacheRenewalChecking');
+  if (renewal.infinite) return t('webSession.promptCacheRenewalInfinite');
+  if (renewal.remaining)
+    return t('webSession.promptCacheRenewalRemaining', { count: renewal.remaining });
+  return t('webSession.promptCacheRenewalOff');
+});
+const renewalError = computed(() =>
+  props.renewal?.lastError &&
+  props.renewal.availability !== 'unsupported' &&
+  props.renewal.availability !== 'disabled'
+    ? t('webSession.promptCacheRenewalFailed', { category: props.renewal.lastError })
+    : ''
+);
+const renewalActionLabel = computed(() => {
+  if (props.renewal?.infinite) return 'webSession.promptCacheRenewalStop';
+  if (props.renewal?.remaining === 3) return 'webSession.promptCacheRenewalMakeInfinite';
+  return 'webSession.promptCacheRenewalAdd';
+});
 const cache = computed(() =>
   estimateWebSessionPromptCache(props.session, props.now, props.speed?.history)
 );
@@ -263,7 +356,40 @@ watch(isMobile, () => {
   showPopover.value = false;
   showMobileDetails.value = false;
 });
-onBeforeUnmount(() => clearTimeout(animationTimer));
+watch(
+  () => showPopover.value || showMobileDetails.value,
+  open => emit('renewalDetails', open)
+);
+onBeforeUnmount(() => {
+  clearTimeout(animationTimer);
+  if (showPopover.value || showMobileDetails.value) emit('renewalDetails', false);
+});
+function toggleRenewal(event: Event) {
+  if (!(event.target instanceof HTMLInputElement)) return;
+  emit('renewalAction', event.target.checked ? 'cycle' : 'off');
+  event.target.checked = renewalActive.value;
+}
+function closeOnFocusExit(event: FocusEvent) {
+  const next = event.relatedTarget;
+  if (next instanceof HTMLElement && document.getElementById(detailsId)?.contains(next)) return;
+  showPopover.value = false;
+}
+function dismissDesktopDetails(event: KeyboardEvent) {
+  if (isMobile.value) return;
+  event.stopPropagation();
+  ring.value?.focus();
+  showPopover.value = false;
+}
+function focusRenewalControls(event: KeyboardEvent) {
+  if (event.shiftKey || isMobile.value || !showPopover.value) return;
+  const checkbox = document
+    .getElementById(detailsId)
+    ?.querySelector<HTMLInputElement>('input:not(:disabled)');
+  if (checkbox) {
+    event.preventDefault();
+    checkbox.focus();
+  }
+}
 function openDetails() {
   if (isMobile.value) showMobileDetails.value = true;
   else showPopover.value = true;
@@ -272,6 +398,7 @@ function openDetails() {
 
 <style scoped>
 .prompt-cache-ring {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -284,6 +411,63 @@ function openDetails() {
   color: var(--cache-muted);
   background: transparent;
   cursor: pointer;
+}
+.prompt-cache-renewal-badge {
+  position: absolute;
+  right: -5px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--cache-accent);
+  color: #111;
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
+}
+.prompt-cache-renewal-loop {
+  width: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: cache-renewal-spin 1.6s linear infinite;
+}
+@keyframes cache-renewal-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.prompt-cache-renewal {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cache-divider);
+}
+.prompt-cache-renewal-checkbox,
+.prompt-cache-renewal-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.prompt-cache-renewal-controls {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.prompt-cache-renewal-action {
+  border: 1px solid var(--cache-divider);
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: transparent;
+  color: inherit;
+}
+.prompt-cache-renewal-error {
+  color: var(--cache-error);
+  font-size: 12px;
 }
 .prompt-cache-ring.state-estimated {
   color: var(--cache-accent);
@@ -441,6 +625,9 @@ function openDetails() {
   line-height: 1.6;
 }
 @media (prefers-reduced-motion: reduce) {
+  .prompt-cache-renewal-loop {
+    animation: none;
+  }
   .is-refreshing .prompt-cache-ring-graphic,
   .is-interrupted .prompt-cache-ring-graphic {
     animation: none;

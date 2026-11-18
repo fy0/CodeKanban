@@ -403,8 +403,19 @@ func (c *codexAppServerClient) readLoop(stdout io.Reader) {
 }
 
 func (c *codexAppServerClient) request(ctx context.Context, method string, params any) (codexAppServerIncoming, error) {
+	return c.requestWithID(ctx, c.nextRequestID(), method, params)
+}
+
+func (c *codexAppServerClient) nextRequestID() string {
+	return fmt.Sprintf("codekanban_%d", atomic.AddUint64(&c.seq, 1))
+}
+
+func (c *codexAppServerClient) requestWithID(ctx context.Context, requestID, method string, params any) (codexAppServerIncoming, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return codexAppServerIncoming{}, err
 	}
 	// Codex may wait for an MCP server during initialize/thread resume. Never
 	// let an app-server RPC hold a session in running state indefinitely.
@@ -418,7 +429,6 @@ func (c *codexAppServerClient) request(ctx context.Context, method string, param
 	}
 	defer cancel()
 
-	requestID := fmt.Sprintf("codekanban_%d", atomic.AddUint64(&c.seq, 1))
 	rawID, _ := json.Marshal(requestID)
 	responseCh := make(chan codexAppServerIncoming, 1)
 
@@ -620,6 +630,14 @@ func appServerIDKey(raw json.RawMessage) string {
 	return strings.TrimSpace(string(raw))
 }
 
+func (m *Manager) codexRunInitializeParams() map[string]any {
+	params := map[string]any{"capabilities": map[string]any{"experimentalApi": true}}
+	if info := m.codexClientInfo(); info != nil {
+		params["clientInfo"] = info
+	}
+	return params
+}
+
 func (m *Manager) runCodexAppServerSession(
 	ctx context.Context,
 	run *activeRun,
@@ -652,18 +670,14 @@ func (m *Manager) runCodexAppServerSession(
 		waitCh <- client.cmd.Wait()
 	}()
 
-	initializeRequest := map[string]any{
-		"capabilities": map[string]any{
-			"experimentalApi": true,
-		},
-	}
-	if clientInfo := m.codexClientInfo(); clientInfo != nil {
-		initializeRequest["clientInfo"] = clientInfo
-	}
-	if _, err := client.request(ctx, "initialize", initializeRequest); err != nil {
+	initializeResponse, err := client.request(ctx, "initialize", m.codexRunInitializeParams())
+	if err != nil {
 		run.resolveBootstrap(err)
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
+	}
+	if m.cfg.PromptCacheRenewal.Enabled && codexExperimentalAPIDisabled(initializeResponse.Result) {
+		m.disablePromptCacheRenewal("experimental_api_disabled")
 	}
 
 	threadID, modelProvider, threadPath, resumedThread, activeMultiAgentV2, err := m.startOrResumeCodexThread(
@@ -812,6 +826,8 @@ func (m *Manager) runCodexAppServerSession(
 	var drainKillTimer <-chan time.Time
 	var drainHardTimer <-chan time.Time
 	drainHardExpired := false
+	var renewal *promptCacheRenewal
+	var renewalStopped <-chan struct{}
 
 drainLoop:
 	for !processExited || incoming != nil {
@@ -825,6 +841,12 @@ drainLoop:
 		case message, ok := <-incoming:
 			if !ok {
 				incoming = nil
+				continue
+			}
+			if renewal != nil {
+				if message.Method == "turn/started" && stringValue(decodeRawObject(message.Params)["threadId"]) == threadID {
+					renewal.stop()
+				}
 				continue
 			}
 			outcome, err := m.handleCodexAppServerMessage(session, run, client, rootScope, message)
@@ -887,9 +909,8 @@ drainLoop:
 
 				stopAndDrainRollout()
 				turnCompleted = true
+				renewal = m.preparePromptCacheRenewal(ctx, session, run, client, rootScope)
 				m.beginCodexRunDrain(session.ID, run)
-				drainKillTimer = time.After(codexRunDrainGracePeriod)
-				drainHardTimer = time.After(codexRunDrainHardTimeout)
 				finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
 				now := time.Now()
 				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
@@ -916,13 +937,31 @@ drainLoop:
 				)
 				m.cancelAutoRetryTimer(session.ID)
 				m.broadcastSessionSummary(context.Background(), session.ID)
-				_ = client.closeStdin()
+				if renewal == nil {
+					drainKillTimer = time.After(codexRunDrainGracePeriod)
+					drainHardTimer = time.After(codexRunDrainHardTimeout)
+					_ = client.closeStdin()
+				} else {
+					renewalStopped = renewal.ctx.Done()
+				}
 				run.resetActiveCallTracking()
 				if m.releaseActiveRun(session.ID, run) && !m.hasPendingSessionWork(session.ID) {
 					m.maybeSyncSessionAfterRun(session)
 				}
+				if renewal != nil {
+					go m.runPromptCacheRenewal(renewal)
+				}
 			}
+		case <-renewalStopped:
+			renewalStopped = nil
+			drainKillTimer = time.After(codexRunDrainGracePeriod)
+			drainHardTimer = time.After(codexRunDrainHardTimeout)
+			_ = client.closeStdin()
 		case waitErr = <-waitCh:
+			if renewal != nil {
+				m.recordPromptCacheFailure(renewal, "connection_closed")
+				renewal.stop()
+			}
 			processExited = true
 			waitCh = nil
 		case <-drainKillTimer:
@@ -955,8 +994,19 @@ drainLoop:
 			client.closeTransport()
 		}
 	}
+	if renewal != nil {
+		renewal.stop()
+		m.mu.Lock()
+		if m.promptCacheRenewals[session.ID] == renewal {
+			delete(m.promptCacheRenewals, session.ID)
+		}
+		m.mu.Unlock()
+	}
 	stopAndDrainRollout()
 
+	if turnCompleted && renewal != nil {
+		return
+	}
 	if ctx.Err() != nil || run.abortRequestedSnapshot() {
 		m.finishAbortedRun(session.ID, session, run)
 		return
@@ -1097,6 +1147,7 @@ func (m *Manager) startOrResumeCodexThread(
 	}
 
 	responsePayload := decodeRawObject(response.Result)
+	run.promptCacheRoot = isCodexSampleRoot(responsePayload["thread"])
 	threadID := parseCodexThreadID(response.Result)
 	if threadID == "" {
 		threadID = existingThreadID

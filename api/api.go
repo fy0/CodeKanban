@@ -104,6 +104,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	webSessionManager, err := websession.NewManager(websession.Config{
 		DataDir:             utils.GetDataDir(),
 		AttachmentSizeLimit: cfg.AttachmentSizeLimit * 1024,
+		PromptCacheRenewal:  cfg.Developer.WebSessionPromptCacheRenewal,
 		DefaultAgentModel: func(agent websession.Agent) string {
 			switch agent {
 			case websession.AgentClaude:
@@ -165,6 +166,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		return err
 	}
 	defer webSessionManager.StopAllPiRuntimes()
+	defer webSessionManager.StopAllPromptCacheRenewals()
 
 	registerAuthRoutes(app, cfg)
 	registerHealthRoutes(app, humaAPI)

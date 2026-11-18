@@ -15,6 +15,7 @@ import (
 )
 
 type activeRun struct {
+	promptCacheRoot           bool
 	sessionID                 string
 	projectID                 string
 	agent                     Agent

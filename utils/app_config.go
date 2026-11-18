@@ -68,26 +68,51 @@ type TerminalShellConfig struct {
 }
 
 type DeveloperConfig struct {
-	EnableTerminalScrollback               bool                              `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
-	EnableTerminalStateSnapshot            bool                              `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
-	WebSessionCodexClientName              string                            `json:"webSessionCodexClientName" yaml:"webSessionCodexClientName"`
-	WebSessionCodexClientTitle             string                            `json:"webSessionCodexClientTitle" yaml:"webSessionCodexClientTitle"`
-	WebSessionCodexClientVersion           string                            `json:"webSessionCodexClientVersion" yaml:"webSessionCodexClientVersion"`
-	WebSessionCodexDefaultModel            string                            `json:"webSessionCodexDefaultModel" yaml:"webSessionCodexDefaultModel"`
-	WebSessionCodexContextWindow           int64                             `json:"webSessionCodexContextWindow" yaml:"webSessionCodexContextWindow"`
-	WebSessionCodexDefaultReasoningEffort  string                            `json:"webSessionCodexDefaultReasoningEffort" yaml:"webSessionCodexDefaultReasoningEffort"`
-	WebSessionCodexDefaultPermissionLevel  string                            `json:"webSessionCodexDefaultPermissionLevel" yaml:"webSessionCodexDefaultPermissionLevel"`
-	WebSessionCodexDefaultSyncMode         string                            `json:"webSessionCodexDefaultSyncMode" yaml:"webSessionCodexDefaultSyncMode"`
-	WebSessionClaudeDefaultModel           string                            `json:"webSessionClaudeDefaultModel" yaml:"webSessionClaudeDefaultModel"`
-	WebSessionClaudeDefaultReasoningEffort string                            `json:"webSessionClaudeDefaultReasoningEffort" yaml:"webSessionClaudeDefaultReasoningEffort"`
-	WebSessionClaudeDefaultRuntime         string                            `json:"webSessionClaudeDefaultRuntime" yaml:"webSessionClaudeDefaultRuntime"`
-	WebSessionPiDefaultModel               string                            `json:"webSessionPiDefaultModel" yaml:"webSessionPiDefaultModel"`
-	WebSessionPiDefaultReasoningEffort     string                            `json:"webSessionPiDefaultReasoningEffort" yaml:"webSessionPiDefaultReasoningEffort"`
-	WebSessionDevinDefaultModel            string                            `json:"webSessionDevinDefaultModel" yaml:"webSessionDevinDefaultModel"`
-	WebSessionDevinDefaultReasoningEffort  string                            `json:"webSessionDevinDefaultReasoningEffort" yaml:"webSessionDevinDefaultReasoningEffort"`
-	WebSessionDevinDefaultPermissionLevel  string                            `json:"webSessionDevinDefaultPermissionLevel" yaml:"webSessionDevinDefaultPermissionLevel"`
-	WebSessionAutoRetryDefaults            WebSessionAutoRetryDefaultsConfig `json:"webSessionAutoRetryDefaults" yaml:"webSessionAutoRetryDefaults"`
-	WebSessionActiveCallTimeout            WebSessionActiveCallTimeoutConfig `json:"webSessionActiveCallTimeout" yaml:"webSessionActiveCallTimeout"`
+	EnableTerminalScrollback               bool                               `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
+	EnableTerminalStateSnapshot            bool                               `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
+	WebSessionCodexClientName              string                             `json:"webSessionCodexClientName" yaml:"webSessionCodexClientName"`
+	WebSessionCodexClientTitle             string                             `json:"webSessionCodexClientTitle" yaml:"webSessionCodexClientTitle"`
+	WebSessionCodexClientVersion           string                             `json:"webSessionCodexClientVersion" yaml:"webSessionCodexClientVersion"`
+	WebSessionCodexDefaultModel            string                             `json:"webSessionCodexDefaultModel" yaml:"webSessionCodexDefaultModel"`
+	WebSessionCodexContextWindow           int64                              `json:"webSessionCodexContextWindow" yaml:"webSessionCodexContextWindow"`
+	WebSessionCodexDefaultReasoningEffort  string                             `json:"webSessionCodexDefaultReasoningEffort" yaml:"webSessionCodexDefaultReasoningEffort"`
+	WebSessionCodexDefaultPermissionLevel  string                             `json:"webSessionCodexDefaultPermissionLevel" yaml:"webSessionCodexDefaultPermissionLevel"`
+	WebSessionCodexDefaultSyncMode         string                             `json:"webSessionCodexDefaultSyncMode" yaml:"webSessionCodexDefaultSyncMode"`
+	WebSessionClaudeDefaultModel           string                             `json:"webSessionClaudeDefaultModel" yaml:"webSessionClaudeDefaultModel"`
+	WebSessionClaudeDefaultReasoningEffort string                             `json:"webSessionClaudeDefaultReasoningEffort" yaml:"webSessionClaudeDefaultReasoningEffort"`
+	WebSessionClaudeDefaultRuntime         string                             `json:"webSessionClaudeDefaultRuntime" yaml:"webSessionClaudeDefaultRuntime"`
+	WebSessionPiDefaultModel               string                             `json:"webSessionPiDefaultModel" yaml:"webSessionPiDefaultModel"`
+	WebSessionPiDefaultReasoningEffort     string                             `json:"webSessionPiDefaultReasoningEffort" yaml:"webSessionPiDefaultReasoningEffort"`
+	WebSessionDevinDefaultModel            string                             `json:"webSessionDevinDefaultModel" yaml:"webSessionDevinDefaultModel"`
+	WebSessionDevinDefaultReasoningEffort  string                             `json:"webSessionDevinDefaultReasoningEffort" yaml:"webSessionDevinDefaultReasoningEffort"`
+	WebSessionDevinDefaultPermissionLevel  string                             `json:"webSessionDevinDefaultPermissionLevel" yaml:"webSessionDevinDefaultPermissionLevel"`
+	WebSessionAutoRetryDefaults            WebSessionAutoRetryDefaultsConfig  `json:"webSessionAutoRetryDefaults" yaml:"webSessionAutoRetryDefaults"`
+	WebSessionActiveCallTimeout            WebSessionActiveCallTimeoutConfig  `json:"webSessionActiveCallTimeout" yaml:"webSessionActiveCallTimeout"`
+	WebSessionPromptCacheRenewal           WebSessionPromptCacheRenewalConfig `json:"webSessionPromptCacheRenewal" yaml:"webSessionPromptCacheRenewal"`
+}
+
+type WebSessionPromptCacheRenewalConfig struct {
+	Enabled               bool `json:"enabled" yaml:"enabled"`
+	IntervalSeconds       int  `json:"intervalSeconds" yaml:"intervalSeconds"`
+	SampleTimeoutSeconds  int  `json:"sampleTimeoutSeconds" yaml:"sampleTimeoutSeconds"`
+	FailureBackoffSeconds int  `json:"failureBackoffSeconds" yaml:"failureBackoffSeconds"`
+	ShowUnsupported       bool `json:"showUnsupported" yaml:"showUnsupported"`
+}
+
+func NormalizeWebSessionPromptCacheRenewalConfig(config WebSessionPromptCacheRenewalConfig) WebSessionPromptCacheRenewalConfig {
+	if config.IntervalSeconds <= 0 {
+		config.IntervalSeconds = 240
+	}
+	if config.SampleTimeoutSeconds <= 0 {
+		config.SampleTimeoutSeconds = 30
+	}
+	if config.FailureBackoffSeconds <= 0 {
+		config.FailureBackoffSeconds = 480
+	}
+	config.IntervalSeconds = max(30, min(config.IntervalSeconds, 3600))
+	config.SampleTimeoutSeconds = min(config.SampleTimeoutSeconds, 45)
+	config.FailureBackoffSeconds = max(30, min(config.FailureBackoffSeconds, 3600))
+	return config
 }
 
 type WebSessionAutoRetryDefaultsConfig struct {
@@ -639,6 +664,7 @@ func NormalizeDeveloperConfig(config DeveloperConfig) DeveloperConfig {
 	}
 	config.WebSessionAutoRetryDefaults = NormalizeWebSessionAutoRetryDefaultsConfig(config.WebSessionAutoRetryDefaults)
 	config.WebSessionActiveCallTimeout = NormalizeWebSessionActiveCallTimeoutConfig(config.WebSessionActiveCallTimeout)
+	config.WebSessionPromptCacheRenewal = NormalizeWebSessionPromptCacheRenewalConfig(config.WebSessionPromptCacheRenewal)
 	return config
 }
 
@@ -716,6 +742,9 @@ func MergeDeveloperConfig(current DeveloperConfig, incoming DeveloperConfig) Dev
 	}
 	if incoming.WebSessionActiveCallTimeout == (WebSessionActiveCallTimeoutConfig{}) {
 		incoming.WebSessionActiveCallTimeout = current.WebSessionActiveCallTimeout
+	}
+	if incoming.WebSessionPromptCacheRenewal == (WebSessionPromptCacheRenewalConfig{}) {
+		incoming.WebSessionPromptCacheRenewal = current.WebSessionPromptCacheRenewal
 	}
 	return NormalizeDeveloperConfig(incoming)
 }

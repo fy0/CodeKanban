@@ -26,6 +26,13 @@ type ItemResponse<T> = {
   item?: T;
 };
 
+export type PromptCacheRenewalState = {
+  availability: 'disabled' | 'unavailable' | 'checking' | 'unsupported' | 'ready';
+  remaining: number;
+  infinite: boolean;
+  lastError?: string;
+};
+
 function createAbortError() {
   if (typeof DOMException !== 'undefined') {
     return new DOMException('The operation was aborted.', 'AbortError');
@@ -849,6 +856,18 @@ export const webSessionApi = {
       throw new Error('failed to sync AI session');
     }
     return body.item;
+  },
+
+  async promptCacheRenewal(
+    projectId: string,
+    sessionId: string,
+    action?: 'cycle' | 'off'
+  ): Promise<PromptCacheRenewalState | undefined> {
+    const path = `/projects/${encodeURIComponent(projectId)}/web-sessions/${encodeURIComponent(sessionId)}/prompt-cache-renewal`;
+    const response = action
+      ? await http.Post<ItemResponse<PromptCacheRenewalState>>(path, { action }).send()
+      : await http.Get<ItemResponse<PromptCacheRenewalState>>(path, { cacheFor: 0 }).send();
+    return response?.item;
   },
 
   async terminateCodexAppServer(

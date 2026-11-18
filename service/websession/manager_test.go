@@ -10251,7 +10251,7 @@ function respondThread(id, explicitThreadId) {
     id,
     result: {
       modelProvider: 'TestProvider',
-      thread: { id: responseThreadId, path: rolloutPath },
+      thread: { id: responseThreadId, path: rolloutPath, ephemeral: false },
     },
   });
 }
@@ -10767,6 +10767,10 @@ rl.on('line', line => {
     return;
   }
   if (message.method === 'initialize') {
+    if (mode.startsWith('prompt_cache_') && message.params?.capabilities?.experimentalApi !== true) {
+      send({ id: message.id, error: { code: -32602, message: 'experimentalApi is required' } });
+      return;
+    }
     send({
       id: message.id,
       result: {
@@ -10803,6 +10807,38 @@ rl.on('line', line => {
       },
     });
     return;
+  }
+
+  if (mode.startsWith('prompt_cache_')) {
+    if (message.method === 'thread/read') {
+      send({ id: message.id, result: { thread: { id: activeThreadId, path: rolloutPath, ephemeral: false, status: { type: 'idle' } } } });
+      return;
+    }
+    if (message.method === 'thread/sample') {
+      fs.appendFileSync(stateFile + '.samples', JSON.stringify(message) + '\n');
+      if (mode === 'prompt_cache_unsupported') {
+        send({ id: message.id, error: { code: -32601, message: 'Method not found' } });
+      } else if (message.params.threadId !== activeThreadId) {
+        send({ id: message.id, error: { code: -32600, message: 'thread/sample requires a loaded source' } });
+      } else if (mode === 'prompt_cache_stale') {
+        send({ id: message.id, error: { code: -32600, message: 'sample source turn must be the latest finished turn' } });
+      } else if (mode !== 'prompt_cache_hold') {
+        send({
+          method: 'item/completed',
+          params: { threadId: 'temporary_sample', turnId: 'sample_turn', item: { type: 'agentMessage', id: 'sample_text', text: 'private sample output' } },
+        });
+        send({ id: message.id, result: { text: 'private sample output', usage: { input_tokens: 4096, cached_input_tokens: 3072, output_tokens: 1 } } });
+      }
+      return;
+    }
+    if (message.method === 'thread/sample/cancel') {
+      fs.appendFileSync(stateFile + '.sample-cancels', JSON.stringify(message.params) + '\n');
+      send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'thread/fork' || message.method === 'sideConversation/start') {
+      fs.writeFileSync(stateFile + '.unexpected-fallback', message.method);
+    }
   }
 
   if (message.method === 'thread/list') {
@@ -11190,6 +11226,7 @@ rl.on('line', line => {
 
 	if (
 	  mode === 'basic' ||
+	  mode.startsWith('prompt_cache_') ||
 	  mode === 'resume_only' ||
 	  mode === 'plan' ||
 	  mode === 'verify_yolo' ||

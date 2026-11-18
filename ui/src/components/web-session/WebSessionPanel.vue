@@ -2106,6 +2106,10 @@
                   :session="currentSession"
                   :now="liveStateClockMs"
                   :speed="currentTokenSpeed"
+                  :renewal="promptCacheRenewal"
+                  :renewal-updating="promptCacheRenewalUpdating"
+                  @renewal-details="setPromptCacheRenewalDetailsOpen"
+                  @renewal-action="setPromptCacheRenewalMode"
                 />
                 <button
                   v-if="contextUsageIndicator"
@@ -3336,6 +3340,10 @@
                       :session="currentSession"
                       :now="liveStateClockMs"
                       :speed="currentTokenSpeed"
+                      :renewal="promptCacheRenewal"
+                      :renewal-updating="promptCacheRenewalUpdating"
+                      @renewal-details="setPromptCacheRenewalDetailsOpen"
+                      @renewal-action="setPromptCacheRenewalMode"
                     />
                     <n-popover
                       v-if="contextUsageIndicator"
@@ -3980,6 +3988,7 @@ import {
 } from '@/components/web-session/webSessionTimeFormat';
 import WebSessionTokenSpeed from '@/components/web-session/WebSessionTokenSpeed.vue';
 import WebSessionPromptCache from '@/components/web-session/WebSessionPromptCache.vue';
+import { usePromptCacheRenewal } from '@/components/web-session/usePromptCacheRenewal';
 import {
   formatElapsedDuration,
   resolveWebSessionLiveTimeCopy,
@@ -4722,6 +4731,12 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
   const session = currentSession.value;
   return session && !isDraftSession(session) ? session : null;
 });
+const {
+  state: promptCacheRenewal,
+  updating: promptCacheRenewalUpdating,
+  setDetailsOpen: setPromptCacheRenewalDetailsOpen,
+  setMode: setPromptCacheRenewalMode,
+} = usePromptCacheRenewal(currentRealSession);
 const {
   show: showLocalFileDialog,
   target: localFileDialogTarget,
