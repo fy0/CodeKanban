@@ -92,7 +92,6 @@ type DeveloperConfig struct {
 }
 
 type WebSessionPromptCacheRenewalConfig struct {
-	Enabled               bool `json:"enabled" yaml:"enabled"`
 	IntervalSeconds       int  `json:"intervalSeconds" yaml:"intervalSeconds"`
 	SampleTimeoutSeconds  int  `json:"sampleTimeoutSeconds" yaml:"sampleTimeoutSeconds"`
 	FailureBackoffSeconds int  `json:"failureBackoffSeconds" yaml:"failureBackoffSeconds"`

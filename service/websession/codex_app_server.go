@@ -676,7 +676,7 @@ func (m *Manager) runCodexAppServerSession(
 		m.waitAndFailCodexAppServer(session, run, client, waitCh, stderrDone, stderrBuffer, err)
 		return
 	}
-	if m.cfg.PromptCacheRenewal.Enabled && codexExperimentalAPIDisabled(initializeResponse.Result) {
+	if codexExperimentalAPIDisabled(initializeResponse.Result) {
 		m.disablePromptCacheRenewal("experimental_api_disabled")
 	}
 

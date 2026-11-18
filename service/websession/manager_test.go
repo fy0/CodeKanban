@@ -10899,6 +10899,11 @@ rl.on('line', line => {
     return;
   }
 
+  if (message.method === 'thread/sample' && !mode.startsWith('prompt_cache_')) {
+    send({ id: message.id, error: { code: -32601, message: 'Method not found' } });
+    return;
+  }
+
   if (mode.startsWith('prompt_cache_')) {
     if (message.method === 'thread/read') {
       send({ id: message.id, result: { thread: { id: activeThreadId, path: rolloutPath, ephemeral: false, status: { type: 'idle' } } } });

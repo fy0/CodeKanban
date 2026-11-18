@@ -117,10 +117,8 @@ go build -ldflags="-s -w" -trimpath -o CodeKanban
 
 ### Prompt cache 自动续期（实验性）
 
-默认关闭。管理员可从现有 `GET /api/v1/system/developer-config` 读取设置，
-在返回的 `item` 中设置 `webSessionPromptCacheRenewal.enabled: true`，再将更新后的
-`item` 作为 `POST /api/v1/system/developer-config/update` 的请求体提交并重启服务。
-可选参数为 `intervalSeconds`（默认 240 秒）、`sampleTimeoutSeconds`（默认 30 秒）、
+功能默认可用，无需全局开关；只在用户为会话勾选后排队续期。管理员可通过开发者配置接口调整
+`webSessionPromptCacheRenewal` 的可选参数：`intervalSeconds`（默认 240 秒）、`sampleTimeoutSeconds`（默认 30 秒）、
 `failureBackoffSeconds`（默认 480 秒）和 `showUnsupported`（默认关闭，隐藏不支持的选项）。
 
 支持时，完成一次持久化主会话 turn 后可从缓存圆环面板勾选续期。勾选排队一次；

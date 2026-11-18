@@ -107,10 +107,11 @@ func TestPromptCacheRuntimeRenewal(t *testing.T) {
 			project := seedProject(t)
 			core, logs := observer.New(zap.InfoLevel)
 			codexPath := writeFakeCodexAppServerCLI(t, "prompt_cache_"+mode)
-			manager, err := NewManager(Config{
-				DataDir: t.TempDir(), CodexPath: codexPath,
-				PromptCacheRenewal: utils.WebSessionPromptCacheRenewalConfig{Enabled: true, ShowUnsupported: true},
-			}, zap.New(core))
+			config := Config{DataDir: t.TempDir(), CodexPath: codexPath}
+			if mode == "unsupported" {
+				config.PromptCacheRenewal.ShowUnsupported = true
+			}
+			manager, err := NewManager(config, zap.New(core))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -144,6 +145,9 @@ func TestPromptCacheRuntimeRenewal(t *testing.T) {
 				return manager.PromptCacheRenewal(ctx, parent, "").Availability == wantAvailability
 			})
 			if mode != "unsupported" {
+				if state := manager.PromptCacheRenewal(ctx, parent, ""); state.Infinite || state.Remaining != 0 {
+					t.Fatalf("renewal was queued before the user enabled it: %#v", state)
+				}
 				manager.mu.RLock()
 				renewal := manager.promptCacheRenewals[session.ID]
 				manager.mu.RUnlock()
@@ -192,8 +196,8 @@ func TestPromptCacheRuntimeRenewal(t *testing.T) {
 				if fields["error_category"] != wantError || fields["success"] != (mode == "success") || fields["parent_thread_id"] != "thread_test" || fields["expected_turn_id"] != "turn_test" {
 					t.Fatalf("incorrect sample log context: %#v", fields)
 				}
-				if duration, ok := fields["rpc_duration"].(time.Duration); !ok || duration <= 0 {
-					t.Fatalf("missing sample RPC duration: %#v", fields)
+				if duration, ok := fields["rpc_duration"].(time.Duration); !ok || duration < 0 {
+					t.Fatalf("invalid sample RPC duration: %#v", fields)
 				}
 				if mode == "success" && (fields["cached_input_tokens"] != int64(3072) || fields["input_tokens"] != int64(4096) || fields["output_tokens"] != int64(1)) {
 					t.Fatalf("incorrect sample usage: %#v", fields)

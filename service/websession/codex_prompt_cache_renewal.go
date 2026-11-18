@@ -88,7 +88,7 @@ func codexExperimentalAPIDisabled(raw json.RawMessage) bool {
 }
 
 func (m *Manager) preparePromptCacheRenewal(ctx context.Context, session tables.WebSessionTable, run *activeRun, client *codexAppServerClient, scope codexTurnScope) *promptCacheRenewal {
-	if !m.cfg.PromptCacheRenewal.Enabled || !run.promptCacheRoot || run.hiddenBootstrap ||
+	if !run.promptCacheRoot || run.hiddenBootstrap ||
 		scope.threadID == "" || scope.turnID == "" || session.ArchivedAt != nil {
 		return nil
 	}
@@ -119,7 +119,7 @@ func (m *Manager) preparePromptCacheRenewal(ctx context.Context, session tables.
 
 func (m *Manager) PromptCacheRenewal(ctx context.Context, session tables.WebSessionTable, action string) PromptCacheRenewalState {
 	state := PromptCacheRenewalState{Availability: "disabled"}
-	if !m.cfg.PromptCacheRenewal.Enabled || effectiveSessionBackend(session) != SessionBackendCodexAppServer {
+	if effectiveSessionBackend(session) != SessionBackendCodexAppServer {
 		return state
 	}
 	m.mu.RLock()

@@ -53,8 +53,8 @@ func TestWebSessionPromptCacheRenewalRoutes(t *testing.T) {
 			var envelope struct {
 				Item websession.PromptCacheRenewalState `json:"item"`
 			}
-			if err := json.Unmarshal([]byte(body), &envelope); err != nil || envelope.Item.Availability != "disabled" || envelope.Item.Infinite || envelope.Item.Remaining != 0 {
-				t.Fatalf("renewal must stay disabled by default: %s", body)
+			if err := json.Unmarshal([]byte(body), &envelope); err != nil || envelope.Item.Availability != "unavailable" || envelope.Item.Infinite || envelope.Item.Remaining != 0 {
+				t.Fatalf("renewal must be available by default but wait for a completed turn: %s", body)
 			}
 		}
 	}
