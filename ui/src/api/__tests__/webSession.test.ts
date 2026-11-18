@@ -132,6 +132,7 @@ describe('webSessionApi.search', () => {
       query: 'needle',
       includeArchived: true,
       includeBody: true,
+      messagesOnly: true,
       cursor: 'cursor-1',
       scanLimit: 50,
     });
@@ -140,6 +141,19 @@ describe('webSessionApi.search', () => {
       scanned: 50,
       total: 120,
     });
+  });
+
+  it('preserves an explicit opt-out from message-only search', async () => {
+    await webSessionApi.search({
+      projectIds: ['project-1'],
+      query: 'needle',
+      messagesOnly: false,
+    });
+
+    expect(postMethodMock).toHaveBeenCalledWith(
+      '/web-sessions/search',
+      expect.objectContaining({ messagesOnly: false })
+    );
   });
 
   it('aborts the active chunk request with the caller signal', async () => {
