@@ -60,8 +60,14 @@ describe('Codex prompt cache estimates', () => {
     });
     expect(estimateWebSessionPromptCache(restored, observedAt + 31 * 60_000)).toMatchObject({
       remainingMs: 0,
+      expiredMs: 60_000,
       state: 'elapsed',
       hitPercent: 90,
+    });
+    expect(estimateWebSessionPromptCache(restored, observedAt + 91 * 60_000)).toMatchObject({
+      remainingMs: 0,
+      expiredMs: 61 * 60_000,
+      state: 'elapsed',
     });
   });
   it('refreshes the estimate only when a new request observation arrives', () => {

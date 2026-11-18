@@ -28,20 +28,22 @@
 .composer-mobile-toolbar {
   width: 100%;
   min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--composer-mobile-button-size) minmax(0, 1fr) var(
+      --composer-mobile-button-size
+    );
   align-items: center;
-  gap: var(--composer-mobile-control-gap);
+  column-gap: var(--composer-mobile-control-gap);
   margin-bottom: 2px;
 }
 
 .composer-mobile-toolbar.is-collapsed {
   margin-bottom: 0;
-  flex-wrap: wrap;
 }
 
 .composer-mobile-toolbar.is-collapsed .composer-mobile-pending-summary {
-  order: 1;
-  flex: 1 0 100%;
+  grid-column: 1 / -1;
+  grid-row: 2;
 }
 
 .composer-status {
@@ -52,8 +54,14 @@
 }
 
 .composer-mobile-status {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
+  min-width: 0;
   gap: var(--composer-mobile-control-gap);
-  margin-left: auto;
+  justify-content: center;
+  justify-self: stretch;
+  margin-left: 0;
 }
 
 .composer-mobile-pending-summary {

@@ -104,7 +104,11 @@ describe('WebSessionPromptCache', () => {
     expect(wrapper.get('.prompt-cache-countdown').text()).toContain('≈28:59');
     expect(wrapper.find('.is-refreshing').exists()).toBe(false);
     await wrapper.setProps({ now: observedAt + 31 * 60_000 });
+    expect(wrapper.get('.prompt-cache-countdown').text()).toContain('已过期 1 分钟');
+    expect(wrapper.get('.prompt-cache-countdown').text()).toContain('估算保留窗口已过期');
     expect(wrapper.get('.prompt-cache-status').text()).toBe('缓存待确认');
+    await wrapper.setProps({ now: observedAt + 91 * 60_000 });
+    expect(wrapper.get('.prompt-cache-countdown').text()).toContain('1小时前');
     expect(wrapper.find('.is-interrupted').exists()).toBe(false);
     wrapper.unmount();
   });

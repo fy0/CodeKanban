@@ -6,10 +6,8 @@
         <span class="prompt-cache-status" :class="`state-${state}`">{{ statusLabel }}</span>
       </div>
       <div class="prompt-cache-countdown">
-        <strong>{{
-          cache.remainingMs === null ? '—' : `≈${formatPromptCacheCountdown(cache.remainingMs)}`
-        }}</strong>
-        <span>{{ t('webSession.promptCacheWindowRemaining') }}</span>
+        <strong>{{ countdownText }}</strong>
+        <span>{{ countdownCaption }}</span>
       </div>
       <dl class="prompt-cache-stats">
         <div>
@@ -61,7 +59,11 @@
         class="prompt-cache-ring"
         :class="[
           `state-${state}`,
-          { 'is-refreshing': animation === 'refresh', 'is-interrupted': animation === 'miss' },
+          {
+            'is-mobile': isMobile,
+            'is-refreshing': animation === 'refresh',
+            'is-interrupted': animation === 'miss',
+          },
         ]"
         :style="themeStyle"
         :aria-label="`${t('webSession.promptCacheDetails')}: ${statusLabel} · ${countdownLabel}`"
@@ -156,17 +158,40 @@ const decreasePercent = computed(() => {
 const state = computed(() =>
   isMiss.value ? 'miss' : isDecreased.value ? cache.value!.event : (cache.value?.state ?? 'unknown')
 );
-const countdownLabel = computed(() =>
-  cache.value?.remainingMs != null && cache.value.remainingMs > 0
-    ? t('webSession.promptCacheRemaining', {
-        time: formatPromptCacheCountdown(cache.value.remainingMs),
-      })
-    : t(
-        cache.value?.state === 'elapsed'
-          ? 'webSession.promptCacheUnconfirmed'
-          : 'webSession.promptCacheUnknown'
-      )
+function formatExpiredLabel(expiredMs: number | null) {
+  if (expiredMs == null || expiredMs < 60_000) {
+    return t('webSession.promptCacheExpiredJustNow');
+  }
+  const minutes = Math.floor(expiredMs / 60_000);
+  if (minutes < 60) {
+    return t('webSession.promptCacheExpiredMinutes', { minutes });
+  }
+  const hours = Math.floor(minutes / 60);
+  const value = hours < 24 ? hours : Math.floor(hours / 24);
+  const unit: Intl.RelativeTimeFormatUnit = hours < 24 ? 'hour' : 'day';
+  return new Intl.RelativeTimeFormat(locale.value, { numeric: 'always' }).format(-value, unit);
+}
+const countdownText = computed(() => {
+  const value = cache.value;
+  if (!value || value.remainingMs === null) return '—';
+  if (value.remainingMs > 0) return `≈${formatPromptCacheCountdown(value.remainingMs)}`;
+  return formatExpiredLabel(value.expiredMs);
+});
+const countdownCaption = computed(() =>
+  cache.value?.remainingMs === 0
+    ? t('webSession.promptCacheWindowExpired')
+    : t('webSession.promptCacheWindowRemaining')
 );
+const countdownLabel = computed(() => {
+  const value = cache.value;
+  if (!value || value.remainingMs === null) return t('webSession.promptCacheUnknown');
+  if (value.remainingMs > 0) {
+    return t('webSession.promptCacheRemaining', {
+      time: formatPromptCacheCountdown(value.remainingMs),
+    });
+  }
+  return countdownText.value;
+});
 const statusLabel = computed(() => {
   const event = cache.value?.event;
   if (event === 'miss') return t('webSession.promptCacheMiss');
@@ -280,6 +305,15 @@ function openDetails() {
   width: 24px;
   height: 24px;
   overflow: visible;
+}
+.prompt-cache-ring.is-mobile {
+  flex-basis: 28px;
+  width: 28px;
+  height: 28px;
+}
+.prompt-cache-ring.is-mobile .prompt-cache-ring-graphic {
+  width: 20px;
+  height: 20px;
 }
 .prompt-cache-track,
 .prompt-cache-arc {

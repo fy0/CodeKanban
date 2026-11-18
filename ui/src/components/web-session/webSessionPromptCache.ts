@@ -99,6 +99,10 @@ export function estimateWebSessionPromptCache(
     hasObservation && inputTokens >= 1024 && windowMs !== null
       ? Math.max(0, windowMs - Math.max(0, now - timestamp))
       : null;
+  const expiredMs =
+    remainingMs === 0 && hasObservation && windowMs !== null
+      ? Math.max(0, now - timestamp - windowMs)
+      : null;
   return {
     observationKey: hasObservation ? observationKey : '',
     event,
@@ -112,6 +116,7 @@ export function estimateWebSessionPromptCache(
     hitPercent: inputTokens > 0 ? Math.round((cachedTokens / inputTokens) * 100) : null,
     windowMs,
     remainingMs,
+    expiredMs,
     remainingRatio: remainingMs !== null && windowMs ? remainingMs / windowMs : 0,
     state:
       remainingMs === null
