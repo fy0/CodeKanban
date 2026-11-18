@@ -5677,6 +5677,88 @@ func TestCodexAppServerTransportRetryPersistsAsNoteAndCompletes(t *testing.T) {
 	}
 }
 
+func TestCodexAppServerTransportRetryReplacesDraftInPlace(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Transport retry draft", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	run := &activeRun{runID: "run-1", agent: AgentCodex}
+	scope := codexTurnScope{threadID: "thread-1", turnID: "turn-1"}
+	notify := func(method string, params map[string]any) {
+		t.Helper()
+		params["threadId"] = scope.threadID
+		params["turnId"] = scope.turnID
+		handleCodexTestNotification(t, manager, *session, run, scope, method, params)
+	}
+	complete := func(id, phase, text string) {
+		t.Helper()
+		notify("item/completed", map[string]any{"item": map[string]any{
+			"type": "agentMessage", "id": id, "phase": phase, "text": text,
+		}})
+	}
+	assistantItems := func() []HistoryItem {
+		t.Helper()
+		history, err := manager.History(context.Background(), session.ID, 50, nil)
+		if err != nil {
+			t.Fatalf("History: %v", err)
+		}
+		var items []HistoryItem
+		for _, item := range history.Items {
+			if item.Kind == "assistant" {
+				items = append(items, item)
+			}
+		}
+		return items
+	}
+
+	complete("progress", "commentary", "Completed progress message")
+	notify("item/agentMessage/delta", map[string]any{"itemId": "draft", "delta": "Original interrupted draft"})
+	notify("error", map[string]any{"message": "Reconnecting... 1/5"})
+	before := assistantItems()
+	if len(before) != 2 || before[1].Done || before[1].Text != "Original interrupted draft" {
+		t.Fatalf("expected visible draft during retry, got %#v", before)
+	}
+
+	notify("item/agentMessage/delta", map[string]any{"itemId": "second-draft", "delta": "Second interrupted draft"})
+	notify("error", map[string]any{"message": "Reconnecting... 2/5"})
+	during := assistantItems()
+	if len(during) != 2 || during[1].ID != before[1].ID || during[1].Text != before[1].Text {
+		t.Fatalf("retry deltas replaced or duplicated the visible draft before completion: %#v", during)
+	}
+
+	notify("item/agentMessage/delta", map[string]any{"itemId": "final", "delta": "Only the beginning"})
+	complete("final", "final_answer", "Full authoritative final answer")
+	complete("another", "final_answer", "Another independently completed message")
+	after := assistantItems()
+	if len(after) != 3 || after[0].ID != before[0].ID || !after[0].Done || after[0].Text != before[0].Text ||
+		after[1].ID != before[1].ID || after[1].OrderIndex != before[1].OrderIndex || !after[1].Done ||
+		after[1].Text != "Full authoritative final answer" || after[1].SourceItemID == nil || *after[1].SourceItemID != "assistant:final" ||
+		after[2].Text != "Another independently completed message" {
+		t.Fatalf("expected an in-place replacement without affecting other completed messages, got %#v", after)
+	}
+	if draft := run.takeCodexRetryDraft(); draft.messageID != "" {
+		t.Fatalf("expected completed retry to clear the retry draft, got %#v", draft)
+	}
+	raw, err := manager.store.readEvents(session.ID)
+	if err != nil {
+		t.Fatalf("readEvents: %v", err)
+	}
+	var staged int
+	for _, event := range raw {
+		if event.Type == "txt_d" && event.Payload["retryStaged"] == true {
+			staged++
+		}
+	}
+	if staged != 2 {
+		t.Fatalf("expected two staged deltas in raw history, got %d", staged)
+	}
+}
+
 func TestCodexAppServerTransportRetryRecoversOnHiddenReasoning(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -5866,6 +5948,7 @@ func TestCodexAppServerTransportRetryExhaustionFailsRun(t *testing.T) {
 	}
 	historyRetryCount := 0
 	historyFailFound := false
+	var assistantItems []HistoryItem
 	for _, item := range history.Items {
 		if item.ItemType == "note" && stringValue(item.Payload["code"]) == codexTransportRetryingCode {
 			historyRetryCount++
@@ -5873,12 +5956,19 @@ func TestCodexAppServerTransportRetryExhaustionFailsRun(t *testing.T) {
 		if item.ItemType == "run_fail" && stringValue(item.Payload["code"]) == codexTransportRetryExhaustedCode {
 			historyFailFound = true
 		}
+		if item.Kind == "assistant" {
+			assistantItems = append(assistantItems, item)
+		}
 	}
 	if historyRetryCount < 2 {
 		t.Fatalf("expected retry notes in projected history, got %#v", history.Items)
 	}
 	if !historyFailFound {
 		t.Fatalf("expected projected final run_fail item, got %#v", history.Items)
+	}
+	if len(assistantItems) != 1 || assistantItems[0].Done || assistantItems[0].Text != "Interrupted draft" ||
+		assistantItems[0].Payload["interrupted"] != true {
+		t.Fatalf("expected the original draft marked interrupted, got %#v", assistantItems)
 	}
 }
 
@@ -11266,6 +11356,10 @@ rl.on('line', line => {
     }
 
     if (mode === 'reconnect_then_fail') {
+      send({
+        method: 'item/agentMessage/delta',
+        params: { threadId, turnId, itemId: 'interrupted-draft', delta: 'Interrupted draft' },
+      });
       send({
         method: 'error',
         params: {

@@ -912,6 +912,7 @@ export default {
     subAgentLocate: 'Locate latest agent activity',
     subAgentNoTimelineActivity: 'No timeline activity is available for this agent.',
     timelineAgentRole: 'Agent · {name}',
+    assistantOutputInterrupted: 'Output interrupted',
     subAgentStatus: {
       pending_init: 'Starting',
       running: 'Running',

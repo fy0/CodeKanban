@@ -1060,6 +1060,9 @@
                     <span class="item-time" :title="formatDateTime(item.timestamp)">{{
                       formatTime(item.timestamp)
                     }}</span>
+                    <span v-if="item.payload?.interrupted === true" class="item-duration">
+                      · {{ t('webSession.assistantOutputInterrupted') }}
+                    </span>
                     <span v-if="item.runDurationMs != null" class="item-duration">
                       ·
                       {{
@@ -5825,7 +5828,12 @@ function buildStreamingMarkdownKey(block: WebSessionBlock, surface: StreamingMar
 }
 
 function isStreamingMessageMarkdownBlock(block: WebSessionBlock) {
-  return block.kind === 'assistant' && liveState.value.running && block.done !== true;
+  return (
+    block.kind === 'assistant' &&
+    liveState.value.running &&
+    block.done !== true &&
+    block.payload?.interrupted !== true
+  );
 }
 
 function isStreamingPlanMarkdownBlock(block: WebSessionBlock) {

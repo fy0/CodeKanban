@@ -60,6 +60,9 @@ type activeRun struct {
 	assistantDeltaSeen        map[string]bool
 	assistantMessagePhases    map[string]string
 	assistantMessageText      map[string]bool
+	assistantAsyncMessages    map[string]bool
+	codexStreamingDraft       codexAssistantDraft
+	codexRetryDraft           codexAssistantDraft
 	completedReply            bool
 	claudeResumeOnly          bool
 	claudeStdioControl        bool
@@ -597,14 +600,30 @@ func (r *activeRun) markCompletedPlanTool() {
 	r.completedPlanTool = true
 }
 
-func (r *activeRun) markCodexTransportRetry() {
+type codexAssistantDraft struct {
+	scope     codexTurnScope
+	messageID string
+}
+
+func (r *activeRun) markCodexTransportRetry(scope codexTurnScope) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
 	r.transportRetrySeen = true
 	r.transportRetryRecovered = false
+	if r.codexStreamingDraft.scope == scope && r.codexStreamingDraft.messageID != "" && r.codexRetryDraft.scope != scope {
+		r.codexRetryDraft = r.codexStreamingDraft
+	}
 	r.mu.Unlock()
+}
+
+func (r *activeRun) takeCodexRetryDraft() codexAssistantDraft {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	draft := r.codexRetryDraft
+	r.codexRetryDraft = codexAssistantDraft{}
+	return draft
 }
 
 func (r *activeRun) codexTransportRetrySeen() bool {
@@ -696,11 +715,18 @@ func (r *activeRun) hasPendingServerRequest() bool {
 	return r.pendingServerReq != nil
 }
 
-func (r *activeRun) recordAssistantMessageStarted(messageID string, phase string) {
+func (r *activeRun) recordAssistantMessageStarted(messageID string, phase string, async bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
+		return
+	}
+	if async {
+		if r.assistantAsyncMessages == nil {
+			r.assistantAsyncMessages = make(map[string]bool)
+		}
+		r.assistantAsyncMessages[messageID] = true
 		return
 	}
 	if r.assistantMessagePhases == nil {
@@ -767,28 +793,46 @@ func (r *activeRun) stopCodexRolloutMonitor() {
 	r.mu.Unlock()
 }
 
-func (r *activeRun) recordAssistantMessageDelta(messageID string, text string) {
-	if strings.TrimSpace(text) == "" {
-		return
-	}
+func (r *activeRun) recordAssistantMessageDelta(scope codexTurnScope, messageID, text string) (staged bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	messageID = strings.TrimSpace(messageID)
-	if messageID == "" {
-		return
+	if messageID == "" || r.assistantAsyncMessages[messageID] {
+		return false
 	}
-	if r.assistantMessageText == nil {
-		r.assistantMessageText = make(map[string]bool)
+	if strings.TrimSpace(text) != "" {
+		if r.assistantMessageText == nil {
+			r.assistantMessageText = make(map[string]bool)
+		}
+		r.assistantMessageText[messageID] = true
 	}
-	r.assistantMessageText[messageID] = true
+	if scope.threadID == "" || scope.turnID == "" || !codexAnswerPhase(r.assistantMessagePhases[messageID]) {
+		return false
+	}
+	if r.codexRetryDraft.scope == scope {
+		return true
+	}
+	if strings.TrimSpace(text) != "" {
+		r.codexStreamingDraft = codexAssistantDraft{scope: scope, messageID: messageID}
+	}
+	return false
 }
 
-func (r *activeRun) recordAssistantMessageCompleted(messageID string, phase string, text string) {
+func (r *activeRun) recordAssistantMessageCompleted(scope codexTurnScope, messageID, phase, text string, async bool) (retrying bool, replaces string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
-		return
+		return false, ""
+	}
+	if r.codexStreamingDraft.messageID == messageID {
+		r.codexStreamingDraft = codexAssistantDraft{}
+	}
+	async = async || r.assistantAsyncMessages[messageID]
+	delete(r.assistantAsyncMessages, messageID)
+	retrying = r.codexRetryDraft.messageID != "" && r.codexRetryDraft.scope == scope
+	if async {
+		return retrying, ""
 	}
 	if r.assistantMessagePhases == nil {
 		r.assistantMessagePhases = make(map[string]string)
@@ -803,6 +847,15 @@ func (r *activeRun) recordAssistantMessageCompleted(messageID string, phase stri
 	if normalizedPhase != "commentary" && hasText {
 		r.completedReply = true
 	}
+	if retrying && strings.TrimSpace(text) != "" && (codexAnswerPhase(normalizedPhase) || r.codexRetryDraft.messageID == messageID) {
+		replaces = r.codexRetryDraft.messageID
+		r.codexRetryDraft = codexAssistantDraft{}
+	}
+	return retrying, replaces
+}
+
+func codexAnswerPhase(phase string) bool {
+	return phase == "" || phase == "final_answer"
 }
 
 func (r *activeRun) completedReplySeen() bool {
@@ -818,6 +871,9 @@ func (r *activeRun) resetCodexTurnCompletionEvidence() {
 	r.assistantDeltaSeen = nil
 	r.assistantMessagePhases = nil
 	r.assistantMessageText = nil
+	r.assistantAsyncMessages = nil
+	r.codexStreamingDraft = codexAssistantDraft{}
+	r.codexRetryDraft = codexAssistantDraft{}
 	r.completedReply = false
 }
 

@@ -388,6 +388,9 @@ func (m *Manager) applyEventToHistoryCacheDB(
 	case "msg_a_st":
 		return nil, nil
 	case "txt_d":
+		if payload["retryStaged"] == true {
+			return nil, nil
+		}
 		messageID := strings.TrimSpace(firstNonEmpty(stringValue(payload["mid"]), event.ParentID, event.ID))
 		item, err := upsertEventItem(event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
 			next.SourceThreadID = sourceThreadID
@@ -407,11 +410,33 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			return nil, err
 		}
 		return &item, nil
-	case "txt_end":
+	case "txt_end", "txt_interrupt":
 		messageID := strings.TrimSpace(firstNonEmpty(stringValue(payload["mid"]), event.ParentID, event.ID))
-		item, err := upsertEventItem(event.ThreadID, "assistant:"+messageID, func(next *HistoryItem) {
+		sourceKey := "assistant:" + messageID
+		lookupKey := sourceKey
+		interrupted := event.Type == "txt_interrupt"
+		draftID := stringValue(payload["retryReplaces"])
+		if interrupted {
+			draftID = messageID
+		}
+		if draftID != "" {
+			var draft tables.WebSessionItemTable
+			err := db.WithContext(ctx).Select("id").Where(
+				"web_session_id = ? AND source_thread_id = ? AND source_turn_id = ? AND run_id = ? AND source_item_id = ? AND done = ?",
+				sessionID, event.ThreadID, event.TurnID, event.RunID, "assistant:"+draftID, false,
+			).Take(&draft).Error
+			if err == nil {
+				lookupKey = "assistant:" + draftID
+			} else if err != gorm.ErrRecordNotFound {
+				return nil, err
+			} else if interrupted {
+				return nil, nil
+			}
+		}
+		item, err := upsertEventItem(event.ThreadID, lookupKey, func(next *HistoryItem) {
 			next.SourceThreadID = sourceThreadID
 			next.SourceTurnID = sourceTurnID
+			next.SourceItemID = ptr(sourceKey)
 			next.RunID = runID
 			next.Kind = "assistant"
 			next.ItemType = "agent_message"
@@ -422,7 +447,7 @@ func (m *Manager) applyEventToHistoryCacheDB(
 			if next.Timestamp == nil {
 				next.Timestamp = ptr(event.Timestamp)
 			}
-			next.Done = true
+			next.Done = !interrupted
 			if detail := codexAsyncInputDetail(payload); detail != nil {
 				if next.Detail == nil || next.Detail.Action == "" {
 					next.Detail = detail

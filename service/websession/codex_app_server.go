@@ -858,6 +858,7 @@ drainLoop:
 				continue
 			}
 			if outcome == codexTurnOutcomeCompleted && !turnCompleted {
+				m.interruptCodexRetryDraft(session, run)
 				if shouldContinueIncompleteCodexTurn(session, run) {
 					if incompleteTurnRetries >= codexIncompleteTurnMaxRetries {
 						run.lastErrorCode = codexIncompleteTurnErrorCode
@@ -1003,6 +1004,7 @@ drainLoop:
 		m.mu.Unlock()
 	}
 	stopAndDrainRollout()
+	m.interruptCodexRetryDraft(session, run)
 
 	if turnCompleted && renewal != nil {
 		return
@@ -1031,6 +1033,23 @@ drainLoop:
 		code = codexTransportRetryExhaustedCode
 	}
 	m.handleRunFailureWithCode(session.ID, session, run, code, fmt.Errorf("%s", message))
+}
+
+func (m *Manager) interruptCodexRetryDraft(session tables.WebSessionTable, run *activeRun) {
+	draft := run.takeCodexRetryDraft()
+	if draft.messageID == "" {
+		return
+	}
+	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+		ID:        utils.NewID(),
+		Type:      "txt_interrupt",
+		RunID:     run.runID,
+		ParentID:  draft.messageID,
+		ThreadID:  draft.scope.threadID,
+		TurnID:    draft.scope.turnID,
+		Timestamp: time.Now(),
+		Payload:   map[string]any{"mid": draft.messageID, "interrupted": true},
+	})
 }
 
 func (m *Manager) waitAndFailCodexAppServer(
@@ -1388,7 +1407,7 @@ func (m *Manager) handleCodexAppServerMessage(
 		run.lastError, run.lastErrorCode = parseCodexTurnError(message.Params)
 		if retryInfo, ok := classifyCodexTransportRetryMessage(run.lastError); ok {
 			retryInfo = retryInfo.withRemoteURL(run.transportRemoteURL)
-			run.markCodexTransportRetry()
+			run.markCodexTransportRetry(rootScope)
 			m.appendRunNote(session.ID, session, run, codexRetryNoteLevel, retryInfo.Message, retryInfo.payload())
 			run.lastError = ""
 			run.lastErrorCode = ""
@@ -1864,9 +1883,7 @@ func (m *Manager) handleCodexAppServerItemStarted(
 		messageID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
 		if isRootEvent {
 			run.setAssistantMessageID(messageID)
-			if !strings.EqualFold(stringValue(item["delivery"]), "async") {
-				run.recordAssistantMessageStarted(messageID, stringValue(item["phase"]))
-			}
+			run.recordAssistantMessageStarted(messageID, stringValue(item["phase"]), strings.EqualFold(stringValue(item["delivery"]), "async"))
 		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
@@ -1946,8 +1963,10 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 			},
 		})
 	}
-	if isRootEvent {
-		run.recordAssistantMessageDelta(messageID, stringValue(payload["delta"]))
+	delta := stringValue(payload["delta"])
+	eventPayload := map[string]any{"mid": messageID, "txt": delta}
+	if isRootEvent && run.recordAssistantMessageDelta(codexTurnScope{threadID, turnID}, messageID, delta) {
+		eventPayload["retryStaged"] = true
 	}
 
 	run.markAssistantDeltaSeen(messageID)
@@ -1960,10 +1979,7 @@ func (m *Manager) handleCodexAppServerAgentDelta(
 		ThreadID:  threadID,
 		TurnID:    turnID,
 		Timestamp: time.Now(),
-		Payload: map[string]any{
-			"mid": messageID,
-			"txt": stringValue(payload["delta"]),
-		},
+		Payload:   eventPayload,
 	}); err != nil && m.logger != nil {
 		m.logger.Error(
 			"failed to enqueue codex app-server text delta",
@@ -2004,15 +2020,13 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			fallbackMessageID = run.assistantMessageID
 		}
 		messageID := firstNonEmpty(stringValue(item["id"]), fallbackMessageID, utils.NewID())
-		if isRootEvent && !strings.EqualFold(stringValue(item["delivery"]), "async") {
-			run.recordAssistantMessageCompleted(
-				messageID,
-				stringValue(item["phase"]),
-				stringValue(item["text"]),
-			)
+		text := stringValue(item["text"])
+		retrying, replaces := false, ""
+		if isRootEvent {
+			retrying, replaces = run.recordAssistantMessageCompleted(codexTurnScope{threadID, turnID}, messageID,
+				stringValue(item["phase"]), text, strings.EqualFold(stringValue(item["delivery"]), "async"))
 		}
-		if !run.assistantDeltaWasSeen(messageID) {
-			text := stringValue(item["text"])
+		if !retrying && !run.assistantDeltaWasSeen(messageID) {
 			if strings.TrimSpace(text) != "" {
 				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 					ID:        utils.NewID(),
@@ -2030,6 +2044,13 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 				})
 			}
 		}
+		eventPayload := map[string]any{"mid": messageID, "delivery": item["delivery"], "questions": item["questions"]}
+		if retrying && strings.TrimSpace(text) != "" {
+			eventPayload["txt"] = text
+		}
+		if replaces != "" && replaces != messageID {
+			eventPayload["retryReplaces"] = replaces
+		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
@@ -2039,11 +2060,7 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			ThreadID:  threadID,
 			TurnID:    turnID,
 			Timestamp: time.Now(),
-			Payload: map[string]any{
-				"mid":       messageID,
-				"delivery":  item["delivery"],
-				"questions": item["questions"],
-			},
+			Payload:   eventPayload,
 		})
 	default:
 		toolSucceeded := codexToolSucceeded(item)

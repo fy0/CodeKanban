@@ -878,6 +878,7 @@ export default {
     subAgentLocate: '定位 Agent 最近活动',
     subAgentNoTimelineActivity: '此 Agent 暂无可显示的时间线活动。',
     timelineAgentRole: 'Agent · {name}',
+    assistantOutputInterrupted: '输出中断',
     subAgentStatus: {
       pending_init: '启动中',
       running: '运行中',
