@@ -112,6 +112,39 @@ describe('WebSessionAsyncUserInput', () => {
     savedDrafts.clear();
   });
 
+  it.each(['omitted', 'null'])(
+    'renders, reveals, and submits a free-text question with %s options',
+    async optionsState => {
+      answer.mockResolvedValue(undefined);
+      const item = makeItem();
+      const question = item.detail!.questions![0]!;
+      item.detail!.questions = [question];
+      if (optionsState === 'omitted') {
+        Reflect.deleteProperty(question, 'options');
+      } else {
+        Reflect.set(question, 'options', null);
+      }
+
+      const wrapper = render(item);
+      expect(wrapper.find('.question-card-header h3').text()).toBe(question.question);
+      expect(wrapper.findAll('.question-card-option')).toHaveLength(0);
+      expect(wrapper.find('.question-card-submit').attributes('disabled')).toBeDefined();
+      await wrapper.find('textarea').setValue('Use the previous directory');
+      await wrapper.find('.question-card-close').trigger('click');
+      await wrapper.vm.reveal();
+      expect(wrapper.find<HTMLTextAreaElement>('textarea').element.value).toBe(
+        'Use the previous directory'
+      );
+      await wrapper.find('form').trigger('submit');
+      await flushPromises();
+      expect(answer).toHaveBeenCalledExactlyOnceWith('session-1', item.id, {
+        '0': ['Use the previous directory'],
+      });
+      expect(wrapper.text()).toContain('Submitted');
+      wrapper.unmount();
+    }
+  );
+
   it('preselects a suggestion without sending and submits all answers including free text', async () => {
     answer.mockResolvedValue(undefined);
     const wrapper = render();

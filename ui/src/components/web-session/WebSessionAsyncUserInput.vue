@@ -166,7 +166,13 @@ const acceptedIgnore = ref(false);
 const error = ref('');
 const collapsed = ref(false);
 const questionIndex = ref(0);
-const questions = computed(() => props.item.detail?.questions ?? []);
+// Free-text questions can arrive without options because the server omits empty lists.
+const questions = computed(() =>
+  (props.item.detail?.questions ?? []).map(question => ({
+    ...question,
+    options: question.options ?? [],
+  }))
+);
 const currentQuestion = computed(() => questions.value[questionIndex.value]);
 const storageKey = computed(() => JSON.stringify(['async', props.sessionId, props.item.id]));
 const submitted = computed(() => accepted.value || props.item.detail?.action === 'submitted');
