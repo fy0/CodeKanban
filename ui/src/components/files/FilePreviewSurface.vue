@@ -77,6 +77,7 @@
         <div
           v-else-if="previewResult.previewKind === 'markdown'"
           class="file-preview-markdown chat-markdown"
+          @click.capture="handleMarkdownClick"
           v-html="renderedMarkdown"
         ></div>
         <pre v-else-if="previewResult.previewKind === 'text'" class="file-preview-text">{{
@@ -163,8 +164,32 @@ const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'download'): void;
   (e: 'image-preview'): void;
+  (e: 'open-linked-file', path: string): void;
   (e: 'mode-change', value: FilePreviewMode): void;
 }>();
+
+function handleMarkdownClick(event: MouseEvent) {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey
+  ) {
+    return;
+  }
+  const path =
+    event.target instanceof Element
+      ? event.target
+          .closest('a[href][data-file-preview-path]')
+          ?.getAttribute('data-file-preview-path')
+      : null;
+  if (path) {
+    event.preventDefault();
+    emit('open-linked-file', path);
+  }
+}
 
 const showHeader = computed(
   () =>

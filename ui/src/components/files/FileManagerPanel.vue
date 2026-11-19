@@ -208,6 +208,7 @@
           diff-unavailable-text=""
           @download="downloadPreviewItem"
           @image-preview="openImagePreviewModal"
+          @open-linked-file="openLinkedFile"
         />
       </aside>
     </div>
@@ -248,6 +249,7 @@
         @close="closeMobilePreview"
         @download="downloadPreviewItem"
         @image-preview="openImagePreviewModal"
+        @open-linked-file="openLinkedFile"
       />
     </n-modal>
 
@@ -370,7 +372,7 @@ import { useResponsive } from '@/composables/useResponsive';
 import { useProjectStore } from '@/stores/project';
 import { useFileManagerStore, type FileManagerOpenRequest } from '@/stores/fileManager';
 import { fileManagerApi } from '@/api/fileManager';
-import { renderMarkdown } from '@/utils/markdown';
+import { renderFileManagerMarkdown } from '@/components/files/fileManagerMarkdown';
 import FilePreviewSurface from '@/components/files/FilePreviewSurface.vue';
 import type {
   FileManagerEntry,
@@ -517,11 +519,19 @@ const bulkActionOptions = computed(() => [
   },
 ]);
 
-const renderedMarkdown = computed(() =>
-  previewResult.value?.previewKind === 'markdown'
-    ? renderMarkdown(previewResult.value.textContent ?? '')
-    : ''
-);
+const renderedMarkdown = computed(() => {
+  const preview = previewResult.value;
+  const scope = activeScope.value;
+  if (preview?.previewKind !== 'markdown' || !scope) {
+    return '';
+  }
+  return renderFileManagerMarkdown(
+    preview.textContent ?? '',
+    preview.entry.path,
+    props.projectId,
+    scope.id
+  );
+});
 const previewMetaText = computed(() =>
   previewResult.value ? buildPreviewMeta(previewResult.value.entry) : ''
 );
@@ -910,6 +920,12 @@ async function handleRowClick(entry: FileManagerEntry) {
     return;
   }
   await openFilePath(entry.path, activeScope.value.id);
+}
+
+async function openLinkedFile(path: string) {
+  if (activeScope.value) {
+    await openFilePath(path, activeScope.value.id);
+  }
 }
 
 async function openRequestedFile(request: FileManagerOpenRequest) {
