@@ -2057,7 +2057,6 @@
               'is-drag-over': isComposerDragOver,
               'is-mobile': isMobile,
               'is-mobile-focused': isMobileComposerFocused,
-              'is-mobile-settings-expanded': isMobile && isMobileComposerSettingsExpanded,
             }"
             @paste.capture="handleComposerPaste"
             @dragenter="handleComposerDragEnter"
@@ -2127,7 +2126,7 @@
                   :aria-expanded="showContextUsagePopover"
                   @click="handleContextUsagePopoverVisibilityChange(true)"
                 >
-                  {{ contextUsageIndicator.label }}
+                  <span class="composer-context-pill-label">{{ contextUsageIndicator.label }}</span>
                 </button>
               </div>
 
@@ -3366,7 +3365,9 @@
                           :class="`state-${contextUsageIndicator.state}`"
                           :aria-label="contextUsageIndicator.title"
                         >
-                          {{ contextUsageIndicator.label }}
+                          <span class="composer-context-pill-label">{{
+                            contextUsageIndicator.label
+                          }}</span>
                         </button>
                       </template>
                       <ContextUsageContent />
@@ -12219,7 +12220,7 @@ function handleComposerSelectorPointerLeave(selector: ComposerHoverSelector) {
 
 const selectedModelDisplayLabel = computed(() => getKnownModelLabel(selectedModel.value));
 const modelSelectStyle = computed<CSSProperties>(() => ({
-  width: `${resolveModelSelectWidth(selectedModelDisplayLabel.value)}px`,
+  width: isMobile.value ? '100%' : `${resolveModelSelectWidth(selectedModelDisplayLabel.value)}px`,
 }));
 const claudeRuntimeOptions = computed(() =>
   CLAUDE_RUNTIME_OPTIONS.map(option => ({
