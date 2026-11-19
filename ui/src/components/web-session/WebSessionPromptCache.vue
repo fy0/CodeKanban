@@ -40,7 +40,15 @@
           </dd>
         </div>
         <div v-if="cache.observedAt !== null">
-          <dt>{{ t('webSession.promptCacheObservedAt') }}</dt>
+          <dt>
+            {{
+              t(
+                cache.observationSource === 'renewal'
+                  ? 'webSession.promptCacheRenewalObservedAt'
+                  : 'webSession.promptCacheObservedAt'
+              )
+            }}
+          </dt>
           <dd>{{ new Date(cache.observedAt).toLocaleString(locale) }}</dd>
         </div>
       </dl>
@@ -78,6 +86,23 @@
             {{ renewalStatus }}
           </span>
         </div>
+        <dl
+          v-if="renewal.sampling || renewal.nextAttemptAt || renewal.lastSample"
+          class="prompt-cache-stats"
+        >
+          <div v-if="renewal.sampling">
+            <dt>{{ t('webSession.promptCacheRenewalProgress') }}</dt>
+            <dd role="status">{{ t('webSession.promptCacheRenewalSampling') }}</dd>
+          </div>
+          <div v-else-if="renewalActive && renewal.nextAttemptAt">
+            <dt>{{ t('webSession.promptCacheRenewalNextAttempt') }}</dt>
+            <dd>{{ new Date(renewal.nextAttemptAt).toLocaleString(locale) }}</dd>
+          </div>
+          <div v-if="renewal.lastSample">
+            <dt>{{ t('webSession.promptCacheRenewalLastSuccess') }}</dt>
+            <dd>{{ new Date(renewal.lastSample.observedAt).toLocaleString(locale) }}</dd>
+          </div>
+        </dl>
         <p
           v-if="renewal.lastError && renewal.availability !== 'unsupported'"
           role="status"
@@ -237,7 +262,12 @@ const renewalActionLabel = computed(() => {
     : 'webSession.promptCacheRenewalQueue';
 });
 const cache = computed(() =>
-  estimateWebSessionPromptCache(props.session, props.now, props.speed?.history)
+  estimateWebSessionPromptCache(
+    props.session,
+    props.now,
+    props.speed?.history,
+    props.renewal?.lastSample
+  )
 );
 const isMiss = computed(() => cache.value?.event === 'miss');
 const isDecreased = computed(
@@ -339,6 +369,7 @@ watch(
     // and delayed duplicate reports must not look like another cache refresh.
     if (
       old.observationKey.startsWith('snapshot:') &&
+      current.observationSource === 'request' &&
       !current.observationKey.startsWith('snapshot:') &&
       old.inputTokens === current.inputTokens &&
       old.cachedTokens === current.cachedTokens &&
@@ -448,6 +479,9 @@ function openDetails() {
   gap: 6px;
   justify-content: space-between;
   font-size: 12px;
+}
+.prompt-cache-renewal > .prompt-cache-stats {
+  margin-top: 10px;
 }
 .prompt-cache-renewal-action {
   display: inline-grid;

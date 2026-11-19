@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"code-kanban/model"
 	"code-kanban/model/tables"
 	"code-kanban/utils"
 
@@ -24,10 +25,38 @@ const (
 )
 
 type PromptCacheRenewalState struct {
-	Availability string `json:"availability"`
-	Remaining    int    `json:"remaining"`
-	Infinite     bool   `json:"infinite"`
-	LastError    string `json:"lastError,omitempty"`
+	Availability  string                    `json:"availability"`
+	Remaining     int                       `json:"remaining"`
+	Infinite      bool                      `json:"infinite"`
+	LastError     string                    `json:"lastError,omitempty"`
+	Sampling      bool                      `json:"sampling,omitempty"`
+	NextAttemptAt *time.Time                `json:"nextAttemptAt,omitempty"`
+	LastSample    *PromptCacheRenewalSample `json:"lastSample,omitempty"`
+}
+
+type PromptCacheRenewalSample struct {
+	ObservedAt        time.Time `json:"observedAt"`
+	Model             string    `json:"model"`
+	InputTokens       *int64    `json:"inputTokens"`
+	CachedInputTokens *int64    `json:"cachedInputTokens"`
+	OutputTokens      *int64    `json:"outputTokens"`
+}
+
+type promptCacheSampleRecord struct {
+	Sample       PromptCacheRenewalSample `json:"sample"`
+	ThreadID     string                   `json:"threadId"`
+	HistoryEpoch int64                    `json:"historyEpoch"`
+}
+
+func promptCacheLastSample(session tables.WebSessionTable) *PromptCacheRenewalSample {
+	var record promptCacheSampleRecord
+	if json.Unmarshal([]byte(session.PromptCacheSampleJSON), &record) != nil ||
+		record.Sample.Model != session.Model || record.HistoryEpoch != session.HistoryEpoch ||
+		!stringPointerEqual(session.NativeSessionID, record.ThreadID) || record.Sample.ObservedAt.IsZero() ||
+		(session.LastContextCompactionAt != nil && record.Sample.ObservedAt.Before(*session.LastContextCompactionAt)) {
+		return nil
+	}
+	return &record.Sample
 }
 
 type promptCacheRenewal struct {
@@ -119,11 +148,18 @@ func (m *Manager) preparePromptCacheRenewal(ctx context.Context, session tables.
 }
 
 func promptCacheObservationTime(session tables.WebSessionTable, now time.Time) time.Time {
+	var latest time.Time
 	for _, observedAt := range []*time.Time{session.LatestTokenCountUpdatedAt, session.LatestTurnUsageUpdatedAt} {
 		if observedAt != nil && !observedAt.IsZero() && !observedAt.After(now) &&
-			(session.LastContextCompactionAt == nil || !observedAt.Before(*session.LastContextCompactionAt)) {
-			return *observedAt
+			(session.LastContextCompactionAt == nil || !observedAt.Before(*session.LastContextCompactionAt)) && observedAt.After(latest) {
+			latest = *observedAt
 		}
+	}
+	if sample := promptCacheLastSample(session); sample != nil && !sample.ObservedAt.After(now) && sample.ObservedAt.After(latest) {
+		latest = sample.ObservedAt
+	}
+	if !latest.IsZero() {
+		return latest
 	}
 	return now
 }
@@ -143,6 +179,7 @@ func (m *Manager) PromptCacheRenewal(ctx context.Context, session tables.WebSess
 	if effectiveSessionBackend(session) != SessionBackendCodexAppServer {
 		return state
 	}
+	state.LastSample = promptCacheLastSample(session)
 	m.mu.RLock()
 	unsupported := m.promptCacheUnsupported
 	renewal := m.promptCacheRenewals[session.ID]
@@ -194,6 +231,11 @@ func (m *Manager) PromptCacheRenewal(ctx context.Context, session tables.WebSess
 	renewal.updateMode(action)
 	state.Remaining = renewal.remaining
 	state.Infinite = renewal.infinite
+	state.Sampling = renewal.attemptCancel != nil
+	if state.Remaining > 0 || state.Infinite {
+		nextAt := renewal.nextAt
+		state.NextAttemptAt = &nextAt
+	}
 	if renewal.done != nil && !renewal.ready && action != "" && state.Remaining == 0 && !state.Infinite {
 		renewal.stop()
 	}
@@ -333,12 +375,15 @@ func (m *Manager) runPromptCacheRenewal(renewal *promptCacheRenewal) {
 		renewal.attemptCancel = cancel
 		renewal.mu.Unlock()
 
-		category, stop := m.tryPromptCacheSample(attemptCtx, renewal)
+		usage, category, stop := m.tryPromptCacheSample(attemptCtx, renewal)
 		cancel()
 		if !stop && category != "sample_cancelled" && renewal.ctx.Err() == nil {
 			if parentError := m.promptCacheParentError(renewal.ctx, renewal); parentError != "" {
 				category, stop = parentError, true
 			}
+		}
+		if category == "" && !stop && renewal.ctx.Err() == nil {
+			m.recordPromptCacheSample(renewal, usage, time.Now())
 		}
 		m.recordPromptCacheFailure(renewal, category)
 		renewal.mu.Lock()
@@ -444,7 +489,7 @@ func (m *Manager) promptCacheParentError(ctx context.Context, renewal *promptCac
 	return readPromptCacheRoot(ctx, renewal, true)
 }
 
-func (m *Manager) tryPromptCacheSample(ctx context.Context, renewal *promptCacheRenewal) (string, bool) {
+func (m *Manager) tryPromptCacheSample(ctx context.Context, renewal *promptCacheRenewal) (codexSampleUsage, string, bool) {
 	category := m.promptCacheParentError(ctx, renewal)
 	var usage codexSampleUsage
 	var duration time.Duration
@@ -477,13 +522,32 @@ func (m *Manager) tryPromptCacheSample(ctx context.Context, renewal *promptCache
 	)
 	if !stop && isCodexSampleUnsupported(category) {
 		m.disablePromptCacheRenewal(category)
-		return category, true
+		return usage, category, true
 	}
 	switch category {
 	case "parent_busy", "parent_missing", "parent_not_root", "expected_turn_changed", "connection_closed":
 		stop = true
 	}
-	return category, stop
+	return usage, category, stop
+}
+
+func (m *Manager) recordPromptCacheSample(renewal *promptCacheRenewal, usage codexSampleUsage, now time.Time) {
+	parent := renewal.parent
+	record := promptCacheSampleRecord{
+		Sample:   PromptCacheRenewalSample{ObservedAt: now, Model: parent.Model, InputTokens: usage.Input, CachedInputTokens: usage.Cached, OutputTokens: usage.Output},
+		ThreadID: renewal.scope.threadID, HistoryEpoch: parent.HistoryEpoch,
+	}
+	encoded, err := json.Marshal(record)
+	if err == nil {
+		// Samples must not change context usage, activity, or transcript revisions.
+		// The scope guards also prevent a late response from updating a reset session.
+		err = model.GetDB().WithContext(renewal.ctx).Model(&tables.WebSessionTable{}).
+			Where("id = ? AND native_session_id = ? AND model = ? AND history_epoch = ?", parent.ID, record.ThreadID, record.Sample.Model, record.HistoryEpoch).
+			UpdateColumn("prompt_cache_sample_json", string(encoded)).Error
+	}
+	if err != nil && renewal.ctx.Err() == nil {
+		m.logger.Warn("Failed to save Codex prompt cache sample", zap.String("sessionId", parent.ID), zap.Error(err))
+	}
 }
 
 func (m *Manager) recordPromptCacheFailure(renewal *promptCacheRenewal, category string) {

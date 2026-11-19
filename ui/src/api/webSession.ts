@@ -26,11 +26,22 @@ type ItemResponse<T> = {
   item?: T;
 };
 
+export type PromptCacheRenewalSample = {
+  observedAt: string;
+  model: string;
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+};
+
 export type PromptCacheRenewalState = {
   availability: 'disabled' | 'unavailable' | 'checking' | 'unsupported' | 'ready';
   remaining: number;
   infinite: boolean;
   lastError?: string;
+  sampling?: boolean;
+  nextAttemptAt?: string;
+  lastSample?: PromptCacheRenewalSample;
 };
 
 function createAbortError() {

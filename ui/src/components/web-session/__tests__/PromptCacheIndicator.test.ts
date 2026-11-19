@@ -90,6 +90,79 @@ afterEach(() => {
 });
 
 describe('WebSessionPromptCache', () => {
+  it('shows actual renewal progress and refreshes an expired countdown only after success', async () => {
+    const wrapper = render();
+    const sampledAt = observedAt + 34 * 60_000;
+    await wrapper.setProps({
+      now: sampledAt,
+      renewal: {
+        availability: 'ready',
+        remaining: 1,
+        infinite: false,
+        nextAttemptAt: new Date(sampledAt).toISOString(),
+      },
+    });
+    expect(wrapper.text()).toContain('下次续期');
+    expect(wrapper.get('.prompt-cache-countdown').text()).toContain('已过期 4 分钟');
+    await wrapper.setProps({
+      renewal: { availability: 'ready', remaining: 1, infinite: false, sampling: true },
+    });
+    expect(wrapper.text()).toContain('正在发送续期请求');
+    expect(wrapper.get('.prompt-cache-countdown').text()).toContain('已过期 4 分钟');
+    const lastSample = {
+      observedAt: new Date(sampledAt).toISOString(),
+      model: session.model,
+      inputTokens: 4096,
+      cachedInputTokens: 3072,
+      outputTokens: 1,
+    };
+    await wrapper.setProps({
+      renewal: { availability: 'ready', remaining: 0, infinite: false, lastSample },
+    });
+    expect(wrapper.get('.prompt-cache-countdown').text()).toContain('≈30:00');
+    expect(wrapper.get('.prompt-cache-status').text()).toBe('缓存继承');
+    expect(wrapper.text()).toContain('75%');
+    expect(wrapper.text()).toContain('3,072 / 4,096');
+    expect(wrapper.text()).toContain('最近一次请求（自动续期）');
+    expect(wrapper.text()).toContain('最近续期成功');
+    expect(wrapper.get('.prompt-cache-ring').classes()).toContain('is-refreshing');
+    await wrapper.setProps({
+      now: sampledAt + 60_000,
+      renewal: {
+        availability: 'ready',
+        remaining: 0,
+        infinite: false,
+        lastSample,
+        lastError: 'sample_timeout',
+      },
+    });
+    expect(wrapper.get('.prompt-cache-countdown').text()).toContain('≈29:00');
+    expect(wrapper.get('.prompt-cache-renewal-error').text()).toContain('sample_timeout');
+    wrapper.unmount();
+  });
+
+  it('animates a renewal even when its usage matches the previous snapshot', async () => {
+    const wrapper = render();
+    await wrapper.setProps({ speed: null });
+    await wrapper.setProps({
+      now: observedAt + 120_000,
+      renewal: {
+        availability: 'ready',
+        remaining: 0,
+        infinite: false,
+        lastSample: {
+          model: session.model,
+          observedAt: new Date(observedAt + 120_000).toISOString(),
+          inputTokens: 20_000,
+          cachedInputTokens: 18_000,
+          outputTokens: 1,
+        },
+      },
+    });
+    expect(wrapper.get('.prompt-cache-ring').classes()).toContain('is-refreshing');
+    wrapper.unmount();
+  });
+
   it('keeps cache status separate from renewal modes and never queues on open', async () => {
     const wrapper = render();
     expect(wrapper.find('.prompt-cache-renewal').exists()).toBe(false);

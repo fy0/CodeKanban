@@ -163,6 +163,9 @@ func TestPromptCacheRuntimeRenewal(t *testing.T) {
 				if state := manager.PromptCacheRenewal(ctx, parent, "cycle"); state.Remaining != 1 {
 					t.Fatalf("enqueue state = %#v", state)
 				}
+				if state := manager.PromptCacheRenewal(ctx, parent, ""); state.NextAttemptAt == nil {
+					t.Fatal("queued renewal must expose its next attempt time")
+				}
 				renewal.mu.Lock()
 				renewal.nextAt = time.Now()
 				renewal.mu.Unlock()
@@ -177,6 +180,9 @@ func TestPromptCacheRuntimeRenewal(t *testing.T) {
 					t.Fatalf("wrong sample params: %s", frames[1].Params)
 				}
 				if mode == "hold" {
+					if state := manager.PromptCacheRenewal(ctx, parent, ""); !state.Sampling || state.LastSample != nil {
+						t.Fatalf("in-flight sample must report progress without claiming success: %#v", state)
+					}
 					manager.PromptCacheRenewal(ctx, parent, "cycle")
 					if len(promptCacheSampleFrames(t, samplePath)) != 2 {
 						t.Fatal("started a concurrent sample")
@@ -202,6 +208,31 @@ func TestPromptCacheRuntimeRenewal(t *testing.T) {
 				if mode == "success" && (fields["cached_input_tokens"] != int64(3072) || fields["input_tokens"] != int64(4096) || fields["output_tokens"] != int64(1)) {
 					t.Fatalf("incorrect sample usage: %#v", fields)
 				}
+				awaitPromptCacheCondition(t, func() bool {
+					current, err := manager.GetSession(ctx, session.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					state := manager.PromptCacheRenewal(ctx, current, "")
+					if state.Sampling {
+						return false
+					}
+					if mode == "success" {
+						if state.LastSample == nil {
+							return false
+						}
+						sample := state.LastSample
+						if sample.InputTokens == nil || *sample.InputTokens != 4096 || sample.CachedInputTokens == nil || *sample.CachedInputTokens != 3072 || sample.OutputTokens == nil || *sample.OutputTokens != 1 || sample.ObservedAt.IsZero() || sample.Model != current.Model {
+							t.Fatalf("sample usage missing from API state: %#v", sample)
+						}
+					} else if state.LastSample != nil {
+						t.Fatalf("failed/cancelled sample was reported as a success: %#v", state.LastSample)
+					}
+					if current.TotalInputTokens != parent.TotalInputTokens || current.TotalCachedInputTokens != parent.TotalCachedInputTokens || current.TotalOutputTokens != parent.TotalOutputTokens || current.LatestTokenCountInputTokens != parent.LatestTokenCountInputTokens || current.LatestTokenCountCachedInputTokens != parent.LatestTokenCountCachedInputTokens {
+						t.Fatal("sample changed normal session context/usage accounting")
+					}
+					return true
+				})
 				var items []tables.WebSessionItemTable
 				if err := model.GetDB().Where("web_session_id = ?", session.ID).Find(&items).Error; err != nil {
 					t.Fatal(err)
@@ -299,8 +330,22 @@ func TestPromptCacheResumesPersistedParentOnlyOnExplicitAction(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("finite renewal did not finish and release its connection")
 	}
+	parent, err = manager.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if state := manager.PromptCacheRenewal(ctx, parent, ""); state.Availability != "ready" || state.Remaining != 0 || state.Infinite || state.LastError != "" {
 		t.Fatalf("finite renewal must automatically go back to off: %#v", state)
+	}
+	restarted, err := NewManager(config, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state := restarted.PromptCacheRenewal(ctx, parent, ""); state.LastSample == nil || state.LastSample.CachedInputTokens == nil || *state.LastSample.CachedInputTokens != 3072 || state.Sampling || state.Infinite || state.Remaining != 0 {
+		t.Fatalf("sample observation must survive worker cleanup and manager restart: %#v", state)
+	}
+	if sample := promptCacheLastSample(parent); sample == nil || !promptCacheObservationTime(parent, time.Now()).Equal(sample.ObservedAt) {
+		t.Fatal("subsequent renewals must be scheduled from the latest successful sample")
 	}
 	frames := promptCacheSampleFrames(t, codexPath+".state.samples")
 	if len(frames) == 0 {
@@ -309,6 +354,42 @@ func TestPromptCacheResumesPersistedParentOnlyOnExplicitAction(t *testing.T) {
 	params := decodeRawObject(frames[len(frames)-1].Params)
 	if params["expectedTurnId"] != "turn_test" || params["threadId"] != "thread_test" {
 		t.Fatalf("expected a renewal of the persisted turn, got: %#v", params)
+	}
+}
+
+func TestPromptCacheSampleScope(t *testing.T) {
+	now := time.Now()
+	session := tables.WebSessionTable{Model: "gpt-6.1-sol", NativeSessionID: ptr("thread"), HistoryEpoch: 1}
+	encoded, err := json.Marshal(promptCacheSampleRecord{
+		Sample:   PromptCacheRenewalSample{ObservedAt: now, Model: session.Model, InputTokens: ptr(int64(4096)), CachedInputTokens: ptr(int64(3072))},
+		ThreadID: "thread", HistoryEpoch: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.PromptCacheSampleJSON = string(encoded)
+	if sample := promptCacheLastSample(session); sample == nil || !sample.ObservedAt.Equal(now) {
+		t.Fatal("lost valid sample observation")
+	}
+	for _, name := range []string{"model", "thread", "epoch", "compaction", "invalid"} {
+		t.Run(name, func(t *testing.T) {
+			changed := session
+			switch name {
+			case "model":
+				changed.Model = "other-model"
+			case "thread":
+				changed.NativeSessionID = ptr("other-thread")
+			case "epoch":
+				changed.HistoryEpoch++
+			case "compaction":
+				changed.LastContextCompactionAt = ptr(now.Add(time.Second))
+			case "invalid":
+				changed.PromptCacheSampleJSON = "invalid"
+			}
+			if promptCacheLastSample(changed) != nil {
+				t.Fatal("stale sample must not be used for another context")
+			}
+		})
 	}
 }
 

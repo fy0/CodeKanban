@@ -1,4 +1,5 @@
 import type { WebSessionSummary, WebSessionTokenSpeedRecord } from '@/types/models';
+import type { PromptCacheRenewalSample } from '@/api/webSession';
 
 // OpenAI's default minimum retention for GPT-5.6 and later. Codex does not
 // report the request's retention setting or the server's actual expiry.
@@ -52,7 +53,8 @@ export function promptCacheRecordEvent(
 export function estimateWebSessionPromptCache(
   session: PromptCacheSession | null,
   now: number,
-  history: WebSessionTokenSpeedRecord[] = []
+  history: WebSessionTokenSpeedRecord[] = [],
+  sample?: PromptCacheRenewalSample
 ) {
   if (session?.agent !== 'codex') return null;
 
@@ -66,6 +68,7 @@ export function estimateWebSessionPromptCache(
     : 0;
   let event: ReturnType<typeof promptCacheRecordEvent> = null;
   let observationKey = Number.isFinite(timestamp) ? `snapshot:${timestamp}` : '';
+  let observationSource: 'request' | 'renewal' = 'request';
   const latest = history[0];
   if (latest && latest.model === session.model && promptCacheRecordEvent(latest)) {
     const endedAt = Date.parse(latest.endedAt);
@@ -87,6 +90,30 @@ export function estimateWebSessionPromptCache(
       observationKey = `${latest.runId}:${latest.sampleId}`;
     }
   }
+  const sampledAt = Date.parse(sample?.observedAt ?? '');
+  if (
+    sample?.model === session.model &&
+    Number.isFinite(sampledAt) &&
+    sampledAt > 0 &&
+    !(compactedAt > sampledAt) &&
+    (!hasSnapshot || !Number.isFinite(timestamp) || sampledAt > timestamp) &&
+    sample.inputTokens != null &&
+    Number.isFinite(sample.inputTokens) &&
+    sample.inputTokens >= 0 &&
+    sample.cachedInputTokens != null &&
+    Number.isFinite(sample.cachedInputTokens) &&
+    sample.cachedInputTokens >= 0
+  ) {
+    timestamp = sampledAt;
+    inputTokens = sample.inputTokens;
+    cachedTokens = Math.min(inputTokens, sample.cachedInputTokens);
+    hasSnapshot = true;
+    // A sample uses a different suffix from a normal request. Comparing their
+    // cached token counts would incorrectly report a rebuild.
+    event = inputTokens >= 1024 ? (cachedTokens > 0 ? 'hit' : 'miss') : null;
+    observationKey = `renewal:${timestamp}`;
+    observationSource = 'renewal';
+  }
   const hasObservation = hasSnapshot && Number.isFinite(timestamp) && timestamp > 0;
   const version = /^gpt-(\d+)(?:\.(\d+))?(?:[-.]|$)/i.exec(session.model.trim());
   const supportsDefaultWindow = Boolean(
@@ -105,9 +132,10 @@ export function estimateWebSessionPromptCache(
       : null;
   return {
     observationKey: hasObservation ? observationKey : '',
+    observationSource,
     event,
     previousCachedTokens:
-      event === 'rebuilt' || event === 'suspected'
+      observationSource === 'request' && (event === 'rebuilt' || event === 'suspected')
         ? promptCacheRecordUsage(history[1])!.cachedTokens
         : null,
     observedAt: hasObservation ? timestamp : null,

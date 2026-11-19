@@ -6,6 +6,7 @@ import {
   promptCacheRecordEvent,
 } from '@/components/web-session/webSessionPromptCache';
 import type { WebSessionTokenSpeedRecord } from '@/types/models';
+import type { PromptCacheRenewalSample } from '@/api/webSession';
 
 const observedAt = Date.parse('2026-11-17T15:00:00Z');
 const session = {
@@ -34,8 +35,70 @@ const record: WebSessionTokenSpeedRecord = {
   tokensPerSecond: 100,
   estimated: false,
 };
+const sample: PromptCacheRenewalSample = {
+  model: session.model,
+  observedAt: new Date(observedAt + 34 * 60_000).toISOString(),
+  inputTokens: 4096,
+  cachedInputTokens: 3072,
+  outputTokens: 1,
+};
 
 describe('Codex prompt cache estimates', () => {
+  it('refreshes expired cache estimates from a successful renewal without inferring a rebuild', () => {
+    expect(
+      estimateWebSessionPromptCache(session, observedAt + 35 * 60_000, [record], sample)
+    ).toMatchObject({
+      observationSource: 'renewal',
+      observationKey: `renewal:${Date.parse(sample.observedAt)}`,
+      observedAt: Date.parse(sample.observedAt),
+      inputTokens: 4096,
+      cachedTokens: 3072,
+      hitPercent: 75,
+      event: 'hit',
+      previousCachedTokens: null,
+      remainingMs: 29 * 60_000,
+    });
+  });
+  it('keeps a renewal cache miss explicit while starting a new estimated window', () => {
+    expect(
+      estimateWebSessionPromptCache(session, Date.parse(sample.observedAt), [record], {
+        ...sample,
+        cachedInputTokens: 0,
+      })
+    ).toMatchObject({ event: 'miss', hitPercent: 0, remainingMs: CODEX_PROMPT_CACHE_ESTIMATE_MS });
+  });
+  it('does not use stale, invalid, other-model, or pre-compaction renewal usage', () => {
+    for (const override of [
+      { observedAt: session.latestTokenCountUpdatedAt },
+      { observedAt: 'invalid' },
+      { model: 'other-model' },
+      { inputTokens: null },
+      { inputTokens: NaN },
+      { cachedInputTokens: null },
+      { cachedInputTokens: -1 },
+    ]) {
+      expect(
+        estimateWebSessionPromptCache(session, observedAt + 35 * 60_000, [record], {
+          ...sample,
+          ...override,
+        })
+      ).toMatchObject({ observationSource: 'request', hitPercent: 90, remainingMs: 0 });
+    }
+    expect(
+      estimateWebSessionPromptCache(
+        { ...session, lastContextCompactionAt: new Date(observedAt + 35 * 60_000).toISOString() },
+        observedAt + 35 * 60_000,
+        [record],
+        sample
+      )
+    ).toMatchObject({ observedAt: null, remainingMs: null });
+  });
+  it('lets a later normal request replace renewal usage', () => {
+    const next = { ...record, endedAt: new Date(observedAt + 36 * 60_000).toISOString() };
+    expect(
+      estimateWebSessionPromptCache(session, observedAt + 37 * 60_000, [next], sample)
+    ).toMatchObject({ observationSource: 'request', hitPercent: 90, remainingMs: 29 * 60_000 });
+  });
   it.each(['gpt-5.6-sol', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra'])(
     '%s uses the documented default window',
     model => {

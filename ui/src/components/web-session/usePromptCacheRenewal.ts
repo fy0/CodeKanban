@@ -85,6 +85,7 @@ export function usePromptCacheRenewal(session: Ref<WebSessionSummary | null>) {
         sessionKey.value &&
           (state.value?.infinite ||
             state.value?.remaining ||
+            state.value?.sampling ||
             (detailsOpen.value &&
               state.value?.availability !== 'disabled' &&
               state.value?.availability !== 'unsupported'))

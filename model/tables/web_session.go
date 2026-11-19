@@ -104,6 +104,7 @@ type WebSessionTable struct {
 	LatestTokenCountOutputTokens      int64      `gorm:"type:integer;not null;default:0" json:"-"`
 	LatestTokenCountTotalTokens       int64      `gorm:"type:integer;not null;default:0" json:"-"`
 	LatestTokenCountUpdatedAt         *time.Time `gorm:"type:datetime" json:"-"`
+	PromptCacheSampleJSON             string     `gorm:"type:text" json:"-"`
 	SessionContextWindowTokens        int64      `gorm:"type:integer;not null;default:0" json:"-"`
 	SessionContextWindowObservedAt    *time.Time `gorm:"type:datetime" json:"-"`
 	ContextBaselineInputTokens        int64      `gorm:"type:integer;not null;default:0" json:"-"`
